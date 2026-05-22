@@ -1,6 +1,9 @@
 @Anchor.Api_HostAddress = http://localhost:5276
 
-GET {{Anchor.Api_HostAddress}}/weatherforecast/
+# Requires a real Entra bearer token for the school tenant.
+# Acquire one via MSAL (e.g. from the Flutter dashboard or a dev helper) and paste below.
+GET {{Anchor.Api_HostAddress}}/me
 Accept: application/json
+Authorization: Bearer {{$dotenv ENTRA_BEARER}}
 
 ###
