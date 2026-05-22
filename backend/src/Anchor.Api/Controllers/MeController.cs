@@ -10,9 +10,6 @@ namespace Anchor.Api.Controllers;
 [Route("me")]
 public sealed class MeController : ControllerBase
 {
-    private const string EntraOidShortClaim = "oid";
-    private const string EntraOidLongClaim = "http://schemas.microsoft.com/identity/claims/objectidentifier";
-
     private readonly IUserStore _userStore;
 
     public MeController(IUserStore userStore)
@@ -23,9 +20,7 @@ public sealed class MeController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<MeResponse>> Get(CancellationToken cancellationToken)
     {
-        var oidValue = User.FindFirst(EntraOidShortClaim)?.Value
-                       ?? User.FindFirst(EntraOidLongClaim)?.Value;
-        if (oidValue is null || !Guid.TryParse(oidValue, out var entraOid))
+        if (!User.TryGetEntraOid(out var entraOid))
             return Unauthorized();
 
         UserRole role;
