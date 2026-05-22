@@ -11,6 +11,19 @@ public static class InfrastructureServiceCollectionExtensions
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
+        services.AddInfrastructureServices();
+        services.AddInfrastructureSqlServer(configuration);
+        return services;
+    }
+
+    public static IServiceCollection AddInfrastructureServices(this IServiceCollection services)
+    {
+        services.AddScoped<IUserStore, EfUserStore>();
+        return services;
+    }
+
+    public static IServiceCollection AddInfrastructureSqlServer(this IServiceCollection services, IConfiguration configuration)
+    {
         var connectionString = configuration.GetConnectionString("DefaultConnection")
             ?? throw new InvalidOperationException(
                 "Connection string 'DefaultConnection' was not found in configuration.");
@@ -20,7 +33,6 @@ public static class InfrastructureServiceCollectionExtensions
                 connectionString,
                 sql => sql.MigrationsAssembly(typeof(AnchorDbContext).Assembly.FullName)));
 
-        services.AddScoped<IUserStore, EfUserStore>();
         return services;
     }
 }
