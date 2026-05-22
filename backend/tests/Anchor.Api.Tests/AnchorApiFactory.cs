@@ -1,3 +1,4 @@
+using Anchor.Api.Realtime;
 using Anchor.Api.Tests.FakeAuth;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Anchor.Api.Tests;
 
@@ -32,6 +34,10 @@ public sealed class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLif
 
             services.AddDbContext<AnchorDbContext>(options =>
                 options.UseSqlite(_connection));
+
+            services.RemoveAll<ISessionBroadcaster>();
+            services.AddSingleton<RecordingSessionBroadcaster>();
+            services.AddSingleton<ISessionBroadcaster>(sp => sp.GetRequiredService<RecordingSessionBroadcaster>());
         });
     }
 
