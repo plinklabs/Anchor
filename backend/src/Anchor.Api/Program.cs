@@ -1,4 +1,5 @@
 using Anchor.Api;
+using Anchor.Api.Realtime;
 using Anchor.Infrastructure;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -16,6 +17,22 @@ builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSch
 {
     options.TokenValidationParameters.RoleClaimType = "roles";
     options.TokenValidationParameters.NameClaimType = "name";
+
+    options.Events ??= new JwtBearerEvents();
+    var existing = options.Events.OnMessageReceived;
+    options.Events.OnMessageReceived = async context =>
+    {
+        if (existing is not null)
+            await existing(context);
+
+        if (string.IsNullOrEmpty(context.Token))
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments(SessionHub.Path))
+                context.Token = accessToken;
+        }
+    };
 });
 
 builder.Services.AddAuthorization(options =>
@@ -28,7 +45,15 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy(AuthorizationPolicies.Student, p => p.RequireRole("Student"));
 });
 
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddInfrastructureServices();
+if (!builder.Environment.IsEnvironment("Test"))
+{
+    builder.Services.AddInfrastructureSqlServer(builder.Configuration);
+}
+
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<ISessionBroadcaster, SessionBroadcaster>();
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
@@ -49,6 +74,7 @@ app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<SessionHub>(SessionHub.Path);
 
 await app.RunAsync();
 

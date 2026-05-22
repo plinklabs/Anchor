@@ -13,9 +13,7 @@ internal sealed class EventConfiguration : IEntityTypeConfiguration<Event>
 
         builder.Property(e => e.Kind).HasConversion<string>().HasMaxLength(32).IsRequired();
         builder.Property(e => e.OccurredAt).IsRequired();
-        builder.Property(e => e.PayloadJson)
-            .HasColumnType("nvarchar(max)")
-            .IsRequired();
+        builder.Property(e => e.PayloadJson).IsRequired();
 
         builder.HasOne(e => e.Session)
             .WithMany()

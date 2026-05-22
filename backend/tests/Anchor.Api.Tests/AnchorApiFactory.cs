@@ -1,23 +1,18 @@
 using Anchor.Api.Tests.FakeAuth;
-using Anchor.Domain.Users;
-using Anchor.Infrastructure.Users;
+using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Anchor.Api.Tests;
 
-public sealed class AnchorApiFactory : WebApplicationFactory<Program>
+public sealed class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    static AnchorApiFactory()
-    {
-        Environment.SetEnvironmentVariable(
-            "ConnectionStrings__DefaultConnection",
-            "Server=(localdb)\\test;Database=AnchorTest;Trusted_Connection=True;");
-    }
+    private readonly SqliteConnection _connection = new("Filename=:memory:");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -35,8 +30,22 @@ public sealed class AnchorApiFactory : WebApplicationFactory<Program>
                 options.DefaultChallengeScheme = FakeJwtBearerHandler.SchemeName;
             });
 
-            services.RemoveAll<IUserStore>();
-            services.AddSingleton<IUserStore, InMemoryUserStore>();
+            services.AddDbContext<AnchorDbContext>(options =>
+                options.UseSqlite(_connection));
         });
+    }
+
+    public async Task InitializeAsync()
+    {
+        await _connection.OpenAsync();
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        await db.Database.EnsureCreatedAsync();
+    }
+
+    public new async Task DisposeAsync()
+    {
+        await _connection.DisposeAsync();
+        await base.DisposeAsync();
     }
 }
