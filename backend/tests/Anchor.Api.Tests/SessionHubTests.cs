@@ -1,3 +1,5 @@
+using System.Net.Http.Json;
+using Anchor.Api.Controllers;
 using Anchor.Api.Realtime;
 using Anchor.Api.Tests.FakeAuth;
 using Anchor.Domain.Classes;
@@ -151,6 +153,45 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
 
         var outsiderGotIt = await Task.WhenAny(outsideSignal.Task, Task.Delay(500)) == outsideSignal.Task;
         Assert.False(outsiderGotIt, "Client outside the session group should not receive SessionEnded.");
+    }
+
+    [Fact]
+    public async Task SessionStarted_REST_call_reaches_roster_members_only()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var outsider = await TestSeed.AddUserAsync(_factory, UserRole.Student, "Outsider");
+
+        await using var studentA = BuildConnection(scenario.Students[0].EntraOid, "Student");
+        await using var studentB = BuildConnection(scenario.Students[1].EntraOid, "Student");
+        await using var outsideConn = BuildConnection(outsider.EntraOid, "Student");
+
+        var signalA = new TaskCompletionSource<SessionStartedPayload>();
+        var signalB = new TaskCompletionSource<SessionStartedPayload>();
+        var signalOutsider = new TaskCompletionSource<SessionStartedPayload>();
+        studentA.On<SessionStartedPayload>(nameof(ISessionHubClient.SessionStarted), p => signalA.TrySetResult(p));
+        studentB.On<SessionStartedPayload>(nameof(ISessionHubClient.SessionStarted), p => signalB.TrySetResult(p));
+        outsideConn.On<SessionStartedPayload>(nameof(ISessionHubClient.SessionStarted), p => signalOutsider.TrySetResult(p));
+
+        await studentA.StartAsync();
+        await studentB.StartAsync();
+        await outsideConn.StartAsync();
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsJsonAsync(
+            "/sessions",
+            new StartSessionRequest(scenario.Class.Id, "Strict", null));
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<StartSessionResponse>();
+        Assert.NotNull(body);
+
+        var receivedA = await signalA.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var receivedB = await signalB.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(body!.Id, receivedA.SessionId);
+        Assert.Equal(body.Id, receivedB.SessionId);
+
+        var outsiderGotIt = await Task.WhenAny(signalOutsider.Task, Task.Delay(500)) == signalOutsider.Task;
+        Assert.False(outsiderGotIt, "User outside the class roster should not receive SessionStarted.");
     }
 
     private async Task<(User student, Session session)> SeedSessionWithStudentAsync()

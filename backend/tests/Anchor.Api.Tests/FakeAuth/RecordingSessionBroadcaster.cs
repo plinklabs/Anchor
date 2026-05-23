@@ -13,14 +13,20 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
         _hub = hub;
     }
 
-    public ConcurrentBag<SessionStartedPayload> SessionStartedCalls { get; } = new();
+    public ConcurrentBag<SessionStartedCall> SessionStartedCalls { get; } = new();
     public ConcurrentBag<Guid> SessionEndedCalls { get; } = new();
     public ConcurrentBag<BundleUpdatedPayload> BundleUpdatedCalls { get; } = new();
 
-    public Task SessionStartedAsync(SessionStartedPayload payload, CancellationToken cancellationToken = default)
+    public Task SessionStartedAsync(
+        SessionStartedPayload payload,
+        IReadOnlyCollection<Guid> recipientUserIds,
+        CancellationToken cancellationToken = default)
     {
-        SessionStartedCalls.Add(payload);
-        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).SessionStarted(payload);
+        SessionStartedCalls.Add(new SessionStartedCall(payload, recipientUserIds.ToArray()));
+        if (recipientUserIds.Count == 0)
+            return Task.CompletedTask;
+        var groups = recipientUserIds.Select(SessionHub.UserGroupName).ToArray();
+        return _hub.Clients.Groups(groups).SessionStarted(payload);
     }
 
     public Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default)
@@ -34,4 +40,10 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
         BundleUpdatedCalls.Add(payload);
         return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).BundleUpdated(payload);
     }
+}
+
+public sealed record SessionStartedCall(SessionStartedPayload Payload, IReadOnlyList<Guid> RecipientUserIds)
+{
+    public Guid SessionId => Payload.SessionId;
+    public string JoinCode => Payload.JoinCode;
 }

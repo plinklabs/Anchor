@@ -74,11 +74,16 @@ public sealed class SessionsController : ControllerBase
                 return ValidationProblem("One or more bundle ids do not exist.");
         }
 
-        var memberIds = await _db.ClassMemberships
+        var rosterUserIds = await _db.ClassMemberships
             .AsNoTracking()
-            .Where(m => m.ClassId == request.ClassId && m.Role == ClassMembershipRole.Member)
-            .Select(m => m.UserId)
+            .Where(m => m.ClassId == request.ClassId)
+            .Select(m => new { m.UserId, m.Role })
             .ToListAsync(cancellationToken);
+        var memberIds = rosterUserIds
+            .Where(m => m.Role == ClassMembershipRole.Member)
+            .Select(m => m.UserId)
+            .ToList();
+        var broadcastRecipientIds = rosterUserIds.Select(m => m.UserId).ToList();
 
         var joinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
         var now = _clock.GetUtcNow();
@@ -112,6 +117,7 @@ public sealed class SessionsController : ControllerBase
 
         await _broadcaster.SessionStartedAsync(
             new SessionStartedPayload(session.Id, session.ClassId, session.Mode.ToString(), session.StartedAt, session.JoinCode),
+            broadcastRecipientIds,
             cancellationToken);
 
         var response = new StartSessionResponse(session.Id, session.ClassId, session.Mode, session.StartedAt, session.JoinCode);

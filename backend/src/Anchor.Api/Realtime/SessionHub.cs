@@ -29,6 +29,17 @@ public sealed class SessionHub : Hub<ISessionHubClient>
 
     public static string GroupName(Guid sessionId) => $"session:{sessionId:D}";
 
+    public static string UserGroupName(Guid userId) => $"user:{userId:D}";
+
+    public override async Task OnConnectedAsync()
+    {
+        var ct = Context.ConnectionAborted;
+        var user = await TryResolveCurrentUserAsync(ct);
+        if (user is not null)
+            await Groups.AddToGroupAsync(Context.ConnectionId, UserGroupName(user.Id), ct);
+        await base.OnConnectedAsync();
+    }
+
     public async Task<JoinSessionResult> JoinSession(JoinSessionRequest request)
     {
         var ct = Context.ConnectionAborted;
@@ -133,5 +144,19 @@ public sealed class SessionHub : Hub<ISessionHubClient>
 
         return await _users.FindByEntraOidAsync(entraOid, ct)
             ?? throw new HubException("User not provisioned. Sign in via /me first.");
+    }
+
+    private async Task<User?> TryResolveCurrentUserAsync(CancellationToken ct)
+    {
+        var principal = Context.User;
+        if (principal is null)
+            return null;
+
+        var oidValue = principal.FindFirst(EntraOidShortClaim)?.Value
+                       ?? principal.FindFirst(EntraOidLongClaim)?.Value;
+        if (oidValue is null || !Guid.TryParse(oidValue, out var entraOid))
+            return null;
+
+        return await _users.FindByEntraOidAsync(entraOid, ct);
     }
 }
