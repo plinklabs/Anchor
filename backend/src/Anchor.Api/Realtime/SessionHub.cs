@@ -13,18 +13,28 @@ public sealed class SessionHub : Hub<ISessionHubClient>
 {
     public const string Path = "/hubs/session";
 
+    /// <summary>
+    /// Dev-only header that overrides the resolved user OID with the given
+    /// value, letting one machine run the agent as a seeded student while the
+    /// dashboard runs as the signed-in teacher. Honored only when the host
+    /// environment is Development. See issue #38.
+    /// </summary>
+    public const string DevImpersonateOidHeader = "X-Dev-Impersonate-Oid";
+
     private const string EntraOidShortClaim = "oid";
     private const string EntraOidLongClaim = "http://schemas.microsoft.com/identity/claims/objectidentifier";
 
     private readonly AnchorDbContext _db;
     private readonly IUserStore _users;
     private readonly TimeProvider _clock;
+    private readonly IHostEnvironment _env;
 
-    public SessionHub(AnchorDbContext db, IUserStore users, TimeProvider clock)
+    public SessionHub(AnchorDbContext db, IUserStore users, TimeProvider clock, IHostEnvironment env)
     {
         _db = db;
         _users = users;
         _clock = clock;
+        _env = env;
     }
 
     public static string GroupName(Guid sessionId) => $"session:{sessionId:D}";
@@ -181,10 +191,8 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         var principal = Context.User
             ?? throw new HubException("No authenticated user on connection.");
 
-        var oidValue = principal.FindFirst(EntraOidShortClaim)?.Value
-                       ?? principal.FindFirst(EntraOidLongClaim)?.Value;
-        if (oidValue is null || !Guid.TryParse(oidValue, out var entraOid))
-            throw new HubException("Token missing oid claim.");
+        var entraOid = TryGetDevImpersonationOid() ?? GetTokenOid(principal)
+            ?? throw new HubException("Token missing oid claim.");
 
         return await _users.FindByEntraOidAsync(entraOid, ct)
             ?? throw new HubException("User not provisioned. Sign in via /me first.");
@@ -196,11 +204,28 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (principal is null)
             return null;
 
-        var oidValue = principal.FindFirst(EntraOidShortClaim)?.Value
-                       ?? principal.FindFirst(EntraOidLongClaim)?.Value;
-        if (oidValue is null || !Guid.TryParse(oidValue, out var entraOid))
+        var entraOid = TryGetDevImpersonationOid() ?? GetTokenOid(principal);
+        if (entraOid is null)
             return null;
 
-        return await _users.FindByEntraOidAsync(entraOid, ct);
+        return await _users.FindByEntraOidAsync(entraOid.Value, ct);
+    }
+
+    private static Guid? GetTokenOid(System.Security.Claims.ClaimsPrincipal principal)
+    {
+        var oidValue = principal.FindFirst(EntraOidShortClaim)?.Value
+                       ?? principal.FindFirst(EntraOidLongClaim)?.Value;
+        return Guid.TryParse(oidValue, out var entraOid) ? entraOid : null;
+    }
+
+    private Guid? TryGetDevImpersonationOid()
+    {
+        if (!_env.IsDevelopment()) return null;
+
+        var http = Context.GetHttpContext();
+        if (http is null) return null;
+
+        var raw = http.Request.Headers[DevImpersonateOidHeader].ToString();
+        return Guid.TryParse(raw, out var oid) ? oid : null;
     }
 }

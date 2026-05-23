@@ -21,6 +21,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     public SignalRSessionHubConnection(
         IOptions<BackendSettings> backend,
         IOptions<RealtimeSettings> realtime,
+        IOptions<DevSettings> dev,
         IAuthTokenProvider tokens,
         ILogger<SignalRSessionHubConnection> log)
     {
@@ -32,13 +33,20 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
         var hubPath = backendValue.HubPath.StartsWith('/') ? backendValue.HubPath : "/" + backendValue.HubPath;
         var hubUrl = baseUrl + hubPath;
 
+        var impersonateOid = dev.Value.ImpersonateOid?.Trim();
+
         _connection = new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>
             {
                 options.AccessTokenProvider = async () => await tokens.GetAccessTokenAsync().ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(impersonateOid))
+                    options.Headers["X-Dev-Impersonate-Oid"] = impersonateOid;
             })
             .WithAutomaticReconnect(new SignalRBackoffPolicy(_realtime.ReconnectMaxBackoff))
             .Build();
+
+        if (!string.IsNullOrEmpty(impersonateOid))
+            _log.LogWarning("Dev impersonation enabled — hub will resolve user as OID {Oid}", impersonateOid);
 
         _connection.On<SessionStartedPayload>("SessionStarted",
             payload => SessionStarted?.Invoke(this, payload));

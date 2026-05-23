@@ -26,3 +26,17 @@ public sealed record RealtimeSettings
     public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(30);
     public TimeSpan JoinConfirmationDuration { get; init; } = TimeSpan.FromSeconds(5);
 }
+
+public sealed record DevSettings
+{
+    public const string SectionName = "Dev";
+
+    /// <summary>
+    /// Optional Entra OID (GUID) to impersonate on the hub connection. When set,
+    /// the agent sends <c>X-Dev-Impersonate-Oid</c> on the SignalR negotiate
+    /// request, and the backend (Development only) resolves the user from this
+    /// value instead of the token's oid claim. Lets one machine play multiple
+    /// student identities without multiple Entra accounts.
+    /// </summary>
+    public string ImpersonateOid { get; init; } = "";
+}

@@ -125,6 +125,8 @@ public partial class App : Application
             .Bind(builder.Configuration.GetSection(RealtimeSettings.SectionName));
         builder.Services.AddOptions<SessionSettings>()
             .Bind(builder.Configuration.GetSection(SessionSettings.SectionName));
+        builder.Services.AddOptions<DevSettings>()
+            .Bind(builder.Configuration.GetSection(DevSettings.SectionName));
 
         builder.Services.AddSingleton(dispatcher);
         builder.Services.AddSingleton(TimeProvider.System);

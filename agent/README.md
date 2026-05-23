@@ -76,9 +76,46 @@ dotnet test
 | `Auth:ClientId` | _empty_ | App registration (public client) ID. |
 | `Auth:Scope` | `<backend-client-id>/.default` | Backend API scope requested for the access token. Uses the bare-GUID form (no `api://` prefix), matching the dashboard — Entra rejects `api://`-form requests when the agent and API share a tenant via `AADSTS90009`. Backend accepts both audience forms. |
 | `Auth:LoginHint` | _empty_ | Optional UPN used as a hint when WAM has to prompt interactively. Useful on machines whose Windows account is not on the school tenant (e.g. dev laptops) — set it to the school UPN to pre-fill the WAM picker. Has no effect once a school-tenant account is cached. |
+| `Dev:ImpersonateOid` | _empty_ | **Dev-only.** GUID of a seeded user OID to impersonate on the hub connection. Sends `X-Dev-Impersonate-Oid` on the SignalR negotiate request; the backend honors it only when running with `ASPNETCORE_ENVIRONMENT=Development`. See [Single-machine dev verification](#single-machine-dev-verification) below. |
 
 `Auth:TenantId`, `Auth:ClientId` and `Auth:Scope` are required. The agent fails
 fast at startup with a clear error message if any are empty.
+
+### Single-machine dev verification
+
+Verifying student-agent behaviour (`SessionStarted`, the join-confirmation
+toast, decline, focus enforcement) historically required a second machine
+signed in with a second school Entra account. To unblock single-machine
+verification ([issue #38](https://github.com/yvanvds/Anchor/issues/38)),
+the backend accepts a dev-only impersonation header on the hub:
+
+Set `Dev:ImpersonateOid` in `appsettings.Development.json` to the OID of a
+seeded user (e.g. the dev `Dev Student` at
+`22222222-2222-2222-2222-222222222222`):
+
+```json
+{
+  "Dev": {
+    "ImpersonateOid": "22222222-2222-2222-2222-222222222222"
+  }
+}
+```
+
+The agent sends `X-Dev-Impersonate-Oid: <oid>` on the SignalR negotiate
+request, and the backend resolves the hub's current user from that OID
+instead of the token's `oid` claim. With this set you can:
+
+- Run the dashboard signed in as your real teacher account and run the
+  agent on the same machine acting as a seeded student — start a session
+  from the dashboard, the agent receives `SessionStarted` and exercises
+  the full join-confirmation / decline / focus flow under the seeded
+  student identity.
+- Switch identity by changing the OID — useful for testing "two students"
+  scenarios from one laptop by relaunching the agent with a different
+  seeded OID.
+
+The override is honored **only** when the backend is running with
+`ASPNETCORE_ENVIRONMENT=Development`; production rejects the header.
 
 ### Local overrides
 
