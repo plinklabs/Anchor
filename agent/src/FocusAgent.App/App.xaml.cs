@@ -33,6 +33,7 @@ public partial class App : Application
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
     private ConnectionManager? _connection;
+    private StatusEndpoint? _statusEndpoint;
     // Held only by the --show-test-toast path so the logger outlives the
     // async show/decide chain rather than getting disposed at OnLaunched return.
     private ILoggerFactory? _testLoggerFactory;
@@ -78,6 +79,19 @@ public partial class App : Application
 
             _connection.StatusChanged += OnConnectionStatusChanged;
             _ = _connection.StartAsync();
+
+            // Start the loopback status endpoint if requested (#44). Lets verify
+            // scripts poll the agent's actual state (connection status + active
+            // session id + joined session id) instead of guessing from
+            // screenshots. Off by default.
+            if (Program.StatusEndpointPort is int port)
+            {
+                _statusEndpoint = new StatusEndpoint(
+                    _connection,
+                    _coordinator,
+                    _host.Services.GetRequiredService<ILogger<StatusEndpoint>>());
+                _statusEndpoint.Start(port);
+            }
         }
         catch (Exception ex)
         {
@@ -236,7 +250,18 @@ public partial class App : Application
         builder.Services.AddSingleton(SynchronizationContext.Current
             ?? new DispatcherQueueSynchronizationContext(dispatcher));
 
-        builder.Services.AddSingleton<IAuthTokenProvider, WamTokenProvider>();
+        // --inject-token (dev only) swaps WAM for a no-op provider so the
+        // agent can run headlessly and authenticate to the backend solely via
+        // the X-Dev-Impersonate-Oid header (#44). Without the flag, the real
+        // WAM provider runs as usual.
+        if (Program.InjectToken)
+        {
+            builder.Services.AddSingleton<IAuthTokenProvider, InjectedTokenProvider>();
+        }
+        else
+        {
+            builder.Services.AddSingleton<IAuthTokenProvider, WamTokenProvider>();
+        }
         builder.Services.AddSingleton<ISessionHubConnection, SignalRSessionHubConnection>();
         builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
         builder.Services.AddSingleton<SessionCoordinator>();

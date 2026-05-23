@@ -203,11 +203,20 @@ public sealed class ConnectionManager : IAsyncDisposable
         _ => "Sign-in failed. Click Sign in to try again.",
     };
 
-    private string DescribeConnectFailure(Exception ex) => ex switch
+    private string DescribeConnectFailure(Exception ex)
     {
-        System.Net.Http.HttpRequestException => $"Can't reach the backend at {_backendBaseUrl}. Retrying…",
-        _ => $"Connection failed: {ex.Message}. Retrying…",
-    };
+        // HttpRequestException covers BOTH connection-refused/DNS errors AND
+        // HTTP status responses (e.g. 401 from the hub negotiate). Distinguish
+        // them — a 401 says the backend is reachable but rejected our auth,
+        // which is a completely different bug class than network unreachable.
+        if (ex is System.Net.Http.HttpRequestException hre)
+        {
+            if (hre.StatusCode is { } sc)
+                return $"Backend rejected the connection with HTTP {(int)sc} ({sc}). Retrying…";
+            return $"Can't reach the backend at {_backendBaseUrl}. Retrying…";
+        }
+        return $"Connection failed: {ex.Message}. Retrying…";
+    }
 
     public async ValueTask DisposeAsync()
     {
