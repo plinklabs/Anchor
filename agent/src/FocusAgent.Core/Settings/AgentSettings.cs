@@ -15,6 +15,7 @@ public sealed record AuthSettings
     public string TenantId { get; init; } = "";
     public string ClientId { get; init; } = "";
     public string Scope { get; init; } = "";
+    public string LoginHint { get; init; } = "";
 }
 
 public sealed record RealtimeSettings

@@ -72,6 +72,34 @@ dotnet test
 | --- | --- | --- |
 | `Backend:BaseUrl` | `http://localhost:5000` | Dev backend URL. Override per deploy. |
 | `Backend:HubPath` | `/hubs/session` | Path of the backend SignalR hub. |
+| `Auth:TenantId` | _empty_ | Entra tenant ID the agent signs in against. |
+| `Auth:ClientId` | _empty_ | App registration (public client) ID. |
+| `Auth:Scope` | `<backend-client-id>/.default` | Backend API scope requested for the access token. Uses the bare-GUID form (no `api://` prefix), matching the dashboard — Entra rejects `api://`-form requests when the agent and API share a tenant via `AADSTS90009`. Backend accepts both audience forms. |
+| `Auth:LoginHint` | _empty_ | Optional UPN used as a hint when WAM has to prompt interactively. Useful on machines whose Windows account is not on the school tenant (e.g. dev laptops) — set it to the school UPN to pre-fill the WAM picker. Has no effect once a school-tenant account is cached. |
+
+`Auth:TenantId`, `Auth:ClientId` and `Auth:Scope` are required. The agent fails
+fast at startup with a clear error message if any are empty.
+
+### Local overrides
+
+`appsettings.Development.json` (gitignored, sits next to `appsettings.json`) is
+loaded after the base config so it can override individual keys without
+touching the committed defaults. Use it on dev machines to supply the agent's
+tenant/client IDs (and optionally a `LoginHint`) without committing them:
+
+```json
+{
+  "Auth": {
+    "TenantId": "<school-tenant-guid>",
+    "ClientId": "<agent-public-client-guid>",
+    "LoginHint": "you@school.example"
+  }
+}
+```
+
+The file is wired into the build with `<CopyToOutputDirectory>PreserveNewest`,
+so creating it in `src/FocusAgent.App/` is enough — no extra MSBuild glue
+needed.
 
 Logs roll daily into `%LOCALAPPDATA%\Anchor\FocusAgent\logs\focusagent-*.log`
 (14-day retention) via Serilog, plus debug output during development. When

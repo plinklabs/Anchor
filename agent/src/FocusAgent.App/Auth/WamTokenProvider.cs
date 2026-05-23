@@ -46,7 +46,8 @@ public sealed class WamTokenProvider : IAuthTokenProvider, IAsyncDisposable
             var scopes = new[] { _settings.Scope };
 
             var accounts = await app.GetAccountsAsync().ConfigureAwait(false);
-            var account = accounts.FirstOrDefault() ?? PublicClientApplication.OperatingSystemAccount;
+            var cachedAccount = accounts.FirstOrDefault();
+            var account = cachedAccount ?? PublicClientApplication.OperatingSystemAccount;
 
             AuthenticationResult result;
             try
@@ -59,11 +60,22 @@ public sealed class WamTokenProvider : IAuthTokenProvider, IAsyncDisposable
             catch (MsalUiRequiredException ex)
             {
                 _log.LogInformation(ex, "Silent acquisition required UI; falling back to interactive WAM prompt");
-                result = await app.AcquireTokenInteractive(scopes)
-                    .WithParentActivityOrWindow(_windowHandleProvider())
-                    .WithAccount(account)
-                    .ExecuteAsync(ct)
-                    .ConfigureAwait(false);
+                var interactive = app.AcquireTokenInteractive(scopes)
+                    .WithParentActivityOrWindow(_windowHandleProvider());
+
+                // Only pin the prompt to a specific account when we have a real cached MSAL account.
+                // Otherwise let WAM show its picker so the user can sign in with a tenant account
+                // that differs from the Windows-signed-in OS account (e.g. dev laptops on a personal MSA).
+                if (cachedAccount is not null)
+                {
+                    interactive = interactive.WithAccount(cachedAccount);
+                }
+                else if (!string.IsNullOrWhiteSpace(_settings.LoginHint))
+                {
+                    interactive = interactive.WithLoginHint(_settings.LoginHint);
+                }
+
+                result = await interactive.ExecuteAsync(ct).ConfigureAwait(false);
                 _log.LogInformation("Acquired token interactively for {Username}", result.Account?.Username);
             }
 
@@ -86,6 +98,8 @@ public sealed class WamTokenProvider : IAuthTokenProvider, IAsyncDisposable
         if (_app is not null)
             return _app;
 
+        ValidateSettings();
+
         var builder = PublicClientApplicationBuilder
             .Create(_settings.ClientId)
             .WithAuthority(AzureCloudInstance.AzurePublic, _settings.TenantId)
@@ -103,6 +117,20 @@ public sealed class WamTokenProvider : IAuthTokenProvider, IAsyncDisposable
         _cacheHelper.RegisterCache(_app.UserTokenCache);
         ct.ThrowIfCancellationRequested();
         return _app;
+    }
+
+    private void ValidateSettings()
+    {
+        var missing = new List<string>(3);
+        if (string.IsNullOrWhiteSpace(_settings.TenantId)) missing.Add("Auth:TenantId");
+        if (string.IsNullOrWhiteSpace(_settings.ClientId)) missing.Add("Auth:ClientId");
+        if (string.IsNullOrWhiteSpace(_settings.Scope)) missing.Add("Auth:Scope");
+        if (missing.Count == 0) return;
+
+        throw new InvalidOperationException(
+            $"Auth configuration is incomplete: {string.Join(", ", missing)} not set. " +
+            "Populate these in appsettings.json or a local appsettings.Development.json " +
+            "(see agent/README.md → Configuration).");
     }
 
     private static string ExtractDisplayName(AuthenticationResult result)
