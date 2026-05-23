@@ -1,7 +1,9 @@
 using Anchor.Api;
+using Anchor.Api.Auth;
 using Anchor.Api.Realtime;
 using Anchor.Infrastructure;
 using Anchor.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -17,14 +19,57 @@ builder.Services.Configure<JwtBearerOptions>(
     JwtBearerDefaults.AuthenticationScheme,
     options => JwtBearerSetup.Configure(options, builder.Configuration));
 
+// In Development, accept the X-Dev-Impersonate-Oid header as a secondary
+// authentication option so headless callers (verify scripts, the agent in
+// --inject-token mode) can hit the API without a real Entra token. The
+// scheme is registered only here so a misconfigured production deployment
+// physically cannot route requests through it.
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddAuthentication()
+        .AddScheme<AuthenticationSchemeOptions, DevImpersonationAuthHandler>(
+            DevImpersonationAuthHandler.SchemeName, _ => { });
+}
+
 builder.Services.AddAuthorization(options =>
 {
-    options.FallbackPolicy = new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build();
-
-    options.AddPolicy(AuthorizationPolicies.Teacher, p => p.RequireRole("Teacher"));
-    options.AddPolicy(AuthorizationPolicies.Student, p => p.RequireRole("Student"));
+    // In Development, accept either JwtBearer or the DevImpersonation header
+    // scheme. Explicit scheme lists are scoped to Development so Test and
+    // Production keep the original DefaultAuthenticateScheme fallback (Test
+    // overrides the default with FakeJwtBearerHandler; production uses
+    // JwtBearer). Without this guard the test factory's auth override is
+    // silently bypassed by the explicit list and every existing test 401s.
+    if (builder.Environment.IsDevelopment())
+    {
+        var schemes = new[]
+        {
+            JwtBearerDefaults.AuthenticationScheme,
+            DevImpersonationAuthHandler.SchemeName,
+        };
+        // [Authorize] without args (used by SessionHub) consults DefaultPolicy.
+        // [Authorize(Policy=...)] uses the named policy. Unmarked endpoints
+        // consult FallbackPolicy. All three need the multi-scheme builder so
+        // the dev impersonation header is accepted everywhere.
+        var multiScheme = new AuthorizationPolicyBuilder(schemes)
+            .RequireAuthenticatedUser()
+            .Build();
+        options.DefaultPolicy = multiScheme;
+        options.FallbackPolicy = multiScheme;
+        options.AddPolicy(AuthorizationPolicies.Teacher, p => p
+            .AddAuthenticationSchemes(schemes)
+            .RequireRole("Teacher"));
+        options.AddPolicy(AuthorizationPolicies.Student, p => p
+            .AddAuthenticationSchemes(schemes)
+            .RequireRole("Student"));
+    }
+    else
+    {
+        options.FallbackPolicy = new AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .Build();
+        options.AddPolicy(AuthorizationPolicies.Teacher, p => p.RequireRole("Teacher"));
+        options.AddPolicy(AuthorizationPolicies.Student, p => p.RequireRole("Student"));
+    }
 });
 
 builder.Services.AddSingleton(TimeProvider.System);

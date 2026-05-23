@@ -17,12 +17,36 @@ public static class Program
     /// </summary>
     public const string ShowTestToastArg = "--show-test-toast";
 
+    /// <summary>
+    /// Dev-only flag (#44): swap <c>WamTokenProvider</c> for
+    /// <c>InjectedTokenProvider</c> so the agent skips interactive sign-in
+    /// entirely and authenticates to the backend via the
+    /// <c>X-Dev-Impersonate-Oid</c> header alone. Requires
+    /// <c>Dev:ImpersonateOid</c> to be set. Used by the verify script and any
+    /// other headless run that must not block on a WAM picker. Off by default
+    /// — production never passes this.
+    /// </summary>
+    public const string InjectTokenArg = "--inject-token";
+
+    /// <summary>
+    /// Dev-only flag (#44): start an HTTP listener on
+    /// <c>http://127.0.0.1:&lt;port&gt;/status</c> exposing the agent's current
+    /// connection + session state as JSON. Lets headless verify scripts poll
+    /// the agent's actual state instead of guessing from screenshots or logs.
+    /// Loopback-only.
+    /// </summary>
+    public const string StatusEndpointArg = "--status-endpoint";
+
     public static bool ShowTestToast { get; private set; }
+    public static bool InjectToken { get; private set; }
+    public static int? StatusEndpointPort { get; private set; }
 
     [STAThread]
     public static int Main(string[] args)
     {
         ShowTestToast = args.Any(a => string.Equals(a, ShowTestToastArg, StringComparison.OrdinalIgnoreCase));
+        InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
+        StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
@@ -46,5 +70,19 @@ public static class Program
         });
 
         return 0;
+    }
+
+    private static int? ParsePortAfter(string[] args, string flag)
+    {
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(args[i + 1], out var port) &&
+                port is > 0 and < 65536)
+            {
+                return port;
+            }
+        }
+        return null;
     }
 }

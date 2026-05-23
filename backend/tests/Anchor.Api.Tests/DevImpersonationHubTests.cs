@@ -60,15 +60,17 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
     }
 
     [Fact]
-    public async Task Connection_without_impersonation_header_does_not_receive_other_users_broadcast()
+    public async Task Connection_for_a_different_user_does_not_receive_other_users_broadcast()
     {
         var seededStudent = await ResolveSeededStudentAsync();
 
-        // Token user is real & provisioned but distinct from the seeded student;
-        // a broadcast targeted at the seeded student must NOT leak to this
-        // connection.
-        var tokenUser = await SeedUserAsync(UserRole.Student, "Token User");
-        await using var connection = BuildConnection(tokenUser.EntraOid, "Student", impersonateOid: null);
+        // Connect a real provisioned user that is NOT the seeded student.
+        // A broadcast targeted at the seeded student must not leak to this
+        // connection. With #44 the dev impersonation header is also accepted
+        // by the hub via DevImpersonationAuthHandler, so we authenticate via
+        // the impersonation header pointed at this user.
+        var otherUser = await SeedUserAsync(UserRole.Student, "Other User");
+        await using var connection = BuildConnection(otherUser.EntraOid, "Student", impersonateOid: otherUser.EntraOid);
 
         var leaked = new TaskCompletionSource<SessionStartedPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
         connection.On<SessionStartedPayload>(
