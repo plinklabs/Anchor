@@ -15,5 +15,6 @@ public interface ISessionHubConnection : IAsyncDisposable
 
     Task JoinSessionAsync(Guid sessionId, string? joinCode, CancellationToken ct = default);
     Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default);
+    Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default);
     Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default);
 }

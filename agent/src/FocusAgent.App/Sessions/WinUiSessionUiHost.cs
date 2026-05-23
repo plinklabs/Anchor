@@ -25,13 +25,15 @@ public sealed class WinUiSessionUiHost : ISessionUiHost
         _dispatcher.TryEnqueue(() =>
         {
             JoinConfirmationWindow? previous;
+            JoinConfirmationWindow current;
             lock (_gate)
             {
                 previous = _current;
-                _current = new JoinConfirmationWindow(confirmation);
+                current = new JoinConfirmationWindow(confirmation);
+                _current = current;
             }
             previous?.Close();
-            _current!.Activate();
+            ToastWindowPositioner.ConfigureAndShow(current);
             confirmation.Start();
         });
 

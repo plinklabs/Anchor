@@ -6,6 +6,8 @@ public sealed record JoinSessionResult(Guid SessionId, Guid UserId);
 
 public sealed record ReportEventRequest(Guid SessionId, string Kind, string? PayloadJson, DateTimeOffset? OccurredAt);
 
+public sealed record DeclineSessionRequest(Guid SessionId, string? Reason);
+
 public sealed record SessionStartedPayload(
     Guid SessionId,
     Guid ClassId,

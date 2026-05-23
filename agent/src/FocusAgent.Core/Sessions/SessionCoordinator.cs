@@ -114,11 +114,11 @@ public sealed class SessionCoordinator : IAsyncDisposable
             case JoinDecision.Declined:
                 try
                 {
-                    await _hub.LeaveSessionAsync(payload.SessionId, ct).ConfigureAwait(false);
+                    await _hub.DeclineSessionAsync(payload.SessionId, "user_cancelled", ct).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
-                    _log.LogWarning(ex, "LeaveSession on decline failed for {SessionId}", payload.SessionId);
+                    _log.LogWarning(ex, "DeclineSession failed for {SessionId}", payload.SessionId);
                 }
                 _log.LogInformation("Declined session {SessionId}", payload.SessionId);
                 break;

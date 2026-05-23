@@ -103,6 +103,50 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(sessionId), ct);
     }
 
+    public async Task DeclineSession(DeclineSessionRequest request)
+    {
+        var ct = Context.ConnectionAborted;
+        var user = await ResolveCurrentUserAsync(ct);
+
+        var session = await _db.Sessions
+            .FirstOrDefaultAsync(s => s.Id == request.SessionId, ct);
+        if (session is null || session.EndedAt is not null)
+            throw new HubException("Session not found or already ended.");
+
+        var now = _clock.GetUtcNow();
+
+        var participant = await _db.SessionParticipants
+            .FirstOrDefaultAsync(p => p.SessionId == session.Id && p.UserId == user.Id, ct);
+        if (participant is null)
+        {
+            participant = new SessionParticipant
+            {
+                SessionId = session.Id,
+                UserId = user.Id,
+                DeclinedAt = now,
+            };
+            _db.SessionParticipants.Add(participant);
+        }
+        else
+        {
+            participant.DeclinedAt ??= now;
+        }
+
+        var reason = string.IsNullOrWhiteSpace(request.Reason) ? "user_cancelled" : request.Reason!;
+        var payloadJson = System.Text.Json.JsonSerializer.Serialize(new { reason });
+
+        _db.Events.Add(new Event
+        {
+            SessionId = session.Id,
+            UserId = user.Id,
+            Kind = EventKind.JoinDeclined,
+            PayloadJson = payloadJson,
+            OccurredAt = now,
+        });
+
+        await _db.SaveChangesAsync(ct);
+    }
+
     public async Task ReportEvent(ReportEventRequest request)
     {
         var ct = Context.ConnectionAborted;

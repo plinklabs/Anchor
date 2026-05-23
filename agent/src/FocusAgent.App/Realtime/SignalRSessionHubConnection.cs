@@ -104,6 +104,12 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default) =>
         _connection.InvokeAsync("LeaveSession", sessionId, ct);
 
+    public Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default) =>
+        _connection.InvokeAsync(
+            "DeclineSession",
+            new DeclineSessionRequest(sessionId, reason),
+            ct);
+
     public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) =>
         _connection.InvokeAsync(
             "ReportEvent",
@@ -158,4 +164,5 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
 
     private sealed record JoinSessionRequest(Guid SessionId, string? JoinCode);
     private sealed record ReportEventRequest(Guid SessionId, string Kind, string? PayloadJson, DateTimeOffset? OccurredAt);
+    private sealed record DeclineSessionRequest(Guid SessionId, string? Reason);
 }

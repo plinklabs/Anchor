@@ -88,6 +88,81 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task Decline_for_roster_member_records_event_and_sets_declined_at()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        await connection.InvokeAsync(
+            "DeclineSession",
+            new DeclineSessionRequest(session.Id, Reason: "user_cancelled"));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+
+        var participant = await db.SessionParticipants.AsNoTracking()
+            .SingleAsync(p => p.SessionId == session.Id && p.UserId == student.Id);
+        Assert.NotNull(participant.DeclinedAt);
+        Assert.Null(participant.JoinedAt);
+
+        var @event = await db.Events.AsNoTracking()
+            .SingleAsync(e => e.SessionId == session.Id && e.UserId == student.Id);
+        Assert.Equal(EventKind.JoinDeclined, @event.Kind);
+        Assert.Contains("user_cancelled", @event.PayloadJson);
+    }
+
+    [Fact]
+    public async Task Decline_for_non_roster_user_creates_declined_participant_row()
+    {
+        var (_, session) = await SeedSessionWithStudentAsync();
+        var stranger = await SeedUserAsync(UserRole.Student, "Outsider");
+
+        await using var connection = BuildConnection(stranger.EntraOid, "Student");
+        await connection.StartAsync();
+
+        await connection.InvokeAsync(
+            "DeclineSession",
+            new DeclineSessionRequest(session.Id, Reason: null));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+
+        var participant = await db.SessionParticipants.AsNoTracking()
+            .SingleAsync(p => p.SessionId == session.Id && p.UserId == stranger.Id);
+        Assert.NotNull(participant.DeclinedAt);
+        Assert.Null(participant.JoinedAt);
+
+        var @event = await db.Events.AsNoTracking()
+            .SingleAsync(e => e.SessionId == session.Id && e.UserId == stranger.Id);
+        Assert.Equal(EventKind.JoinDeclined, @event.Kind);
+    }
+
+    [Fact]
+    public async Task Decline_for_ended_session_is_rejected()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            var tracked = await db.Sessions.SingleAsync(s => s.Id == session.Id);
+            tracked.EndedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        var ex = await Assert.ThrowsAsync<HubException>(() =>
+            connection.InvokeAsync(
+                "DeclineSession",
+                new DeclineSessionRequest(session.Id, Reason: "user_cancelled")));
+        Assert.Contains("already ended", ex.Message);
+    }
+
+    [Fact]
     public async Task Join_with_wrong_code_is_rejected()
     {
         var (_, session) = await SeedSessionWithStudentAsync();
