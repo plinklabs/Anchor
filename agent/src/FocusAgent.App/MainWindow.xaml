@@ -3,12 +3,39 @@
     x:Class="FocusAgent.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Padding="24" RowSpacing="8">
+    <Grid Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <TextBlock Grid.Row="0" Text="FocusAgent" FontSize="24" FontWeight="SemiBold" />
-        <TextBlock Grid.Row="1" Text="Idle. No active session." Opacity="0.7" />
+
+        <StackPanel Grid.Row="0"
+                    Padding="32"
+                    Spacing="12">
+            <TextBlock Text="FocusAgent"
+                       FontSize="28"
+                       FontWeight="SemiBold" />
+            <TextBlock x:Name="StatusText"
+                       FontSize="18"
+                       Text="Starting…" />
+            <TextBlock x:Name="DetailText"
+                       Opacity="0.7"
+                       TextWrapping="Wrap"
+                       Text="" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    Spacing="12"
+                    HorizontalAlignment="Right"
+                    Padding="32,16,32,32">
+            <Button x:Name="PrimaryButton"
+                    Content="Sign in"
+                    Click="OnPrimaryClicked"
+                    MinWidth="140" />
+            <Button Content="Quit"
+                    Click="OnQuitClicked"
+                    MinWidth="80" />
+        </StackPanel>
     </Grid>
 </Window>

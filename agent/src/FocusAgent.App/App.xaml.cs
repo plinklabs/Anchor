@@ -1,4 +1,5 @@
 using FocusAgent.App.Auth;
+using FocusAgent.App.Connectivity;
 using FocusAgent.App.Focus;
 using FocusAgent.App.Realtime;
 using FocusAgent.App.Sessions;
@@ -31,6 +32,7 @@ public partial class App : Application
     private SessionCoordinator? _coordinator;
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
+    private ConnectionManager? _connection;
     // Held only by the --show-test-toast path so the logger outlives the
     // async show/decide chain rather than getting disposed at OnLaunched return.
     private ILoggerFactory? _testLoggerFactory;
@@ -62,19 +64,20 @@ public partial class App : Application
             TaskScheduler.UnobservedTaskException += (_, e) =>
                 logger.LogError(e.Exception, "Unobserved task exception");
 
-            _mainWindow = new MainWindow();
+            _hub = _host.Services.GetRequiredService<ISessionHubConnection>();
+            _coordinator = _host.Services.GetRequiredService<SessionCoordinator>();
+            _focus = _host.Services.GetRequiredService<FocusSessionController>();
+            _connection = _host.Services.GetRequiredService<ConnectionManager>();
+
+            _mainWindow = new MainWindow(_connection, onQuit: Exit);
             _tray = new TrayIconHost(
-                onOpen: () => _mainWindow.Activate(),
+                onOpen: () => ShowMainWindow(),
                 onQuit: () => Exit(),
                 dispatcher: dispatcher);
             _tray.Show();
 
-            _hub = _host.Services.GetRequiredService<ISessionHubConnection>();
-            _coordinator = _host.Services.GetRequiredService<SessionCoordinator>();
-            _focus = _host.Services.GetRequiredService<FocusSessionController>();
-
-            _hub.StateChanged += (_, state) => _tray.UpdateStatus(state, LastDisplayName);
-            _ = StartHubAsync(_host.Services, logger);
+            _connection.StatusChanged += OnConnectionStatusChanged;
+            _ = _connection.StartAsync();
         }
         catch (Exception ex)
         {
@@ -83,52 +86,65 @@ public partial class App : Application
         }
     }
 
-    private string? LastDisplayName { get; set; }
-
-    private async Task StartHubAsync(IServiceProvider services, ILogger<App> logger)
+    private void OnConnectionStatusChanged(object? sender, ConnectionStatusSnapshot snapshot)
     {
-        try
+        // Mirror the manager's status into the tray text.
+        _tray?.UpdateStatus(MapToTrayState(snapshot.Status), snapshot.DisplayName);
+
+        // Surface stuck states by auto-opening MainWindow so the recovery
+        // button is right in front of the user. SignInFailed is immediate
+        // (no automatic retry will help); Disconnected gets a short grace
+        // period so transient drops don't pop a window.
+        switch (snapshot.Status)
         {
-            var tokens = services.GetRequiredService<IAuthTokenProvider>();
-            var auth = await tokens.AcquireTokenAsync().ConfigureAwait(true);
-            LastDisplayName = auth.DisplayName;
+            case ConnectionStatus.SignInFailed:
+                _mainWindow?.DispatcherQueue.TryEnqueue(ShowMainWindow);
+                break;
+            case ConnectionStatus.Disconnected:
+                _ = AutoOpenOnSustainedDisconnectedAsync();
+                break;
+            case ConnectionStatus.Connected:
+                _stuckSince = null;
+                break;
         }
-        catch (Exception ex)
+    }
+
+    private DateTimeOffset? _stuckSince;
+
+    private async Task AutoOpenOnSustainedDisconnectedAsync()
+    {
+        if (_stuckSince is not null) return; // a prior waiter is already armed
+        _stuckSince = DateTimeOffset.UtcNow;
+        var openedFor = _stuckSince.Value;
+
+        await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
+        if (_stuckSince != openedFor) return;
+        if (_connection?.Snapshot.Status is ConnectionStatus.Connected)
         {
-            logger.LogError(ex, "Failed to acquire access token");
-            _tray?.UpdateStatus(AgentConnectionState.Disconnected, LastDisplayName);
+            _stuckSince = null;
             return;
         }
 
-        // SignalR's WithAutomaticReconnect only fires AFTER a connection has
-        // been established at least once. Without a first-connect backoff loop
-        // a dev who launches the agent before the backend gets a one-shot
-        // failure that leaves the tray stuck Disconnected forever (#43). Use
-        // the same exponential cap as the post-establishment retry policy.
-        var attempt = 0;
-        while (true)
-        {
-            _tray?.UpdateStatus(
-                attempt == 0 ? AgentConnectionState.Connecting : AgentConnectionState.Reconnecting,
-                LastDisplayName);
-            try
-            {
-                await _hub!.StartAsync().ConfigureAwait(true);
-                _tray?.UpdateStatus(AgentConnectionState.Connected, LastDisplayName);
-                return;
-            }
-            catch (Exception ex)
-            {
-                attempt++;
-                var seconds = Math.Min(30, Math.Pow(2, Math.Min(attempt, 5)));
-                logger.LogWarning(ex,
-                    "Initial hub connect failed (attempt {Attempt}); retrying in {Seconds:0}s",
-                    attempt, seconds);
-                _tray?.UpdateStatus(AgentConnectionState.Disconnected, LastDisplayName);
-                await Task.Delay(TimeSpan.FromSeconds(seconds)).ConfigureAwait(true);
-            }
-        }
+        _mainWindow?.DispatcherQueue.TryEnqueue(ShowMainWindow);
     }
+
+    private void ShowMainWindow()
+    {
+        if (_mainWindow is null) return;
+        _mainWindow.Activate();
+    }
+
+    private static AgentConnectionState MapToTrayState(ConnectionStatus status) => status switch
+    {
+        ConnectionStatus.Connected => AgentConnectionState.Connected,
+        ConnectionStatus.Connecting => AgentConnectionState.Connecting,
+        ConnectionStatus.Reconnecting => AgentConnectionState.Reconnecting,
+        ConnectionStatus.SigningIn => AgentConnectionState.Connecting,
+        ConnectionStatus.Disconnected => AgentConnectionState.Disconnected,
+        ConnectionStatus.SignInFailed => AgentConnectionState.SignedOut,
+        _ => AgentConnectionState.SignedOut,
+    };
 
     /// <summary>
     /// Dev-only path: skip host/WAM/hub bootstrap and just render the join
@@ -224,6 +240,7 @@ public partial class App : Application
         builder.Services.AddSingleton<ISessionHubConnection, SignalRSessionHubConnection>();
         builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
         builder.Services.AddSingleton<SessionCoordinator>();
+        builder.Services.AddSingleton<ConnectionManager>();
 
         builder.Services.AddSingleton<IAppIdentifier, AppIdentifier>();
         builder.Services.AddSingleton<IForegroundWatcher, ForegroundWatcher>();
