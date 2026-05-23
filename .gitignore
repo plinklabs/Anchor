@@ -4,3 +4,6 @@
 *.db
 *.db-shm
 *.db-wal
+
+# Code-signing private keys — must never be committed.
+*.pfx
