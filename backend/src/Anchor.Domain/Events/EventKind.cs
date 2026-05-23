@@ -7,5 +7,6 @@ public enum EventKind
     UnblockRequest,
     HeartbeatLost,
     AgentKilled,
-    ManualLeave
+    ManualLeave,
+    JoinDeclined
 }

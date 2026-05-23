@@ -35,7 +35,7 @@ public class SessionCoordinatorTests
     }
 
     [Fact]
-    public async Task Declined_decision_calls_LeaveSession()
+    public async Task Declined_decision_calls_DeclineSession_with_user_cancelled_reason()
     {
         var hub = new FakeHub();
         var ui = new FakeUi { NextDecision = JoinDecision.Declined };
@@ -45,8 +45,10 @@ public class SessionCoordinatorTests
         await coordinator.HandleSessionStartedAsync(payload);
 
         Assert.Empty(hub.JoinCalls);
-        Assert.Single(hub.LeaveCalls);
-        Assert.Equal(payload.SessionId, hub.LeaveCalls[0]);
+        Assert.Empty(hub.LeaveCalls);
+        Assert.Single(hub.DeclineCalls);
+        Assert.Equal(payload.SessionId, hub.DeclineCalls[0].SessionId);
+        Assert.Equal("user_cancelled", hub.DeclineCalls[0].Reason);
     }
 
     [Fact]
@@ -194,6 +196,7 @@ public class SessionCoordinatorTests
 
         public List<(Guid SessionId, string? JoinCode)> JoinCalls { get; } = new();
         public List<Guid> LeaveCalls { get; } = new();
+        public List<(Guid SessionId, string Reason)> DeclineCalls { get; } = new();
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
@@ -205,6 +208,11 @@ public class SessionCoordinatorTests
         public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default)
         {
             LeaveCalls.Add(sessionId);
+            return Task.CompletedTask;
+        }
+        public Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default)
+        {
+            DeclineCalls.Add((sessionId, reason));
             return Task.CompletedTask;
         }
         public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) =>

@@ -213,6 +213,7 @@ public class FocusSessionControllerTests
         public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task JoinSessionAsync(Guid sessionId, string? joinCode, CancellationToken ct = default) => Task.CompletedTask;
         public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default) => Task.CompletedTask;
         public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default)
         {
             Reports.Add((sessionId, kind, payloadJson, occurredAt));
