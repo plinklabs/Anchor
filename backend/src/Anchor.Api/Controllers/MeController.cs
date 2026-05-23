@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Anchor.Domain.Users;
+using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,10 +12,14 @@ namespace Anchor.Api.Controllers;
 public sealed class MeController : ControllerBase
 {
     private readonly IUserStore _userStore;
+    private readonly AnchorDbContext _db;
+    private readonly IWebHostEnvironment _env;
 
-    public MeController(IUserStore userStore)
+    public MeController(IUserStore userStore, AnchorDbContext db, IWebHostEnvironment env)
     {
         _userStore = userStore;
+        _db = db;
+        _env = env;
     }
 
     [HttpGet]
@@ -34,6 +39,12 @@ public sealed class MeController : ControllerBase
                           ?? "Unknown";
 
         var user = await _userStore.UpsertAsync(entraOid, displayName, role, cancellationToken);
+
+        if (_env.IsDevelopment() && role == UserRole.Teacher)
+        {
+            await DevDataSeeder.EnsureDevTeacherMembershipAsync(_db, user.Id, cancellationToken);
+        }
+
         return new MeResponse(user.Id, user.EntraOid, user.DisplayName, user.Role);
     }
 }

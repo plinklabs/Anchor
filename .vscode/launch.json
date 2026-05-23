@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "dashboard (Edge, port 5173)",
+      "request": "launch",
+      "type": "dart",
+      "cwd": "dashboard",
+      "deviceId": "edge",
+      "args": [
+        "--web-port=5173"
+      ]
+    }
+  ]
+}

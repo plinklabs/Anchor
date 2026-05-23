@@ -13,27 +13,9 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"));
 
-builder.Services.Configure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
-{
-    options.TokenValidationParameters.RoleClaimType = "roles";
-    options.TokenValidationParameters.NameClaimType = "name";
-
-    options.Events ??= new JwtBearerEvents();
-    var existing = options.Events.OnMessageReceived;
-    options.Events.OnMessageReceived = async context =>
-    {
-        if (existing is not null)
-            await existing(context);
-
-        if (string.IsNullOrEmpty(context.Token))
-        {
-            var accessToken = context.Request.Query["access_token"];
-            var path = context.HttpContext.Request.Path;
-            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments(SessionHub.Path))
-                context.Token = accessToken;
-        }
-    };
-});
+builder.Services.Configure<JwtBearerOptions>(
+    JwtBearerDefaults.AuthenticationScheme,
+    options => JwtBearerSetup.Configure(options, builder.Configuration));
 
 builder.Services.AddAuthorization(options =>
 {
@@ -49,11 +31,33 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddInfrastructureServices();
 if (!builder.Environment.IsEnvironment("Test"))
 {
-    builder.Services.AddInfrastructureSqlServer(builder.Configuration);
+    // Dev uses a local SQLite file so the backend runs anywhere (laptop on a
+    // train, no network). Production points at Azure SQL via SqlServer.
+    if (builder.Environment.IsDevelopment())
+    {
+        builder.Services.AddInfrastructureSqlite(builder.Configuration);
+    }
+    else
+    {
+        builder.Services.AddInfrastructureSqlServer(builder.Configuration);
+    }
 }
 
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<ISessionBroadcaster, SessionBroadcaster>();
+
+const string DashboardCorsPolicy = "DashboardCors";
+var dashboardOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(DashboardCorsPolicy, policy => policy
+        .WithOrigins(dashboardOrigins)
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials());
+});
 
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
@@ -66,11 +70,18 @@ if (app.Environment.IsDevelopment())
 
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
-    await db.Database.MigrateAsync();
+    // SQLite dev DB doesn't share migrations with the SqlServer prod schema,
+    // so build the schema from the current model instead of running migrations.
+    await db.Database.EnsureCreatedAsync();
     await DevDataSeeder.SeedAsync(db);
 }
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+app.UseCors(DashboardCorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

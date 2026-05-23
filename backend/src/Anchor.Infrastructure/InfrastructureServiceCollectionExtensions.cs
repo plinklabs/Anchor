@@ -35,4 +35,16 @@ public static class InfrastructureServiceCollectionExtensions
 
         return services;
     }
+
+    public static IServiceCollection AddInfrastructureSqlite(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration.GetConnectionString("DefaultConnection")
+            ?? throw new InvalidOperationException(
+                "Connection string 'DefaultConnection' was not found in configuration.");
+
+        services.AddDbContext<AnchorDbContext>(options =>
+            options.UseSqlite(connectionString));
+
+        return services;
+    }
 }

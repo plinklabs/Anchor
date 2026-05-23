@@ -39,11 +39,16 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (session is null || session.EndedAt is not null)
             throw new HubException("Session not found or already ended.");
 
+        // The session-owning teacher is not stored as a SessionParticipant
+        // (they're the TeacherId). Let them subscribe to their own session
+        // without a join code or a participant row.
+        var isOwningTeacher = session.TeacherId == user.Id;
+
         var participant = await _db.SessionParticipants
             .FirstOrDefaultAsync(p => p.SessionId == session.Id && p.UserId == user.Id, ct);
 
         var now = _clock.GetUtcNow();
-        if (participant is null)
+        if (participant is null && !isOwningTeacher)
         {
             // Loose mode: any signed-in user with the correct join code may join.
             if (string.IsNullOrWhiteSpace(request.JoinCode) ||
@@ -60,7 +65,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             };
             _db.SessionParticipants.Add(participant);
         }
-        else
+        else if (participant is not null)
         {
             participant.JoinedAt ??= now;
             participant.LeftAt = null;
