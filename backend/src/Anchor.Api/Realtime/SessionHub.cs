@@ -28,13 +28,20 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     private readonly IUserStore _users;
     private readonly TimeProvider _clock;
     private readonly IHostEnvironment _env;
+    private readonly ILogger<SessionHub> _log;
 
-    public SessionHub(AnchorDbContext db, IUserStore users, TimeProvider clock, IHostEnvironment env)
+    public SessionHub(
+        AnchorDbContext db,
+        IUserStore users,
+        TimeProvider clock,
+        IHostEnvironment env,
+        ILogger<SessionHub> log)
     {
         _db = db;
         _users = users;
         _clock = clock;
         _env = env;
+        _log = log;
     }
 
     public static string GroupName(Guid sessionId) => $"session:{sessionId:D}";
@@ -46,7 +53,18 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         var ct = Context.ConnectionAborted;
         var user = await TryResolveCurrentUserAsync(ct);
         if (user is not null)
+        {
             await Groups.AddToGroupAsync(Context.ConnectionId, UserGroupName(user.Id), ct);
+            _log.LogInformation(
+                "Hub connection {ConnectionId} resolved to user {UserId} ({DisplayName}); joined group {Group}",
+                Context.ConnectionId, user.Id, user.DisplayName, UserGroupName(user.Id));
+        }
+        else
+        {
+            _log.LogWarning(
+                "Hub connection {ConnectionId} could not resolve a user — no user-group subscription. Broadcasts will not reach this connection.",
+                Context.ConnectionId);
+        }
         await base.OnConnectedAsync();
     }
 

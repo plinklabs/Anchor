@@ -7,18 +7,30 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Anchor.Api.Tests;
 
-public sealed class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
+public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     private readonly SqliteConnection _connection = new("Filename=:memory:");
 
+    protected virtual string EnvironmentName => "Test";
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseEnvironment("Test");
+        builder.UseEnvironment(EnvironmentName);
+
+        // Program.cs's Development path requires ConnectionStrings:DefaultConnection
+        // before we override the DbContext below. Supply a harmless placeholder so
+        // AddInfrastructureSqlite doesn't throw during host build.
+        builder.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] = "Data Source=:memory:",
+            }));
 
         builder.ConfigureTestServices(services =>
         {
@@ -32,6 +44,10 @@ public sealed class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLif
                 options.DefaultChallengeScheme = FakeJwtBearerHandler.SchemeName;
             });
 
+            // Drop any DbContext registration Program.cs added on the Development
+            // path and swap in our shared in-memory SQLite connection.
+            services.RemoveAll<DbContextOptions<AnchorDbContext>>();
+            services.RemoveAll<AnchorDbContext>();
             services.AddDbContext<AnchorDbContext>(options =>
                 options.UseSqlite(_connection));
 

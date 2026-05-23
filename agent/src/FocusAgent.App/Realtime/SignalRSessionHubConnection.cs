@@ -48,10 +48,18 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
         if (!string.IsNullOrEmpty(impersonateOid))
             _log.LogWarning("Dev impersonation enabled — hub will resolve user as OID {Oid}", impersonateOid);
 
-        _connection.On<SessionStartedPayload>("SessionStarted",
-            payload => SessionStarted?.Invoke(this, payload));
-        _connection.On<Guid>("SessionEnded",
-            sessionId => SessionEnded?.Invoke(this, sessionId));
+        _connection.On<SessionStartedPayload>("SessionStarted", payload =>
+        {
+            _log.LogInformation(
+                "Hub received SessionStarted for session {SessionId} (class {ClassId}, mode {Mode})",
+                payload.SessionId, payload.ClassId, payload.Mode);
+            SessionStarted?.Invoke(this, payload);
+        });
+        _connection.On<Guid>("SessionEnded", sessionId =>
+        {
+            _log.LogInformation("Hub received SessionEnded for session {SessionId}", sessionId);
+            SessionEnded?.Invoke(this, sessionId);
+        });
 
         _connection.Reconnecting += _ =>
         {
