@@ -1,6 +1,7 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
+import 'package:anchor_dashboard/api/classes_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/auth/msal_config.dart';
@@ -23,6 +24,7 @@ void main() {
     );
     final sessions = SessionsApi(api);
     final bundles = BundlesApi(api);
+    final classes = ClassesApi(api);
 
     await tester.pumpWidget(
       AnchorDashboard(
@@ -31,6 +33,7 @@ void main() {
         api: api,
         sessions: sessions,
         bundles: bundles,
+        classes: classes,
         apiBaseUrl: Uri.parse('http://localhost'),
       ),
     );
