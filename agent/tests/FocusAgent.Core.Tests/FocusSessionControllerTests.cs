@@ -219,6 +219,7 @@ public class FocusSessionControllerTests
             Reports.Add((sessionId, kind, payloadJson, occurredAt));
             return Task.CompletedTask;
         }
+        public Task HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public async Task RaiseSessionStarted(SessionStartedPayload payload)

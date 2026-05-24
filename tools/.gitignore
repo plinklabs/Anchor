@@ -1,0 +1,3 @@
+# Standard .NET build output for dev tools under this folder.
+bin/
+obj/

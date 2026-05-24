@@ -200,6 +200,10 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
                 new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:DefaultConnection"] = "Data Source=:memory:",
+                    // The monitor scans tracker state on a timer; here it would
+                    // race the shared in-memory SQLite connection. Tests that
+                    // need it drive HeartbeatMonitor.ScanOnceAsync directly.
+                    ["Heartbeat:EnableMonitor"] = "false",
                     // Stub AzureAd so MicrosoftIdentityWeb's option binding succeeds;
                     // we never actually validate a real token in these tests.
                     ["AzureAd:Instance"] = "https://login.microsoftonline.com/",
@@ -262,6 +266,12 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
                 BundleUpdatedCalls.Add(payload);
                 return Task.CompletedTask;
             }
+
+            public Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
+
+            public Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
         }
 
         public sealed record SessionStartedCall(SessionStartedPayload Payload, IReadOnlyList<Guid> RecipientUserIds);

@@ -201,6 +201,63 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task Heartbeat_from_active_participant_records_to_tracker()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession",
+            new JoinSessionRequest(session.Id, JoinCode: null));
+
+        await connection.InvokeAsync("Heartbeat", session.Id);
+
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.True(tracker.TryGet(session.Id, student.Id, out _));
+    }
+
+    [Fact]
+    public async Task Heartbeat_from_non_joined_user_is_rejected()
+    {
+        var (_, session) = await SeedSessionWithStudentAsync();
+        var stranger = await SeedUserAsync(UserRole.Student, "Stranger");
+
+        await using var connection = BuildConnection(stranger.EntraOid, "Student");
+        await connection.StartAsync();
+
+        var ex = await Assert.ThrowsAsync<HubException>(() =>
+            connection.InvokeAsync("Heartbeat", session.Id));
+        Assert.Contains("Not an active participant", ex.Message);
+
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.False(tracker.TryGet(session.Id, stranger.Id, out _));
+    }
+
+    [Fact]
+    public async Task SessionEnded_broadcast_clears_heartbeat_tracker_state_for_that_session()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession",
+            new JoinSessionRequest(session.Id, JoinCode: null));
+        await connection.InvokeAsync("Heartbeat", session.Id);
+
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.True(tracker.TryGet(session.Id, student.Id, out _));
+
+        var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
+        await broadcaster.SessionEndedAsync(session.Id);
+
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _));
+    }
+
+    [Fact]
     public async Task SessionEnded_broadcast_reaches_joined_clients_only()
     {
         var (joiner, session) = await SeedSessionWithStudentAsync();

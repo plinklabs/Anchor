@@ -7,15 +7,21 @@ namespace Anchor.Api.Tests.FakeAuth;
 public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
 {
     private readonly IHubContext<SessionHub, ISessionHubClient> _hub;
+    private readonly HeartbeatTracker _heartbeats;
 
-    public RecordingSessionBroadcaster(IHubContext<SessionHub, ISessionHubClient> hub)
+    public RecordingSessionBroadcaster(
+        IHubContext<SessionHub, ISessionHubClient> hub,
+        HeartbeatTracker heartbeats)
     {
         _hub = hub;
+        _heartbeats = heartbeats;
     }
 
     public ConcurrentBag<SessionStartedCall> SessionStartedCalls { get; } = new();
     public ConcurrentBag<Guid> SessionEndedCalls { get; } = new();
     public ConcurrentBag<BundleUpdatedPayload> BundleUpdatedCalls { get; } = new();
+    public ConcurrentBag<HeartbeatLostPayload> HeartbeatLostCalls { get; } = new();
+    public ConcurrentBag<AgentReconnectedPayload> AgentReconnectedCalls { get; } = new();
 
     public Task SessionStartedAsync(
         SessionStartedPayload payload,
@@ -32,6 +38,10 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     public Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         SessionEndedCalls.Add(sessionId);
+        // Mirror production SessionBroadcaster: drop liveness state up-front so
+        // tests observing tracker behaviour see the same outcome they would in
+        // a real deployment.
+        _heartbeats.ClearSession(sessionId);
         return _hub.Clients.Group(SessionHub.GroupName(sessionId)).SessionEnded(sessionId);
     }
 
@@ -39,6 +49,18 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     {
         BundleUpdatedCalls.Add(payload);
         return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).BundleUpdated(payload);
+    }
+
+    public Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default)
+    {
+        HeartbeatLostCalls.Add(payload);
+        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).HeartbeatLost(payload);
+    }
+
+    public Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default)
+    {
+        AgentReconnectedCalls.Add(payload);
+        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).AgentReconnected(payload);
     }
 }
 

@@ -217,6 +217,7 @@ public class SessionCoordinatorTests
         }
         public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) =>
             Task.CompletedTask;
+        public Task HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
