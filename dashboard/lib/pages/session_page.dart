@@ -145,6 +145,9 @@ class _SessionPageState extends State<SessionPage> {
     });
     try {
       await widget.sessions.endSession(widget.sessionId);
+      // Re-fetch so the post-end summary panel has data. The End response
+      // doesn't carry summaries; the GET path does.
+      await _loadDetail();
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = 'Failed to end session: $e');
@@ -209,6 +212,8 @@ class _SessionPageState extends State<SessionPage> {
               padding: const EdgeInsets.all(12),
               child: const Text('Session ended — event stream stopped.'),
             ),
+          if (_ended && (_detail?.summaries.isNotEmpty ?? false))
+            _SessionSummaryPanel(summaries: _detail!.summaries),
           if (!_ended && _pendingRequests.isNotEmpty)
             _PendingRequestsPanel(
               requests: _pendingRequests,
@@ -351,6 +356,45 @@ class _PendingRequestRow extends StatelessWidget {
           label: const Text('Approve'),
         ),
       ],
+    );
+  }
+}
+
+class _SessionSummaryPanel extends StatelessWidget {
+  const _SessionSummaryPanel({required this.summaries});
+
+  final List<SessionEventSummary> summaries;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final byKind = <String, int>{};
+    for (final s in summaries) {
+      byKind[s.kind] = (byKind[s.kind] ?? 0) + s.count;
+    }
+    final lines = byKind.entries
+        .map((e) => '${e.value} ${e.key}')
+        .toList(growable: false);
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHigh,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Session summary',
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            lines.join(' · '),
+            style: theme.textTheme.bodyMedium,
+          ),
+        ],
+      ),
     );
   }
 }

@@ -175,11 +175,47 @@ public sealed class SessionsController : ControllerBase
         if (session.EndedAt is null)
         {
             session.EndedAt = _clock.GetUtcNow();
+            await AggregateEventSummariesAsync(session.Id, cancellationToken);
             await _db.SaveChangesAsync(cancellationToken);
             await _broadcaster.SessionEndedAsync(session.Id, cancellationToken);
         }
 
         return Ok(new EndSessionResponse(session.Id, session.EndedAt!.Value));
+    }
+
+    /// <summary>
+    /// Aggregate this session's raw events into the
+    /// <see cref="SessionEventSummary"/> table so the per-(student, kind)
+    /// counts survive the 30-day raw-event prune (#77). Caller is responsible
+    /// for the surrounding SaveChanges so the EndedAt update and the summary
+    /// rows commit in a single transaction.
+    /// </summary>
+    private async Task AggregateEventSummariesAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        // SQLite (dev + tests) doesn't translate GROUP BY over DateTimeOffset
+        // server-side, so materialise the rows first. Volume per session is
+        // bounded (a class period generates hundreds, not millions of events).
+        var rows = await _db.Events.AsNoTracking()
+            .Where(e => e.SessionId == sessionId)
+            .Select(e => new { e.UserId, e.Kind, e.OccurredAt })
+            .ToListAsync(cancellationToken);
+
+        var groups = rows
+            .GroupBy(r => new { r.UserId, r.Kind })
+            .Select(g => new SessionEventSummary
+            {
+                SessionId = sessionId,
+                UserId = g.Key.UserId,
+                Kind = g.Key.Kind,
+                Count = g.Count(),
+                FirstAt = g.Min(r => r.OccurredAt),
+                LastAt = g.Max(r => r.OccurredAt),
+            });
+
+        foreach (var summary in groups)
+        {
+            _db.SessionEventSummaries.Add(summary);
+        }
     }
 
     [HttpGet("{id:guid}")]
@@ -223,8 +259,17 @@ public sealed class SessionsController : ControllerBase
         var recentEvents = recentEventRows
             .OrderByDescending(e => e.OccurredAt)
             .Take(RecentEventsLimit)
-            .Select(e => new SessionEventSummary(e.Id, e.UserId, e.Kind, e.PayloadJson, e.OccurredAt))
+            .Select(e => new SessionRecentEvent(e.Id, e.UserId, e.Kind, e.PayloadJson, e.OccurredAt))
             .ToList();
+
+        // Per-(user, kind) aggregate written when the session ends. Once raw
+        // events are pruned (#77) this is the only remaining record of what
+        // happened — included for both live and ended sessions so the
+        // dashboard never has to branch on retention state.
+        var summaries = await _db.SessionEventSummaries.AsNoTracking()
+            .Where(s => s.SessionId == id)
+            .Select(s => new SessionEventSummaryDto(s.UserId, s.Kind, s.Count, s.FirstAt, s.LastAt))
+            .ToListAsync(cancellationToken);
 
         return Ok(new SessionDetailResponse(
             session.Id,
@@ -235,7 +280,8 @@ public sealed class SessionsController : ControllerBase
             session.EndedAt,
             session.JoinCode,
             participants,
-            recentEvents));
+            recentEvents,
+            summaries));
     }
 
     [HttpGet("active")]
@@ -640,7 +686,8 @@ public sealed record SessionDetailResponse(
     DateTimeOffset? EndedAt,
     string JoinCode,
     IReadOnlyList<SessionParticipantSummary> Participants,
-    IReadOnlyList<SessionEventSummary> RecentEvents);
+    IReadOnlyList<SessionRecentEvent> RecentEvents,
+    IReadOnlyList<SessionEventSummaryDto> Summaries);
 
 public sealed record SessionParticipantSummary(
     Guid UserId,
@@ -649,12 +696,19 @@ public sealed record SessionParticipantSummary(
     DateTimeOffset? DeclinedAt,
     DateTimeOffset? LeftAt);
 
-public sealed record SessionEventSummary(
+public sealed record SessionRecentEvent(
     Guid Id,
     Guid UserId,
     EventKind Kind,
     string PayloadJson,
     DateTimeOffset OccurredAt);
+
+public sealed record SessionEventSummaryDto(
+    Guid UserId,
+    EventKind Kind,
+    int Count,
+    DateTimeOffset FirstAt,
+    DateTimeOffset LastAt);
 
 public sealed record JoinByCodeRequest(string Code);
 
