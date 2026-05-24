@@ -3,6 +3,7 @@ using System.Runtime.Versioning;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Windows.Foundation;
 using Windows.Graphics;
 using WinRT.Interop;
 
@@ -41,6 +42,11 @@ internal static class ToastWindowPositioner
     // Floor so an unexpectedly-small measurement (e.g. content not yet laid
     // out) doesn't produce a sliver of a window.
     private const int MinHeightDip = 160;
+
+    // Ceiling so a runaway measurement (e.g. infinity from a layout glitch)
+    // doesn't produce a full-screen window. Generous enough to absorb a
+    // 3-line teacher name at 144 DPI.
+    private const int MaxHeightDip = 360;
 
     public static void ConfigureAndShow(Window window)
     {
@@ -82,21 +88,26 @@ internal static class ToastWindowPositioner
         window.Activate();
         appWindow.MoveAndResize(new RectInt32(x, y, width, initialHeight));
 
-        // Now that the island is realised, force a synchronous layout pass and
-        // resize the HWND to match the content's actual height. Without this,
-        // a tall teacher line or larger-than-expected font would render past
-        // the bottom edge (the #50 regression).
+        // Now that the island is realised, ask the root element what height it
+        // wants given the toast's fixed width — then shrink the HWND to that.
+        // We use Measure/DesiredSize rather than ActualHeight because the root
+        // Grid is the Window.Content and so stretches to fill the client area,
+        // making ActualHeight equal to the initial window height (the #49
+        // regression of the #50 fix). DesiredSize reflects only what the
+        // content needs.
         if (window.Content is FrameworkElement root)
         {
-            root.UpdateLayout();
-            var contentHeightDip = root.ActualHeight;
+            root.Measure(new Size(ToastWidthDip, double.PositiveInfinity));
+            var contentHeightDip = root.DesiredSize.Height;
             if (contentHeightDip > 0)
             {
                 // SetBorderAndTitleBar(hasBorder: true) adds a 1-DIP frame on
                 // each edge; add 2 DIP of slack so descenders aren't shaved.
                 var measuredHeight = (int)Math.Ceiling((contentHeightDip + 2) * scale);
                 var floor = (int)(MinHeightDip * scale);
+                var ceiling = (int)(MaxHeightDip * scale);
                 if (measuredHeight < floor) measuredHeight = floor;
+                if (measuredHeight > ceiling) measuredHeight = ceiling;
                 if (measuredHeight != initialHeight)
                 {
                     appWindow.MoveAndResize(new RectInt32(x, y, width, measuredHeight));
