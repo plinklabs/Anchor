@@ -17,5 +17,12 @@ public interface ISessionHubConnection : IAsyncDisposable
     Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default);
     Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default);
     Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default);
-    Task HeartbeatAsync(Guid sessionId, CancellationToken ct = default);
+    /// <summary>
+    /// Sends a heartbeat for the active session. Returns <c>true</c> only when
+    /// the call actually round-tripped to the server; returns <c>false</c> when
+    /// the implementation short-circuited (e.g. transport not Connected, future
+    /// rate-limiter / circuit-breaker). Callers should treat <c>false</c> the
+    /// same as a thrown exception — the ping did not happen.
+    /// </summary>
+    Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default);
 }
