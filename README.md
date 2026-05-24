@@ -53,7 +53,7 @@ Design rationale, technology decisions, data model, and phasing live in [focus-s
 | Backend API | [backend/](backend/) | Scaffolded | ASP.NET Core 8, EF Core, SignalR, Entra (Microsoft.Identity.Web) |
 | Teacher dashboard | [dashboard/](dashboard/) | Scaffolded | Flutter Web, MSAL.js |
 | Student agent | [agent/](agent/) | Scaffolded | WinUI 3 + C#, MSIX (later), WAM silent auth (later) |
-| Edge extension | — | Not yet scaffolded | TypeScript, Edge (Chromium) MV3 |
+| Edge extension | [extension/](extension/) | Scaffolded | TypeScript, Edge (Chromium) MV3 |
 | Azure infra | [infra/](infra/) | Scaffolded | Bicep — App Service, Azure SQL, SignalR, Static Web Apps |
 
 ## Prerequisites
@@ -109,7 +109,15 @@ This is the Phase 2 scaffold — tray icon, hidden main window, single instance,
 
 ### Edge extension
 
-Not yet scaffolded. Tracked as **Phase 3** of [focus-system-design.md](focus-system-design.md#11-build-phases). Build/run instructions will be added here once the project exists.
+See [extension/README.md](extension/README.md) for full details (layout, dev-load loop, sideload shape). Quick start:
+
+```powershell
+cd extension
+npm install
+npm run build
+```
+
+Output lands in `extension/dist/`. Load it via `edge://extensions` → **Developer mode** → **Load unpacked**. This is the Phase 3 scaffold — URL filtering, real block-page contents, and the SignalR client land in follow-up issues.
 
 ### Azure infrastructure
 
