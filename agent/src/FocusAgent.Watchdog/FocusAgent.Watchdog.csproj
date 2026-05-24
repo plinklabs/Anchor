@@ -1,7 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- WinExe (Windows subsystem) so the loader does not allocate a console
+         window when the StartupTask launches the process under explorer.
+         The Watchdog has no UI of its own; all output is Serilog file
+         logging. With OutputType=Exe (console subsystem) Windows would
+         allocate a terminal window students would see flicker — or worse,
+         a permanent black window they'd close out of confusion. -->
+    <OutputType>WinExe</OutputType>
     <!-- Console host, NOT WinUI. We need the -windows10.0.19041.0 TFM only
          so we can call Windows.ApplicationModel.Package.Current to resolve
          the App's exe path when running packaged. -->
@@ -13,11 +19,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <!-- The Watchdog runs hidden — no console window flashes up at login.
-         Suppressing the subsystem keeps StartupTask launches silent. -->
-    <UseWindowsForms>false</UseWindowsForms>
-    <UseWPF>false</UseWPF>
-    <DisableWinExeOutputInference>true</DisableWinExeOutputInference>
   </PropertyGroup>
 
   <ItemGroup>

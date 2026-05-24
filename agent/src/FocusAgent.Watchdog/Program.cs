@@ -66,14 +66,12 @@ public static class Program
                     return 0;
                 }
 
-                using var cts = new CancellationTokenSource();
-                Console.CancelKeyPress += (_, e) =>
-                {
-                    e.Cancel = true;
-                    cts.Cancel();
-                };
-
-                await host.RunAsync(cts.Token).ConfigureAwait(false);
+                // No CancelKeyPress hook: the Watchdog is a WinExe (no
+                // console attached) launched as an MSIX StartupTask, so
+                // Ctrl+C is never a thing. Windows tears it down at
+                // sign-out / uninstall by terminating the process; we don't
+                // need a cooperative cancellation path.
+                await host.RunAsync(CancellationToken.None).ConfigureAwait(false);
                 return 0;
             }
             finally
