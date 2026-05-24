@@ -119,6 +119,42 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
     }
 
     [Fact]
+    public async Task Hub_negotiate_with_impersonation_query_string_authenticates()
+    {
+        // Browser-hosted SignalR clients (the Edge extension, #72) cannot
+        // attach custom headers to the WebSocket upgrade, so the dev
+        // impersonation value also has to authenticate when it arrives as a
+        // dev_impersonate_oid query parameter on the hub URL. Negotiate is the
+        // first authenticated request on the SignalR handshake, so verifying
+        // it returns 200 OK proves the auth path is wired end-to-end without
+        // needing to spin up an actual hub connection.
+        var (teacher, _) = await SeedClassWithTeacherAsync();
+
+        using var client = _factory.CreateClient();
+        var url = $"{SessionHub.Path}/negotiate?negotiateVersion=1&dev_impersonate_oid={teacher.EntraOid}";
+
+        using var response = await client.PostAsync(url, content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rest_endpoint_with_impersonation_query_string_is_unauthorized()
+    {
+        // The query-string fallback is scoped to the SignalR hub path so the
+        // REST surface keeps its header-only contract. A controller request
+        // with only the query string must therefore 401.
+        var (teacher, @class) = await SeedClassWithTeacherAsync();
+
+        using var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync(
+            $"/sessions?dev_impersonate_oid={teacher.EntraOid}",
+            new StartSessionRequest(@class.Id, "Strict", null));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Post_sessions_with_unprovisioned_impersonation_oid_is_unauthorized()
     {
         var (_, @class) = await SeedClassWithTeacherAsync();

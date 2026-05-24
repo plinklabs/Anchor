@@ -285,7 +285,14 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         var http = Context.GetHttpContext();
         if (http is null) return null;
 
+        // Browser-hosted SignalR clients (the Edge extension) cannot attach
+        // custom headers to the WebSocket upgrade, so the dev-impersonation
+        // value can also arrive as a query-string parameter — matches the
+        // fallback in DevImpersonationAuthHandler.
         var raw = http.Request.Headers[DevImpersonateOidHeader].ToString();
+        if (string.IsNullOrWhiteSpace(raw))
+            raw = http.Request.Query[Auth.DevImpersonationAuthHandler.QueryParamName].ToString();
+
         return Guid.TryParse(raw, out var oid) ? oid : null;
     }
 }
