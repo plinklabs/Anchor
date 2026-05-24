@@ -43,6 +43,12 @@ class ApiClient {
     Map<String, String>? headers,
   }) => _http.post(_baseUrl.resolve(path), body: body, headers: headers);
 
+  Future<http.Response> put(
+    String path, {
+    Object? body,
+    Map<String, String>? headers,
+  }) => _http.put(_baseUrl.resolve(path), body: body, headers: headers);
+
   Future<http.Response> delete(String path) =>
       _http.delete(_baseUrl.resolve(path));
 

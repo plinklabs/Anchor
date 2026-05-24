@@ -62,6 +62,12 @@ builder.Services.AddAuthorization(options =>
         options.AddPolicy(AuthorizationPolicies.Student, p => p
             .AddAuthenticationSchemes(schemes)
             .RequireRole("Student"));
+        options.AddPolicy(AuthorizationPolicies.Admin, p =>
+        {
+            p.AddAuthenticationSchemes(schemes);
+            p.RequireAuthenticatedUser();
+            p.AddRequirements(new AdminRoleRequirement());
+        });
     }
     else
     {
@@ -70,8 +76,15 @@ builder.Services.AddAuthorization(options =>
             .Build();
         options.AddPolicy(AuthorizationPolicies.Teacher, p => p.RequireRole("Teacher"));
         options.AddPolicy(AuthorizationPolicies.Student, p => p.RequireRole("Student"));
+        options.AddPolicy(AuthorizationPolicies.Admin, p =>
+        {
+            p.RequireAuthenticatedUser();
+            p.AddRequirements(new AdminRoleRequirement());
+        });
     }
 });
+
+builder.Services.AddScoped<IAuthorizationHandler, AdminRoleAuthorizationHandler>();
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddInfrastructureServices();

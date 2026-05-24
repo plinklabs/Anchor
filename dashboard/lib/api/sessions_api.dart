@@ -56,6 +56,8 @@ class MeResponse {
   final String displayName;
   final String role;
 
+  bool get isAdmin => role.toLowerCase() == 'admin';
+
   factory MeResponse.fromJson(Map<String, dynamic> json) => MeResponse(
     id: json['id'] as String,
     displayName: json['displayName'] as String,

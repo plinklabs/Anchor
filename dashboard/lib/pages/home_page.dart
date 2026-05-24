@@ -33,6 +33,7 @@ class _HomePageState extends State<HomePage> {
   final Set<String> _selectedBundleIds = <String>{};
   bool _busy = false;
   String? _error;
+  bool _isAdmin = false;
 
   @override
   void initState() {
@@ -48,7 +49,7 @@ class _HomePageState extends State<HomePage> {
     try {
       // Provision the user in the backend before any role-gated call —
       // /me upserts based on the Entra oid + role claim, idempotently.
-      await widget.sessions.me();
+      final me = await widget.sessions.me();
       final classesFuture = widget.sessions.classes();
       final bundlesFuture = widget.bundles.list();
       final classes = await classesFuture;
@@ -79,6 +80,7 @@ class _HomePageState extends State<HomePage> {
         _classes = classes;
         _selected = preferred;
         _bundles = bundles;
+        _isAdmin = me.isAdmin;
         _selectedBundleIds
           ..clear()
           ..addAll(restored);
@@ -141,6 +143,12 @@ class _HomePageState extends State<HomePage> {
             label: const Text('Manage classes'),
             onPressed: () => context.go('/classes'),
           ),
+          if (_isAdmin)
+            TextButton.icon(
+              icon: const Icon(Icons.collections_bookmark),
+              label: const Text('Bundles'),
+              onPressed: () => context.go('/bundles'),
+            ),
           if (account != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),

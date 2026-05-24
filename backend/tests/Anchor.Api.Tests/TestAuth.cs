@@ -18,4 +18,5 @@ internal static class TestAuth
 
     public static void SetTeacher(HttpClient client, User user) => Set(client, user, "Teacher");
     public static void SetStudent(HttpClient client, User user) => Set(client, user, "Student");
+    public static void SetAdmin(HttpClient client, User user) => Set(client, user, "Admin");
 }

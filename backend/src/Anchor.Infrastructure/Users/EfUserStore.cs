@@ -33,7 +33,11 @@ internal sealed class EfUserStore : IUserStore
         }
 
         existing.DisplayName = displayName;
-        existing.Role = role;
+        // Admin is a DB-only role layered on top of an underlying Teacher/Student
+        // identity (#75). Re-running /me would otherwise downgrade an admin back
+        // to whatever role the JWT carries on every sign-in.
+        if (existing.Role != UserRole.Admin)
+            existing.Role = role;
         await _db.SaveChangesAsync(cancellationToken);
         return existing;
     }

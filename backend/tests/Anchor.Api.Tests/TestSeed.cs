@@ -73,11 +73,11 @@ internal static class TestSeed
         return user;
     }
 
-    public static async Task<Bundle> AddBundleAsync(AnchorApiFactory factory, string name)
+    public static async Task<Bundle> AddBundleAsync(AnchorApiFactory factory, string name, bool isArchived = false)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
-        var bundle = new Bundle { Name = name, Version = 1 };
+        var bundle = new Bundle { Name = name, Version = 1, IsArchived = isArchived };
         db.Bundles.Add(bundle);
         await db.SaveChangesAsync();
         return bundle;

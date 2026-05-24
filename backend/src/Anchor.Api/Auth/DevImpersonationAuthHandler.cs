@@ -71,6 +71,7 @@ public sealed class DevImpersonationAuthHandler : AuthenticationHandler<Authenti
         {
             UserRole.Teacher => "Teacher",
             UserRole.Student => "Student",
+            UserRole.Admin => "Admin",
             _ => string.Empty,
         };
 
