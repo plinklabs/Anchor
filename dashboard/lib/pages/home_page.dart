@@ -136,6 +136,11 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Anchor'),
         actions: [
+          TextButton.icon(
+            icon: const Icon(Icons.group),
+            label: const Text('Manage classes'),
+            onPressed: () => context.go('/classes'),
+          ),
           if (account != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),

@@ -12,6 +12,7 @@ internal sealed class ClassMembershipConfiguration : IEntityTypeConfiguration<Cl
         builder.HasKey(m => new { m.ClassId, m.UserId });
 
         builder.Property(m => m.Role).HasConversion<string>().HasMaxLength(32).IsRequired();
+        builder.Property(m => m.JoinedAt).IsRequired();
 
         builder.HasOne(m => m.Class)
             .WithMany(c => c.Memberships)
