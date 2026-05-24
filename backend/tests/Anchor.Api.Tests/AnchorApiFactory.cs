@@ -15,7 +15,19 @@ namespace Anchor.Api.Tests;
 
 public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    private readonly SqliteConnection _connection = new("Filename=:memory:");
+    // Shared in-memory SQLite: a unique name per factory keeps fixtures
+    // hermetic, while `mode=memory&cache=shared` lets every scope open its
+    // own SqliteConnection against the same database. The keep-alive
+    // connection below is what stops the DB from being torn down when
+    // scoped connections close.
+    private readonly string _connectionString =
+        $"Data Source=file:{Guid.NewGuid():N}?mode=memory&cache=shared";
+    private readonly SqliteConnection _keepAlive;
+
+    public AnchorApiFactory()
+    {
+        _keepAlive = new SqliteConnection(_connectionString);
+    }
 
     protected virtual string EnvironmentName => "Test";
 
@@ -30,9 +42,9 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = "Data Source=:memory:",
-                // The monitor scans tracker state on a timer; in tests it would
-                // race with our shared in-memory SQLite connection. Tests drive
-                // the scan directly via HeartbeatMonitor.ScanOnceAsync instead.
+                // The monitor scans tracker state on a timer; tests drive
+                // the scan deterministically via HeartbeatMonitor.ScanOnceAsync
+                // instead so assertions don't race the timer.
                 ["Heartbeat:EnableMonitor"] = "false",
             }));
 
@@ -49,11 +61,14 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             });
 
             // Drop any DbContext registration Program.cs added on the Development
-            // path and swap in our shared in-memory SQLite connection.
+            // path and point every scope at the shared in-memory database via a
+            // fresh connection — passing a connection string (not an instance)
+            // lets EF Core open a new SqliteConnection per scope, eliminating
+            // the cross-scope contention that flaked SignalR hub tests (#46).
             services.RemoveAll<DbContextOptions<AnchorDbContext>>();
             services.RemoveAll<AnchorDbContext>();
             services.AddDbContext<AnchorDbContext>(options =>
-                options.UseSqlite(_connection));
+                options.UseSqlite(_connectionString));
 
             services.RemoveAll<ISessionBroadcaster>();
             services.AddSingleton<RecordingSessionBroadcaster>();
@@ -63,7 +78,7 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        await _connection.OpenAsync();
+        await _keepAlive.OpenAsync();
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
         await db.Database.EnsureCreatedAsync();
@@ -71,7 +86,7 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     public new async Task DisposeAsync()
     {
-        await _connection.DisposeAsync();
+        await _keepAlive.DisposeAsync();
         await base.DisposeAsync();
     }
 }
