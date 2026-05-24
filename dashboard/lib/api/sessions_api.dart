@@ -72,12 +72,14 @@ class SessionDetail {
     required this.joinCode,
     required this.startedAt,
     required this.endedAt,
+    required this.summaries,
   });
   final String id;
   final String classId;
   final String joinCode;
   final DateTime startedAt;
   final DateTime? endedAt;
+  final List<SessionEventSummary> summaries;
 
   factory SessionDetail.fromJson(Map<String, dynamic> json) => SessionDetail(
     id: json['id'] as String,
@@ -87,7 +89,38 @@ class SessionDetail {
     endedAt: json['endedAt'] == null
         ? null
         : DateTime.parse(json['endedAt'] as String),
+    summaries: ((json['summaries'] as List<dynamic>?) ?? const <dynamic>[])
+        .map((e) => SessionEventSummary.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false),
   );
+}
+
+/// Per-(student, kind) aggregate written when the session ends (#77). The
+/// raw event log is pruned after 30 days; these counts survive indefinitely
+/// so the dashboard can still say "47 foreground changes off-list, 12 blocked
+/// URLs" long after the underlying rows are gone.
+class SessionEventSummary {
+  SessionEventSummary({
+    required this.userId,
+    required this.kind,
+    required this.count,
+    required this.firstAt,
+    required this.lastAt,
+  });
+  final String userId;
+  final String kind;
+  final int count;
+  final DateTime firstAt;
+  final DateTime lastAt;
+
+  factory SessionEventSummary.fromJson(Map<String, dynamic> json) =>
+      SessionEventSummary(
+        userId: json['userId'] as String,
+        kind: json['kind'] as String,
+        count: json['count'] as int,
+        firstAt: DateTime.parse(json['firstAt'] as String),
+        lastAt: DateTime.parse(json['lastAt'] as String),
+      );
 }
 
 class SessionsApi {

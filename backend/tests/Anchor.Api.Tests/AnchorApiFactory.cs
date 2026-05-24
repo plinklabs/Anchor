@@ -54,6 +54,10 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
                 // the scan deterministically via HeartbeatMonitor.ScanOnceAsync
                 // instead so assertions don't race the timer.
                 ["Heartbeat:EnableMonitor"] = "false",
+                // Same reasoning as Heartbeat:EnableMonitor — tests drive
+                // EventPruner.PruneOnceAsync directly to avoid racing the
+                // shared in-memory SQLite connection.
+                ["EventRetention:EnablePruner"] = "false",
             }));
 
         builder.ConfigureTestServices(services =>

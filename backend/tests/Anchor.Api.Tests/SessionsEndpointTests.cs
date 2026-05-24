@@ -4,6 +4,7 @@ using Anchor.Api.Controllers;
 using Anchor.Api.Realtime;
 using Anchor.Api.Tests.FakeAuth;
 using Anchor.Domain.Bundles;
+using Anchor.Domain.Events;
 using Anchor.Domain.Sessions;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -292,6 +293,97 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task POST_session_end_writes_summary_rows_matching_group_by_on_raw_events()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        // Seed a known mix of events: 3 ForegroundChange + 2 BlockedUrl for s0,
+        // 1 ForegroundChange for s1. Expected summary rows: 3 total
+        // ((s0, FG, 3), (s0, BU, 2), (s1, FG, 1)).
+        var s0 = scenario.Students[0].Id;
+        var s1 = scenario.Students[1].Id;
+        await SeedEventsAsync(session.Id, new[]
+        {
+            (s0, EventKind.ForegroundChange, new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero)),
+            (s0, EventKind.ForegroundChange, new DateTimeOffset(2026, 1, 1, 9, 5, 0, TimeSpan.Zero)),
+            (s0, EventKind.ForegroundChange, new DateTimeOffset(2026, 1, 1, 9, 10, 0, TimeSpan.Zero)),
+            (s0, EventKind.BlockedUrl,       new DateTimeOffset(2026, 1, 1, 9, 1, 0, TimeSpan.Zero)),
+            (s0, EventKind.BlockedUrl,       new DateTimeOffset(2026, 1, 1, 9, 6, 0, TimeSpan.Zero)),
+            (s1, EventKind.ForegroundChange, new DateTimeOffset(2026, 1, 1, 9, 7, 0, TimeSpan.Zero)),
+        });
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsync($"/sessions/{session.Id}/end", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var summaries = await db.SessionEventSummaries.AsNoTracking()
+            .Where(s => s.SessionId == session.Id)
+            .ToListAsync();
+        Assert.Equal(3, summaries.Count);
+
+        var s0Fg = summaries.Single(s => s.UserId == s0 && s.Kind == EventKind.ForegroundChange);
+        Assert.Equal(3, s0Fg.Count);
+        Assert.Equal(new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero), s0Fg.FirstAt);
+        Assert.Equal(new DateTimeOffset(2026, 1, 1, 9, 10, 0, TimeSpan.Zero), s0Fg.LastAt);
+
+        var s0Bu = summaries.Single(s => s.UserId == s0 && s.Kind == EventKind.BlockedUrl);
+        Assert.Equal(2, s0Bu.Count);
+
+        var s1Fg = summaries.Single(s => s.UserId == s1 && s.Kind == EventKind.ForegroundChange);
+        Assert.Equal(1, s1Fg.Count);
+    }
+
+    [Fact]
+    public async Task POST_session_end_with_no_events_writes_no_summary_rows()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsync($"/sessions/{session.Id}/end", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        Assert.False(await db.SessionEventSummaries.AnyAsync(s => s.SessionId == session.Id));
+    }
+
+    [Fact]
+    public async Task POST_session_end_does_not_double_write_summaries_when_called_twice()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        var s0 = scenario.Students[0].Id;
+        await SeedEventsAsync(session.Id, new[]
+        {
+            (s0, EventKind.ForegroundChange, new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero)),
+            (s0, EventKind.ForegroundChange, new DateTimeOffset(2026, 1, 1, 9, 1, 0, TimeSpan.Zero)),
+        });
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        await client.PostAsync($"/sessions/{session.Id}/end", null);
+        // Second call must short-circuit on session.EndedAt != null and
+        // produce no extra summary rows (PK collision would also surface here).
+        var second = await client.PostAsync($"/sessions/{session.Id}/end", null);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var row = await db.SessionEventSummaries.AsNoTracking()
+            .SingleAsync(s => s.SessionId == session.Id);
+        Assert.Equal(2, row.Count);
+    }
+
+    [Fact]
     public async Task POST_session_end_is_idempotent_when_already_ended()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
@@ -549,6 +641,26 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
         db.SessionBundles.Add(new SessionBundle { SessionId = sessionId, BundleId = bundleId });
+        await db.SaveChangesAsync();
+    }
+
+    private async Task SeedEventsAsync(
+        Guid sessionId,
+        IEnumerable<(Guid UserId, EventKind Kind, DateTimeOffset OccurredAt)> events)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        foreach (var (userId, kind, occurredAt) in events)
+        {
+            db.Events.Add(new Event
+            {
+                SessionId = sessionId,
+                UserId = userId,
+                Kind = kind,
+                PayloadJson = "{}",
+                OccurredAt = occurredAt,
+            });
+        }
         await db.SaveChangesAsync();
     }
 

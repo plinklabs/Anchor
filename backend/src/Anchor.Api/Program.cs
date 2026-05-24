@@ -1,5 +1,6 @@
 using Anchor.Api;
 using Anchor.Api.Auth;
+using Anchor.Api.Events;
 using Anchor.Api.Realtime;
 using Anchor.Api.Sessions;
 using Anchor.Infrastructure;
@@ -114,6 +115,14 @@ var enableHeartbeatMonitor = heartbeatSection.GetValue<bool?>(nameof(HeartbeatOp
 if (enableHeartbeatMonitor)
 {
     builder.Services.AddHostedService<HeartbeatMonitor>();
+}
+
+builder.Services.Configure<EventRetentionOptions>(builder.Configuration.GetSection(EventRetentionOptions.SectionName));
+var retentionSection = builder.Configuration.GetSection(EventRetentionOptions.SectionName);
+var enableEventPruner = retentionSection.GetValue<bool?>(nameof(EventRetentionOptions.EnablePruner)) ?? true;
+if (enableEventPruner)
+{
+    builder.Services.AddHostedService<EventPruner>();
 }
 
 const string DashboardCorsPolicy = "DashboardCors";
