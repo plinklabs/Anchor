@@ -5,9 +5,16 @@ import { loadSettings } from './shared/settings';
 import {
   clearActiveSession,
   getActiveSession,
+  mergeAddedDomains,
   setActiveSession,
 } from './shared/session-state';
-import type { ActiveSessionState, SessionStartedPayload } from './shared/types';
+import type {
+  ActiveSessionState,
+  AllowlistAmendedPayload,
+  ExtensionRuntimeMessage,
+  SessionStartedPayload,
+  UnblockRequestPayload,
+} from './shared/types';
 
 const log = logger('background');
 
@@ -52,6 +59,7 @@ async function ensureHub(): Promise<void> {
   hubClient = new HubClient(settings, {
     onSessionStarted: handleSessionStarted,
     onSessionEnded: handleSessionEnded,
+    onAllowlistAmended: handleAllowlistAmended,
   });
   try {
     await hubClient.start();
@@ -90,6 +98,80 @@ async function handleSessionEnded(sessionId: string): Promise<void> {
   }
   await clearActiveSession();
   log.info('active session cleared', { sessionId });
+}
+
+async function handleAllowlistAmended(payload: AllowlistAmendedPayload): Promise<void> {
+  const merged = await mergeAddedDomains(payload.sessionId, payload.addedDomains ?? []);
+  if (!merged) {
+    log.warn('AllowlistAmended dropped — no matching active session in cache', {
+      sessionId: payload.sessionId,
+    });
+    return;
+  }
+  log.info('allowlist amended', {
+    sessionId: payload.sessionId,
+    addedCount: payload.addedDomains?.length ?? 0,
+    totalDomains: merged.domains.length,
+  });
+
+  // Tell any open block pages that an amendment landed. We send the bare
+  // host strings: the block page only needs to know "does this match what
+  // I'm currently blocking?" — it doesn't need the matchType to decide.
+  const addedHosts = (payload.addedDomains ?? [])
+    .map((d) => d.value?.trim().toLowerCase())
+    .filter((v): v is string => !!v);
+  if (addedHosts.length === 0) return;
+  const message: ExtensionRuntimeMessage = {
+    kind: 'allowlist-amended',
+    sessionId: payload.sessionId,
+    addedHosts,
+  };
+  try {
+    // sendMessage with no recipient broadcasts to all extension contexts
+    // (popups, options pages, extension pages like the block page). The
+    // callback errors silently if no listener is attached — we don't care.
+    await chrome.runtime.sendMessage(message);
+  } catch (err) {
+    // "Receiving end does not exist" is the normal case when no block page
+    // is open; not worth surfacing as an error.
+    log.debug('no runtime listeners for allowlist-amended (expected if no block page open)', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Block-page → background bridge (UnblockRequest)
+// ---------------------------------------------------------------------------
+
+chrome.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
+  const message = raw as ExtensionRuntimeMessage;
+  if (message?.kind !== 'unblock-request') return undefined;
+
+  void handleUnblockRequestFromPage(message.sessionId, message.payload)
+    .then(() => sendResponse({ ok: true }))
+    .catch((err) => {
+      log.error('unblock-request relay failed', err);
+      sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    });
+  // Returning true keeps the message channel open for the async response.
+  return true;
+});
+
+async function handleUnblockRequestFromPage(
+  sessionId: string,
+  payload: UnblockRequestPayload,
+): Promise<void> {
+  if (!hubClient) {
+    // Block page can only render when we'd previously cached an active
+    // session, so the hub should already be up. If it isn't, surface that
+    // — the block page will show a "couldn't reach teacher" message.
+    throw new Error('Hub not initialised');
+  }
+  const current = await getActiveSession();
+  if (current?.sessionId !== sessionId) {
+    throw new Error('Active session has changed; reload the page.');
+  }
+  await hubClient.reportUnblockRequest(sessionId, payload);
+  log.info('forwarded UnblockRequest', { sessionId, host: payload.host });
 }
 
 // ---------------------------------------------------------------------------

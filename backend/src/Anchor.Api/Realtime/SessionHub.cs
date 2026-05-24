@@ -35,6 +35,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     private readonly TimeProvider _clock;
     private readonly IHostEnvironment _env;
     private readonly HeartbeatTracker _heartbeats;
+    private readonly ISessionBroadcaster _broadcaster;
     private readonly ILogger<SessionHub> _log;
 
     public SessionHub(
@@ -43,6 +44,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         TimeProvider clock,
         IHostEnvironment env,
         HeartbeatTracker heartbeats,
+        ISessionBroadcaster broadcaster,
         ILogger<SessionHub> log)
     {
         _db = db;
@@ -50,6 +52,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         _clock = clock;
         _env = env;
         _heartbeats = heartbeats;
+        _broadcaster = broadcaster;
         _log = log;
     }
 
@@ -222,17 +225,75 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (!Enum.TryParse<EventKind>(request.Kind, ignoreCase: true, out var kind))
             throw new HubException($"Unknown event kind '{request.Kind}'.");
 
+        var payloadJson = string.IsNullOrWhiteSpace(request.PayloadJson) ? "{}" : request.PayloadJson!;
+        var occurredAt = request.OccurredAt ?? _clock.GetUtcNow();
+
         var @event = new Event
         {
             SessionId = request.SessionId,
             UserId = user.Id,
             Kind = kind,
-            PayloadJson = string.IsNullOrWhiteSpace(request.PayloadJson) ? "{}" : request.PayloadJson!,
-            OccurredAt = request.OccurredAt ?? _clock.GetUtcNow(),
+            PayloadJson = payloadJson,
+            OccurredAt = occurredAt,
         };
         _db.Events.Add(@event);
         await _db.SaveChangesAsync(ct);
+
+        // UnblockRequest is the one event kind that triggers a live teacher-
+        // facing push (#73). The Event row above is the authoritative source —
+        // the broadcast is best-effort and skipped if the payload doesn't
+        // parse to a usable host; the dashboard's GET endpoint will still
+        // surface it on a reload.
+        if (kind == EventKind.UnblockRequest)
+        {
+            var parsed = TryParseUnblockRequestPayload(payloadJson);
+            if (parsed is not null)
+            {
+                await _broadcaster.UnblockRequestedAsync(
+                    new UnblockRequestedPayload(
+                        request.SessionId,
+                        user.Id,
+                        user.DisplayName,
+                        parsed.Host,
+                        parsed.Url,
+                        occurredAt),
+                    ct);
+            }
+            else
+            {
+                _log.LogWarning(
+                    "UnblockRequest from {UserId} on session {SessionId} had unparseable payload — broadcast skipped.",
+                    user.Id, request.SessionId);
+            }
+        }
     }
+
+    private static UnblockRequestPayloadShape? TryParseUnblockRequestPayload(string payloadJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+
+            var url = root.TryGetProperty("url", out var u) && u.ValueKind == System.Text.Json.JsonValueKind.String
+                ? u.GetString() ?? string.Empty
+                : string.Empty;
+            var host = root.TryGetProperty("host", out var h) && h.ValueKind == System.Text.Json.JsonValueKind.String
+                ? h.GetString() ?? string.Empty
+                : string.Empty;
+
+            host = host.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(host)) return null;
+            return new UnblockRequestPayloadShape(url, host);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record UnblockRequestPayloadShape(string Url, string Host);
 
     private async Task<User> ResolveCurrentUserAsync(CancellationToken ct)
     {

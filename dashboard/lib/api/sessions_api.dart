@@ -139,9 +139,71 @@ class SessionsApi {
     _ensureOk(res);
   }
 
+  Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async {
+    final res = await _client.get('sessions/$sessionId/unblock-requests');
+    _ensureOk(res);
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list
+        .map((e) => UnblockRequestSummary.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<void> approveUnblock(String sessionId, String userId, String host) async {
+    final res = await _client.post(
+      'sessions/$sessionId/unblock',
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'userId': userId, 'host': host}),
+    );
+    _ensureOk(res);
+  }
+
   void _ensureOk(http.Response res) {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw ApiException(res.statusCode, res.body);
     }
   }
+}
+
+class UnblockRequestRequester {
+  UnblockRequestRequester({
+    required this.userId,
+    required this.displayName,
+    required this.requestedAt,
+  });
+  final String userId;
+  final String displayName;
+  final DateTime requestedAt;
+
+  factory UnblockRequestRequester.fromJson(Map<String, dynamic> json) =>
+      UnblockRequestRequester(
+        userId: json['userId'] as String,
+        displayName: json['displayName'] as String,
+        requestedAt: DateTime.parse(json['requestedAt'] as String),
+      );
+}
+
+class UnblockRequestSummary {
+  UnblockRequestSummary({
+    required this.host,
+    required this.count,
+    required this.firstRequestedAt,
+    required this.latestRequestedAt,
+    required this.requesters,
+  });
+  final String host;
+  final int count;
+  final DateTime firstRequestedAt;
+  final DateTime latestRequestedAt;
+  final List<UnblockRequestRequester> requesters;
+
+  factory UnblockRequestSummary.fromJson(Map<String, dynamic> json) =>
+      UnblockRequestSummary(
+        host: json['host'] as String,
+        count: json['count'] as int,
+        firstRequestedAt: DateTime.parse(json['firstRequestedAt'] as String),
+        latestRequestedAt: DateTime.parse(json['latestRequestedAt'] as String),
+        requesters: (json['requesters'] as List<dynamic>)
+            .map((e) => UnblockRequestRequester.fromJson(e as Map<String, dynamic>))
+            .toList(growable: false),
+      );
 }

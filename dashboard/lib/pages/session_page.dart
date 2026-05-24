@@ -35,6 +35,9 @@ class _SessionPageState extends State<SessionPage> {
   bool _ended = false;
   String? _error;
   SessionDetail? _detail;
+  List<UnblockRequestSummary> _pendingRequests = const [];
+  final Set<String> _approving = {};
+  String? _unblockError;
 
   @override
   void initState() {
@@ -44,6 +47,7 @@ class _SessionPageState extends State<SessionPage> {
       tokenProvider: () async => widget.tokens.token,
     );
     _loadDetail();
+    _loadPendingRequests();
     _connect();
   }
 
@@ -55,6 +59,44 @@ class _SessionPageState extends State<SessionPage> {
     } catch (_) {
       // Non-fatal: the live event stream still works without the detail block.
       // The join-code panel just won't render.
+    }
+  }
+
+  Future<void> _loadPendingRequests() async {
+    try {
+      final list = await widget.sessions.unblockRequests(widget.sessionId);
+      if (!mounted) return;
+      setState(() => _pendingRequests = list);
+    } catch (_) {
+      // Non-fatal: the panel just stays empty on initial load. Subsequent
+      // UnblockRequested pushes will still populate it.
+    }
+  }
+
+  Future<void> _approveHost(UnblockRequestSummary summary) async {
+    setState(() {
+      _approving.add(summary.host);
+      _unblockError = null;
+    });
+    try {
+      // One POST per pending student. Run sequentially: the volume is small
+      // (a class is rarely > 30 kids) and serial avoids tripping any
+      // backend rate limit we might add later.
+      for (final requester in summary.requesters) {
+        await widget.sessions.approveUnblock(
+          widget.sessionId,
+          requester.userId,
+          summary.host,
+        );
+      }
+      // Refresh from the source of truth so a request that arrived between
+      // initial load and approval doesn't get accidentally hidden.
+      await _loadPendingRequests();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _unblockError = 'Approve failed: $e');
+    } finally {
+      if (mounted) setState(() => _approving.remove(summary.host));
     }
   }
 
@@ -79,6 +121,14 @@ class _SessionPageState extends State<SessionPage> {
             _ended = true;
           }
         });
+        // UnblockRequested = a student just clicked Request access. Re-fetch
+        // the pending list rather than maintain a separate in-memory tracker:
+        // the GET endpoint already de-dupes per (student, host) and filters
+        // out already-granted entries, so this is the cheapest way to stay
+        // consistent with the source of truth.
+        if (evt.kind == 'UnblockRequested') {
+          _loadPendingRequests();
+        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -159,6 +209,13 @@ class _SessionPageState extends State<SessionPage> {
               padding: const EdgeInsets.all(12),
               child: const Text('Session ended — event stream stopped.'),
             ),
+          if (!_ended && _pendingRequests.isNotEmpty)
+            _PendingRequestsPanel(
+              requests: _pendingRequests,
+              approving: _approving,
+              error: _unblockError,
+              onApprove: _approveHost,
+            ),
           Expanded(
             child: _events.isEmpty
                 ? const Center(child: Text('Waiting for events…'))
@@ -183,6 +240,117 @@ class _SessionPageState extends State<SessionPage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _PendingRequestsPanel extends StatelessWidget {
+  const _PendingRequestsPanel({
+    required this.requests,
+    required this.approving,
+    required this.error,
+    required this.onApprove,
+  });
+
+  final List<UnblockRequestSummary> requests;
+  final Set<String> approving;
+  final String? error;
+  final void Function(UnblockRequestSummary) onApprove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.pending_actions,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Pending requests',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          if (error != null) ...[
+            const SizedBox(height: 6),
+            Text(error!, style: TextStyle(color: theme.colorScheme.error)),
+          ],
+          const SizedBox(height: 8),
+          for (final r in requests)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _PendingRequestRow(
+                summary: r,
+                isApproving: approving.contains(r.host),
+                onApprove: () => onApprove(r),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingRequestRow extends StatelessWidget {
+  const _PendingRequestRow({
+    required this.summary,
+    required this.isApproving,
+    required this.onApprove,
+  });
+
+  final UnblockRequestSummary summary;
+  final bool isApproving;
+  final VoidCallback onApprove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final names = summary.requesters.map((r) => r.displayName).join(', ');
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                summary.host,
+                style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+              ),
+              Text(
+                summary.count == 1
+                    ? '1 student — $names'
+                    : '${summary.count} students — $names',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        FilledButton.tonalIcon(
+          onPressed: isApproving ? null : onApprove,
+          icon: isApproving
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.check),
+          label: const Text('Approve'),
+        ),
+      ],
     );
   }
 }

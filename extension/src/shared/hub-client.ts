@@ -11,7 +11,12 @@
 import * as signalR from '@microsoft/signalr';
 import { logger } from './logger';
 import type { ExtensionSettings } from './settings';
-import type { BlockedUrlPayload, SessionStartedPayload } from './types';
+import type {
+  AllowlistAmendedPayload,
+  BlockedUrlPayload,
+  SessionStartedPayload,
+  UnblockRequestPayload,
+} from './types';
 
 const log = logger('hub-client');
 
@@ -20,6 +25,7 @@ const HUB_PATH = '/hubs/session';
 export interface HubCallbacks {
   onSessionStarted: (payload: SessionStartedPayload) => void | Promise<void>;
   onSessionEnded: (sessionId: string) => void | Promise<void>;
+  onAllowlistAmended: (payload: AllowlistAmendedPayload) => void | Promise<void>;
 }
 
 export class HubClient {
@@ -66,6 +72,14 @@ export class HubClient {
       await callbacks.onSessionEnded(sessionId);
     });
 
+    this.connection.on('AllowlistAmended', async (payload: AllowlistAmendedPayload) => {
+      log.info('AllowlistAmended received', {
+        sessionId: payload.sessionId,
+        addedCount: payload.addedDomains?.length ?? 0,
+      });
+      await callbacks.onAllowlistAmended(payload);
+    });
+
     this.connection.onreconnecting((err) => log.warn('reconnecting', err));
     this.connection.onreconnected((id) => log.info('reconnected', { connectionId: id }));
     this.connection.onclose((err) => log.warn('connection closed', err));
@@ -102,6 +116,24 @@ export class HubClient {
     } catch (err) {
       log.error('ReportEvent(BlockedUrl) failed', err);
     }
+  }
+
+  /**
+   * Posts an UnblockRequest event to the backend (#73). Surfaces failures to
+   * the caller so the block page can fall back to a "couldn't reach teacher"
+   * UI state — unlike BlockedUrl, the student is actively waiting on this
+   * call and silent drops would look like the request vanished.
+   */
+  async reportUnblockRequest(sessionId: string, payload: UnblockRequestPayload): Promise<void> {
+    if (this.connection.state !== signalR.HubConnectionState.Connected) {
+      throw new Error(`Hub not connected (state: ${this.connection.state})`);
+    }
+    await this.connection.invoke('ReportEvent', {
+      sessionId,
+      kind: 'UnblockRequest',
+      payloadJson: JSON.stringify(payload),
+      occurredAt: new Date().toISOString(),
+    });
   }
 
   private buildHubUrl(): string {

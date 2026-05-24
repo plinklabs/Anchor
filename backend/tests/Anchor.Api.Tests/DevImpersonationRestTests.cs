@@ -308,6 +308,12 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
 
             public Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default)
                 => Task.CompletedTask;
+
+            public Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
+
+            public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
         }
 
         public sealed record SessionStartedCall(SessionStartedPayload Payload, IReadOnlyList<Guid> RecipientUserIds);

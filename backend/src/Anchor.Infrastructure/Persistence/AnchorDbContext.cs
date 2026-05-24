@@ -21,6 +21,7 @@ public sealed class AnchorDbContext : DbContext
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<SessionBundle> SessionBundles => Set<SessionBundle>();
     public DbSet<SessionParticipant> SessionParticipants => Set<SessionParticipant>();
+    public DbSet<SessionUnblockGrant> SessionUnblockGrants => Set<SessionUnblockGrant>();
     public DbSet<Event> Events => Set<Event>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

@@ -415,6 +415,183 @@ public sealed class SessionsController : ControllerBase
         return Ok(new JoinByCodeResponse(session.Id));
     }
 
+    // ------- Unblock requests + grants (#73) -------
+
+    [HttpGet("{id:guid}/unblock-requests")]
+    [Authorize(Policy = AuthorizationPolicies.Teacher)]
+    [ProducesResponseType(typeof(IReadOnlyList<UnblockRequestSummary>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<UnblockRequestSummary>>> UnblockRequests(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var session = await _db.Sessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (session is null)
+            return NotFound();
+        if (session.TeacherId != caller.Id)
+            return Forbid();
+
+        // Pull raw UnblockRequest events; group + filter happens in-memory
+        // (SQLite + EF Core JSON access is dialect-fragile, and the volume per
+        // session is small — tens of rows is the realistic upper bound).
+        var eventRows = await _db.Events.AsNoTracking()
+            .Where(e => e.SessionId == id && e.Kind == EventKind.UnblockRequest)
+            .Select(e => new { e.UserId, e.PayloadJson, e.OccurredAt, e.User!.DisplayName })
+            .ToListAsync(cancellationToken);
+
+        var grants = await _db.SessionUnblockGrants.AsNoTracking()
+            .Where(g => g.SessionId == id)
+            .Select(g => new { g.UserId, g.Host })
+            .ToListAsync(cancellationToken);
+        var granted = grants
+            .Select(g => (g.UserId, Host: g.Host.ToLowerInvariant()))
+            .ToHashSet();
+
+        var byHost = new Dictionary<string, List<UnblockRequestRequester>>(StringComparer.Ordinal);
+        var hostFirstSeen = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        var hostLatest = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+        var seenUserHost = new HashSet<(Guid, string)>();
+
+        foreach (var row in eventRows.OrderBy(r => r.OccurredAt))
+        {
+            var host = ExtractHostFromPayload(row.PayloadJson);
+            if (host is null) continue;
+            if (granted.Contains((row.UserId, host))) continue;
+            // Collapse repeat clicks from the same student on the same host —
+            // a student spamming the button shouldn't inflate the per-host
+            // count beyond one.
+            if (!seenUserHost.Add((row.UserId, host))) continue;
+
+            if (!byHost.TryGetValue(host, out var requesters))
+            {
+                requesters = new List<UnblockRequestRequester>();
+                byHost[host] = requesters;
+                hostFirstSeen[host] = row.OccurredAt;
+            }
+            requesters.Add(new UnblockRequestRequester(row.UserId, row.DisplayName, row.OccurredAt));
+            hostLatest[host] = row.OccurredAt;
+        }
+
+        var summaries = byHost
+            .Select(kv => new UnblockRequestSummary(
+                kv.Key,
+                kv.Value.Count,
+                hostFirstSeen[kv.Key],
+                hostLatest[kv.Key],
+                kv.Value))
+            .OrderByDescending(s => s.LatestRequestedAt)
+            .ToList();
+
+        return Ok(summaries);
+    }
+
+    [HttpPost("{id:guid}/unblock")]
+    [Authorize(Policy = AuthorizationPolicies.Teacher)]
+    [ProducesResponseType(typeof(UnblockGrantResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<UnblockGrantResponse>> Unblock(
+        Guid id,
+        [FromBody] UnblockGrantRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var host = NormaliseHost(request.Host);
+        if (host is null)
+            return ValidationProblem("Host is required and must be a valid hostname.");
+
+        var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (session is null)
+            return NotFound();
+        if (session.TeacherId != caller.Id)
+            return Forbid();
+        if (session.EndedAt is not null)
+            return ValidationProblem("Session has ended.");
+
+        var isParticipant = await _db.SessionParticipants.AsNoTracking().AnyAsync(
+            p => p.SessionId == id && p.UserId == request.UserId, cancellationToken);
+        if (!isParticipant)
+            return ValidationProblem("Target user is not a participant of this session.");
+
+        var now = _clock.GetUtcNow();
+        var existing = await _db.SessionUnblockGrants.FirstOrDefaultAsync(
+            g => g.SessionId == id && g.UserId == request.UserId && g.Host == host,
+            cancellationToken);
+
+        if (existing is null)
+        {
+            _db.SessionUnblockGrants.Add(new SessionUnblockGrant
+            {
+                SessionId = id,
+                UserId = request.UserId,
+                Host = host,
+                GrantedAt = now,
+            });
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
+        // Suffix match so reddit.com also covers www.reddit.com — students
+        // typically request the bare host and expect the navigation chain to
+        // work. Mirrors the matcher rules (#72).
+        var addedDomain = new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host);
+        await _broadcaster.AllowlistAmendedAsync(
+            new AllowlistAmendedPayload(id, request.UserId, new[] { addedDomain }),
+            cancellationToken);
+
+        return Ok(new UnblockGrantResponse(id, request.UserId, host, existing?.GrantedAt ?? now));
+    }
+
+    private static string? NormaliseHost(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var trimmed = raw.Trim().ToLowerInvariant();
+        // Reject anything that obviously isn't a hostname: spaces, schemes,
+        // paths, ports. We accept a-z, 0-9, '-', '.'.
+        foreach (var ch in trimmed)
+        {
+            var ok = (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '.';
+            if (!ok) return null;
+        }
+        if (trimmed.Length > 253) return null;
+        return trimmed;
+    }
+
+    private static string? ExtractHostFromPayload(string payloadJson)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            if (!root.TryGetProperty("host", out var h) || h.ValueKind != System.Text.Json.JsonValueKind.String)
+                return null;
+            var host = h.GetString()?.Trim().ToLowerInvariant();
+            return string.IsNullOrEmpty(host) ? null : host;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
     private static ObjectResult JoinByCodeError(int statusCode, string message) =>
         new(new JoinByCodeErrorResponse(message)) { StatusCode = statusCode };
 
@@ -482,3 +659,16 @@ public sealed record JoinByCodeRequest(string Code);
 public sealed record JoinByCodeResponse(Guid SessionId);
 
 public sealed record JoinByCodeErrorResponse(string Message);
+
+public sealed record UnblockGrantRequest(Guid UserId, string Host);
+
+public sealed record UnblockGrantResponse(Guid SessionId, Guid UserId, string Host, DateTimeOffset GrantedAt);
+
+public sealed record UnblockRequestSummary(
+    string Host,
+    int Count,
+    DateTimeOffset FirstRequestedAt,
+    DateTimeOffset LatestRequestedAt,
+    IReadOnlyList<UnblockRequestRequester> Requesters);
+
+public sealed record UnblockRequestRequester(Guid UserId, string DisplayName, DateTimeOffset RequestedAt);

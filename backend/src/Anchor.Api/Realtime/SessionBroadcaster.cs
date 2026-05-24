@@ -12,6 +12,8 @@ public interface ISessionBroadcaster
     Task BundleUpdatedAsync(BundleUpdatedPayload payload, CancellationToken cancellationToken = default);
     Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default);
     Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default);
+    Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default);
+    Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default);
 }
 
 internal sealed class SessionBroadcaster : ISessionBroadcaster
@@ -56,4 +58,16 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
 
     public Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default)
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).AgentReconnected(payload);
+
+    public Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default)
+        // Granted student only — every other extension/agent on the same
+        // session must stay on the un-amended allowlist.
+        => _hub.Clients.Group(SessionHub.UserGroupName(payload.UserId)).AllowlistAmended(payload);
+
+    public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
+        // Session group: the owning teacher is the only "interested" party,
+        // but they may not yet have joined the hub (dashboard re-opened mid-
+        // session). Pushing to the session group lets any active connection
+        // pick this up; the dashboard filters/groups by host.
+        => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnblockRequested(payload);
 }

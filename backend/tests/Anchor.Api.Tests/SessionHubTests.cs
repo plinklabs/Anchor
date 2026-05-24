@@ -288,6 +288,65 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task ReportEvent_unblock_request_broadcasts_typed_payload_to_session_group()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        var payload = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            url = "https://reddit.com/r/aww",
+            host = "REDDIT.com",
+            reason = "research",
+        });
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.UnblockRequest), payload, OccurredAt: null));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var call = Assert.Single(broadcaster.UnblockRequestedCalls,
+            c => c.SessionId == session.Id && c.UserId == student.Id);
+        // Host normalised to lowercase server-side so the dashboard can group
+        // case-insensitive without per-row work.
+        Assert.Equal("reddit.com", call.Host);
+        Assert.Equal("https://reddit.com/r/aww", call.Url);
+        Assert.Equal("Test Student", call.UserDisplayName);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var @event = await db.Events.AsNoTracking()
+            .SingleAsync(e => e.SessionId == session.Id && e.UserId == student.Id);
+        Assert.Equal(EventKind.UnblockRequest, @event.Kind);
+    }
+
+    [Fact]
+    public async Task ReportEvent_unblock_request_with_unparseable_payload_persists_event_but_skips_broadcast()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        // Payload object but without a host field — broadcast must be skipped.
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.UnblockRequest), "{\"url\":\"https://x\"}", OccurredAt: null));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        Assert.DoesNotContain(broadcaster.UnblockRequestedCalls,
+            c => c.SessionId == session.Id && c.UserId == student.Id);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        Assert.True(await db.Events.AnyAsync(
+            e => e.SessionId == session.Id && e.UserId == student.Id && e.Kind == EventKind.UnblockRequest));
+    }
+
+    [Fact]
     public async Task SessionStarted_REST_call_reaches_roster_members_only()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);

@@ -87,6 +87,16 @@
       button.primary { background: var(--accent); color: white; border-color: var(--accent); }
       button.primary:hover { filter: brightness(1.05); }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .status {
+        margin-top: 1rem;
+        font-size: 0.9rem;
+        min-height: 1.4em;
+        color: var(--muted);
+      }
+      .status.error { color: #b91c1c; }
+      @media (prefers-color-scheme: dark) {
+        .status.error { color: #f87171; }
+      }
       .footnote {
         margin-top: 1.5rem;
         font-size: 0.85rem;
@@ -103,8 +113,9 @@
       <p class="muted">If you think this site should be allowed for this session, ask your teacher — they can add it from the dashboard.</p>
       <div class="actions">
         <button class="primary" type="button" data-action="back">Go back</button>
-        <button type="button" data-action="request" disabled title="Coming soon">Request access</button>
+        <button type="button" data-action="request">Request access</button>
       </div>
+      <output class="status" data-status aria-live="polite"></output>
       <p class="footnote">Anchor focus enforcement</p>
     </main>
     <script src="block-page.js"></script>

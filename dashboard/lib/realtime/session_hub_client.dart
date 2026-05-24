@@ -69,6 +69,16 @@ class SessionHubClient {
       );
     });
 
+    connection.on('UnblockRequested', (args) {
+      final payload =
+          args != null && args.isNotEmpty && args.first is Map
+              ? Map<String, dynamic>.from(args.first as Map)
+              : <String, dynamic>{};
+      _events.add(
+        SessionEvent(kind: 'UnblockRequested', payload: payload, at: DateTime.now()),
+      );
+    });
+
     await connection.start();
     _connection = connection;
   }

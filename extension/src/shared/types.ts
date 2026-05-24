@@ -54,3 +54,42 @@ export interface BlockedUrlPayload {
   tabId: number;
   occurredAt: string;
 }
+
+/**
+ * Payload the extension sends to the backend when a student clicks
+ * "Request access" on the block page. Maps to EventKind.UnblockRequest on
+ * the backend; the wire shape is documented in issue #73.
+ */
+export interface UnblockRequestPayload {
+  url: string;
+  host: string;
+  reason?: string;
+}
+
+/**
+ * Delta-shaped allowlist amendment pushed by the backend when a teacher
+ * approves a pending unblock request. Mirrors AllowlistAmendedPayload on
+ * the backend; pushed only to the granted student's user group (#73).
+ */
+export interface AllowlistAmendedPayload {
+  sessionId: string;
+  userId: string;
+  addedDomains: ReadonlyArray<AllowedDomainDto>;
+}
+
+/**
+ * Wire format for chrome.runtime messages exchanged between the background
+ * service worker and the block page. Kept in one discriminated union so a
+ * recipient can switch on `kind` without speculating about the shape.
+ */
+export type ExtensionRuntimeMessage =
+  | {
+      kind: 'unblock-request';
+      sessionId: string;
+      payload: UnblockRequestPayload;
+    }
+  | {
+      kind: 'allowlist-amended';
+      sessionId: string;
+      addedHosts: ReadonlyArray<string>;
+    };

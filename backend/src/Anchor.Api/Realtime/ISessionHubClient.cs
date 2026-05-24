@@ -7,4 +7,6 @@ public interface ISessionHubClient
     Task BundleUpdated(BundleUpdatedPayload payload);
     Task HeartbeatLost(HeartbeatLostPayload payload);
     Task AgentReconnected(AgentReconnectedPayload payload);
+    Task AllowlistAmended(AllowlistAmendedPayload payload);
+    Task UnblockRequested(UnblockRequestedPayload payload);
 }

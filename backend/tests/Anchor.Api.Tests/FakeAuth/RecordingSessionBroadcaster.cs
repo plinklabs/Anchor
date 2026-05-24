@@ -22,6 +22,8 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     public ConcurrentBag<BundleUpdatedPayload> BundleUpdatedCalls { get; } = new();
     public ConcurrentBag<HeartbeatLostPayload> HeartbeatLostCalls { get; } = new();
     public ConcurrentBag<AgentReconnectedPayload> AgentReconnectedCalls { get; } = new();
+    public ConcurrentBag<AllowlistAmendedPayload> AllowlistAmendedCalls { get; } = new();
+    public ConcurrentBag<UnblockRequestedPayload> UnblockRequestedCalls { get; } = new();
 
     public Task SessionStartedAsync(
         SessionStartedPayload payload,
@@ -61,6 +63,18 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     {
         AgentReconnectedCalls.Add(payload);
         return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).AgentReconnected(payload);
+    }
+
+    public Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default)
+    {
+        AllowlistAmendedCalls.Add(payload);
+        return _hub.Clients.Group(SessionHub.UserGroupName(payload.UserId)).AllowlistAmended(payload);
+    }
+
+    public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
+    {
+        UnblockRequestedCalls.Add(payload);
+        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnblockRequested(payload);
     }
 }
 
