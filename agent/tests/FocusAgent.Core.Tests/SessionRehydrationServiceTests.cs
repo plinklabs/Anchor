@@ -188,7 +188,7 @@ public class SessionRehydrationServiceTests
         public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
         public Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default) => Task.CompletedTask;
         public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) => Task.CompletedTask;
-        public Task HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

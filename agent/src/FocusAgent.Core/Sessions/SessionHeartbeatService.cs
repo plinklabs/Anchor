@@ -122,8 +122,8 @@ public sealed class SessionHeartbeatService : IAsyncDisposable
 
         try
         {
-            await _hub.HeartbeatAsync(sessionId).ConfigureAwait(false);
-            Pinged?.Invoke(this, _clock.GetUtcNow());
+            if (await _hub.HeartbeatAsync(sessionId).ConfigureAwait(false))
+                Pinged?.Invoke(this, _clock.GetUtcNow());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

@@ -128,11 +128,12 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
             new ReportEventRequest(sessionId, kind, payloadJson, occurredAt),
             ct);
 
-    public Task HeartbeatAsync(Guid sessionId, CancellationToken ct = default)
+    public async Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default)
     {
         if (_connection.State != HubConnectionState.Connected)
-            return Task.CompletedTask;
-        return _connection.InvokeAsync("Heartbeat", sessionId, ct);
+            return false;
+        await _connection.InvokeAsync("Heartbeat", sessionId, ct).ConfigureAwait(false);
+        return true;
     }
 
     private void SetState(AgentConnectionState next)

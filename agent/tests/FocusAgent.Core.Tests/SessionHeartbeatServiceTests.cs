@@ -151,6 +151,35 @@ public class SessionHeartbeatServiceTests
     }
 
     [Fact]
+    public async Task Pinged_event_does_not_fire_when_hub_returns_false()
+    {
+        // Regression for #58: when the hub short-circuits (e.g. transport not
+        // Connected) it returns false. The service must treat that as "ping
+        // did not happen" and skip Pinged, so the UI staleness indicator can
+        // turn red instead of showing a phantom-fresh ack.
+        var hub = new RecordingHub { ReturnFalseOnHeartbeat = true };
+        var ui = new ConfirmingUi();
+        var coordinator = NewCoordinator(hub, ui);
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var heartbeat = new SessionHeartbeatService(
+            coordinator,
+            hub,
+            Options.Create(new SessionSettings { HeartbeatIntervalSeconds = 10 }),
+            clock);
+
+        var pingedCount = 0;
+        heartbeat.Pinged += (_, _) => Interlocked.Increment(ref pingedCount);
+
+        await coordinator.HandleSessionStartedAsync(Payload(Guid.NewGuid()));
+        await AdvanceAndDrainAsync(clock, TimeSpan.FromSeconds(10));
+        await AdvanceAndDrainAsync(clock, TimeSpan.FromSeconds(10));
+
+        Assert.True(hub.HeartbeatCalls.Count >= 2,
+            $"expected the pump to keep calling the hub, got {hub.HeartbeatCalls.Count}");
+        Assert.Equal(0, pingedCount);
+    }
+
+    [Fact]
     public async Task Hub_exception_does_not_break_the_pump()
     {
         var hub = new RecordingHub { ThrowOnHeartbeat = true };
@@ -205,6 +234,7 @@ public class SessionHeartbeatServiceTests
 
         public List<Guid> HeartbeatCalls { get; } = new();
         public bool ThrowOnHeartbeat { get; set; }
+        public bool ReturnFalseOnHeartbeat { get; set; }
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
@@ -212,11 +242,11 @@ public class SessionHeartbeatServiceTests
         public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
         public Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default) => Task.CompletedTask;
         public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) => Task.CompletedTask;
-        public Task HeartbeatAsync(Guid sessionId, CancellationToken ct = default)
+        public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default)
         {
             lock (HeartbeatCalls) HeartbeatCalls.Add(sessionId);
             if (ThrowOnHeartbeat) throw new InvalidOperationException("simulated transport failure");
-            return Task.CompletedTask;
+            return Task.FromResult(!ReturnFalseOnHeartbeat);
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
