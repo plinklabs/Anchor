@@ -16,6 +16,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -79,7 +80,12 @@ public partial class App : Application
             _focus = _host.Services.GetRequiredService<FocusSessionController>();
             _connection = _host.Services.GetRequiredService<ConnectionManager>();
 
-            _mainWindow = new MainWindow(_connection, onQuit: Exit);
+            _mainWindow = new MainWindow(
+                _connection,
+                _coordinator,
+                _heartbeat,
+                _host.Services.GetRequiredService<IOptions<SessionSettings>>(),
+                onQuit: Exit);
             _tray = new TrayIconHost(
                 onOpen: () => ShowMainWindow(),
                 onQuit: () => Exit(),

@@ -47,6 +47,16 @@ public sealed class SessionHeartbeatService : IAsyncDisposable
         get { lock (_gate) return _sessionId; }
     }
 
+    /// <summary>
+    /// Fires after each <em>successful</em> Heartbeat hub invocation, carrying
+    /// the timestamp the ping was acknowledged. UI surfaces (e.g. MainWindow's
+    /// session panel — #53) subscribe to this to render a freshness indicator
+    /// that goes stale when no event arrives for &gt; 2 × interval. Failed
+    /// pings deliberately do NOT fire, so a broken transport surfaces as
+    /// staleness rather than a misleadingly-fresh dot.
+    /// </summary>
+    public event EventHandler<DateTimeOffset>? Pinged;
+
     private void OnSessionJoined(object? sender, FocusAgent.Core.Dtos.SessionStartedPayload payload)
     {
         StartFor(payload.SessionId);
@@ -113,6 +123,7 @@ public sealed class SessionHeartbeatService : IAsyncDisposable
         try
         {
             await _hub.HeartbeatAsync(sessionId).ConfigureAwait(false);
+            Pinged?.Invoke(this, _clock.GetUtcNow());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

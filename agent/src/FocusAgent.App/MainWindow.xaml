@@ -22,6 +22,25 @@
                        Opacity="0.7"
                        TextWrapping="Wrap"
                        Text="" />
+
+            <StackPanel x:Name="SessionPanel"
+                        Orientation="Vertical"
+                        Spacing="6"
+                        Visibility="Collapsed">
+                <TextBlock x:Name="SessionStatusText"
+                           FontSize="16"
+                           Text="" />
+                <StackPanel Orientation="Horizontal"
+                            Spacing="8"
+                            VerticalAlignment="Center">
+                    <Ellipse x:Name="HeartbeatDot"
+                             Width="10"
+                             Height="10" />
+                    <TextBlock x:Name="HeartbeatText"
+                               Opacity="0.7"
+                               Text="" />
+                </StackPanel>
+            </StackPanel>
         </StackPanel>
 
         <StackPanel Grid.Row="1"

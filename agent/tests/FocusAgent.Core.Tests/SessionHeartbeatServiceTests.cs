@@ -101,6 +101,56 @@ public class SessionHeartbeatServiceTests
     }
 
     [Fact]
+    public async Task Pinged_event_fires_after_each_successful_heartbeat()
+    {
+        var hub = new RecordingHub();
+        var ui = new ConfirmingUi();
+        var coordinator = NewCoordinator(hub, ui);
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var heartbeat = new SessionHeartbeatService(
+            coordinator,
+            hub,
+            Options.Create(new SessionSettings { HeartbeatIntervalSeconds = 10 }),
+            clock);
+
+        var pinged = new List<DateTimeOffset>();
+        heartbeat.Pinged += (_, at) => { lock (pinged) pinged.Add(at); };
+
+        await coordinator.HandleSessionStartedAsync(Payload(Guid.NewGuid()));
+
+        await AdvanceAndDrainAsync(clock, TimeSpan.FromSeconds(10));
+        await AdvanceAndDrainAsync(clock, TimeSpan.FromSeconds(10));
+
+        Assert.True(pinged.Count >= 2,
+            $"expected >= 2 Pinged events after 20s, got {pinged.Count}");
+        // Timestamps reflect the fake clock, not wall time.
+        Assert.All(pinged, t => Assert.True(t > DateTimeOffset.UnixEpoch));
+    }
+
+    [Fact]
+    public async Task Pinged_event_does_not_fire_when_hub_throws()
+    {
+        var hub = new RecordingHub { ThrowOnHeartbeat = true };
+        var ui = new ConfirmingUi();
+        var coordinator = NewCoordinator(hub, ui);
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var heartbeat = new SessionHeartbeatService(
+            coordinator,
+            hub,
+            Options.Create(new SessionSettings { HeartbeatIntervalSeconds = 10 }),
+            clock);
+
+        var pingedCount = 0;
+        heartbeat.Pinged += (_, _) => Interlocked.Increment(ref pingedCount);
+
+        await coordinator.HandleSessionStartedAsync(Payload(Guid.NewGuid()));
+        await AdvanceAndDrainAsync(clock, TimeSpan.FromSeconds(10));
+        await AdvanceAndDrainAsync(clock, TimeSpan.FromSeconds(10));
+
+        Assert.Equal(0, pingedCount);
+    }
+
+    [Fact]
     public async Task Hub_exception_does_not_break_the_pump()
     {
         var hub = new RecordingHub { ThrowOnHeartbeat = true };
