@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusAgent.Core.Tests", "te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusAgent.Native.Tests", "tests\FocusAgent.Native.Tests\FocusAgent.Native.Tests.csproj", "{437D3B26-1AD8-4C9C-B1E9-A01800139632}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusAgent.Watchdog", "src\FocusAgent.Watchdog\FocusAgent.Watchdog.csproj", "{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -87,6 +89,18 @@ Global
 		{437D3B26-1AD8-4C9C-B1E9-A01800139632}.Release|x64.Build.0 = Release|Any CPU
 		{437D3B26-1AD8-4C9C-B1E9-A01800139632}.Release|x86.ActiveCfg = Release|Any CPU
 		{437D3B26-1AD8-4C9C-B1E9-A01800139632}.Release|x86.Build.0 = Release|Any CPU
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Debug|Any CPU.Build.0 = Debug|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Debug|x64.ActiveCfg = Debug|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Debug|x64.Build.0 = Debug|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Debug|x86.ActiveCfg = Debug|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Debug|x86.Build.0 = Debug|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Release|Any CPU.ActiveCfg = Release|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Release|Any CPU.Build.0 = Release|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Release|x64.ActiveCfg = Release|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Release|x64.Build.0 = Release|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Release|x86.ActiveCfg = Release|x64
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A}.Release|x86.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -97,5 +111,6 @@ Global
 		{BC6C8F43-1D06-47E0-8D95-2EDE5F033A51} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{F35D42AC-ED83-4B32-BDAE-D17688EF382E} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{437D3B26-1AD8-4C9C-B1E9-A01800139632} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{4BB2F3A0-937C-4C7F-99B2-B9156AF29C2A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

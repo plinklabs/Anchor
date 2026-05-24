@@ -77,4 +77,42 @@
     <Content Include="Assets\StoreLogo.png" />
   </ItemGroup>
 
+  <!-- #35: bundle FocusAgent.Watchdog into the MSIX under a Watchdog\
+       subfolder. The Watchdog is a separate executable (per-user supervisor
+       process) packaged in the same MSIX as a sibling Application entry in
+       Package.appxmanifest. Build it first, then glob its primary output
+       directory as Content so the WinAppSDK MSIX packager picks it up.
+       Path is hard-coded against the Watchdog's csproj target framework
+       (kept in sync there); the alternative (deriving from MSBuild output
+       items) triggers item-batching that adds the Content glob multiple
+       times and trips NETSDK1152. -->
+  <PropertyGroup Condition="'$(WindowsPackageType)' == 'MSIX'">
+    <_WatchdogOutputDir>$(MSBuildThisFileDirectory)..\FocusAgent.Watchdog\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.19041.0\</_WatchdogOutputDir>
+  </PropertyGroup>
+  <Target Name="_BuildWatchdogForMsix"
+          BeforeTargets="_CollectWatchdogContentForMsix"
+          Condition="'$(WindowsPackageType)' == 'MSIX'">
+    <MSBuild Projects="..\FocusAgent.Watchdog\FocusAgent.Watchdog.csproj"
+             Properties="Configuration=$(Configuration);Platform=$(Platform)"
+             Targets="Build" />
+  </Target>
+  <Target Name="_CollectWatchdogContentForMsix"
+          BeforeTargets="AssignTargetPaths"
+          Condition="'$(WindowsPackageType)' == 'MSIX'">
+    <!-- Stage into a private item type first so the %(RecursiveDir)/%(FileName)
+         references on <Link> below are qualified to THIS glob's items, not
+         batched across the project's other Content items (the manifest's
+         Assets\*.png). Without the qualifier, MSBuild assigns every Watchdog
+         output the Link path of one of the asset PNGs and the package ends
+         up with images named FocusAgent.Watchdog.exe and 0 real exes. -->
+    <ItemGroup>
+      <_WatchdogPackageFiles Include="$(_WatchdogOutputDir)**\*"
+                              Exclude="$(_WatchdogOutputDir)**\*.pdb;$(_WatchdogOutputDir)**\*.xml" />
+      <Content Include="@(_WatchdogPackageFiles)">
+        <Link>Watchdog\%(_WatchdogPackageFiles.RecursiveDir)%(_WatchdogPackageFiles.FileName)%(_WatchdogPackageFiles.Extension)</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+    </ItemGroup>
+  </Target>
+
 </Project>

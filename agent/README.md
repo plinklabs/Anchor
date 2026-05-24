@@ -14,7 +14,8 @@ agent/
 ├── src/
 │   ├── FocusAgent.App      — WinUI 3 desktop app, tray + hidden main window. Builds unpackaged for dev or MSIX for distribution.
 │   ├── FocusAgent.Core     — DTOs (mirroring backend SignalR payloads), settings, log paths
-│   └── FocusAgent.Native   — Win32 P/Invoke surface (foreground watcher, focus enforcer, app identifier)
+│   ├── FocusAgent.Native   — Win32 P/Invoke surface (foreground watcher, focus enforcer, app identifier)
+│   └── FocusAgent.Watchdog — per-user supervisor process; relaunches the App if it dies. Packaged in the same MSIX.
 └── tests/
     ├── FocusAgent.Core.Tests   — xUnit tests for Core
     └── FocusAgent.Native.Tests — xUnit tests for Native
@@ -144,6 +145,37 @@ running packaged (MSIX), `LocalApplicationData` resolves to
 `%LOCALAPPDATA%\Packages\net.attr-x.anchor.focusagent_<hash>\LocalCache\Local`
 — same code path, sandboxed location.
 
+## Watchdog (anti-tamper supervisor)
+
+Per [focus-system-design.md](../focus-system-design.md) §5.4, a per-user
+companion process restarts `FocusAgent.App` if it dies unexpectedly. The
+implementation (issue #35) is `FocusAgent.Watchdog`, a small .NET 10 console
+host packaged inside the same MSIX as a second `windows.startupTask` entry —
+no admin install, no real Windows Service.
+
+How it works:
+
+| Concern | Mechanism |
+| --- | --- |
+| Presence detection | The App holds a session-scoped named mutex (`Local\Anchor.FocusAgent.AppPresence`). The Watchdog probes it every 5s via `Mutex.TryOpenExisting`. |
+| Relaunch | When packaged, resolves the App via `Package.Current.InstalledLocation` and launches it with `Process.Start`. Dev can override the path with `--app-path`. |
+| Crash-loop guard | After 5 crashes inside a 60s window, pauses relaunching for 5 minutes. Logged. |
+| Clean shutdown | The App writes `%LOCALAPPDATA%\Anchor\FocusAgent\quit.flag` when the user clicks tray → Quit. While that file is present AND its mtime is within 10s, the Watchdog does not relaunch. The App deletes the flag on its next startup. After 10s the flag is stale, the gate clears, and the supervisor brings the App back — that's the deliberate "visible, not impossible" anti-tamper posture. |
+| Single instance | The Watchdog itself takes `Local\Anchor.FocusAgent.WatchdogPresence`; a second launch (e.g., manual + StartupTask) exits immediately. |
+| Logs | `%LOCALAPPDATA%\Anchor\FocusAgent\logs\watchdog-*.log` (daily rolling, 14-day retention). |
+
+Verify the supervisor logic end-to-end without a backend or MSIX install:
+
+```powershell
+.\scripts\dev\verify-watchdog.ps1
+```
+
+The script spawns a PowerShell stub that takes the AppPresence mutex (no
+real WinUI App needed), then drives the watchdog through alive / killed /
+quit.flag fresh / quit.flag stale, asserting the logged outcome of each
+tick. The unit tests in `FocusAgent.Core.Tests/Watchdog/` cover the crash
+cooldown and quit-flag freshness logic in isolation.
+
 ## MSIX packaging
 
 `FocusAgent.App` is set up as a single-project MSIX. The default build is
@@ -217,7 +249,9 @@ the cert is trusted and installs in one step)
 
 First launch prompts the user to allow the StartupTask. Declining means the
 agent will not auto-start at login (the user can flip this later from Windows
-Settings → Apps → Startup).
+Settings → Apps → Startup). The MSIX declares two startup tasks —
+`AnchorFocusAgentStartup` (the App) and `AnchorFocusAgentWatchdogStartup`
+(the Watchdog) — and Windows prompts for each independently.
 
 ### Tenant distribution via Intune
 

@@ -92,7 +92,7 @@ public partial class App : Application
                 _coordinator,
                 _heartbeat,
                 _host.Services.GetRequiredService<IOptions<SessionSettings>>(),
-                onQuit: Exit);
+                onQuit: ShutdownCleanly);
             _joinByCodeFlow = _host.Services.GetRequiredService<JoinByCodeFlow>();
             _tray = new TrayIconHost(
                 onOpen: () => ShowMainWindow(),
@@ -101,7 +101,7 @@ public partial class App : Application
                 // already in (or being walked into) a session — no point
                 // letting the student type a code they can't act on.
                 canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null,
-                onQuit: () => Exit(),
+                onQuit: ShutdownCleanly,
                 dispatcher: dispatcher);
             _tray.Show();
 
@@ -181,6 +181,17 @@ public partial class App : Application
     {
         if (_mainWindow is null) return;
         _mainWindow.Activate();
+    }
+
+    /// <summary>
+    /// User-initiated exit (tray Quit or MainWindow Quit). Writes the
+    /// quit.flag sentinel so the Watchdog (#35) treats this absence as
+    /// intentional rather than as a crash that needs relaunching.
+    /// </summary>
+    private void ShutdownCleanly()
+    {
+        Program.MarkCleanShutdown();
+        Exit();
     }
 
     private static AgentConnectionState MapToTrayState(ConnectionStatus status) => status switch
