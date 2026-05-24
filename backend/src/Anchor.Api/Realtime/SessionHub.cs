@@ -24,6 +24,12 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     private const string EntraOidShortClaim = "oid";
     private const string EntraOidLongClaim = "http://schemas.microsoft.com/identity/claims/objectidentifier";
 
+    // The resolved User is fixed for the connection's lifetime (the EntraOid
+    // is captured at handshake and can't change without a fresh connection),
+    // so we cache it in Context.Items to spare every hub invocation a
+    // redundant SELECT Users round-trip. See issue #55.
+    private const string ResolvedUserContextItemKey = "anchor.resolved-user";
+
     private readonly AnchorDbContext _db;
     private readonly IUserStore _users;
     private readonly TimeProvider _clock;
@@ -230,18 +236,27 @@ public sealed class SessionHub : Hub<ISessionHubClient>
 
     private async Task<User> ResolveCurrentUserAsync(CancellationToken ct)
     {
+        if (Context.Items.TryGetValue(ResolvedUserContextItemKey, out var cached) && cached is User cachedUser)
+            return cachedUser;
+
         var principal = Context.User
             ?? throw new HubException("No authenticated user on connection.");
 
         var entraOid = TryGetDevImpersonationOid() ?? GetTokenOid(principal)
             ?? throw new HubException("Token missing oid claim.");
 
-        return await _users.FindByEntraOidAsync(entraOid, ct)
+        var user = await _users.FindByEntraOidAsync(entraOid, ct)
             ?? throw new HubException("User not provisioned. Sign in via /me first.");
+
+        Context.Items[ResolvedUserContextItemKey] = user;
+        return user;
     }
 
     private async Task<User?> TryResolveCurrentUserAsync(CancellationToken ct)
     {
+        if (Context.Items.TryGetValue(ResolvedUserContextItemKey, out var cached) && cached is User cachedUser)
+            return cachedUser;
+
         var principal = Context.User;
         if (principal is null)
             return null;
@@ -250,7 +265,10 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (entraOid is null)
             return null;
 
-        return await _users.FindByEntraOidAsync(entraOid.Value, ct);
+        var user = await _users.FindByEntraOidAsync(entraOid.Value, ct);
+        if (user is not null)
+            Context.Items[ResolvedUserContextItemKey] = user;
+        return user;
     }
 
     private static Guid? GetTokenOid(System.Security.Claims.ClaimsPrincipal principal)
