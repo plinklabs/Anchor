@@ -1,5 +1,6 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
+import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/auth/msal_config.dart';
@@ -21,6 +22,7 @@ void main() {
       tokenProvider: () async => tokens.token,
     );
     final sessions = SessionsApi(api);
+    final bundles = BundlesApi(api);
 
     await tester.pumpWidget(
       AnchorDashboard(
@@ -28,6 +30,7 @@ void main() {
         auth: auth,
         api: api,
         sessions: sessions,
+        bundles: bundles,
         apiBaseUrl: Uri.parse('http://localhost'),
       ),
     );
