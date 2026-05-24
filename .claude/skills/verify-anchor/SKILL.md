@@ -83,7 +83,31 @@ Launch the agent yourself and screenshot the surface you changed. Two approaches
 
 If the agent has a `--show-test-toast`-style flag for your surface, use it — no real session needed. Otherwise launch the agent with `--inject-token` and drive it through the headless script in Step 2 to trigger the scenario, then screenshot.
 
-For screenshots: **WinUI 3 surfaces require PrintWindow with `PW_RENDERFULLCONTENT`, not BitBlt** ([[reference-winui3-screenshot-dcomp]]). DComp surfaces are invisible to GDI; a BitBlt of the toast region returns blank.
+#### Before you screenshot — preflight
+
+Run these checks FIRST. Skipping them turns a 5-minute verify into an hour-long rabbit hole.
+
+1. **Look up the actual screen resolution and DPI scaling.** Ask the user, or run `(Get-WmiObject -Class Win32_VideoController).CurrentHorizontalResolution / .CurrentVerticalResolution`. On this dev machine the display is **2880×1800 at 200% scaling** ([[project-dev-laptop-non-tenant]]) — most laptop dev machines are HiDPI.
+
+2. **Make your PowerShell process per-monitor DPI-aware** before any window enumeration or `BitBlt`. On HiDPI without this, `GetWindowRect` returns virtual (96-DPI) coordinates and your capture reads from the wrong half of the screen — the toast at "virtual (1036, 24)" is physically at (2072, 48). You will see whatever's behind the toast, conclude the toast isn't rendering, and start hacking unrelated things.
+
+   ```csharp
+   [DllImport("user32.dll")]
+   public static extern IntPtr SetProcessDpiAwarenessContext(IntPtr value);
+   public static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new IntPtr(-4);
+   ```
+   Call once at script start, before any `Add-Type`'d WinAPI usage.
+
+3. **Don't run from the stale RID-suffixed bin path.** `dotnet build` writes to `bin\x64\Debug\net10.0-windows10.0.19041.0\` (no RID subfolder). The `\win-x64\` subfolder gets populated by `Publish` / first-run packaging and may sit days-stale. If your code change "isn't running", check the EXE's `LastWriteTime` before debugging the code.
+
+#### Pick a capture API
+
+| Capture method | Captures | Misses | When to use |
+|---|---|---|---|
+| `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)` | WinUI Window's GDI back buffer (background, simple TextBlocks) | DComp-composed children — Buttons, large/themed text, anything visually styled | Quick sanity check of layout/positioning |
+| `BitBlt(... screen DC ..., SRCCOPY \| CAPTUREBLT)` at the window's rect | Everything the user sees, including DComp surfaces | (Needs DPI-aware process + window on top) | Verifying user-facing rendering (button visibility, themed controls) |
+
+The toast is `IsAlwaysOnTop`, so screen-region capture with `CAPTUREBLT` is the reliable choice — see `scripts/dev/verify-toast.ps1` for a working version that also pulls in the preflight DPI fix. The older claim that "PrintWindow is the only path" ([[reference_winui3_screenshot_dcomp]]) is incomplete: PrintWindow works for the simple WinUI GDI surface but blanks the styled Button.
 
 ### State-change UI (dot color, freshness label, in-session badge)
 
@@ -114,7 +138,9 @@ The PR that ships a feature also ships the way to verify it. This keeps the head
 ## Common gotchas
 
 - **Backend on the wrong port.** Backend `launchSettings.json` defaults to **5276**. Dashboard and agent also default to 5276 (since PR #42 / [[reference-agent-dashboard-backend-ports]]). Port mismatch silently routes to a different backend instance and nothing reaches the agent.
-- **GDI BitBlt can't capture WinUI toasts** ([[reference-winui3-screenshot-dcomp]]). The verify script doesn't screenshot — it polls `/status` for `activeSessionId`. If you need a screenshot, use PrintWindow.
+- **Non-DPI-aware PowerShell capturing a HiDPI screen reads the wrong region** — `GetWindowRect` and `BitBlt` see virtual 96-DPI coordinates. Always call `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` before any window/screen WinAPI. See the preflight in Step 3 above.
+- **Stale binaries in the `\win-x64\` RID subfolder.** `dotnet build` writes to the parent `net10.0-windows...\` folder; the RID subfolder doesn't auto-update. If your edits don't seem to be running, check the EXE's `LastWriteTime`.
+- **WinUI 3 toast pixel capture needs `BitBlt + CAPTUREBLT`, not `BitBlt SRCCOPY` and not just `PrintWindow`** ([[reference-winui3-screenshot-dcomp]]). The first gets all DComp surfaces (button, large countdown); the second misses everything DComp; PrintWindow gets the WinUI background but blanks themed controls.
 - **A real agent process is locking the build output** when you try to rebuild. `Get-Process -Name FocusAgent.App | Stop-Process -Force` and try again.
 - **The agent's `appsettings.Development.json` is gitignored** — must exist locally with `Dev:ImpersonateOid` populated.
 
