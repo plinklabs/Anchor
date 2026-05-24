@@ -91,6 +91,7 @@ if (!builder.Environment.IsEnvironment("Test"))
 
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<JoinByCodeRateLimiter>();
+builder.Services.AddScoped<ISessionAllowlistExpander, SessionAllowlistExpander>();
 builder.Services.AddSingleton<ISessionBroadcaster, SessionBroadcaster>();
 builder.Services.AddSingleton<HeartbeatTracker>();
 builder.Services.Configure<HeartbeatOptions>(builder.Configuration.GetSection(HeartbeatOptions.SectionName));

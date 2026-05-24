@@ -14,7 +14,9 @@ public class SessionCoordinatorTests
             ClassId: Guid.NewGuid(),
             Mode: "strict",
             StartedAt: DateTimeOffset.UnixEpoch,
-            JoinCode: "123456");
+            JoinCode: "123456",
+            Apps: Array.Empty<AllowedAppDto>(),
+            Domains: Array.Empty<AllowedDomainDto>());
 
     [Fact]
     public async Task Confirmed_decision_calls_JoinSession_with_null_join_code()

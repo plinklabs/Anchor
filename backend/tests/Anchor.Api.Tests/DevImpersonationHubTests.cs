@@ -130,7 +130,9 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
         ClassId: Guid.NewGuid(),
         Mode: "Strict",
         StartedAt: DateTimeOffset.UtcNow,
-        JoinCode: "654321");
+        JoinCode: "654321",
+        Apps: Array.Empty<AllowedAppDto>(),
+        Domains: Array.Empty<AllowedDomainDto>());
 
     public sealed class DevAnchorApiFactory : AnchorApiFactory
     {

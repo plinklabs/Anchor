@@ -31,19 +31,22 @@ public sealed class SessionsController : ControllerBase
     private readonly ISessionBroadcaster _broadcaster;
     private readonly TimeProvider _clock;
     private readonly JoinByCodeRateLimiter _joinByCodeLimiter;
+    private readonly ISessionAllowlistExpander _allowlist;
 
     public SessionsController(
         AnchorDbContext db,
         IUserStore users,
         ISessionBroadcaster broadcaster,
         TimeProvider clock,
-        JoinByCodeRateLimiter joinByCodeLimiter)
+        JoinByCodeRateLimiter joinByCodeLimiter,
+        ISessionAllowlistExpander allowlist)
     {
         _db = db;
         _users = users;
         _broadcaster = broadcaster;
         _clock = clock;
         _joinByCodeLimiter = joinByCodeLimiter;
+        _allowlist = allowlist;
     }
 
     [HttpPost]
@@ -126,14 +129,25 @@ public sealed class SessionsController : ControllerBase
 
         await _db.SaveChangesAsync(cancellationToken);
 
+        var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
         await _broadcaster.SessionStartedAsync(
-            new SessionStartedPayload(session.Id, session.ClassId, session.Mode.ToString(), session.StartedAt, session.JoinCode),
+            BuildStartedPayload(session, expanded),
             broadcastRecipientIds,
             cancellationToken);
 
         var response = new StartSessionResponse(session.Id, session.ClassId, session.Mode, session.StartedAt, session.JoinCode);
         return CreatedAtAction(nameof(Get), new { id = session.Id }, response);
     }
+
+    private static SessionStartedPayload BuildStartedPayload(Session session, ExpandedAllowlist allowlist) =>
+        new(
+            session.Id,
+            session.ClassId,
+            session.Mode.ToString(),
+            session.StartedAt,
+            session.JoinCode,
+            allowlist.Apps,
+            allowlist.Domains);
 
     [HttpPost("{id:guid}/end")]
     [Authorize(Policy = AuthorizationPolicies.Teacher)]
@@ -250,15 +264,21 @@ public sealed class SessionsController : ControllerBase
     }
 
     [HttpGet("rejoinable")]
-    [ProducesResponseType(typeof(IReadOnlyList<SessionSummary>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(IReadOnlyList<SessionStartedPayload>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<ActionResult<IReadOnlyList<SessionSummary>>> Rejoinable(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<SessionStartedPayload>>> Rejoinable(CancellationToken cancellationToken)
     {
         // Drives the agent's post-restart rehydration (#54). Returns only the
         // sessions the caller is actively a member of right now -- non-ended,
         // JoinedAt set, LeftAt null, DeclinedAt null. The agent calls JoinSession
         // for every entry on the first hub Connected after startup. Server-side
         // filter so the agent never has to interpret participation state.
+        //
+        // The response shape matches the SessionStarted broadcast payload
+        // (incl. the expanded allowlist, #70) so the agent's existing
+        // SessionCoordinator can rejoin with the same rules a fresh
+        // session-start would carry — without persisting the allowlist
+        // to disk.
         if (!User.TryGetEntraOid(out var entraOid))
             return Unauthorized();
 
@@ -274,9 +294,28 @@ public sealed class SessionsController : ControllerBase
                 p.JoinedAt != null &&
                 p.LeftAt == null &&
                 p.DeclinedAt == null))
-            .Select(s => new SessionSummary(s.Id, s.ClassId, s.TeacherId, s.Mode, s.StartedAt, s.EndedAt, s.JoinCode))
+            .Select(s => new { s.Id, s.ClassId, s.Mode, s.StartedAt, s.JoinCode })
             .ToListAsync(cancellationToken);
-        var sessions = rows.OrderByDescending(s => s.StartedAt).ToList();
+
+        // SQLite (used by dev + tests) can't ORDER BY a DateTimeOffset server
+        // side, so sort after materialisation. Production SqlServer would
+        // happily do this in the query, but keeping a single path keeps the
+        // test suite honest.
+        var ordered = rows.OrderByDescending(s => s.StartedAt).ToList();
+
+        var sessions = new List<SessionStartedPayload>(ordered.Count);
+        foreach (var row in ordered)
+        {
+            var expanded = await _allowlist.ExpandForSessionAsync(row.Id, cancellationToken);
+            sessions.Add(new SessionStartedPayload(
+                row.Id,
+                row.ClassId,
+                row.Mode.ToString(),
+                row.StartedAt,
+                row.JoinCode,
+                expanded.Apps,
+                expanded.Domains));
+        }
 
         return Ok(sessions);
     }
@@ -367,8 +406,9 @@ public sealed class SessionsController : ControllerBase
         // this up and the #31 join-confirmation flow takes over. Keeping the
         // payload identical to the roster-based push means the agent needs
         // no new client-side branch.
+        var expanded = await _allowlist.ExpandForSessionAsync(session.Id, cancellationToken);
         await _broadcaster.SessionStartedAsync(
-            new SessionStartedPayload(session.Id, session.ClassId, session.Mode.ToString(), session.StartedAt, session.JoinCode),
+            BuildStartedPayload(session, expanded),
             new[] { caller.Id },
             cancellationToken);
 

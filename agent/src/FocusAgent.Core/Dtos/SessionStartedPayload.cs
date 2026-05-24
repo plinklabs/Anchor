@@ -5,4 +5,6 @@ public sealed record SessionStartedPayload(
     Guid ClassId,
     string Mode,
     DateTimeOffset StartedAt,
-    string JoinCode);
+    string JoinCode,
+    IReadOnlyList<AllowedAppDto> Apps,
+    IReadOnlyList<AllowedDomainDto> Domains);

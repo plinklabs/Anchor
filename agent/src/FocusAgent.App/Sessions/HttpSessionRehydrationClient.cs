@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
@@ -11,7 +12,10 @@ namespace FocusAgent.App.Sessions;
 
 /// <summary>
 /// Real implementation of <see cref="ISessionRehydrationClient"/> that talks
-/// to the backend's <c>GET /sessions/rejoinable</c> endpoint (#54).
+/// to the backend's <c>GET /sessions/rejoinable</c> endpoint (#54). As of
+/// #70 that endpoint returns a list of <see cref="SessionStartedPayload"/>
+/// (with the expanded allowlist) so a post-restart rejoin carries the same
+/// rules a fresh broadcast would — no local disk cache.
 ///
 /// Auth mirrors <see cref="Realtime.SignalRSessionHubConnection"/>: bearer
 /// token from <see cref="IAuthTokenProvider"/>, plus the dev-only
@@ -23,6 +27,8 @@ namespace FocusAgent.App.Sessions;
 public sealed class HttpSessionRehydrationClient : ISessionRehydrationClient
 {
     private const string DevImpersonateOidHeader = "X-Dev-Impersonate-Oid";
+
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _http;
     private readonly IAuthTokenProvider _tokens;
@@ -65,40 +71,9 @@ public sealed class HttpSessionRehydrationClient : ISessionRehydrationClient
         using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
-        // Backend's SessionSummary.Mode is a SessionMode enum which serializes
-        // as an int by default (no JsonStringEnumConverter is configured).
-        // Parse via JsonDocument so we tolerate either representation and the
-        // agent doesn't have to take a dependency on the backend enum.
-        using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-        if (doc.RootElement.ValueKind != JsonValueKind.Array || doc.RootElement.GetArrayLength() == 0)
-            return Array.Empty<SessionStartedPayload>();
-
-        var result = new List<SessionStartedPayload>(doc.RootElement.GetArrayLength());
-        foreach (var el in doc.RootElement.EnumerateArray())
-        {
-            result.Add(new SessionStartedPayload(
-                SessionId: el.GetProperty("id").GetGuid(),
-                ClassId: el.GetProperty("classId").GetGuid(),
-                Mode: ReadModeName(el.GetProperty("mode")),
-                StartedAt: el.GetProperty("startedAt").GetDateTimeOffset(),
-                JoinCode: el.GetProperty("joinCode").GetString() ?? string.Empty));
-        }
-        return result;
+        var payloads = await response.Content
+            .ReadFromJsonAsync<List<SessionStartedPayload>>(JsonOptions, ct)
+            .ConfigureAwait(false);
+        return (IReadOnlyList<SessionStartedPayload>?)payloads ?? Array.Empty<SessionStartedPayload>();
     }
-
-    // SessionMode values in the backend domain are ordered { Strict = 0,
-    // Loose = 1 }. We project them back to the names the rest of the agent
-    // already speaks (SessionStartedPayload.Mode is a string).
-    private static string ReadModeName(JsonElement modeElement) => modeElement.ValueKind switch
-    {
-        JsonValueKind.String => modeElement.GetString() ?? "Strict",
-        JsonValueKind.Number => modeElement.GetInt32() switch
-        {
-            0 => "Strict",
-            1 => "Loose",
-            var n => $"Unknown({n})",
-        },
-        _ => "Strict",
-    };
 }

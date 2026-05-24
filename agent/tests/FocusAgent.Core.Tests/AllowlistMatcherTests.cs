@@ -4,22 +4,10 @@ namespace FocusAgent.Core.Tests;
 
 public class AllowlistMatcherTests
 {
-    [Fact]
-    public void Edge_is_always_allowed_even_with_empty_user_rules()
-    {
-        var matcher = new AllowlistMatcher(Array.Empty<AllowedAppRule>());
-
-        Assert.True(matcher.IsAllowed(new AppInfo("msedge", @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "Microsoft Corporation")));
-        Assert.True(matcher.IsAllowed(new AppInfo("MSEDGE.EXE", null, null)));
-    }
-
-    [Fact]
-    public void Explorer_is_baseline_allowed()
-    {
-        var matcher = new AllowlistMatcher(Array.Empty<AllowedAppRule>());
-
-        Assert.True(matcher.IsAllowed(new AppInfo("explorer", @"C:\Windows\explorer.exe", null)));
-    }
+    // Post-#70 the agent's matcher carries no built-in baseline — Edge,
+    // explorer, the bundle expansion, all come from the SessionStarted
+    // payload's Apps list. The matcher's only local guarantee is that
+    // its own process is allowed (so the watcher can't lock itself out).
 
     [Fact]
     public void Notepad_is_blocked_when_not_in_rules()
@@ -27,6 +15,30 @@ public class AllowlistMatcherTests
         var matcher = new AllowlistMatcher(Array.Empty<AllowedAppRule>());
 
         Assert.False(matcher.IsAllowed(new AppInfo("notepad", @"C:\Windows\System32\notepad.exe", "Microsoft Windows")));
+    }
+
+    [Fact]
+    public void Edge_is_blocked_when_payload_does_not_carry_it()
+    {
+        // Inverse of the pre-#70 behaviour: msedge is no longer
+        // baseline-allowed locally. If the backend forgets to ship it in
+        // the payload (misconfiguration), the matcher honours the wire,
+        // not its old baseline.
+        var matcher = new AllowlistMatcher(Array.Empty<AllowedAppRule>());
+
+        Assert.False(matcher.IsAllowed(new AppInfo("msedge", @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "Microsoft Corporation")));
+    }
+
+    [Fact]
+    public void Edge_is_allowed_when_payload_carries_it()
+    {
+        var matcher = new AllowlistMatcher(new[]
+        {
+            new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
+        });
+
+        Assert.True(matcher.IsAllowed(new AppInfo("msedge", @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "Microsoft Corporation")));
+        Assert.True(matcher.IsAllowed(new AppInfo("MSEDGE.EXE", null, null)));
     }
 
     [Fact]
@@ -103,5 +115,21 @@ public class AllowlistMatcherTests
         Assert.True(matcher.IsAllowed(new AppInfo("WINWORD", null, "Microsoft Corporation")));
         Assert.True(matcher.IsAllowed(new AppInfo("GeoGebra", null, "International GeoGebra Institute")));
         Assert.False(matcher.IsAllowed(new AppInfo("notepad", null, "Microsoft Corporation")));
+    }
+
+    [Fact]
+    public void UserRules_exposes_whatever_was_passed_in()
+    {
+        // Pre-#70 this property excluded the built-in baseline; the matcher
+        // no longer has one, so callers see exactly what they gave it. The
+        // overlay relies on this to render the allowed-apps list.
+        var rules = new[]
+        {
+            new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" },
+            new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
+        };
+        var matcher = new AllowlistMatcher(rules);
+
+        Assert.Equal(new[] { "winword", "msedge" }, matcher.UserRules.Select(r => r.Value).ToArray());
     }
 }

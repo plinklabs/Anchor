@@ -11,7 +11,9 @@ public class JoinConfirmationTests
             ClassId: Guid.NewGuid(),
             Mode: "strict",
             StartedAt: DateTimeOffset.UnixEpoch,
-            JoinCode: "123456");
+            JoinCode: "123456",
+            Apps: Array.Empty<AllowedAppDto>(),
+            Domains: Array.Empty<AllowedDomainDto>());
 
     [Fact]
     public void Confirms_when_timer_elapses()

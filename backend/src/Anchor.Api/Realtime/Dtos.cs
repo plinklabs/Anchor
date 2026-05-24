@@ -13,7 +13,23 @@ public sealed record SessionStartedPayload(
     Guid ClassId,
     string Mode,
     DateTimeOffset StartedAt,
-    string JoinCode);
+    string JoinCode,
+    IReadOnlyList<AllowedAppDto> Apps,
+    IReadOnlyList<AllowedDomainDto> Domains);
+
+/// <summary>
+/// One entry in the session allowlist's app list (#70). <see cref="MatchKind"/>
+/// is a wire-string matching the agent's <c>AllowedAppMatchKind</c> enum
+/// (ProcessName / ExecutablePath / Publisher).
+/// </summary>
+public sealed record AllowedAppDto(string MatchKind, string Value);
+
+/// <summary>
+/// One entry in the session allowlist's domain list (#70). <see cref="MatchType"/>
+/// is a wire-string matching <c>BundleEntryMatchType</c>
+/// (Exact / Wildcard / Suffix). Consumed by the Edge extension once it lands.
+/// </summary>
+public sealed record AllowedDomainDto(string MatchType, string Value);
 
 public sealed record BundleUpdatedPayload(Guid SessionId, Guid BundleId);
 

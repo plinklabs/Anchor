@@ -213,7 +213,9 @@ public class SessionHeartbeatServiceTests
         ClassId: Guid.NewGuid(),
         Mode: "Strict",
         StartedAt: DateTimeOffset.UnixEpoch,
-        JoinCode: "123456");
+        JoinCode: "123456",
+        Apps: Array.Empty<AllowedAppDto>(),
+        Domains: Array.Empty<AllowedDomainDto>());
 
     private static async Task AdvanceAndDrainAsync(FakeTimeProvider clock, TimeSpan by)
     {

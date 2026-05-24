@@ -63,7 +63,8 @@ public sealed class FocusSessionController : IAsyncDisposable
     {
         try
         {
-            var matcher = new AllowlistMatcher(_settings.AllowedApps, ownProcessName: CurrentProcessName());
+            var rules = AllowedAppRuleMapper.FromPayload(payload.Apps);
+            var matcher = new AllowlistMatcher(rules, ownProcessName: CurrentProcessName());
             lock (_gate)
             {
                 _activeSessionId = payload.SessionId;
@@ -74,9 +75,10 @@ public sealed class FocusSessionController : IAsyncDisposable
             _enforcer.Reset();
             _watcher.Start();
             _log.LogInformation(
-                "Focus enforcement started for session {SessionId} with {RuleCount} configured allowlist rules",
+                "Focus enforcement started for session {SessionId} with {AppCount} app rules / {DomainCount} domains from payload",
                 payload.SessionId,
-                _settings.AllowedApps.Count);
+                payload.Apps.Count,
+                payload.Domains.Count);
         }
         catch (Exception ex)
         {

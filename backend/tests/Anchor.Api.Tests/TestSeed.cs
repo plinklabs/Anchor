@@ -83,6 +83,25 @@ internal static class TestSeed
         return bundle;
     }
 
+    public static async Task AddBundleEntryAsync(
+        AnchorApiFactory factory,
+        Guid bundleId,
+        BundleEntryKind kind,
+        string value,
+        BundleEntryMatchType matchType)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        db.BundleEntries.Add(new BundleEntry
+        {
+            BundleId = bundleId,
+            Kind = kind,
+            Value = value,
+            MatchType = matchType,
+        });
+        await db.SaveChangesAsync();
+    }
+
     public static async Task<Session> AddSessionAsync(
         AnchorApiFactory factory,
         Guid teacherId,

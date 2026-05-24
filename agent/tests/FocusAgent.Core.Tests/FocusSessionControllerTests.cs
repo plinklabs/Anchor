@@ -42,12 +42,12 @@ public class FocusSessionControllerTests
     [Fact]
     public async Task Allowed_foreground_change_is_remembered_and_reported_as_unblocked()
     {
-        var fixtures = new Fixtures
-        {
-            AllowedAppRules = { new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" } },
-        };
+        var fixtures = new Fixtures();
         var (_, _) = BuildController(fixtures);
-        var payload = NewPayload();
+        var payload = NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        });
         await fixtures.Hub.RaiseSessionStarted(payload);
 
         var change = ForegroundFor("winword", hwnd: 0x100);
@@ -77,11 +77,18 @@ public class FocusSessionControllerTests
     }
 
     [Fact]
-    public async Task Edge_is_always_unblocked_even_without_explicit_rule()
+    public async Task Edge_is_unblocked_when_payload_carries_it_as_baseline()
     {
+        // Baseline lives on the backend post-#70 — the agent's matcher no
+        // longer has a built-in Edge entry. The payload's Apps list carries
+        // it instead. This test pins that the wiring still treats Edge as
+        // allowed once it's present on the wire.
         var fixtures = new Fixtures();
         var (_, _) = BuildController(fixtures);
-        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "msedge"),
+        }));
 
         fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x300));
 
@@ -91,14 +98,32 @@ public class FocusSessionControllerTests
     }
 
     [Fact]
-    public async Task Duplicate_foreground_change_is_coalesced_within_window()
+    public async Task Edge_is_blocked_when_payload_does_not_carry_it()
     {
-        var fixtures = new Fixtures
-        {
-            AllowedAppRules = { new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" } },
-        };
+        // Inverse of the above: if the backend ever omits the baseline
+        // (misconfiguration or empty selection), the agent doesn't
+        // silently re-add it. The matcher honours exactly what the
+        // payload says.
+        var fixtures = new Fixtures();
         var (_, _) = BuildController(fixtures);
         await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x300));
+
+        Assert.Single(fixtures.Enforcer.Blocked);
+        var reported = Assert.Single(fixtures.Reporter.Reports);
+        Assert.True(reported.Blocked);
+    }
+
+    [Fact]
+    public async Task Duplicate_foreground_change_is_coalesced_within_window()
+    {
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
 
         fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x100));
         fixtures.Clock.Advance(TimeSpan.FromMilliseconds(100));
@@ -112,12 +137,12 @@ public class FocusSessionControllerTests
     [Fact]
     public async Task Distinct_apps_are_each_reported()
     {
-        var fixtures = new Fixtures
-        {
-            AllowedAppRules = { new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" } },
-        };
+        var fixtures = new Fixtures();
         var (_, _) = BuildController(fixtures);
-        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
 
         fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x100));
         fixtures.Clock.Advance(TimeSpan.FromMilliseconds(50));
@@ -141,20 +166,20 @@ public class FocusSessionControllerTests
     [Fact]
     public async Task Overlay_is_shown_when_block_has_no_fallback()
     {
-        var fixtures = new Fixtures
-        {
-            AllowedAppRules = { new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" } },
-        };
+        var fixtures = new Fixtures();
         fixtures.Enforcer.BlockRestoresFallback = false;
         var (_, _) = BuildController(fixtures);
-        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
 
         fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
 
         var shown = Assert.Single(fixtures.Overlay.Shown);
         Assert.Equal("notepad", shown.BlockedAppName);
-        // Baseline rules (msedge, explorer) must not leak into the overlay's
-        // user-facing list — only the teacher-supplied rules.
+        // Whatever the payload carries — baseline-merged on the backend or
+        // teacher-picked — flows through to the overlay's allowed-apps list.
         Assert.Equal(new[] { "winword" }, shown.Rules.Select(r => r.Value).ToArray());
         Assert.Equal(0, fixtures.Overlay.HideCount);
     }
@@ -175,12 +200,12 @@ public class FocusSessionControllerTests
     [Fact]
     public async Task Overlay_is_hidden_when_allowed_foreground_change_arrives()
     {
-        var fixtures = new Fixtures
-        {
-            AllowedAppRules = { new() { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" } },
-        };
+        var fixtures = new Fixtures();
         var (_, _) = BuildController(fixtures);
-        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
 
         fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x100));
 
@@ -216,12 +241,14 @@ public class FocusSessionControllerTests
         Assert.Empty(fixtures.Reporter.Reports);
     }
 
-    private static SessionStartedPayload NewPayload(Guid? id = null) => new(
+    private static SessionStartedPayload NewPayload(Guid? id = null, IReadOnlyList<AllowedAppDto>? apps = null) => new(
         SessionId: id ?? Guid.NewGuid(),
         ClassId: Guid.NewGuid(),
         Mode: "strict",
         StartedAt: DateTimeOffset.UnixEpoch,
-        JoinCode: "123456");
+        JoinCode: "123456",
+        Apps: apps ?? Array.Empty<AllowedAppDto>(),
+        Domains: Array.Empty<AllowedDomainDto>());
 
     private static ForegroundChange ForegroundFor(string process, nint hwnd, string? exePath = null, string? publisher = null, int pid = 4242) =>
         new(new AppInfo(process, exePath, publisher), WindowTitle: process, ProcessId: pid, WindowHandle: hwnd);
@@ -231,7 +258,6 @@ public class FocusSessionControllerTests
         var fixtures = supplied ?? new Fixtures();
         var settings = Options.Create(new SessionSettings
         {
-            AllowedApps = fixtures.AllowedAppRules,
             DuplicateCoalesceWindow = TimeSpan.FromMilliseconds(500),
         });
         var coordinator = new SessionCoordinator(
@@ -259,7 +285,6 @@ public class FocusSessionControllerTests
         public RecordingReporter Reporter { get; } = new();
         public RecordingOverlay Overlay { get; } = new();
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UnixEpoch);
-        public List<AllowedAppRule> AllowedAppRules { get; } = new();
         public JoinDecision UiDecision { get; set; } = JoinDecision.Confirmed;
         public SessionCoordinator? Coordinator { get; set; }
     }

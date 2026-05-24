@@ -142,7 +142,9 @@ public class SessionRehydrationServiceTests
         ClassId: Guid.NewGuid(),
         Mode: "Strict",
         StartedAt: DateTimeOffset.UnixEpoch,
-        JoinCode: "987654");
+        JoinCode: "987654",
+        Apps: Array.Empty<AllowedAppDto>(),
+        Domains: Array.Empty<AllowedDomainDto>());
 
     private sealed class StubClient : ISessionRehydrationClient
     {
