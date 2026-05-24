@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Anchor",
-  "version": "0.1.0",
-  "description": "Anchor focus-session enforcement (scaffold — no logic yet).",
+  "version": "0.2.0",
+  "description": "Anchor focus-session enforcement — URL filter and friendly block page.",
   "permissions": [
     "tabs",
     "webNavigation",

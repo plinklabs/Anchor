@@ -53,7 +53,7 @@ Design rationale, technology decisions, data model, and phasing live in [focus-s
 | Backend API | [backend/](backend/) | Scaffolded | ASP.NET Core 8, EF Core, SignalR, Entra (Microsoft.Identity.Web) |
 | Teacher dashboard | [dashboard/](dashboard/) | Scaffolded | Flutter Web, MSAL.js |
 | Student agent | [agent/](agent/) | Scaffolded | WinUI 3 + C#, MSIX (later), WAM silent auth (later) |
-| Edge extension | [extension/](extension/) | Scaffolded | TypeScript, Edge (Chromium) MV3 |
+| Edge extension | [extension/](extension/) | URL filter + block page | TypeScript, Edge (Chromium) MV3 |
 | Azure infra | [infra/](infra/) | Scaffolded | Bicep — App Service, Azure SQL, SignalR, Static Web Apps |
 
 ## Prerequisites
@@ -117,7 +117,7 @@ npm install
 npm run build
 ```
 
-Output lands in `extension/dist/`. Load it via `edge://extensions` → **Developer mode** → **Load unpacked**. This is the Phase 3 scaffold — URL filtering, real block-page contents, and the SignalR client land in follow-up issues.
+Output lands in `extension/dist/`. Load it via `edge://extensions` → **Developer mode** → **Load unpacked**. Phase 3 v1 lands the URL filter, friendly block page, and SignalR client; configuration + smoke-test steps are in [extension/README.md](extension/README.md). Production Entra auth (`chrome.identity`) is a follow-up issue.
 
 ### Azure infrastructure
 
