@@ -30,7 +30,6 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private TrayIconHost? _tray;
     private SessionCoordinator? _coordinator;
-    private SessionHeartbeatService? _heartbeat;
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
     private ConnectionManager? _connection;
@@ -68,10 +67,6 @@ public partial class App : Application
 
             _hub = _host.Services.GetRequiredService<ISessionHubConnection>();
             _coordinator = _host.Services.GetRequiredService<SessionCoordinator>();
-            // Resolve eagerly so the heartbeat service's constructor wires up
-            // its SessionJoined / SessionLeft subscriptions before the first
-            // SessionStarted broadcast can possibly arrive.
-            _heartbeat = _host.Services.GetRequiredService<SessionHeartbeatService>();
             _focus = _host.Services.GetRequiredService<FocusSessionController>();
             _connection = _host.Services.GetRequiredService<ConnectionManager>();
 
@@ -270,7 +265,6 @@ public partial class App : Application
         builder.Services.AddSingleton<ISessionHubConnection, SignalRSessionHubConnection>();
         builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
         builder.Services.AddSingleton<SessionCoordinator>();
-        builder.Services.AddSingleton<SessionHeartbeatService>();
         builder.Services.AddSingleton<ConnectionManager>();
 
         builder.Services.AddSingleton<IAppIdentifier, AppIdentifier>();

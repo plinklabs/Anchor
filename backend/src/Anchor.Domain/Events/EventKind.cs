@@ -6,7 +6,6 @@ public enum EventKind
     BlockedUrl,
     UnblockRequest,
     HeartbeatLost,
-    AgentReconnected,
     AgentKilled,
     ManualLeave,
     JoinDeclined

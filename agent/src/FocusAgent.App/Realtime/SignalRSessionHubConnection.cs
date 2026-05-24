@@ -16,6 +16,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     private readonly object _gate = new();
 
     private AgentConnectionState _state = AgentConnectionState.SignedOut;
+    private Timer? _heartbeat;
 
     public SignalRSessionHubConnection(
         IOptions<BackendSettings> backend,
@@ -73,6 +74,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
         _connection.Closed += _ =>
         {
             SetState(AgentConnectionState.Disconnected);
+            StopHeartbeat();
             return Task.CompletedTask;
         };
     }
@@ -93,6 +95,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
         {
             await _connection.StartAsync(ct).ConfigureAwait(false);
             SetState(AgentConnectionState.Connected);
+            StartHeartbeat();
         }
         catch
         {
@@ -103,6 +106,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
 
     public async Task StopAsync(CancellationToken ct = default)
     {
+        StopHeartbeat();
         await _connection.StopAsync(ct).ConfigureAwait(false);
         SetState(AgentConnectionState.Disconnected);
     }
@@ -128,11 +132,29 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
             new ReportEventRequest(sessionId, kind, payloadJson, occurredAt),
             ct);
 
-    public Task HeartbeatAsync(Guid sessionId, CancellationToken ct = default)
+    private void StartHeartbeat()
+    {
+        StopHeartbeat();
+        _heartbeat = new Timer(_ => _ = SendHeartbeatAsync(), null, _realtime.HeartbeatInterval, _realtime.HeartbeatInterval);
+    }
+
+    private void StopHeartbeat()
+    {
+        var t = Interlocked.Exchange(ref _heartbeat, null);
+        t?.Dispose();
+    }
+
+    private Task SendHeartbeatAsync()
     {
         if (_connection.State != HubConnectionState.Connected)
             return Task.CompletedTask;
-        return _connection.InvokeAsync("Heartbeat", sessionId, ct);
+
+        // TODO(#24 follow-up): server has no `heartbeat` EventKind yet (only
+        // HeartbeatLost is defined). The SignalR transport already keep-alives
+        // at the protocol level; once a server-side heartbeat kind is added,
+        // invoke `ReportEvent` with kind="heartbeat" here so the dashboard can
+        // surface "agent alive" beyond protocol pings.
+        return Task.CompletedTask;
     }
 
     private void SetState(AgentConnectionState next)
@@ -152,6 +174,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
 
     public async ValueTask DisposeAsync()
     {
+        StopHeartbeat();
         await _connection.DisposeAsync().ConfigureAwait(false);
     }
 

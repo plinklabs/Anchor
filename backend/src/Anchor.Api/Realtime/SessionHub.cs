@@ -28,7 +28,6 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     private readonly IUserStore _users;
     private readonly TimeProvider _clock;
     private readonly IHostEnvironment _env;
-    private readonly HeartbeatTracker _heartbeats;
     private readonly ILogger<SessionHub> _log;
 
     public SessionHub(
@@ -36,14 +35,12 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         IUserStore users,
         TimeProvider clock,
         IHostEnvironment env,
-        HeartbeatTracker heartbeats,
         ILogger<SessionHub> log)
     {
         _db = db;
         _users = users;
         _clock = clock;
         _env = env;
-        _heartbeats = heartbeats;
         _log = log;
     }
 
@@ -176,27 +173,6 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         });
 
         await _db.SaveChangesAsync(ct);
-    }
-
-    public async Task Heartbeat(Guid sessionId)
-    {
-        var ct = Context.ConnectionAborted;
-        var user = await ResolveCurrentUserAsync(ct);
-
-        // The hub is the agent's only liveness witness, so we don't want a
-        // stale or finished session keeping participant slots warm. Confirm
-        // the participant is actively joined before recording the ping —
-        // mirrors ReportEvent's check.
-        var isActiveParticipant = await _db.SessionParticipants.AsNoTracking().AnyAsync(
-            p => p.SessionId == sessionId &&
-                 p.UserId == user.Id &&
-                 p.JoinedAt != null &&
-                 p.LeftAt == null,
-            ct);
-        if (!isActiveParticipant)
-            throw new HubException("Not an active participant of this session.");
-
-        _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow());
     }
 
     public async Task ReportEvent(ReportEventRequest request)

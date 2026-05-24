@@ -30,10 +30,6 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = "Data Source=:memory:",
-                // The monitor scans tracker state on a timer; in tests it would
-                // race with our shared in-memory SQLite connection. Tests drive
-                // the scan directly via HeartbeatMonitor.ScanOnceAsync instead.
-                ["Heartbeat:EnableMonitor"] = "false",
             }));
 
         builder.ConfigureTestServices(services =>

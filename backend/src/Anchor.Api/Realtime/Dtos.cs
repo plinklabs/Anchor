@@ -16,7 +16,3 @@ public sealed record SessionStartedPayload(
     string JoinCode);
 
 public sealed record BundleUpdatedPayload(Guid SessionId, Guid BundleId);
-
-public sealed record HeartbeatLostPayload(Guid SessionId, Guid UserId, DateTimeOffset LastSeenAt);
-
-public sealed record AgentReconnectedPayload(Guid SessionId, Guid UserId, DateTimeOffset ReconnectedAt);

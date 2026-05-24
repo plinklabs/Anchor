@@ -90,14 +90,6 @@ if (!builder.Environment.IsEnvironment("Test"))
 
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<ISessionBroadcaster, SessionBroadcaster>();
-builder.Services.AddSingleton<HeartbeatTracker>();
-builder.Services.Configure<HeartbeatOptions>(builder.Configuration.GetSection(HeartbeatOptions.SectionName));
-var heartbeatSection = builder.Configuration.GetSection(HeartbeatOptions.SectionName);
-var enableHeartbeatMonitor = heartbeatSection.GetValue<bool?>(nameof(HeartbeatOptions.EnableMonitor)) ?? true;
-if (enableHeartbeatMonitor)
-{
-    builder.Services.AddHostedService<HeartbeatMonitor>();
-}
 
 const string DashboardCorsPolicy = "DashboardCors";
 var dashboardOrigins = builder.Configuration

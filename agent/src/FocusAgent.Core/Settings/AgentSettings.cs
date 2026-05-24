@@ -23,6 +23,7 @@ public sealed record RealtimeSettings
     public const string SectionName = "Realtime";
 
     public TimeSpan ReconnectMaxBackoff { get; init; } = TimeSpan.FromSeconds(30);
+    public TimeSpan HeartbeatInterval { get; init; } = TimeSpan.FromSeconds(30);
     public TimeSpan JoinConfirmationDuration { get; init; } = TimeSpan.FromSeconds(5);
 }
 
