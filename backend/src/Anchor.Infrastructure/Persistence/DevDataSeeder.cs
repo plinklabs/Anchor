@@ -1,3 +1,4 @@
+using Anchor.Domain.Bundles;
 using Anchor.Domain.Classes;
 using Anchor.Domain.Users;
 using Microsoft.EntityFrameworkCore;
@@ -21,9 +22,11 @@ public static class DevDataSeeder
     public static async Task SeedAsync(AnchorDbContext db, CancellationToken cancellationToken = default)
     {
         // The main seed is one-shot — early-return so we don't churn classes
-        // / memberships on every restart. The outsider student is bolted on
-        // below idempotently so dev DBs created before #34 still pick it up.
+        // / memberships on every restart. The outsider student and bundles are
+        // bolted on below idempotently so dev DBs created before #34 / #69
+        // still pick them up.
         await EnsureDevOutsiderStudentAsync(db, cancellationToken);
+        await EnsureDevBundlesAsync(db, cancellationToken);
         if (await db.Users.AnyAsync(u => u.EntraOid != OutsiderStudentEntraOid, cancellationToken)) return;
 
         var teacher = new User
@@ -83,6 +86,66 @@ public static class DevDataSeeder
         });
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    /// <summary>
+    /// Placeholder bundles so the dashboard's bundle picker (#69) is not empty
+    /// on a fresh dev DB. Idempotent: each bundle is inserted only if its
+    /// (Name, Version) row doesn't already exist. The catalogue editor (separate
+    /// issue) is where these get curated for real.
+    /// </summary>
+    public static async Task EnsureDevBundlesAsync(AnchorDbContext db, CancellationToken cancellationToken = default)
+    {
+        var seeds = new[]
+        {
+            new BundleSeed("Microsoft 365", new[]
+            {
+                new EntrySeed("*.office.com", BundleEntryMatchType.Wildcard),
+                new EntrySeed("*.office365.com", BundleEntryMatchType.Wildcard),
+                new EntrySeed("*.microsoft.com", BundleEntryMatchType.Wildcard),
+                new EntrySeed("*.microsoftonline.com", BundleEntryMatchType.Wildcard),
+                new EntrySeed("*.live.com", BundleEntryMatchType.Wildcard),
+                new EntrySeed("*.sharepoint.com", BundleEntryMatchType.Wildcard),
+                new EntrySeed("outlook.office.com", BundleEntryMatchType.Exact),
+                new EntrySeed("teams.microsoft.com", BundleEntryMatchType.Exact),
+            }),
+            new BundleSeed("Smartschool", new[]
+            {
+                new EntrySeed("*.smartschool.be", BundleEntryMatchType.Wildcard),
+            }),
+            new BundleSeed("Bingel", new[]
+            {
+                new EntrySeed("*.bingel.be", BundleEntryMatchType.Wildcard),
+            }),
+        };
+
+        var changed = false;
+        foreach (var seed in seeds)
+        {
+            var exists = await db.Bundles.AnyAsync(
+                b => b.Name == seed.Name && b.Version == 1, cancellationToken);
+            if (exists) continue;
+
+            var bundle = new Bundle { Name = seed.Name, Version = 1 };
+            db.Bundles.Add(bundle);
+            foreach (var entry in seed.Entries)
+            {
+                db.BundleEntries.Add(new BundleEntry
+                {
+                    BundleId = bundle.Id,
+                    Kind = BundleEntryKind.Domain,
+                    Value = entry.Value,
+                    MatchType = entry.MatchType,
+                });
+            }
+            changed = true;
+        }
+
+        if (changed)
+            await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private sealed record BundleSeed(string Name, IReadOnlyList<EntrySeed> Entries);
+    private sealed record EntrySeed(string Value, BundleEntryMatchType MatchType);
 
     /// <summary>
     /// Dev convenience: make sure any real teacher who signs in ends up with a

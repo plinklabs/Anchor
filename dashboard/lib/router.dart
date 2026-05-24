@@ -1,6 +1,7 @@
 import 'package:go_router/go_router.dart';
 
 import 'api/auth_token_store.dart';
+import 'api/bundles_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
 import 'pages/home_page.dart';
@@ -11,6 +12,7 @@ GoRouter buildRouter({
   required AuthTokenStore tokens,
   required MsalAuthService auth,
   required SessionsApi sessions,
+  required BundlesApi bundles,
   required Uri apiBaseUrl,
 }) {
   return GoRouter(
@@ -31,8 +33,12 @@ GoRouter buildRouter({
       ),
       GoRoute(
         path: '/',
-        builder: (context, state) =>
-            HomePage(tokens: tokens, auth: auth, sessions: sessions),
+        builder: (context, state) => HomePage(
+          tokens: tokens,
+          auth: auth,
+          sessions: sessions,
+          bundles: bundles,
+        ),
       ),
       GoRoute(
         path: '/session/:id',

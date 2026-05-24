@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'api/api_client.dart';
 import 'api/auth_token_store.dart';
+import 'api/bundles_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
 import 'auth/msal_config.dart';
@@ -25,6 +26,7 @@ void main() {
     },
   );
   final sessions = SessionsApi(api);
+  final bundles = BundlesApi(api);
 
   runApp(
     AnchorDashboard(
@@ -32,6 +34,7 @@ void main() {
       auth: auth,
       api: api,
       sessions: sessions,
+      bundles: bundles,
       apiBaseUrl: Uri.parse(apiBase),
     ),
   );
@@ -44,6 +47,7 @@ class AnchorDashboard extends StatefulWidget {
     required this.auth,
     required this.api,
     required this.sessions,
+    required this.bundles,
     required this.apiBaseUrl,
   });
 
@@ -51,6 +55,7 @@ class AnchorDashboard extends StatefulWidget {
   final MsalAuthService auth;
   final ApiClient api;
   final SessionsApi sessions;
+  final BundlesApi bundles;
   final Uri apiBaseUrl;
 
   @override
@@ -62,6 +67,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     tokens: widget.tokens,
     auth: widget.auth,
     sessions: widget.sessions,
+    bundles: widget.bundles,
     apiBaseUrl: widget.apiBaseUrl,
   );
 
