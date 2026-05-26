@@ -157,6 +157,11 @@ class _HomePageState extends State<HomePage> {
             label: const Text('Manage classes'),
             onPressed: () => context.go('/classes'),
           ),
+          TextButton.icon(
+            icon: const Icon(Icons.history),
+            label: const Text('Past sessions'),
+            onPressed: () => context.go('/history'),
+          ),
           if (_isAdmin)
             TextButton.icon(
               icon: const Icon(Icons.collections_bookmark),

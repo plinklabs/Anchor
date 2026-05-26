@@ -69,21 +69,32 @@ class SessionDetail {
   SessionDetail({
     required this.id,
     required this.classId,
+    required this.className,
     required this.joinCode,
     required this.startedAt,
     required this.endedAt,
     required this.summaries,
+    required this.recentEvents,
+    required this.participants,
+    required this.bundles,
+    required this.grants,
   });
   final String id;
   final String classId;
+  final String className;
   final String joinCode;
   final DateTime startedAt;
   final DateTime? endedAt;
   final List<SessionEventSummary> summaries;
+  final List<SessionRecentEvent> recentEvents;
+  final List<SessionParticipantInfo> participants;
+  final List<SessionBundleInfo> bundles;
+  final List<SessionUnblockGrantInfo> grants;
 
   factory SessionDetail.fromJson(Map<String, dynamic> json) => SessionDetail(
     id: json['id'] as String,
     classId: json['classId'] as String,
+    className: json['className'] as String? ?? '',
     joinCode: json['joinCode'] as String? ?? '',
     startedAt: DateTime.parse(json['startedAt'] as String),
     endedAt: json['endedAt'] == null
@@ -92,7 +103,106 @@ class SessionDetail {
     summaries: ((json['summaries'] as List<dynamic>?) ?? const <dynamic>[])
         .map((e) => SessionEventSummary.fromJson(e as Map<String, dynamic>))
         .toList(growable: false),
+    recentEvents: ((json['recentEvents'] as List<dynamic>?) ?? const <dynamic>[])
+        .map((e) => SessionRecentEvent.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false),
+    participants: ((json['participants'] as List<dynamic>?) ?? const <dynamic>[])
+        .map((e) => SessionParticipantInfo.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false),
+    bundles: ((json['bundles'] as List<dynamic>?) ?? const <dynamic>[])
+        .map((e) => SessionBundleInfo.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false),
+    grants: ((json['grants'] as List<dynamic>?) ?? const <dynamic>[])
+        .map((e) => SessionUnblockGrantInfo.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false),
   );
+}
+
+class SessionRecentEvent {
+  SessionRecentEvent({
+    required this.id,
+    required this.userId,
+    required this.kind,
+    required this.payloadJson,
+    required this.occurredAt,
+  });
+  final String id;
+  final String userId;
+  final String kind;
+  final String payloadJson;
+  final DateTime occurredAt;
+
+  factory SessionRecentEvent.fromJson(Map<String, dynamic> json) =>
+      SessionRecentEvent(
+        id: json['id'] as String,
+        userId: json['userId'] as String,
+        kind: (json['kind'] as Object).toString(),
+        payloadJson: json['payloadJson'] as String? ?? '',
+        occurredAt: DateTime.parse(json['occurredAt'] as String),
+      );
+}
+
+class SessionParticipantInfo {
+  SessionParticipantInfo({
+    required this.userId,
+    required this.displayName,
+    required this.joinedAt,
+    required this.declinedAt,
+    required this.leftAt,
+  });
+  final String userId;
+  final String displayName;
+  final DateTime? joinedAt;
+  final DateTime? declinedAt;
+  final DateTime? leftAt;
+
+  factory SessionParticipantInfo.fromJson(Map<String, dynamic> json) =>
+      SessionParticipantInfo(
+        userId: json['userId'] as String,
+        displayName: json['displayName'] as String,
+        joinedAt: json['joinedAt'] == null
+            ? null
+            : DateTime.parse(json['joinedAt'] as String),
+        declinedAt: json['declinedAt'] == null
+            ? null
+            : DateTime.parse(json['declinedAt'] as String),
+        leftAt: json['leftAt'] == null
+            ? null
+            : DateTime.parse(json['leftAt'] as String),
+      );
+}
+
+class SessionBundleInfo {
+  SessionBundleInfo({required this.id, required this.name});
+  final String id;
+  final String name;
+
+  factory SessionBundleInfo.fromJson(Map<String, dynamic> json) =>
+      SessionBundleInfo(
+        id: json['id'] as String,
+        name: json['name'] as String,
+      );
+}
+
+class SessionUnblockGrantInfo {
+  SessionUnblockGrantInfo({
+    required this.userId,
+    required this.displayName,
+    required this.host,
+    required this.grantedAt,
+  });
+  final String userId;
+  final String displayName;
+  final String host;
+  final DateTime grantedAt;
+
+  factory SessionUnblockGrantInfo.fromJson(Map<String, dynamic> json) =>
+      SessionUnblockGrantInfo(
+        userId: json['userId'] as String,
+        displayName: json['displayName'] as String,
+        host: json['host'] as String,
+        grantedAt: DateTime.parse(json['grantedAt'] as String),
+      );
 }
 
 /// Per-(student, kind) aggregate written when the session ends (#77). The
@@ -123,6 +233,30 @@ class SessionEventSummary {
       );
 }
 
+class SessionHistoryEntry {
+  SessionHistoryEntry({
+    required this.id,
+    required this.classId,
+    required this.className,
+    required this.startedAt,
+    required this.endedAt,
+  });
+  final String id;
+  final String classId;
+  final String className;
+  final DateTime startedAt;
+  final DateTime endedAt;
+
+  factory SessionHistoryEntry.fromJson(Map<String, dynamic> json) =>
+      SessionHistoryEntry(
+        id: json['id'] as String,
+        classId: json['classId'] as String,
+        className: json['className'] as String,
+        startedAt: DateTime.parse(json['startedAt'] as String),
+        endedAt: DateTime.parse(json['endedAt'] as String),
+      );
+}
+
 class SessionsApi {
   SessionsApi(this._client);
   final ApiClient _client;
@@ -131,6 +265,15 @@ class SessionsApi {
     final res = await _client.get('me');
     _ensureOk(res);
     return MeResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  Future<List<SessionHistoryEntry>> history({int limit = 50, int offset = 0}) async {
+    final res = await _client.get('sessions/history?limit=$limit&offset=$offset');
+    _ensureOk(res);
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list
+        .map((e) => SessionHistoryEntry.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false);
   }
 
   Future<SessionDetail> getSession(String sessionId) async {

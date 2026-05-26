@@ -476,6 +476,67 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task GET_session_detail_includes_attached_bundles_with_names()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var bundleA = await TestSeed.AddBundleAsync(_factory, "Smartschool");
+        var bundleB = await TestSeed.AddBundleAsync(_factory, "Wiskunde");
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        await AttachBundleAsync(session.Id, bundleA.Id);
+        await AttachBundleAsync(session.Id, bundleB.Id);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<SessionDetailResponse>($"/sessions/{session.Id}");
+
+        Assert.NotNull(body);
+        Assert.Equal(2, body!.Bundles.Count);
+        Assert.Contains(body.Bundles, b => b.Id == bundleA.Id && b.Name == "Smartschool");
+        Assert.Contains(body.Bundles, b => b.Id == bundleB.Id && b.Name == "Wiskunde");
+    }
+
+    [Fact]
+    public async Task GET_session_detail_includes_unblock_grants_with_display_names()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        await AddUnblockGrantAsync(session.Id, scenario.Students[0].Id, "reddit.com",
+            new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero));
+        await AddUnblockGrantAsync(session.Id, scenario.Students[1].Id, "youtube.com",
+            new DateTimeOffset(2026, 1, 1, 9, 5, 0, TimeSpan.Zero));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<SessionDetailResponse>($"/sessions/{session.Id}");
+
+        Assert.NotNull(body);
+        Assert.Equal(2, body!.Grants.Count);
+        // GrantedAt ordering: earliest first.
+        Assert.Equal("reddit.com", body.Grants[0].Host);
+        Assert.Equal(scenario.Students[0].DisplayName, body.Grants[0].DisplayName);
+        Assert.Equal("youtube.com", body.Grants[1].Host);
+        Assert.Equal(scenario.Students[1].DisplayName, body.Grants[1].DisplayName);
+    }
+
+    private async Task AddUnblockGrantAsync(Guid sessionId, Guid userId, string host, DateTimeOffset grantedAt)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        db.SessionUnblockGrants.Add(new Anchor.Domain.Sessions.SessionUnblockGrant
+        {
+            SessionId = sessionId,
+            UserId = userId,
+            Host = host,
+            GrantedAt = grantedAt,
+        });
+        await db.SaveChangesAsync();
+    }
+
     // ------- GET /sessions/active -------
 
     [Fact]
@@ -634,6 +695,142 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
 
         Assert.NotNull(body);
         Assert.Empty(body!);
+    }
+
+    // ------- GET /sessions/history -------
+
+    [Fact]
+    public async Task GET_sessions_history_unauthenticated_returns_401()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.GetAsync("/sessions/history");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_sessions_history_as_student_returns_403()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetStudent(client, scenario.Students[0]);
+
+        var response = await client.GetAsync("/sessions/history");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_sessions_history_returns_only_callers_ended_sessions_ordered_by_ended_at_desc()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        // Three ended sessions for the calling teacher, distinct EndedAt to make
+        // ordering observable. AddSessionAsync's default EndedAt only differs by
+        // wall-clock drift, so pin the values explicitly.
+        var older = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+        var middle = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+        var newest = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+        await SetSessionEndedAtAsync(older.Id, new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero));
+        await SetSessionEndedAtAsync(middle.Id, new DateTimeOffset(2026, 1, 2, 9, 0, 0, TimeSpan.Zero));
+        await SetSessionEndedAtAsync(newest.Id, new DateTimeOffset(2026, 1, 3, 9, 0, 0, TimeSpan.Zero));
+
+        // Live (not-ended) session for same teacher — must not appear.
+        await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        // Another teacher's ended session — must not appear.
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        await TestSeed.AddSessionAsync(
+            _factory, other.Teacher.Id, other.Class.Id, other.Students.Select(s => s.Id).ToList(), ended: true);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<List<SessionHistoryEntry>>("/sessions/history");
+
+        Assert.NotNull(body);
+        Assert.Equal(3, body!.Count);
+        Assert.Equal(newest.Id, body[0].Id);
+        Assert.Equal(middle.Id, body[1].Id);
+        Assert.Equal(older.Id, body[2].Id);
+        // Class name comes from a join, not the live class lookup the dashboard
+        // already has — exposing it here saves the page an extra round trip.
+        Assert.Equal(scenario.Class.Name, body[0].ClassName);
+    }
+
+    [Fact]
+    public async Task GET_sessions_history_paginates_with_limit_and_offset()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var sessions = new List<Session>();
+        for (var i = 0; i < 5; i++)
+        {
+            var s = await TestSeed.AddSessionAsync(
+                _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(x => x.Id).ToList(), ended: true);
+            await SetSessionEndedAtAsync(s.Id, new DateTimeOffset(2026, 1, i + 1, 9, 0, 0, TimeSpan.Zero));
+            sessions.Add(s);
+        }
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var firstPage = await client.GetFromJsonAsync<List<SessionHistoryEntry>>("/sessions/history?limit=2");
+        Assert.Equal(2, firstPage!.Count);
+        Assert.Equal(sessions[4].Id, firstPage[0].Id);
+        Assert.Equal(sessions[3].Id, firstPage[1].Id);
+
+        var secondPage = await client.GetFromJsonAsync<List<SessionHistoryEntry>>("/sessions/history?limit=2&offset=2");
+        Assert.Equal(2, secondPage!.Count);
+        Assert.Equal(sessions[2].Id, secondPage[0].Id);
+        Assert.Equal(sessions[1].Id, secondPage[1].Id);
+
+        var thirdPage = await client.GetFromJsonAsync<List<SessionHistoryEntry>>("/sessions/history?limit=2&offset=4");
+        Assert.Single(thirdPage!);
+        Assert.Equal(sessions[0].Id, thirdPage![0].Id);
+    }
+
+    [Theory]
+    [InlineData("limit=0")]
+    [InlineData("limit=201")]
+    [InlineData("offset=-1")]
+    public async Task GET_sessions_history_rejects_invalid_pagination(string query)
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.GetAsync($"/sessions/history?{query}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_sessions_history_empty_when_caller_has_no_ended_sessions()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<List<SessionHistoryEntry>>("/sessions/history");
+
+        Assert.NotNull(body);
+        Assert.Empty(body!);
+    }
+
+    private async Task SetSessionEndedAtAsync(Guid sessionId, DateTimeOffset endedAt)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var session = await db.Sessions.SingleAsync(s => s.Id == sessionId);
+        session.EndedAt = endedAt;
+        await db.SaveChangesAsync();
     }
 
     private async Task AttachBundleAsync(Guid sessionId, Guid bundleId)

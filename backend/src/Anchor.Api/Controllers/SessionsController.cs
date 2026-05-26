@@ -241,6 +241,11 @@ public sealed class SessionsController : ControllerBase
         if (session.TeacherId != caller.Id && !isParticipant)
             return Forbid();
 
+        var className = await _db.Classes.AsNoTracking()
+            .Where(c => c.Id == session.ClassId)
+            .Select(c => c.Name)
+            .FirstAsync(cancellationToken);
+
         var participants = await _db.SessionParticipants.AsNoTracking()
             .Where(p => p.SessionId == id)
             .OrderBy(p => p.User!.DisplayName)
@@ -271,9 +276,27 @@ public sealed class SessionsController : ControllerBase
             .Select(s => new SessionEventSummaryDto(s.UserId, s.Kind, s.Count, s.FirstAt, s.LastAt))
             .ToListAsync(cancellationToken);
 
+        // Bundles + grants survive the raw-event prune, so they remain usable
+        // material on the past-sessions detail view even months later (#87
+        // follow-up). Resolving the bundle/user names server-side spares the
+        // dashboard a round-trip per row.
+        var bundles = await _db.SessionBundles.AsNoTracking()
+            .Where(sb => sb.SessionId == id)
+            .Select(sb => new SessionBundleSummary(sb.BundleId, sb.Bundle!.Name))
+            .ToListAsync(cancellationToken);
+
+        // SQLite (dev + tests) can't ORDER BY a DateTimeOffset — materialise then
+        // sort in memory, same pattern as /sessions/rejoinable.
+        var grantRows = await _db.SessionUnblockGrants.AsNoTracking()
+            .Where(g => g.SessionId == id)
+            .Select(g => new SessionUnblockGrantDto(g.UserId, g.User!.DisplayName, g.Host, g.GrantedAt))
+            .ToListAsync(cancellationToken);
+        var grants = grantRows.OrderBy(g => g.GrantedAt).ToList();
+
         return Ok(new SessionDetailResponse(
             session.Id,
             session.ClassId,
+            className,
             session.TeacherId,
             session.Mode,
             session.StartedAt,
@@ -281,7 +304,9 @@ public sealed class SessionsController : ControllerBase
             session.JoinCode,
             participants,
             recentEvents,
-            summaries));
+            summaries,
+            bundles,
+            grants));
     }
 
     [HttpGet("active")]
@@ -308,6 +333,71 @@ public sealed class SessionsController : ControllerBase
         var sessions = rows.OrderByDescending(s => s.StartedAt).ToList();
 
         return Ok(sessions);
+    }
+
+    [HttpGet("history")]
+    [Authorize(Policy = AuthorizationPolicies.Teacher)]
+    [ProducesResponseType(typeof(IReadOnlyList<SessionHistoryEntry>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<SessionHistoryEntry>>> History(
+        [FromQuery] int? limit,
+        [FromQuery] int? offset,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var take = limit ?? 50;
+        var skip = offset ?? 0;
+        if (take < 1 || take > 200)
+            return ValidationProblem("limit must be between 1 and 200.");
+        if (skip < 0)
+            return ValidationProblem("offset must be non-negative.");
+
+        // Owner-scoped — issue #87 only surfaces sessions the calling teacher
+        // started. We don't expose other teachers' history to keep the per-row
+        // authorisation model the same as the live session-detail page.
+        var rows = await _db.Sessions.AsNoTracking()
+            .Where(s => s.EndedAt != null && s.TeacherId == caller.Id)
+            .Join(_db.Classes.AsNoTracking(),
+                s => s.ClassId,
+                c => c.Id,
+                (s, c) => new
+                {
+                    s.Id,
+                    s.ClassId,
+                    ClassName = c.Name,
+                    s.TeacherId,
+                    s.Mode,
+                    s.StartedAt,
+                    s.EndedAt,
+                })
+            .ToListAsync(cancellationToken);
+
+        // SQLite (dev + tests) can't ORDER BY a DateTimeOffset server side, so
+        // sort + page in memory. Volume is bounded per teacher (one row per
+        // ended session) so this stays cheap in practice — matches /sessions/rejoinable.
+        var entries = rows
+            .OrderByDescending(s => s.EndedAt!.Value)
+            .Skip(skip)
+            .Take(take)
+            .Select(s => new SessionHistoryEntry(
+                s.Id,
+                s.ClassId,
+                s.ClassName,
+                s.TeacherId,
+                s.Mode,
+                s.StartedAt,
+                s.EndedAt!.Value))
+            .ToList();
+
+        return Ok(entries);
     }
 
     [HttpGet("rejoinable")]
@@ -677,9 +767,19 @@ public sealed record SessionSummary(
     DateTimeOffset? EndedAt,
     string JoinCode);
 
+public sealed record SessionHistoryEntry(
+    Guid Id,
+    Guid ClassId,
+    string ClassName,
+    Guid TeacherId,
+    SessionMode Mode,
+    DateTimeOffset StartedAt,
+    DateTimeOffset EndedAt);
+
 public sealed record SessionDetailResponse(
     Guid Id,
     Guid ClassId,
+    string ClassName,
     Guid TeacherId,
     SessionMode Mode,
     DateTimeOffset StartedAt,
@@ -687,7 +787,17 @@ public sealed record SessionDetailResponse(
     string JoinCode,
     IReadOnlyList<SessionParticipantSummary> Participants,
     IReadOnlyList<SessionRecentEvent> RecentEvents,
-    IReadOnlyList<SessionEventSummaryDto> Summaries);
+    IReadOnlyList<SessionEventSummaryDto> Summaries,
+    IReadOnlyList<SessionBundleSummary> Bundles,
+    IReadOnlyList<SessionUnblockGrantDto> Grants);
+
+public sealed record SessionBundleSummary(Guid Id, string Name);
+
+public sealed record SessionUnblockGrantDto(
+    Guid UserId,
+    string DisplayName,
+    string Host,
+    DateTimeOffset GrantedAt);
 
 public sealed record SessionParticipantSummary(
     Guid UserId,
