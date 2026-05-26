@@ -11,7 +11,6 @@ internal sealed class SessionConfiguration : IEntityTypeConfiguration<Session>
         builder.ToTable("Sessions");
         builder.HasKey(s => s.Id);
 
-        builder.Property(s => s.Mode).HasConversion<string>().HasMaxLength(16).IsRequired();
         builder.Property(s => s.StartedAt).IsRequired();
         builder.Property(s => s.JoinCode).IsRequired().HasMaxLength(16);
 

@@ -31,10 +31,6 @@ class _HomePageState extends State<HomePage> {
   ClassSummary? _selected;
   List<BundleSummary>? _bundles;
   final Set<String> _selectedBundleIds = <String>{};
-  // SessionMode wire value — must match the SessionMode enum names on the
-  // backend (Strict | Loose). Default Strict so the dashboard's behaviour
-  // matches pre-#76 sessions until the teacher actively opts into Loose.
-  String _mode = 'Strict';
   bool _busy = false;
   String? _error;
   bool _isAdmin = false;
@@ -78,9 +74,6 @@ class _HomePageState extends State<HomePage> {
       final restored = (remembered ?? const <String>[])
           .where(availableIds.contains)
           .toSet();
-      final restoredMode = accountKey == null
-          ? null
-          : _prefs.readMode(accountKey);
 
       if (!mounted) return;
       setState(() {
@@ -91,11 +84,6 @@ class _HomePageState extends State<HomePage> {
         _selectedBundleIds
           ..clear()
           ..addAll(restored);
-        // Reject anything outside the known mode set so a corrupted localStorage
-        // entry can't put us in an unknown state — backend would 400 the start.
-        if (restoredMode == 'Strict' || restoredMode == 'Loose') {
-          _mode = restoredMode!;
-        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -117,12 +105,10 @@ class _HomePageState extends State<HomePage> {
       final accountKey = widget.tokens.account?.homeAccountId;
       if (accountKey != null) {
         _prefs.writeSelection(accountKey, bundleIds);
-        _prefs.writeMode(accountKey, _mode);
       }
       final session = await widget.sessions.startSession(
         klass.id,
         bundleIds: bundleIds,
-        mode: _mode,
       );
       if (!mounted) return;
       context.go('/session/${session.id}');
@@ -219,12 +205,6 @@ class _HomePageState extends State<HomePage> {
                         : (value) => setState(() => _selected = value),
                   ),
                   const SizedBox(height: 16),
-                  _ModeSelector(
-                    mode: _mode,
-                    enabled: !_busy,
-                    onChanged: (m) => setState(() => _mode = m),
-                  ),
-                  const SizedBox(height: 16),
                   _BundlePicker(
                     bundles: bundles,
                     selectedIds: _selectedBundleIds,
@@ -269,52 +249,6 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _ModeSelector extends StatelessWidget {
-  const _ModeSelector({
-    required this.mode,
-    required this.enabled,
-    required this.onChanged,
-  });
-
-  // Wire-format values — kept in sync with backend SessionMode enum names.
-  final String mode;
-  final bool enabled;
-  final void Function(String mode) onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Session mode', style: theme.textTheme.labelLarge),
-        const SizedBox(height: 8),
-        SegmentedButton<String>(
-          segments: const [
-            ButtonSegment(
-              value: 'Strict',
-              label: Text('Strict'),
-              icon: Icon(Icons.lock_outline),
-              // One-line tooltip per the #76 acceptance criteria.
-              tooltip: 'Only the bundles you picked are allowed; everything else is blocked. Best for tests and quiet work.',
-            ),
-            ButtonSegment(
-              value: 'Loose',
-              label: Text('Loose'),
-              icon: Icon(Icons.shield_outlined),
-              tooltip: 'Blocks known social, video and gaming sites; allows the rest. Best for general lessons.',
-            ),
-          ],
-          selected: {mode},
-          onSelectionChanged: enabled
-              ? (selection) => onChanged(selection.first)
-              : null,
-        ),
-      ],
     );
   }
 }

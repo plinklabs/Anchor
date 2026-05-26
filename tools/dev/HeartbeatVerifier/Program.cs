@@ -46,7 +46,7 @@ var target = classes.FirstOrDefault(c => c.Name == className)
     ?? throw new InvalidOperationException($"Class '{className}' not found.");
 
 Log($"POST /sessions for class {target.Id}…");
-var createResp = await http.PostAsJsonAsync("/sessions", new { classId = target.Id, mode = "Strict", bundleIds = Array.Empty<Guid>() });
+var createResp = await http.PostAsJsonAsync("/sessions", new { classId = target.Id, bundleIds = Array.Empty<Guid>() });
 createResp.EnsureSuccessStatusCode();
 var session = await createResp.Content.ReadFromJsonAsync<SessionDto>()
     ?? throw new InvalidOperationException("/sessions returned null");

@@ -55,7 +55,7 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
 
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(@class.Id, "Strict", null));
+            new StartSessionRequest(@class.Id, null));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
@@ -81,7 +81,7 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
 
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(@class.Id, "Strict", null));
+            new StartSessionRequest(@class.Id, null));
 
         // The handler authenticates the student successfully, but the Teacher
         // authorization policy rejects the request — proving the role claim
@@ -98,7 +98,7 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
 
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(@class.Id, "Strict", null));
+            new StartSessionRequest(@class.Id, null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -113,7 +113,7 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
 
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(@class.Id, "Strict", null));
+            new StartSessionRequest(@class.Id, null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -149,7 +149,7 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
         using var client = _factory.CreateClient();
         var response = await client.PostAsJsonAsync(
             $"/sessions?dev_impersonate_oid={teacher.EntraOid}",
-            new StartSessionRequest(@class.Id, "Strict", null));
+            new StartSessionRequest(@class.Id, null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -166,7 +166,7 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
 
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(@class.Id, "Strict", null));
+            new StartSessionRequest(@class.Id, null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }

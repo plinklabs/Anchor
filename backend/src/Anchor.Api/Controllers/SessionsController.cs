@@ -67,9 +67,6 @@ public sealed class SessionsController : ControllerBase
         if (caller is null)
             return Unauthorized();
 
-        if (!Enum.TryParse<SessionMode>(request.Mode, ignoreCase: true, out var mode))
-            return ValidationProblem($"Unknown session mode '{request.Mode}'.");
-
         var @class = await _db.Classes.AsNoTracking().FirstOrDefaultAsync(c => c.Id == request.ClassId, cancellationToken);
         if (@class is null)
             return NotFound();
@@ -106,7 +103,6 @@ public sealed class SessionsController : ControllerBase
         {
             TeacherId = caller.Id,
             ClassId = request.ClassId,
-            Mode = mode,
             StartedAt = now,
             JoinCode = joinCode,
         };
@@ -129,13 +125,13 @@ public sealed class SessionsController : ControllerBase
 
         await _db.SaveChangesAsync(cancellationToken);
 
-        var expanded = await _allowlist.ExpandAsync(bundleIds, session.Mode, cancellationToken);
+        var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
         await _broadcaster.SessionStartedAsync(
             BuildStartedPayload(session, expanded),
             broadcastRecipientIds,
             cancellationToken);
 
-        var response = new StartSessionResponse(session.Id, session.ClassId, session.Mode, session.StartedAt, session.JoinCode);
+        var response = new StartSessionResponse(session.Id, session.ClassId, session.StartedAt, session.JoinCode);
         return CreatedAtAction(nameof(Get), new { id = session.Id }, response);
     }
 
@@ -143,12 +139,10 @@ public sealed class SessionsController : ControllerBase
         new(
             session.Id,
             session.ClassId,
-            session.Mode.ToString(),
             session.StartedAt,
             session.JoinCode,
             allowlist.Apps,
-            allowlist.Domains,
-            allowlist.BlockedDomains);
+            allowlist.Domains);
 
     [HttpPost("{id:guid}/end")]
     [Authorize(Policy = AuthorizationPolicies.Teacher)]
@@ -298,7 +292,6 @@ public sealed class SessionsController : ControllerBase
             session.ClassId,
             className,
             session.TeacherId,
-            session.Mode,
             session.StartedAt,
             session.EndedAt,
             session.JoinCode,
@@ -328,7 +321,7 @@ public sealed class SessionsController : ControllerBase
             : query.Where(s => _db.SessionParticipants.Any(p => p.SessionId == s.Id && p.UserId == caller.Id));
 
         var rows = await query
-            .Select(s => new SessionSummary(s.Id, s.ClassId, s.TeacherId, s.Mode, s.StartedAt, s.EndedAt, s.JoinCode))
+            .Select(s => new SessionSummary(s.Id, s.ClassId, s.TeacherId, s.StartedAt, s.EndedAt, s.JoinCode))
             .ToListAsync(cancellationToken);
         var sessions = rows.OrderByDescending(s => s.StartedAt).ToList();
 
@@ -374,7 +367,6 @@ public sealed class SessionsController : ControllerBase
                     s.ClassId,
                     ClassName = c.Name,
                     s.TeacherId,
-                    s.Mode,
                     s.StartedAt,
                     s.EndedAt,
                 })
@@ -392,7 +384,6 @@ public sealed class SessionsController : ControllerBase
                 s.ClassId,
                 s.ClassName,
                 s.TeacherId,
-                s.Mode,
                 s.StartedAt,
                 s.EndedAt!.Value))
             .ToList();
@@ -431,7 +422,7 @@ public sealed class SessionsController : ControllerBase
                 p.JoinedAt != null &&
                 p.LeftAt == null &&
                 p.DeclinedAt == null))
-            .Select(s => new { s.Id, s.ClassId, s.Mode, s.StartedAt, s.JoinCode })
+            .Select(s => new { s.Id, s.ClassId, s.StartedAt, s.JoinCode })
             .ToListAsync(cancellationToken);
 
         // SQLite (used by dev + tests) can't ORDER BY a DateTimeOffset server
@@ -443,16 +434,14 @@ public sealed class SessionsController : ControllerBase
         var sessions = new List<SessionStartedPayload>(ordered.Count);
         foreach (var row in ordered)
         {
-            var expanded = await _allowlist.ExpandForSessionAsync(row.Id, row.Mode, cancellationToken);
+            var expanded = await _allowlist.ExpandForSessionAsync(row.Id, cancellationToken);
             sessions.Add(new SessionStartedPayload(
                 row.Id,
                 row.ClassId,
-                row.Mode.ToString(),
                 row.StartedAt,
                 row.JoinCode,
                 expanded.Apps,
-                expanded.Domains,
-                expanded.BlockedDomains));
+                expanded.Domains));
         }
 
         return Ok(sessions);
@@ -544,7 +533,7 @@ public sealed class SessionsController : ControllerBase
         // this up and the #31 join-confirmation flow takes over. Keeping the
         // payload identical to the roster-based push means the agent needs
         // no new client-side branch.
-        var expanded = await _allowlist.ExpandForSessionAsync(session.Id, session.Mode, cancellationToken);
+        var expanded = await _allowlist.ExpandForSessionAsync(session.Id, cancellationToken);
         await _broadcaster.SessionStartedAsync(
             BuildStartedPayload(session, expanded),
             new[] { caller.Id },
@@ -747,12 +736,11 @@ public sealed class SessionsController : ControllerBase
     }
 }
 
-public sealed record StartSessionRequest(Guid ClassId, string Mode, IReadOnlyList<Guid>? BundleIds);
+public sealed record StartSessionRequest(Guid ClassId, IReadOnlyList<Guid>? BundleIds);
 
 public sealed record StartSessionResponse(
     Guid Id,
     Guid ClassId,
-    SessionMode Mode,
     DateTimeOffset StartedAt,
     string JoinCode);
 
@@ -762,7 +750,6 @@ public sealed record SessionSummary(
     Guid Id,
     Guid ClassId,
     Guid TeacherId,
-    SessionMode Mode,
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
     string JoinCode);
@@ -772,7 +759,6 @@ public sealed record SessionHistoryEntry(
     Guid ClassId,
     string ClassName,
     Guid TeacherId,
-    SessionMode Mode,
     DateTimeOffset StartedAt,
     DateTimeOffset EndedAt);
 
@@ -781,7 +767,6 @@ public sealed record SessionDetailResponse(
     Guid ClassId,
     string ClassName,
     Guid TeacherId,
-    SessionMode Mode,
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
     string JoinCode,

@@ -12,12 +12,10 @@ public class SessionCoordinatorTests
     private static SessionStartedPayload Payload(Guid? sessionId = null) =>
         new(SessionId: sessionId ?? Guid.NewGuid(),
             ClassId: Guid.NewGuid(),
-            Mode: "strict",
             StartedAt: DateTimeOffset.UnixEpoch,
             JoinCode: "123456",
             Apps: Array.Empty<AllowedAppDto>(),
-            Domains: Array.Empty<AllowedDomainDto>(),
-            BlockedDomains: Array.Empty<BlockedDomainDto>());
+            Domains: Array.Empty<AllowedDomainDto>());
 
     [Fact]
     public async Task Confirmed_decision_calls_JoinSession_with_null_join_code()

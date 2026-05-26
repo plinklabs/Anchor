@@ -212,7 +212,7 @@ public sealed class BundlesAdminEndpointTests : IClassFixture<AnchorApiFactory>
         // allowlist that was in force.
         using var scope = _factory.Services.CreateScope();
         var expander = scope.ServiceProvider.GetRequiredService<ISessionAllowlistExpander>();
-        var expanded = await expander.ExpandForSessionAsync(session.Id, session.Mode);
+        var expanded = await expander.ExpandForSessionAsync(session.Id);
         Assert.Contains(expanded.Domains, d => d.Value == "history.example.com");
     }
 

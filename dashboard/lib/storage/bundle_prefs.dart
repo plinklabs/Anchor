@@ -1,19 +1,14 @@
 import 'bundle_prefs_stub.dart'
     if (dart.library.js_interop) 'bundle_prefs_web.dart';
 
-/// Per-teacher persistence of the last-used start-session choices (bundle
-/// selection per #69, session mode per #76). Scope is the local browser,
-/// keyed by [accountKey] (the MSAL homeAccountId) so a shared workstation
-/// keeps each teacher's preferences separate. Returns null on non-web builds
-/// and on first use.
+/// Per-teacher persistence of the last-used bundle selection on the
+/// session-start screen (#69). Scope is the local browser, keyed by
+/// [accountKey] (the MSAL homeAccountId) so a shared workstation keeps each
+/// teacher's preferences separate. Returns null on non-web builds and on
+/// first use.
 abstract class BundlePrefs {
   factory BundlePrefs() = BundlePrefsImpl;
 
   List<String>? readSelection(String accountKey);
   void writeSelection(String accountKey, List<String> bundleIds);
-
-  /// Returns the last-saved session mode ("Strict" or "Loose"), or null on
-  /// first use / non-web builds.
-  String? readMode(String accountKey);
-  void writeMode(String accountKey, String mode);
 }

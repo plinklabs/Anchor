@@ -1,5 +1,5 @@
 import { HubClient } from './shared/hub-client';
-import { isUrlAllowed, isUrlBlockedByLoose } from './shared/host-matcher';
+import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { loadSettings } from './shared/settings';
 import {
@@ -72,20 +72,16 @@ async function handleSessionStarted(payload: SessionStartedPayload): Promise<voi
   const state: ActiveSessionState = {
     sessionId: payload.sessionId,
     classId: payload.classId,
-    mode: payload.mode,
     joinCode: payload.joinCode,
     startedAt: payload.startedAt,
     // Wire shape already matches the matcher's AllowedDomain (camelCase
     // matchType + value), so no field renaming is needed here.
     domains: payload.domains ?? [],
-    blockedDomains: payload.blockedDomains ?? [],
   };
   await setActiveSession(state);
   log.info('active session cached', {
     sessionId: state.sessionId,
-    mode: state.mode,
     domainCount: state.domains.length,
-    blockedDomainCount: state.blockedDomains.length,
   });
 }
 
@@ -211,20 +207,6 @@ async function evaluateAndMaybeBlock(tabId: number, url: string): Promise<void> 
     return;
   }
 
-  if (session.mode.toLowerCase() === 'loose') {
-    // Loose mode (#76): block only when the URL matches the server-pushed
-    // blocklist AND isn't covered by the baseline allow-list. Anything else
-    // passes through — the design's "general lessons" mode where the teacher
-    // doesn't want to curate.
-    if (!isUrlBlockedByLoose(url, session.domains, session.blockedDomains)) {
-      return;
-    }
-    log.info('blocking loose-mode navigation', { tabId, url, sessionId: session.sessionId });
-    await redirectToBlockPage(tabId, url, session);
-    await reportBlockedUrl(session.sessionId, tabId, url);
-    return;
-  }
-
   if (isUrlAllowed(url, session.domains)) {
     return;
   }
@@ -238,7 +220,6 @@ async function redirectToBlockPage(tabId: number, blockedUrl: string, session: A
   const params = new URLSearchParams({
     blocked: blockedUrl,
     session: session.sessionId,
-    mode: session.mode,
   });
   const target = chrome.runtime.getURL(BLOCK_PAGE_FILE) + '?' + params.toString();
   try {

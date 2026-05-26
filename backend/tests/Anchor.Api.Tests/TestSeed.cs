@@ -107,7 +107,6 @@ internal static class TestSeed
         Guid teacherId,
         Guid classId,
         IReadOnlyCollection<Guid> participantUserIds,
-        SessionMode mode = SessionMode.Strict,
         bool ended = false)
     {
         using var scope = factory.Services.CreateScope();
@@ -118,7 +117,6 @@ internal static class TestSeed
         {
             TeacherId = teacherId,
             ClassId = classId,
-            Mode = mode,
             StartedAt = startedAt,
             EndedAt = ended ? startedAt.AddMinutes(2) : null,
             JoinCode = Random.Shared.Next(0, 1_000_000).ToString("D6"),

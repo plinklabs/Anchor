@@ -231,12 +231,10 @@ public partial class App : Application
         var payload = new SessionStartedPayload(
             SessionId: Guid.Parse("00000000-0000-0000-0000-000000000041"),
             ClassId: Guid.NewGuid(),
-            Mode: "Strict",
             StartedAt: DateTimeOffset.UtcNow,
             JoinCode: "TOAST41",
             Apps: Array.Empty<AllowedAppDto>(),
-            Domains: Array.Empty<AllowedDomainDto>(),
-            BlockedDomains: Array.Empty<BlockedDomainDto>());
+            Domains: Array.Empty<AllowedDomainDto>());
         var confirmation = new JoinConfirmation(payload, "Self-Test Teacher", TimeSpan.FromSeconds(5), TimeProvider.System);
 
         // Kick off the show on the UI thread — ShowJoinConfirmationAsync

@@ -164,7 +164,6 @@ public sealed class EventPrunerTests : IClassFixture<EventPrunerTests.PrunerTest
         {
             TeacherId = teacher.Id,
             ClassId = @class.Id,
-            Mode = SessionMode.Strict,
             StartedAt = endedAt.AddHours(-1),
             EndedAt = endedAt,
             JoinCode = Random.Shared.Next(0, 1_000_000).ToString("D6"),
@@ -186,7 +185,6 @@ public sealed class EventPrunerTests : IClassFixture<EventPrunerTests.PrunerTest
         {
             TeacherId = teacher.Id,
             ClassId = @class.Id,
-            Mode = SessionMode.Strict,
             StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
             JoinCode = Random.Shared.Next(0, 1_000_000).ToString("D6"),
         };

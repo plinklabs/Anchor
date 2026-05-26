@@ -5,11 +5,9 @@ import type { ActiveSessionState, AllowedDomainDto } from './types';
 const baseState = (domains: AllowedDomainDto[]): ActiveSessionState => ({
   sessionId: 'session-1',
   classId: 'class-1',
-  mode: 'Strict',
   joinCode: '123456',
   startedAt: '2026-05-24T00:00:00Z',
   domains,
-  blockedDomains: [],
 });
 
 describe('mergeDomainsInto', () => {
