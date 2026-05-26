@@ -46,9 +46,21 @@ class _SessionPageState extends State<SessionPage> {
       apiBaseUrl: widget.apiBaseUrl,
       tokenProvider: () async => widget.tokens.token,
     );
-    _loadDetail();
-    _loadPendingRequests();
-    _connect();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    await _loadDetail();
+    // Old bookmarks / direct links to /session/:id of a session that has since
+    // ended would otherwise hit Hub.JoinSession and surface a scary exception.
+    // The past-session view at /history/:id is the read-only review surface
+    // for these — redirect there before touching the hub.
+    if (!mounted) return;
+    if (_ended) {
+      context.go('/history/${widget.sessionId}');
+      return;
+    }
+    await Future.wait([_connect(), _loadPendingRequests()]);
   }
 
   Future<void> _loadDetail() async {
