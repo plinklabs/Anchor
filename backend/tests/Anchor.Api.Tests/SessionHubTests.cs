@@ -371,7 +371,7 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         TestAuth.SetTeacher(client, scenario.Teacher);
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(scenario.Class.Id, "Strict", null));
+            new StartSessionRequest(scenario.Class.Id, null));
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadFromJsonAsync<StartSessionResponse>();
         Assert.NotNull(body);
@@ -417,7 +417,6 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         {
             TeacherId = teacher.Id,
             ClassId = @class.Id,
-            Mode = SessionMode.Strict,
             StartedAt = DateTimeOffset.UtcNow,
             JoinCode = $"J{Guid.NewGuid():N}".Substring(0, 8),
         };

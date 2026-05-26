@@ -244,12 +244,10 @@ public class FocusSessionControllerTests
     private static SessionStartedPayload NewPayload(Guid? id = null, IReadOnlyList<AllowedAppDto>? apps = null) => new(
         SessionId: id ?? Guid.NewGuid(),
         ClassId: Guid.NewGuid(),
-        Mode: "strict",
         StartedAt: DateTimeOffset.UnixEpoch,
         JoinCode: "123456",
         Apps: apps ?? Array.Empty<AllowedAppDto>(),
-        Domains: Array.Empty<AllowedDomainDto>(),
-        BlockedDomains: Array.Empty<BlockedDomainDto>());
+        Domains: Array.Empty<AllowedDomainDto>());
 
     private static ForegroundChange ForegroundFor(string process, nint hwnd, string? exePath = null, string? publisher = null, int pid = 4242) =>
         new(new AppInfo(process, exePath, publisher), WindowTitle: process, ProcessId: pid, WindowHandle: hwnd);

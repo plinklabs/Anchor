@@ -80,7 +80,6 @@ public sealed class SessionHubUserCacheTests : IClassFixture<SessionHubUserCache
         {
             TeacherId = teacher.Id,
             ClassId = @class.Id,
-            Mode = SessionMode.Strict,
             StartedAt = DateTimeOffset.UtcNow,
             JoinCode = $"J{Guid.NewGuid():N}".Substring(0, 8),
         };

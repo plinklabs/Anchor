@@ -183,7 +183,6 @@ public sealed class HeartbeatMonitorTests : IClassFixture<HeartbeatMonitorTests.
         {
             TeacherId = teacher.Id,
             ClassId = @class.Id,
-            Mode = Domain.Sessions.SessionMode.Strict,
             StartedAt = DateTimeOffset.UtcNow,
             JoinCode = Random.Shared.Next(0, 1_000_000).ToString("D6"),
         };

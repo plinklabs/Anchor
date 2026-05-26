@@ -140,12 +140,10 @@ public class SessionRehydrationServiceTests
     private static SessionStartedPayload Payload(Guid? sessionId = null) => new(
         SessionId: sessionId ?? Guid.NewGuid(),
         ClassId: Guid.NewGuid(),
-        Mode: "Strict",
         StartedAt: DateTimeOffset.UnixEpoch,
         JoinCode: "987654",
         Apps: Array.Empty<AllowedAppDto>(),
-        Domains: Array.Empty<AllowedDomainDto>(),
-        BlockedDomains: Array.Empty<BlockedDomainDto>());
+        Domains: Array.Empty<AllowedDomainDto>());
 
     private sealed class StubClient : ISessionRehydrationClient
     {

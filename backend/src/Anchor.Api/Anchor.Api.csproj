@@ -19,13 +19,4 @@
     <ProjectReference Include="..\Anchor.Infrastructure\Anchor.Infrastructure.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Loose-mode blocklist (#76) — read by LooseModeBlocklistProvider at
-         startup, so it has to live next to the binary at runtime. The Update
-         (not Include) tunes the implicit Content item the SDK already added. -->
-    <Content Update="Sessions\LooseModeBlocklist.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
-
 </Project>

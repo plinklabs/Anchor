@@ -18,7 +18,6 @@ block as a `BlockedUrl` event.
 Out of scope for v1 (separate issues):
 
 - "Request access" button wiring (the button is rendered but disabled).
-- Loose-mode known-bad-category filtering (Loose currently passes everything).
 - Path-level filtering (no `/embed/...` allow rules).
 - Production Entra auth via `chrome.identity` — dev uses the impersonation
   fallback documented below.

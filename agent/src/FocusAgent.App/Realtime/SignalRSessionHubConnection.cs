@@ -50,8 +50,8 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
         _connection.On<SessionStartedPayload>("SessionStarted", payload =>
         {
             _log.LogInformation(
-                "Hub received SessionStarted for session {SessionId} (class {ClassId}, mode {Mode})",
-                payload.SessionId, payload.ClassId, payload.Mode);
+                "Hub received SessionStarted for session {SessionId} (class {ClassId})",
+                payload.SessionId, payload.ClassId);
             SessionStarted?.Invoke(this, payload);
         });
         _connection.On<Guid>("SessionEnded", sessionId =>

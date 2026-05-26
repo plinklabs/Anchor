@@ -6,7 +6,6 @@ const log = logger('block-page');
 interface BlockParams {
   blockedUrl: string;
   sessionId: string | null;
-  mode: string | null;
 }
 
 function readParams(): BlockParams {
@@ -14,20 +13,12 @@ function readParams(): BlockParams {
   return {
     blockedUrl: url.searchParams.get('blocked') ?? '',
     sessionId: url.searchParams.get('session'),
-    mode: url.searchParams.get('mode'),
   };
 }
 
 function render(params: BlockParams): void {
   const urlEl = document.querySelector<HTMLElement>('[data-blocked-url]');
   if (urlEl) urlEl.textContent = params.blockedUrl || '(unknown)';
-
-  const sessionSuffix = document.querySelector<HTMLElement>('[data-session-suffix]');
-  if (sessionSuffix && params.mode) {
-    // Show the mode (Strict / Loose) but not the session ID — that's noise to
-    // a student and useful only in the event log on the backend.
-    sessionSuffix.textContent = ` (${params.mode.toLowerCase()})`;
-  }
 }
 
 function setStatus(text: string, kind: 'info' | 'error' = 'info'): void {

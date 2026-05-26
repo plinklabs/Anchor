@@ -55,7 +55,6 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
         var got = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(payload.SessionId, got.SessionId);
         Assert.Equal(payload.ClassId, got.ClassId);
-        Assert.Equal(payload.Mode, got.Mode);
         Assert.Equal(payload.JoinCode, got.JoinCode);
     }
 
@@ -128,12 +127,10 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
     private static SessionStartedPayload NewPayload() => new(
         SessionId: Guid.NewGuid(),
         ClassId: Guid.NewGuid(),
-        Mode: "Strict",
         StartedAt: DateTimeOffset.UtcNow,
         JoinCode: "654321",
         Apps: Array.Empty<AllowedAppDto>(),
-        Domains: Array.Empty<AllowedDomainDto>(),
-        BlockedDomains: Array.Empty<BlockedDomainDto>());
+        Domains: Array.Empty<AllowedDomainDto>());
 
     public sealed class DevAnchorApiFactory : AnchorApiFactory
     {

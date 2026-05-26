@@ -156,12 +156,9 @@ Every session implicitly allows:
 
 Without this baseline, the agent's own auth and most modern web pages fail.
 
-### 7.3 Strict vs loose mode
+### 7.3 Enforcement model
 
-Each session has a mode:
-
-- **Strict** — only bundle domains + baseline resolve; everything else is blocked. Used for tests and quiet work.
-- **Loose** — block known-bad categories (social, gaming, video) but allow the rest. Used for general lessons where curating an allowlist isn't worth the time.
+Every session is strict: only bundle domains + baseline resolve; everything else is blocked. A "loose" mode (allow-everything-except-known-bad-categories) was prototyped and removed (#88) because the school firewall already covers the same ground.
 
 ### 7.4 "Site is broken" feedback loop
 

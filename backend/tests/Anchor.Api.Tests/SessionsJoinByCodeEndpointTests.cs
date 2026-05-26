@@ -99,7 +99,6 @@ public sealed class SessionsJoinByCodeEndpointTests : IClassFixture<AnchorApiFac
             {
                 TeacherId = scenario.Teacher.Id,
                 ClassId = scenario.Class.Id,
-                Mode = SessionMode.Strict,
                 StartedAt = DateTimeOffset.UtcNow - SessionsController.JoinCodeFreshnessWindow - TimeSpan.FromMinutes(5),
                 JoinCode = Random.Shared.Next(0, 1_000_000).ToString("D6"),
             };

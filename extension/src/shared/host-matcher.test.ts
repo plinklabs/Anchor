@@ -1,16 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   isUrlAllowed,
-  isUrlBlockedByLoose,
   type AllowedDomain,
-  type BlockedDomain,
 } from './host-matcher';
 
 const exact = (value: string): AllowedDomain => ({ matchType: 'Exact', value });
 const wildcard = (value: string): AllowedDomain => ({ matchType: 'Wildcard', value });
 const suffix = (value: string): AllowedDomain => ({ matchType: 'Suffix', value });
-const blockSuffix = (value: string): BlockedDomain => ({ matchType: 'Suffix', value });
-const blockExact = (value: string): BlockedDomain => ({ matchType: 'Exact', value });
 
 describe('isUrlAllowed', () => {
   describe('Exact', () => {
@@ -122,49 +118,5 @@ describe('isUrlAllowed', () => {
       const bogus = { matchType: 'NotARealType' as unknown as 'Exact', value: 'reddit.com' };
       expect(isUrlAllowed('https://reddit.com/', [bogus])).toBe(false);
     });
-  });
-});
-
-// #76 — loose-mode evaluator. Blocks only when the host matches the blocklist
-// AND isn't covered by the baseline allow-list, so login flows can't be
-// accidentally broken by a category entry that overlaps an auth domain.
-describe('isUrlBlockedByLoose', () => {
-  it('blocks a host that matches the blocklist with no baseline overlap', () => {
-    expect(isUrlBlockedByLoose('https://www.roblox.com/', [], [blockSuffix('roblox.com')])).toBe(true);
-  });
-
-  it('does not block a host that matches no blocklist entry', () => {
-    expect(isUrlBlockedByLoose('https://wikipedia.org/', [], [blockSuffix('roblox.com')])).toBe(false);
-  });
-
-  it('does not block when the host is in the baseline allow-list (login override)', () => {
-    // login.microsoftonline.com must keep working even if a hypothetical
-    // future blocklist entry overlapped — baseline always wins.
-    const baseline: AllowedDomain[] = [wildcard('*.microsoftonline.com')];
-    const blocked: BlockedDomain[] = [blockSuffix('microsoftonline.com')];
-    expect(isUrlBlockedByLoose('https://login.microsoftonline.com/oauth', baseline, blocked)).toBe(false);
-  });
-
-  it('matches blocklist subdomains via Suffix', () => {
-    expect(isUrlBlockedByLoose('https://m.facebook.com/login', [], [blockSuffix('facebook.com')])).toBe(true);
-  });
-
-  it('does not match hosts that merely end with the blocklist string', () => {
-    // notroblox.com ends with "roblox.com" but is not a subdomain.
-    expect(isUrlBlockedByLoose('https://notroblox.com/', [], [blockSuffix('roblox.com')])).toBe(false);
-  });
-
-  it('supports Exact-typed blocklist entries', () => {
-    expect(isUrlBlockedByLoose('https://example.com/', [], [blockExact('example.com')])).toBe(true);
-    expect(isUrlBlockedByLoose('https://sub.example.com/', [], [blockExact('example.com')])).toBe(false);
-  });
-
-  it('returns false on an empty blocklist (loose mode with no curated entries)', () => {
-    expect(isUrlBlockedByLoose('https://anything.example/', [], [])).toBe(false);
-  });
-
-  it('passes through non-http(s) URLs', () => {
-    expect(isUrlBlockedByLoose('chrome://settings', [], [blockSuffix('settings')])).toBe(false);
-    expect(isUrlBlockedByLoose('about:blank', [], [blockSuffix('blank')])).toBe(false);
   });
 });

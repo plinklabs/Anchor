@@ -9,12 +9,10 @@ public class JoinConfirmationTests
     private static SessionStartedPayload SamplePayload() =>
         new(SessionId: Guid.NewGuid(),
             ClassId: Guid.NewGuid(),
-            Mode: "strict",
             StartedAt: DateTimeOffset.UnixEpoch,
             JoinCode: "123456",
             Apps: Array.Empty<AllowedAppDto>(),
-            Domains: Array.Empty<AllowedDomainDto>(),
-            BlockedDomains: Array.Empty<BlockedDomainDto>());
+            Domains: Array.Empty<AllowedDomainDto>());
 
     [Fact]
     public void Confirms_when_timer_elapses()

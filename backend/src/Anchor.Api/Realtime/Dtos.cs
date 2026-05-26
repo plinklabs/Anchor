@@ -11,12 +11,10 @@ public sealed record DeclineSessionRequest(Guid SessionId, string? Reason);
 public sealed record SessionStartedPayload(
     Guid SessionId,
     Guid ClassId,
-    string Mode,
     DateTimeOffset StartedAt,
     string JoinCode,
     IReadOnlyList<AllowedAppDto> Apps,
-    IReadOnlyList<AllowedDomainDto> Domains,
-    IReadOnlyList<BlockedDomainDto> BlockedDomains);
+    IReadOnlyList<AllowedDomainDto> Domains);
 
 /// <summary>
 /// One entry in the session allowlist's app list (#70). <see cref="MatchKind"/>
@@ -31,14 +29,6 @@ public sealed record AllowedAppDto(string MatchKind, string Value);
 /// (Exact / Wildcard / Suffix). Consumed by the Edge extension.
 /// </summary>
 public sealed record AllowedDomainDto(string MatchType, string Value);
-
-/// <summary>
-/// One entry in the session's loose-mode blocklist (#76). Same wire shape as
-/// <see cref="AllowedDomainDto"/> so the extension's host-match primitive can
-/// run against either list unchanged. Only populated when the session is
-/// started in Loose mode; empty (and ignored) in Strict.
-/// </summary>
-public sealed record BlockedDomainDto(string MatchType, string Value);
 
 public sealed record BundleUpdatedPayload(Guid SessionId, Guid BundleId);
 

@@ -211,12 +211,10 @@ public class SessionHeartbeatServiceTests
     private static SessionStartedPayload Payload(Guid sessionId) => new(
         SessionId: sessionId,
         ClassId: Guid.NewGuid(),
-        Mode: "Strict",
         StartedAt: DateTimeOffset.UnixEpoch,
         JoinCode: "123456",
         Apps: Array.Empty<AllowedAppDto>(),
-        Domains: Array.Empty<AllowedDomainDto>(),
-        BlockedDomains: Array.Empty<BlockedDomainDto>());
+        Domains: Array.Empty<AllowedDomainDto>());
 
     private static async Task AdvanceAndDrainAsync(FakeTimeProvider clock, TimeSpan by)
     {

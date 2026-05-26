@@ -101,7 +101,8 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         var now = _clock.GetUtcNow();
         if (participant is null && !isOwningTeacher)
         {
-            // Loose mode: any signed-in user with the correct join code may join.
+            // Join-by-code fallback: any signed-in user with the correct code
+            // may join even without a roster row.
             if (string.IsNullOrWhiteSpace(request.JoinCode) ||
                 !string.Equals(request.JoinCode, session.JoinCode, StringComparison.Ordinal))
             {

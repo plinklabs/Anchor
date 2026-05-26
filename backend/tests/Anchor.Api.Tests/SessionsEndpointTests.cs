@@ -29,7 +29,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
 
         using var client = _factory.CreateClient();
-        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, "Strict", null));
+        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
@@ -42,7 +42,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         using var client = _factory.CreateClient();
         TestAuth.SetStudent(client, scenario.Students[0]);
 
-        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, "Strict", null));
+        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -56,7 +56,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         using var client = _factory.CreateClient();
         TestAuth.SetTeacher(client, owned.Teacher);
 
-        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(other.Class.Id, "Strict", null));
+        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(other.Class.Id, null));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
@@ -69,22 +69,9 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         using var client = _factory.CreateClient();
         TestAuth.SetTeacher(client, scenario.Teacher);
 
-        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(Guid.NewGuid(), "Strict", null));
+        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(Guid.NewGuid(), null));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task POST_sessions_with_unknown_mode_returns_400()
-    {
-        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
-
-        using var client = _factory.CreateClient();
-        TestAuth.SetTeacher(client, scenario.Teacher);
-
-        var response = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, "Bogus", null));
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
@@ -97,7 +84,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
 
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(scenario.Class.Id, "Strict", new[] { Guid.NewGuid() }));
+            new StartSessionRequest(scenario.Class.Id, new[] { Guid.NewGuid() }));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -114,13 +101,12 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
 
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(scenario.Class.Id, "Strict", new[] { bundle.Id }));
+            new StartSessionRequest(scenario.Class.Id, new[] { bundle.Id }));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<StartSessionResponse>();
         Assert.NotNull(body);
         Assert.Equal(scenario.Class.Id, body!.ClassId);
-        Assert.Equal(SessionMode.Strict, body.Mode);
         Assert.Equal(6, body.JoinCode.Length);
         Assert.True(body.JoinCode.All(char.IsDigit), $"JoinCode '{body.JoinCode}' should be all digits.");
 
@@ -161,7 +147,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
 
         var response = await client.PostAsJsonAsync(
             "/sessions",
-            new StartSessionRequest(scenario.Class.Id, "Strict", null));
+            new StartSessionRequest(scenario.Class.Id, null));
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<StartSessionResponse>();
@@ -170,41 +156,6 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         var broadcast = Assert.Single(broadcaster.SessionStartedCalls, p => p.SessionId == body!.Id);
         Assert.NotEmpty(broadcast.Payload.Apps);
         Assert.NotEmpty(broadcast.Payload.Domains);
-        // Strict mode never carries a blocklist (#76).
-        Assert.Empty(broadcast.Payload.BlockedDomains);
-    }
-
-    [Fact]
-    public async Task POST_sessions_in_loose_mode_carries_blocklist_and_baseline_allowlist()
-    {
-        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
-        // Seed the blocklist override the factory injected so we can assert
-        // the wire contents without depending on the shipped catalogue.
-        _factory.BlocklistOverride.Entries = new[]
-        {
-            new BlockedDomainDto("Suffix", "facebook.com"),
-            new BlockedDomainDto("Suffix", "tiktok.com"),
-        };
-
-        using var client = _factory.CreateClient();
-        TestAuth.SetTeacher(client, scenario.Teacher);
-
-        var response = await client.PostAsJsonAsync(
-            "/sessions",
-            new StartSessionRequest(scenario.Class.Id, "Loose", null));
-
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<StartSessionResponse>();
-
-        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
-        var broadcast = Assert.Single(broadcaster.SessionStartedCalls, p => p.SessionId == body!.Id);
-        Assert.Equal("Loose", broadcast.Payload.Mode);
-        // Baseline allow-list still ships so login flows aren't blocked.
-        Assert.Contains(broadcast.Payload.Domains, d => d.Value == "*.microsoftonline.com");
-        Assert.Contains(broadcast.Payload.BlockedDomains, b => b.Value == "facebook.com");
-        Assert.Contains(broadcast.Payload.BlockedDomains, b => b.Value == "tiktok.com");
-
-        _factory.BlocklistOverride.Entries = Array.Empty<BlockedDomainDto>();
     }
 
     // ------- POST /sessions/{id}/end -------

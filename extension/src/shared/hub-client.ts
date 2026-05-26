@@ -49,7 +49,6 @@ export class HubClient {
     this.connection.on('SessionStarted', async (payload: SessionStartedPayload) => {
       log.info('SessionStarted received', {
         sessionId: payload.sessionId,
-        mode: payload.mode,
         domainCount: payload.domains?.length ?? 0,
       });
       try {

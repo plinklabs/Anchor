@@ -8,7 +8,6 @@ public sealed class Session
     public Guid Id { get; init; } = Guid.NewGuid();
     public required Guid TeacherId { get; init; }
     public required Guid ClassId { get; init; }
-    public required SessionMode Mode { get; set; }
     public required DateTimeOffset StartedAt { get; init; }
     public DateTimeOffset? EndedAt { get; set; }
     public required string JoinCode { get; init; }

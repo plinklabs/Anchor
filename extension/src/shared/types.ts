@@ -6,7 +6,7 @@
 // because its client-side deserializer is case-insensitive, but the JS
 // client receives the raw camelCase JSON.
 
-import type { AllowedDomain, BlockedDomain } from './host-matcher';
+import type { AllowedDomain } from './host-matcher';
 
 export interface AllowedAppDto {
   matchKind: string;
@@ -20,26 +20,13 @@ export interface AllowedAppDto {
  */
 export type AllowedDomainDto = AllowedDomain;
 
-/**
- * Loose-mode blocklist entry on the wire (#76). Same shape as
- * AllowedDomainDto by design, so the host-match primitive can run against
- * either list unchanged.
- */
-export type BlockedDomainDto = BlockedDomain;
-
 export interface SessionStartedPayload {
   sessionId: string;
   classId: string;
-  mode: string;
   startedAt: string;
   joinCode: string;
   apps: ReadonlyArray<AllowedAppDto>;
   domains: ReadonlyArray<AllowedDomainDto>;
-  /**
-   * Loose-mode blocklist. Empty in Strict mode; populated with the
-   * server-side "known-bad categories" list when Mode == "Loose" (#76).
-   */
-  blockedDomains?: ReadonlyArray<BlockedDomainDto>;
 }
 
 /**
@@ -49,16 +36,9 @@ export interface SessionStartedPayload {
 export interface ActiveSessionState {
   sessionId: string;
   classId: string;
-  mode: string;
   joinCode: string;
   startedAt: string;
   domains: ReadonlyArray<AllowedDomain>;
-  /**
-   * Loose-mode blocklist cached so background.ts can decide allow/block
-   * without re-fetching on every navigation. Always present (empty array
-   * in Strict mode) so callers don't need a null check.
-   */
-  blockedDomains: ReadonlyArray<BlockedDomain>;
 }
 
 /**

@@ -127,7 +127,7 @@ try {
 
     # -------------------------------------------------- POST /sessions
     Write-Step 'Creating session...'
-    $body = @{ classId = $targetClass.id; mode = 'Strict'; bundleIds = @() } | ConvertTo-Json
+    $body = @{ classId = $targetClass.id; bundleIds = @() } | ConvertTo-Json
     $sessionResponse = Invoke-RestMethod -Method Post -Uri "$BackendUrl/sessions" `
         -Headers @{ 'X-Dev-Impersonate-Oid' = $TeacherOid; 'Content-Type' = 'application/json' } `
         -Body $body -TimeoutSec 5
