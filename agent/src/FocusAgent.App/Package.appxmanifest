@@ -54,34 +54,6 @@
         </uap5:Extension>
       </Extensions>
     </Application>
-    <!-- #35: per-user watchdog. Same package identity as the App so it can
-         read Package.Current to resolve the App's install path, and so MSIX
-         uninstall removes both startup tasks together. AppListEntry="none"
-         keeps it out of Start menu / Apps list — students should see one
-         "Anchor Focus Agent" entry, not two. -->
-    <Application
-      Id="Watchdog"
-      Executable="Watchdog\FocusAgent.Watchdog.exe"
-      EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements
-        AppListEntry="none"
-        DisplayName="Anchor Focus Agent Watchdog"
-        Description="Restarts Anchor Focus Agent if it stops unexpectedly"
-        Square150x150Logo="Assets\Square150x150Logo.png"
-        Square44x44Logo="Assets\Square44x44Logo.png"
-        BackgroundColor="transparent" />
-      <Extensions>
-        <uap5:Extension
-          Category="windows.startupTask"
-          Executable="Watchdog\FocusAgent.Watchdog.exe"
-          EntryPoint="Windows.FullTrustApplication">
-          <uap5:StartupTask
-            TaskId="AnchorFocusAgentWatchdogStartup"
-            Enabled="true"
-            DisplayName="Anchor Focus Agent Watchdog" />
-        </uap5:Extension>
-      </Extensions>
-    </Application>
   </Applications>
 
   <Capabilities>

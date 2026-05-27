@@ -183,14 +183,8 @@ public partial class App : Application
         _mainWindow.Activate();
     }
 
-    /// <summary>
-    /// User-initiated exit (tray Quit or MainWindow Quit). Writes the
-    /// quit.flag sentinel so the Watchdog (#35) treats this absence as
-    /// intentional rather than as a crash that needs relaunching.
-    /// </summary>
     private void ShutdownCleanly()
     {
-        Program.MarkCleanShutdown();
         Exit();
     }
 

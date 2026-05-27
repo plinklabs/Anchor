@@ -1,4 +1,3 @@
-using FocusAgent.Core.Watchdog;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
@@ -8,15 +7,6 @@ namespace FocusAgent.App;
 public static class Program
 {
     private const string SingleInstanceKey = "Anchor.FocusAgent.SingleInstance";
-
-    // Held for the lifetime of the process so the Watchdog (issue #35) can
-    // probe App presence via Mutex.TryOpenExisting. AppInstance.FindOrRegisterForKey
-    // above handles our own single-instance gating, but it's a Windows App
-    // SDK concept that another process can't easily query — a real named
-    // kernel mutex can. Static field is intentional: the GC must not collect
-    // the handle, and the kernel will release the object when the process
-    // exits (clean or hard kill alike).
-    private static Mutex? _appPresenceMutex;
 
     /// <summary>
     /// Dev-only flag: shows a fake join-confirmation toast immediately, with
@@ -80,24 +70,6 @@ public static class Program
             {
                 return 0;
             }
-
-            // Watchdog presence beacon (#35). Take ownership only if no one
-            // else holds it; if WaitOne(0) fails the App is somehow already
-            // running despite the AppInstance check above — bail rather than
-            // racing.
-            _appPresenceMutex = new Mutex(initiallyOwned: false, AnchorWatchdogPaths.AppPresenceMutexName, out _);
-            if (!_appPresenceMutex.WaitOne(0))
-            {
-                _appPresenceMutex.Dispose();
-                _appPresenceMutex = null;
-                return 0;
-            }
-
-            // The Watchdog uses quit.flag freshness to decide whether the
-            // App's absence was intentional. Whenever the App starts, clear
-            // any leftover flag so a future Quit can't be confused with this
-            // session's startup. See AnchorWatchdogPaths.QuitFlagPath().
-            TryDeleteQuitFlag();
         }
 
         Application.Start(p =>
@@ -109,45 +81,6 @@ public static class Program
         });
 
         return 0;
-    }
-
-    /// <summary>
-    /// Mark this exit as a deliberate user-initiated quit so the Watchdog
-    /// (#35) does not bounce the App back up. Writes the sentinel BEFORE
-    /// <see cref="Application.Exit"/> so we can't be killed mid-write.
-    /// Failures are swallowed — at worst the Watchdog will relaunch us,
-    /// which is annoying but not unsafe.
-    /// </summary>
-    public static void MarkCleanShutdown()
-    {
-        try
-        {
-            var path = AnchorWatchdogPaths.QuitFlagPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, DateTimeOffset.UtcNow.ToString("O"));
-        }
-        catch
-        {
-            // best-effort sentinel; see XML doc
-        }
-    }
-
-    private static void TryDeleteQuitFlag()
-    {
-        try
-        {
-            var path = AnchorWatchdogPaths.QuitFlagPath();
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch
-        {
-            // ignore; a leftover stale flag is at worst a 10s window where
-            // a freshly killed App won't relaunch — and the freshness check
-            // in QuitFlagGate guards against ancient flags.
-        }
     }
 
     private static int? ParsePortAfter(string[] args, string flag)

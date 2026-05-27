@@ -115,10 +115,10 @@ Key APIs in use:
 
 ### 5.4 Anti-tamper posture
 
-We accept that BYOD without admin rights means a determined student can kill the agent. Mitigations:
+We accept that BYOD without admin rights means a determined student can kill the agent. There is **no watchdog**: a student who is willing to kill the agent will simply kill the watchdog too, and the installer complexity it would add (service registration, SCM permissions, an extra StartupTask the user has to approve) buys nothing real. Instead:
 
-- A Windows Service (running as the user) restarts the UI process if it dies unexpectedly.
-- Loss of heartbeat for > N seconds during an active session surfaces in the dashboard as "agent stopped reporting."
+- The agent registers itself to auto-start at login via the MSIX `windows.startupTask` extension, so a reboot or sign-out brings it back the next time the student signs in.
+- Loss of heartbeat for > N seconds during an active session surfaces in the dashboard's live student-state panel as "agent stopped reporting" — that's the signal teachers actually act on.
 - We treat tampering as a **social problem visible to the teacher**, not a technical arms race.
 
 ## 6. Edge extension behaviour
