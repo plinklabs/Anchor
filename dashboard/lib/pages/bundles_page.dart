@@ -246,6 +246,47 @@ class _BundlesPageState extends State<BundlesPage> {
     }
   }
 
+  Future<void> _delete() async {
+    final selected = _selected;
+    if (selected == null) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete bundle?'),
+        content: Text(
+          '"${selected.name}" will be permanently removed. '
+          'This cannot be undone. Available because no session has ever used this bundle.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await widget.bundles.hardDelete(selected.id);
+      if (!mounted) return;
+      _clearEditor();
+      await _refreshList();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Delete failed: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   void _runTest() {
     final probe = _testController.text.trim();
     if (probe.isEmpty) {
@@ -432,14 +473,7 @@ class _BundlesPageState extends State<BundlesPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              if (_selected != null && !_selected!.isArchived)
-                OutlinedButton.icon(
-                  icon: const Icon(Icons.archive_outlined),
-                  label: const Text('Archive'),
-                  onPressed: _saving ? null : _archive,
-                )
-              else
-                const SizedBox.shrink(),
+              _buildDestructiveAction(),
               FilledButton.icon(
                 icon: _saving
                     ? const SizedBox(
@@ -461,6 +495,39 @@ class _BundlesPageState extends State<BundlesPage> {
         ],
       ),
     );
+  }
+
+  /// Per #89: surface Delete when the bundle has never been bound to a
+  /// session; otherwise fall back to Archive (the historical-reproducibility
+  /// guarantee makes hard delete impossible). Archived-but-never-used bundles
+  /// still get the Delete option as a cleanup path.
+  Widget _buildDestructiveAction() {
+    final selected = _selected;
+    if (selected == null) return const SizedBox.shrink();
+
+    if (!selected.hasBeenUsed) {
+      return Tooltip(
+        message: 'Permanently delete — this bundle has never been used in a session.',
+        child: OutlinedButton.icon(
+          icon: const Icon(Icons.delete_outline),
+          label: const Text('Delete'),
+          onPressed: _saving ? null : _delete,
+        ),
+      );
+    }
+
+    if (!selected.isArchived) {
+      return Tooltip(
+        message: 'Hide from the picker. Hard delete is not possible because this bundle has been used in past sessions.',
+        child: OutlinedButton.icon(
+          icon: const Icon(Icons.archive_outlined),
+          label: const Text('Archive'),
+          onPressed: _saving ? null : _archive,
+        ),
+      );
+    }
+
+    return const SizedBox.shrink();
   }
 
   Widget _buildTester() {

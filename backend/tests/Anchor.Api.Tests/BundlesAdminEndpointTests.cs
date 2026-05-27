@@ -230,6 +230,96 @@ public sealed class BundlesAdminEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
     }
 
+    // ---------- DELETE (hard) ----------
+
+    [Fact]
+    public async Task DELETE_bundle_hard_succeeds_when_never_used_and_removes_row()
+    {
+        var admin = await TestSeed.AddUserAsync(_factory, UserRole.Admin, "Admin " + Suffix());
+        var bundle = await TestSeed.AddBundleAsync(_factory, "Hard-" + Suffix());
+        await TestSeed.AddBundleEntryAsync(_factory, bundle.Id, BundleEntryKind.Domain,
+            "neverused.example.com", BundleEntryMatchType.Exact);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetAdmin(client, admin);
+
+        var res = await client.DeleteAsync($"/bundles/{bundle.Id}?hard=true");
+        Assert.Equal(HttpStatusCode.NoContent, res.StatusCode);
+
+        // Row is gone — both default list and includeArchived list omit it.
+        var listAll = await client.GetFromJsonAsync<List<BundleSummary>>("/bundles?includeArchived=true");
+        Assert.NotNull(listAll);
+        Assert.DoesNotContain(listAll!, b => b.Id == bundle.Id);
+
+        var get = await client.GetAsync($"/bundles/{bundle.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, get.StatusCode);
+    }
+
+    [Fact]
+    public async Task DELETE_bundle_hard_returns_409_when_used_in_session()
+    {
+        var admin = await TestSeed.AddUserAsync(_factory, UserRole.Admin, "Admin " + Suffix());
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var bundle = await TestSeed.AddBundleAsync(_factory, "Used-" + Suffix());
+        var session = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id,
+            new[] { scenario.Students[0].Id }, ended: true);
+        await AddSessionBundleAsync(session.Id, bundle.Id);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetAdmin(client, admin);
+
+        var res = await client.DeleteAsync($"/bundles/{bundle.Id}?hard=true");
+        Assert.Equal(HttpStatusCode.Conflict, res.StatusCode);
+
+        // Row survives, and archive flag is untouched (no implicit soft delete).
+        var detail = await client.GetFromJsonAsync<BundleDetail>($"/bundles/{bundle.Id}");
+        Assert.NotNull(detail);
+        Assert.False(detail!.IsArchived);
+        Assert.True(detail.HasBeenUsed);
+    }
+
+    [Fact]
+    public async Task DELETE_bundle_hard_as_teacher_returns_403()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var bundle = await TestSeed.AddBundleAsync(_factory, "T-" + Suffix());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var res = await client.DeleteAsync($"/bundles/{bundle.Id}?hard=true");
+
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_bundles_exposes_hasBeenUsed_flag()
+    {
+        var admin = await TestSeed.AddUserAsync(_factory, UserRole.Admin, "Admin " + Suffix());
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var unused = await TestSeed.AddBundleAsync(_factory, "Unused-" + Suffix());
+        var used = await TestSeed.AddBundleAsync(_factory, "Used-" + Suffix());
+        var session = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id,
+            new[] { scenario.Students[0].Id }, ended: true);
+        await AddSessionBundleAsync(session.Id, used.Id);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetAdmin(client, admin);
+
+        var list = await client.GetFromJsonAsync<List<BundleSummary>>("/bundles");
+        Assert.NotNull(list);
+        Assert.False(list!.Single(b => b.Id == unused.Id).HasBeenUsed);
+        Assert.True(list.Single(b => b.Id == used.Id).HasBeenUsed);
+
+        var unusedDetail = await client.GetFromJsonAsync<BundleDetail>($"/bundles/{unused.Id}");
+        Assert.NotNull(unusedDetail);
+        Assert.False(unusedDetail!.HasBeenUsed);
+
+        var usedDetail = await client.GetFromJsonAsync<BundleDetail>($"/bundles/{used.Id}");
+        Assert.NotNull(usedDetail);
+        Assert.True(usedDetail!.HasBeenUsed);
+    }
+
     // ---------- GET list filtering ----------
 
     [Fact]

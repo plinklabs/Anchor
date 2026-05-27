@@ -51,6 +51,7 @@ class BundleSummary {
     required this.name,
     required this.version,
     required this.isArchived,
+    required this.hasBeenUsed,
   });
 
   final String id;
@@ -58,11 +59,16 @@ class BundleSummary {
   final int version;
   final bool isArchived;
 
+  /// True if any past or current session bound this bundle. Hard delete is
+  /// only allowed when this is false (#89).
+  final bool hasBeenUsed;
+
   factory BundleSummary.fromJson(Map<String, dynamic> json) => BundleSummary(
     id: json['id'] as String,
     name: json['name'] as String,
     version: (json['version'] as num).toInt(),
     isArchived: (json['isArchived'] as bool?) ?? false,
+    hasBeenUsed: (json['hasBeenUsed'] as bool?) ?? false,
   );
 }
 
@@ -96,6 +102,7 @@ class BundleDetail {
     required this.name,
     required this.version,
     required this.isArchived,
+    required this.hasBeenUsed,
     required this.entries,
   });
 
@@ -103,6 +110,7 @@ class BundleDetail {
   final String name;
   final int version;
   final bool isArchived;
+  final bool hasBeenUsed;
   final List<BundleEntry> entries;
 
   factory BundleDetail.fromJson(Map<String, dynamic> json) => BundleDetail(
@@ -110,6 +118,7 @@ class BundleDetail {
     name: json['name'] as String,
     version: (json['version'] as num).toInt(),
     isArchived: (json['isArchived'] as bool?) ?? false,
+    hasBeenUsed: (json['hasBeenUsed'] as bool?) ?? false,
     entries: (json['entries'] as List<dynamic>)
         .map((e) => BundleEntry.fromJson(e as Map<String, dynamic>))
         .toList(growable: false),
@@ -178,6 +187,14 @@ class BundlesApi {
 
   Future<void> archive(String id) async {
     final res = await _client.delete('bundles/$id');
+    _ensureOk(res);
+  }
+
+  /// Permanently remove a bundle. The server rejects this with 409 if the
+  /// bundle has ever been bound to a session (#89) — callers should fall back
+  /// to [archive] in that case.
+  Future<void> hardDelete(String id) async {
+    final res = await _client.delete('bundles/$id?hard=true');
     _ensureOk(res);
   }
 

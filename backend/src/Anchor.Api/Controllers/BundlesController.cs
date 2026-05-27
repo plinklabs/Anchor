@@ -46,7 +46,12 @@ public sealed class BundlesController : ControllerBase
 
         var bundles = await query
             .OrderBy(b => b.Name)
-            .Select(b => new BundleSummary(b.Id, b.Name, b.Version, b.IsArchived))
+            .Select(b => new BundleSummary(
+                b.Id,
+                b.Name,
+                b.Version,
+                b.IsArchived,
+                _db.SessionBundles.Any(sb => sb.BundleId == b.Id)))
             .ToListAsync(cancellationToken);
 
         return Ok(bundles);
@@ -70,6 +75,7 @@ public sealed class BundlesController : ControllerBase
                 b.Name,
                 b.Version,
                 b.IsArchived,
+                HasBeenUsed = _db.SessionBundles.Any(sb => sb.BundleId == b.Id),
                 Entries = b.Entries
                     .OrderBy(e => e.Value)
                     .Select(e => new BundleEntrySummary(e.Kind, e.Value, e.MatchType))
@@ -80,7 +86,7 @@ public sealed class BundlesController : ControllerBase
         if (bundle is null)
             return NotFound();
 
-        return Ok(new BundleDetail(bundle.Id, bundle.Name, bundle.Version, bundle.IsArchived, bundle.Entries));
+        return Ok(new BundleDetail(bundle.Id, bundle.Name, bundle.Version, bundle.IsArchived, bundle.HasBeenUsed, bundle.Entries));
     }
 
     [HttpPost]
@@ -181,11 +187,40 @@ public sealed class BundlesController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Archive(Guid id, CancellationToken cancellationToken)
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Delete(
+        Guid id,
+        [FromQuery] bool hard,
+        CancellationToken cancellationToken)
     {
-        var bundle = await _db.Bundles.FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+        var bundle = await _db.Bundles
+            .Include(b => b.Entries)
+            .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
         if (bundle is null)
             return NotFound();
+
+        if (hard)
+        {
+            // Hard delete is only safe if no session ever bound this bundle.
+            // Otherwise historical SessionBundle rows would lose their FK target
+            // and past-session views (#73 unblock log) could no longer resolve
+            // the allowlist that was in force. Once used, archive is the only
+            // option — that's the audit-trail trade-off baked into #75.
+            var used = await _db.SessionBundles.AnyAsync(sb => sb.BundleId == id, cancellationToken);
+            if (used)
+            {
+                return Conflict(new ProblemDetails
+                {
+                    Title = "Bundle has been used in a session and cannot be hard-deleted.",
+                    Detail = "Archive it instead so historical sessions remain reproducible.",
+                });
+            }
+            _db.BundleEntries.RemoveRange(bundle.Entries);
+            _db.Bundles.Remove(bundle);
+            await _db.SaveChangesAsync(cancellationToken);
+            return NoContent();
+        }
+
         if (!bundle.IsArchived)
         {
             bundle.IsArchived = true;
@@ -204,13 +239,14 @@ public sealed class BundlesController : ControllerBase
                 b.Name,
                 b.Version,
                 b.IsArchived,
+                HasBeenUsed = _db.SessionBundles.Any(sb => sb.BundleId == b.Id),
                 Entries = b.Entries
                     .OrderBy(e => e.Value)
                     .Select(e => new BundleEntrySummary(e.Kind, e.Value, e.MatchType))
                     .ToList(),
             })
             .FirstAsync(cancellationToken);
-        return new BundleDetail(row.Id, row.Name, row.Version, row.IsArchived, row.Entries);
+        return new BundleDetail(row.Id, row.Name, row.Version, row.IsArchived, row.HasBeenUsed, row.Entries);
     }
 
     private static (string? Name, string? ValidationError) NormaliseAndValidate(WriteBundleRequest request)
@@ -275,13 +311,14 @@ public sealed class BundlesController : ControllerBase
     }
 }
 
-public sealed record BundleSummary(Guid Id, string Name, int Version, bool IsArchived);
+public sealed record BundleSummary(Guid Id, string Name, int Version, bool IsArchived, bool HasBeenUsed);
 
 public sealed record BundleDetail(
     Guid Id,
     string Name,
     int Version,
     bool IsArchived,
+    bool HasBeenUsed,
     IReadOnlyList<BundleEntrySummary> Entries);
 
 public sealed record BundleEntrySummary(
