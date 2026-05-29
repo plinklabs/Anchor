@@ -13,6 +13,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Identity.Web" Version="4.9.0" />
+    <PackageReference Include="Microsoft.Identity.Web.MicrosoftGraph" Version="4.9.0" />
   </ItemGroup>
 
   <ItemGroup>
