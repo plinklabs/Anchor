@@ -335,7 +335,6 @@ class _RosterTable extends StatelessWidget {
           columns: const [
             DataColumn(label: Text('Display name')),
             DataColumn(label: Text('Role')),
-            DataColumn(label: Text('Joined')),
             DataColumn(label: Text('')),
           ],
           rows: [
@@ -343,8 +342,7 @@ class _RosterTable extends StatelessWidget {
               DataRow(
                 cells: [
                   DataCell(Text(m.displayName)),
-                  DataCell(Text(m.membershipRole)),
-                  DataCell(Text(_formatDate(m.joinedAt))),
+                  DataCell(Text(m.userRole)),
                   DataCell(
                     IconButton(
                       icon: const Icon(Icons.close),
@@ -358,13 +356,6 @@ class _RosterTable extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static String _formatDate(DateTime d) {
-    final local = d.toLocal();
-    return '${local.year.toString().padLeft(4, '0')}-'
-        '${local.month.toString().padLeft(2, '0')}-'
-        '${local.day.toString().padLeft(2, '0')}';
   }
 }
 
