@@ -19,15 +19,32 @@ class _ClassesPageState extends State<ClassesPage> {
   List<ClassSummary>? _classes;
   ClassSummary? _selected;
   ClassMembersResponse? _roster;
+  List<String>? _schools;
   bool _loadingClasses = false;
   bool _loadingRoster = false;
+  bool _loadingSchools = false;
+  bool _savingCodes = false;
+  bool _bulkImporting = false;
   String? _error;
   List<ClassMembershipImportResult>? _lastImportResults;
+
+  // Editable copies of the selected class's schoolTag / classCode. Sit
+  // alongside [_selected] (which mirrors the server) until the teacher hits
+  // Save; allows them to walk away from edits by re-selecting a class.
+  String? _editSchoolTag;
+  final _classCodeController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadClasses();
+    _loadSchools();
+  }
+
+  @override
+  void dispose() {
+    _classCodeController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadClasses() async {
@@ -40,7 +57,9 @@ class _ClassesPageState extends State<ClassesPage> {
       if (!mounted) return;
       setState(() {
         _classes = list;
-        _selected ??= list.isNotEmpty ? list.first : null;
+        if (_selected == null && list.isNotEmpty) {
+          _selectClass(list.first, refreshRoster: false);
+        }
       });
       if (_selected != null) {
         await _loadRoster(_selected!);
@@ -50,6 +69,23 @@ class _ClassesPageState extends State<ClassesPage> {
       setState(() => _error = 'Could not load classes: $e');
     } finally {
       if (mounted) setState(() => _loadingClasses = false);
+    }
+  }
+
+  Future<void> _loadSchools() async {
+    setState(() => _loadingSchools = true);
+    try {
+      final schools = await widget.classes.schools();
+      if (!mounted) return;
+      setState(() => _schools = schools);
+    } catch (_) {
+      // Non-fatal — the selector will fall back to a free-text affordance
+      // and the page surfaces other errors via [_error]. Listing the school
+      // tags is a discovery convenience, not a gate.
+      if (!mounted) return;
+      setState(() => _schools = const <String>[]);
+    } finally {
+      if (mounted) setState(() => _loadingSchools = false);
     }
   }
 
@@ -71,13 +107,47 @@ class _ClassesPageState extends State<ClassesPage> {
     }
   }
 
-  void _selectClass(ClassSummary klass) {
+  void _selectClass(ClassSummary klass, {bool refreshRoster = true}) {
     setState(() {
       _selected = klass;
       _roster = null;
       _lastImportResults = null;
+      _editSchoolTag = klass.schoolTag;
+      _classCodeController.text = klass.classCode ?? '';
     });
-    _loadRoster(klass);
+    if (refreshRoster) _loadRoster(klass);
+  }
+
+  Future<void> _saveCodes() async {
+    final klass = _selected;
+    if (klass == null) return;
+    setState(() {
+      _savingCodes = true;
+      _error = null;
+    });
+    try {
+      final updated = await widget.classes.updateCodes(
+        klass.id,
+        schoolTag: _editSchoolTag,
+        classCode: _classCodeController.text.trim().isEmpty
+            ? null
+            : _classCodeController.text.trim(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _selected = updated;
+        _classes = _classes
+            ?.map((c) => c.id == updated.id ? updated : c)
+            .toList(growable: false);
+        _editSchoolTag = updated.schoolTag;
+        _classCodeController.text = updated.classCode ?? '';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not save school + code: $e');
+    } finally {
+      if (mounted) setState(() => _savingCodes = false);
+    }
   }
 
   Future<void> _addMember(String entraOid, String? displayName) async {
@@ -154,6 +224,41 @@ class _ClassesPageState extends State<ClassesPage> {
     }
   }
 
+  Future<void> _bulkImportFromGraph() async {
+    final klass = _selected;
+    if (klass == null) return;
+    setState(() {
+      _bulkImporting = true;
+      _error = null;
+    });
+    try {
+      final results = await widget.classes.bulkImportFromDirectory(klass.id);
+      if (!mounted) return;
+      setState(() => _lastImportResults = results);
+      await _loadRoster(klass);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Populate from Graph failed: $e');
+    } finally {
+      if (mounted) setState(() => _bulkImporting = false);
+    }
+  }
+
+  Future<List<DirectoryUser>> _searchUsers(String query) {
+    // Always scope by the class's saved schoolTag — never by the unsaved
+    // edit, which could surface students from a school the class isn't
+    // actually bound to.
+    return widget.classes.searchUsers(query, company: _selected?.schoolTag);
+  }
+
+  bool get _codesDirty {
+    final klass = _selected;
+    if (klass == null) return false;
+    final currentCode = _classCodeController.text.trim();
+    final savedCode = klass.classCode ?? '';
+    return _editSchoolTag != klass.schoolTag || currentCode != savedCode;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -183,10 +288,22 @@ class _ClassesPageState extends State<ClassesPage> {
                 : _RosterPane(
                     klass: _selected!,
                     roster: _roster,
-                    loading: _loadingRoster,
+                    schools: _schools,
+                    loadingSchools: _loadingSchools,
+                    loadingRoster: _loadingRoster,
+                    savingCodes: _savingCodes,
+                    bulkImporting: _bulkImporting,
+                    codesDirty: _codesDirty,
+                    editSchoolTag: _editSchoolTag,
+                    classCodeController: _classCodeController,
+                    onSchoolChanged: (v) =>
+                        setState(() => _editSchoolTag = v),
+                    onClassCodeChanged: (_) => setState(() {}),
+                    onSaveCodes: _saveCodes,
+                    onBulkImport: _bulkImportFromGraph,
                     error: _error,
                     lastImportResults: _lastImportResults,
-                    onSearch: widget.classes.searchUsers,
+                    onSearch: _searchUsers,
                     onAdd: _addMember,
                     onRemove: _removeMember,
                     onImport: _importCsv,
@@ -242,7 +359,18 @@ class _RosterPane extends StatelessWidget {
   const _RosterPane({
     required this.klass,
     required this.roster,
-    required this.loading,
+    required this.schools,
+    required this.loadingSchools,
+    required this.loadingRoster,
+    required this.savingCodes,
+    required this.bulkImporting,
+    required this.codesDirty,
+    required this.editSchoolTag,
+    required this.classCodeController,
+    required this.onSchoolChanged,
+    required this.onClassCodeChanged,
+    required this.onSaveCodes,
+    required this.onBulkImport,
     required this.error,
     required this.lastImportResults,
     required this.onSearch,
@@ -253,7 +381,18 @@ class _RosterPane extends StatelessWidget {
 
   final ClassSummary klass;
   final ClassMembersResponse? roster;
-  final bool loading;
+  final List<String>? schools;
+  final bool loadingSchools;
+  final bool loadingRoster;
+  final bool savingCodes;
+  final bool bulkImporting;
+  final bool codesDirty;
+  final String? editSchoolTag;
+  final TextEditingController classCodeController;
+  final void Function(String?) onSchoolChanged;
+  final void Function(String) onClassCodeChanged;
+  final Future<void> Function() onSaveCodes;
+  final Future<void> Function() onBulkImport;
   final String? error;
   final List<ClassMembershipImportResult>? lastImportResults;
   final Future<List<DirectoryUser>> Function(String query) onSearch;
@@ -263,6 +402,8 @@ class _RosterPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scopeReady =
+        klass.schoolTag != null && (klass.classCode ?? '').isNotEmpty;
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -272,18 +413,50 @@ class _RosterPane extends StatelessWidget {
             '${klass.name} (${klass.schoolYear})',
             style: Theme.of(context).textTheme.titleLarge,
           ),
+          const SizedBox(height: 12),
+          _ScopeRow(
+            schools: schools,
+            loadingSchools: loadingSchools,
+            saving: savingCodes,
+            dirty: codesDirty,
+            editSchoolTag: editSchoolTag,
+            classCodeController: classCodeController,
+            onSchoolChanged: onSchoolChanged,
+            onClassCodeChanged: onClassCodeChanged,
+            onSave: onSaveCodes,
+          ),
           const SizedBox(height: 16),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              AddStudentSearch(onSearch: onSearch, onAdd: onAdd),
+              AddStudentSearch(
+                onSearch: onSearch,
+                onAdd: onAdd,
+                disabled: !scopeReady,
+                disabledReason: 'Set school + code first',
+              ),
               const SizedBox(width: 12),
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.upload_file),
                   label: const Text('Import CSV'),
-                  onPressed: onImport,
+                  onPressed: scopeReady ? onImport : null,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: FilledButton.icon(
+                  icon: bulkImporting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_download),
+                  label: const Text('Populate from Graph'),
+                  onPressed: (scopeReady && !bulkImporting) ? onBulkImport : null,
                 ),
               ),
             ],
@@ -301,17 +474,98 @@ class _RosterPane extends StatelessWidget {
           ],
           const SizedBox(height: 16),
           Expanded(
-            child: loading && roster == null
+            child: loadingRoster && roster == null
                 ? const Center(child: CircularProgressIndicator())
                 : roster == null
                 ? const SizedBox.shrink()
-                : _RosterTable(
-                    members: roster!.members,
-                    onRemove: onRemove,
-                  ),
+                : _RosterTable(members: roster!.members, onRemove: onRemove),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ScopeRow extends StatelessWidget {
+  const _ScopeRow({
+    required this.schools,
+    required this.loadingSchools,
+    required this.saving,
+    required this.dirty,
+    required this.editSchoolTag,
+    required this.classCodeController,
+    required this.onSchoolChanged,
+    required this.onClassCodeChanged,
+    required this.onSave,
+  });
+
+  final List<String>? schools;
+  final bool loadingSchools;
+  final bool saving;
+  final bool dirty;
+  final String? editSchoolTag;
+  final TextEditingController classCodeController;
+  final void Function(String?) onSchoolChanged;
+  final void Function(String) onClassCodeChanged;
+  final Future<void> Function() onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final options = schools ?? const <String>[];
+    // If the class is bound to a tag the directory no longer reports, keep
+    // it in the dropdown so the teacher doesn't silently lose the binding.
+    final entries = <String>{
+      ...options,
+      if (editSchoolTag != null && editSchoolTag!.isNotEmpty) editSchoolTag!,
+    }.toList();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        SizedBox(
+          width: 220,
+          child: DropdownButtonFormField<String?>(
+            initialValue: editSchoolTag,
+            decoration: InputDecoration(
+              labelText: 'School',
+              helperText: loadingSchools ? 'Loading…' : null,
+            ),
+            items: [
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('(none)'),
+              ),
+              for (final s in entries)
+                DropdownMenuItem<String?>(value: s, child: Text(s)),
+            ],
+            onChanged: saving ? null : onSchoolChanged,
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 160,
+          child: TextField(
+            controller: classCodeController,
+            enabled: !saving,
+            onChanged: onClassCodeChanged,
+            decoration: const InputDecoration(
+              labelText: 'Class code',
+              hintText: 'e.g. 3A',
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        FilledButton.icon(
+          icon: saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.save),
+          label: const Text('Save'),
+          onPressed: (!saving && dirty) ? onSave : null,
+        ),
+      ],
     );
   }
 }
@@ -375,6 +629,9 @@ class _ImportResultsBar extends StatelessWidget {
     final unresolved = results
         .where((r) => r.status == ClassMembershipImportStatus.notFoundInEntra)
         .toList();
+    final wrongSchool = results
+        .where((r) => r.status == ClassMembershipImportStatus.wrongSchool)
+        .toList();
     return Wrap(
       spacing: 12,
       children: [
@@ -386,6 +643,17 @@ class _ImportResultsBar extends StatelessWidget {
                 .map((r) => r.upn ?? r.entraOid ?? '(blank)')
                 .join('\n'),
             child: _chip(context, '${unresolved.length} unresolved', Colors.red),
+          ),
+        if (wrongSchool.isNotEmpty)
+          Tooltip(
+            message: wrongSchool
+                .map((r) => '${r.upn ?? r.entraOid ?? '(blank)'} — ${r.detail ?? ''}')
+                .join('\n'),
+            child: _chip(
+              context,
+              '${wrongSchool.length} wrong school',
+              Colors.deepOrange,
+            ),
           ),
       ],
     );

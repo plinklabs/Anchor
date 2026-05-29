@@ -249,8 +249,8 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
 
         var directory = new Dictionary<string, DirectoryUser>(StringComparer.OrdinalIgnoreCase)
         {
-            [newUpn] = new DirectoryUser(newOid, "Imported Alex", newUpn),
-            [existingUpn] = new DirectoryUser(existingStudent.EntraOid, existingStudent.DisplayName, existingUpn),
+            [newUpn] = new DirectoryUser(newOid, "Imported Alex", newUpn, null, null),
+            [existingUpn] = new DirectoryUser(existingStudent.EntraOid, existingStudent.DisplayName, existingUpn, null, null),
         };
         Fake().ResolveHandler = (upn, _) =>
             Task.FromResult(directory.TryGetValue(upn, out var u) ? u : null);
@@ -348,6 +348,191 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
                 new("nope@school.be", ClassMembershipRole.Member),
             }));
 
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PATCH_class_sets_school_tag_and_class_code_and_surfaces_them()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var patch = await client.PatchAsJsonAsync(
+            $"/classes/{scenario.Class.Id}",
+            new UpdateClassRequest("SSM", "3A"));
+        Assert.Equal(HttpStatusCode.OK, patch.StatusCode);
+        var updated = await patch.Content.ReadFromJsonAsync<ClassSummary>();
+        Assert.Equal("SSM", updated!.SchoolTag);
+        Assert.Equal("3A", updated.ClassCode);
+
+        var roster = await client.GetFromJsonAsync<ClassMembersResponse>($"/classes/{scenario.Class.Id}/members");
+        Assert.Equal("SSM", roster!.SchoolTag);
+        Assert.Equal("3A", roster.ClassCode);
+
+        // PATCH again with null/blank clears.
+        var clear = await client.PatchAsJsonAsync(
+            $"/classes/{scenario.Class.Id}",
+            new UpdateClassRequest(null, "  "));
+        Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+        var cleared = await clear.Content.ReadFromJsonAsync<ClassSummary>();
+        Assert.Null(cleared!.SchoolTag);
+        Assert.Null(cleared.ClassCode);
+    }
+
+    [Fact]
+    public async Task PATCH_class_as_non_teacher_returns_403()
+    {
+        var owned = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, owned.Teacher);
+
+        var response = await client.PatchAsJsonAsync(
+            $"/classes/{other.Class.Id}",
+            new UpdateClassRequest("SSM", "3A"));
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_class_members_import_returns_WrongSchool_for_user_outside_school_tag()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(
+            _factory, schoolTag: "SSM", classCode: "3A");
+
+        const string foreignUpn = "alex@sji.be";
+        Fake().ResolveHandler = (upn, _) => Task.FromResult<DirectoryUser?>(
+            new DirectoryUser(Guid.NewGuid(), "Alex Foreign", upn, "SJI", "3A"));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            $"/classes/{scenario.Class.Id}/members/import",
+            new ImportClassMembersRequest(new List<ImportClassMemberRow>
+            {
+                new(foreignUpn, ClassMembershipRole.Member),
+            }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<ImportClassMembersResponse>();
+        var row = Assert.Single(body!.Results);
+        Assert.Equal(ClassMembershipImportStatus.WrongSchool, row.Status);
+        Assert.Equal(foreignUpn, row.Upn);
+        Assert.NotNull(row.Detail);
+        // The user must not have been added.
+        var roster = await client.GetFromJsonAsync<ClassMembersResponse>($"/classes/{scenario.Class.Id}/members");
+        Assert.DoesNotContain(roster!.Members, m => m.DisplayName == "Alex Foreign");
+    }
+
+    [Fact]
+    public async Task POST_class_members_bulk_import_fails_400_when_class_missing_school_tag_or_code()
+    {
+        // No schoolTag / classCode set.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsync(
+            $"/classes/{scenario.Class.Id}/members/bulk-import", content: null);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_class_members_bulk_import_pulls_users_from_directory_and_adds_them()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(
+            _factory, schoolTag: "SSM", classCode: "3A");
+
+        var newOid1 = Guid.NewGuid();
+        var newOid2 = Guid.NewGuid();
+        Fake().ListByClassHandler = (company, code, _, _) =>
+        {
+            Assert.Equal("SSM", company);
+            Assert.Equal("3A", code);
+            return Task.FromResult<IReadOnlyList<DirectoryUser>>(new[]
+            {
+                new DirectoryUser(newOid1, "Anna Apple", "anna@ssm.be", "SSM", "3A"),
+                new DirectoryUser(newOid2, "Bert Banana", "bert@ssm.be", "SSM", "3A"),
+            });
+        };
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsync(
+            $"/classes/{scenario.Class.Id}/members/bulk-import", content: null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<ImportClassMembersResponse>();
+        Assert.Equal(2, body!.Results.Count);
+        Assert.All(body.Results, r => Assert.Equal(ClassMembershipImportStatus.Added, r.Status));
+
+        var roster = await client.GetFromJsonAsync<ClassMembersResponse>(
+            $"/classes/{scenario.Class.Id}/members");
+        Assert.Contains(roster!.Members, m => m.EntraOid == newOid1);
+        Assert.Contains(roster.Members, m => m.EntraOid == newOid2);
+    }
+
+    [Fact]
+    public async Task POST_class_members_bulk_import_marks_wrong_school_for_users_with_other_company()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(
+            _factory, schoolTag: "SSM", classCode: "3A");
+
+        var foreignOid = Guid.NewGuid();
+        // Defensive path: Graph filter would normally exclude this, but if a
+        // user has a stale/mis-attributed company the controller must refuse.
+        Fake().ListByClassHandler = (_, _, _, _) =>
+            Task.FromResult<IReadOnlyList<DirectoryUser>>(new[]
+            {
+                new DirectoryUser(foreignOid, "Cara Cross", "cara@sji.be", "SJI", "3A"),
+            });
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsync(
+            $"/classes/{scenario.Class.Id}/members/bulk-import", content: null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<ImportClassMembersResponse>();
+        var row = Assert.Single(body!.Results);
+        Assert.Equal(ClassMembershipImportStatus.WrongSchool, row.Status);
+        Assert.Equal(foreignOid, row.EntraOid);
+    }
+
+    [Fact]
+    public async Task POST_class_members_bulk_import_returns_502_when_directory_throws()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(
+            _factory, schoolTag: "SSM", classCode: "3A");
+
+        Fake().ListByClassHandler = (_, _, _, _) => throw new InvalidOperationException("consent required");
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsync(
+            $"/classes/{scenario.Class.Id}/members/bulk-import", content: null);
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_class_members_bulk_import_as_non_teacher_returns_403()
+    {
+        var owned = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(
+            _factory, schoolTag: "SSM", classCode: "3A");
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, owned.Teacher);
+
+        var response = await client.PostAsync(
+            $"/classes/{other.Class.Id}/members/bulk-import", content: null);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 }

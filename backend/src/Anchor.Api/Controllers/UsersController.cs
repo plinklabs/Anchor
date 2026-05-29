@@ -11,6 +11,7 @@ public sealed class UsersController : ControllerBase
 {
     public const int MinQueryLength = 2;
     public const int MaxQueryLength = 64;
+    public const int MaxCompanyLength = 64;
     public const int DefaultTop = 10;
     public const int MaxTop = 25;
 
@@ -32,6 +33,7 @@ public sealed class UsersController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<DirectoryUserResponse>>> Search(
         [FromQuery(Name = "q")] string? q,
         [FromQuery] int? top,
+        [FromQuery] string? company,
         CancellationToken cancellationToken)
     {
         var trimmed = (q ?? string.Empty).Trim();
@@ -40,13 +42,17 @@ public sealed class UsersController : ControllerBase
         if (trimmed.Length > MaxQueryLength)
             return BadRequest(new { error = $"q must be at most {MaxQueryLength} characters" });
 
+        var companyFilter = string.IsNullOrWhiteSpace(company) ? null : company.Trim();
+        if (companyFilter is { Length: > MaxCompanyLength })
+            return BadRequest(new { error = $"company must be at most {MaxCompanyLength} characters" });
+
         var clampedTop = Math.Clamp(top ?? DefaultTop, 1, MaxTop);
 
         try
         {
-            var results = await _search.SearchAsync(trimmed, clampedTop, cancellationToken);
+            var results = await _search.SearchAsync(trimmed, clampedTop, companyFilter, cancellationToken);
             return Ok(results
-                .Select(r => new DirectoryUserResponse(r.EntraOid, r.DisplayName, r.Upn))
+                .Select(r => new DirectoryUserResponse(r.EntraOid, r.DisplayName, r.Upn, r.Company, r.Department))
                 .ToList());
         }
         catch (OperationCanceledException)
@@ -65,4 +71,9 @@ public sealed class UsersController : ControllerBase
     }
 }
 
-public sealed record DirectoryUserResponse(Guid EntraOid, string DisplayName, string? Upn);
+public sealed record DirectoryUserResponse(
+    Guid EntraOid,
+    string DisplayName,
+    string? Upn,
+    string? Company,
+    string? Department);

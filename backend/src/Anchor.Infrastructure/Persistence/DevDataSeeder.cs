@@ -46,6 +46,11 @@ public static class DevDataSeeder
         {
             Name = "3A",
             SchoolYear = "2025-2026",
+            // Mirrors what a real Entra-backed class would have set via PATCH
+            // /classes/{id}, so the #96 school + class-code filter has a
+            // realistic scope to verify against in dev.
+            SchoolTag = "SSM",
+            ClassCode = "3A",
         };
 
         var teacherMembership = new ClassMembership

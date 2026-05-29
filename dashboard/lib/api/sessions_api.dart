@@ -13,15 +13,31 @@ class ApiException implements Exception {
 }
 
 class ClassSummary {
-  ClassSummary({required this.id, required this.name, required this.schoolYear});
+  ClassSummary({
+    required this.id,
+    required this.name,
+    required this.schoolYear,
+    this.schoolTag,
+    this.classCode,
+  });
   final String id;
   final String name;
   final String schoolYear;
+
+  /// Entra `Company` value scoping every Graph query for this class (#96).
+  /// Null on legacy classes; set via PATCH /classes/{id}.
+  final String? schoolTag;
+
+  /// Entra `Department` value used as the class code (#96). Not unique
+  /// across the Arcadia group, so always read in tandem with [schoolTag].
+  final String? classCode;
 
   factory ClassSummary.fromJson(Map<String, dynamic> json) => ClassSummary(
     id: json['id'] as String,
     name: json['name'] as String,
     schoolYear: json['schoolYear'] as String,
+    schoolTag: json['schoolTag'] as String?,
+    classCode: json['classCode'] as String?,
   );
 }
 

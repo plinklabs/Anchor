@@ -15,6 +15,14 @@ public sealed class ClassesController : ControllerBase
 {
     public const int MaxImportRows = 200;
 
+    /// Upper bound on the bulk-import result set. Graph filters can in theory
+    /// match very large groups; the controller refuses to expand a class
+    /// roster by more than this in a single shot.
+    public const int MaxBulkImportRows = 500;
+
+    public const int MaxSchoolTagLength = 64;
+    public const int MaxClassCodeLength = 32;
+
     private readonly AnchorDbContext _db;
     private readonly IUserStore _users;
     private readonly IUserDirectorySearch _directory;
@@ -49,7 +57,12 @@ public sealed class ClassesController : ControllerBase
             .AsNoTracking()
             .Where(m => m.UserId == caller.Id && m.Role == ClassMembershipRole.Teacher)
             .OrderBy(m => m.Class!.Name)
-            .Select(m => new ClassSummary(m.Class!.Id, m.Class.Name, m.Class.SchoolYear))
+            .Select(m => new ClassSummary(
+                m.Class!.Id,
+                m.Class.Name,
+                m.Class.SchoolYear,
+                m.Class.SchoolTag,
+                m.Class.ClassCode))
             .ToListAsync(cancellationToken);
 
         return Ok(classes);
@@ -82,8 +95,48 @@ public sealed class ClassesController : ControllerBase
             auth.Class!.Id,
             auth.Class.Name,
             auth.Class.SchoolYear,
+            auth.Class.SchoolTag,
+            auth.Class.ClassCode,
             members));
     }
+
+    /// Sets the school tag + class code on a class. Both fields are
+    /// overwritten on every call; send null to clear. They scope every Graph
+    /// query made on behalf of the class roster (#96).
+    [HttpPatch("{id:guid}")]
+    [ProducesResponseType(typeof(ClassSummary), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ClassSummary>> UpdateClass(
+        Guid id,
+        [FromBody] UpdateClassRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+            return BadRequest(new { error = "body is required" });
+        if (request.SchoolTag is { Length: > MaxSchoolTagLength })
+            return BadRequest(new { error = $"schoolTag must be at most {MaxSchoolTagLength} characters" });
+        if (request.ClassCode is { Length: > MaxClassCodeLength })
+            return BadRequest(new { error = $"classCode must be at most {MaxClassCodeLength} characters" });
+
+        var auth = await AuthorizeTeacherOfClassAsync(id, cancellationToken);
+        if (auth.Result is not null) return auth.Result;
+
+        // AsNoTracking() in the helper means we need to fetch a tracked copy.
+        var tracked = await _db.Classes.FirstAsync(c => c.Id == id, cancellationToken);
+        tracked.SchoolTag = NormalizeOrNull(request.SchoolTag);
+        tracked.ClassCode = NormalizeOrNull(request.ClassCode);
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return Ok(new ClassSummary(
+            tracked.Id, tracked.Name, tracked.SchoolYear, tracked.SchoolTag, tracked.ClassCode));
+    }
+
+    private static string? NormalizeOrNull(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     [HttpPost("{id:guid}/members")]
     [ProducesResponseType(typeof(ClassMembershipImportResult), StatusCodes.Status200OK)]
@@ -160,6 +213,7 @@ public sealed class ClassesController : ControllerBase
         var auth = await AuthorizeTeacherOfClassAsync(id, cancellationToken);
         if (auth.Result is not null) return auth.Result;
 
+        var schoolTag = auth.Class!.SchoolTag;
         var results = new List<ClassMembershipImportResult>(request.Rows.Count);
         try
         {
@@ -189,6 +243,20 @@ public sealed class ClassesController : ControllerBase
                     continue;
                 }
 
+                if (schoolTag is not null
+                    && !string.Equals(resolved.Company, schoolTag, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Class is scoped to a school (#96); refuse rosters from
+                    // any other school rather than silently mixing students.
+                    results.Add(new ClassMembershipImportResult(
+                        resolved.EntraOid,
+                        null,
+                        ClassMembershipImportStatus.WrongSchool,
+                        $"user belongs to '{resolved.Company ?? "(none)"}', class is scoped to '{schoolTag}'",
+                        upn));
+                    continue;
+                }
+
                 var role = row!.Role ?? ClassMembershipRole.Member;
                 var result = await UpsertMembershipAsync(
                     id, resolved.EntraOid, resolved.DisplayName, role, cancellationToken);
@@ -207,6 +275,76 @@ public sealed class ClassesController : ControllerBase
             // above, so reaching here means we can't resolve anything.
             _logger.LogWarning(ex, "Roster import directory lookup failed");
             return StatusCode(StatusCodes.Status502BadGateway, new { error = "directory lookup unavailable" });
+        }
+
+        return Ok(new ImportClassMembersResponse(results));
+    }
+
+    /// Populates the roster from Microsoft Graph in one shot by enumerating
+    /// every user whose Entra <c>companyName</c> matches the class's
+    /// <see cref="Class.SchoolTag"/> AND whose <c>department</c> matches
+    /// <see cref="Class.ClassCode"/>. The class must have both fields set —
+    /// otherwise we'd risk pulling every <c>3A</c> across the school group.
+    [HttpPost("{id:guid}/members/bulk-import")]
+    [ProducesResponseType(typeof(ImportClassMembersResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<ImportClassMembersResponse>> BulkImportFromDirectory(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var auth = await AuthorizeTeacherOfClassAsync(id, cancellationToken);
+        if (auth.Result is not null) return auth.Result;
+
+        var schoolTag = auth.Class!.SchoolTag;
+        var classCode = auth.Class.ClassCode;
+        if (string.IsNullOrWhiteSpace(schoolTag) || string.IsNullOrWhiteSpace(classCode))
+        {
+            return BadRequest(new
+            {
+                error = "class is missing schoolTag or classCode — set them with PATCH /classes/{id} first",
+            });
+        }
+
+        IReadOnlyList<DirectoryUser> directoryUsers;
+        try
+        {
+            directoryUsers = await _directory.ListByClassAsync(
+                schoolTag, classCode, MaxBulkImportRows, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Roster bulk import directory listing failed");
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "directory listing unavailable" });
+        }
+
+        var results = new List<ClassMembershipImportResult>(directoryUsers.Count);
+        foreach (var user in directoryUsers)
+        {
+            // Defensive: Graph should have filtered already, but verify so a
+            // mis-attributed user (or a Graph filter regression) can't leak
+            // across schools.
+            if (!string.Equals(user.Company, schoolTag, StringComparison.OrdinalIgnoreCase))
+            {
+                results.Add(new ClassMembershipImportResult(
+                    user.EntraOid,
+                    null,
+                    ClassMembershipImportStatus.WrongSchool,
+                    $"user belongs to '{user.Company ?? "(none)"}', class is scoped to '{schoolTag}'",
+                    user.Upn));
+                continue;
+            }
+
+            var result = await UpsertMembershipAsync(
+                id, user.EntraOid, user.DisplayName, ClassMembershipRole.Member, cancellationToken);
+            results.Add(result with { Upn = user.Upn });
         }
 
         return Ok(new ImportClassMembersResponse(results));
@@ -295,12 +433,19 @@ public sealed class ClassesController : ControllerBase
     }
 }
 
-public sealed record ClassSummary(Guid Id, string Name, string SchoolYear);
+public sealed record ClassSummary(
+    Guid Id,
+    string Name,
+    string SchoolYear,
+    string? SchoolTag = null,
+    string? ClassCode = null);
 
 public sealed record ClassMembersResponse(
     Guid Id,
     string Name,
     string SchoolYear,
+    string? SchoolTag,
+    string? ClassCode,
     IReadOnlyList<ClassMemberSummary> Members);
 
 public sealed record ClassMemberSummary(
@@ -315,6 +460,8 @@ public sealed record AddClassMemberRequest(
     Guid EntraOid,
     string? DisplayName,
     ClassMembershipRole? Role);
+
+public sealed record UpdateClassRequest(string? SchoolTag, string? ClassCode);
 
 public sealed record ImportClassMembersRequest(IReadOnlyList<ImportClassMemberRow> Rows);
 
@@ -336,4 +483,5 @@ public enum ClassMembershipImportStatus
     Added,
     AlreadyMember,
     NotFoundInEntra,
+    WrongSchool,
 }

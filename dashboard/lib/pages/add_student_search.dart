@@ -12,10 +12,19 @@ class AddStudentSearch extends StatefulWidget {
     super.key,
     required this.onSearch,
     required this.onAdd,
+    this.disabled = false,
+    this.disabledReason,
   });
 
+  /// Performs a directory search. Returns the matching directory users.
+  /// The roster page wires this so the class's school tag scopes the search.
   final Future<List<DirectoryUser>> Function(String query) onSearch;
   final Future<void> Function(String entraOid, String? displayName) onAdd;
+
+  /// Disables the input — typically because the class doesn't have a school
+  /// tag set yet, so a Graph search would be unscoped (#96).
+  final bool disabled;
+  final String? disabledReason;
 
   @override
   State<AddStudentSearch> createState() => _AddStudentSearchState();
@@ -112,11 +121,13 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
           width: _fieldWidth,
           child: TextField(
             controller: _controller,
-            enabled: !_adding,
+            enabled: !_adding && !widget.disabled,
             onChanged: _onChanged,
             decoration: InputDecoration(
               labelText: 'Add student',
-              hintText: 'Search by name',
+              hintText: widget.disabled
+                  ? (widget.disabledReason ?? 'Search disabled')
+                  : 'Search by name',
               prefixIcon: const Icon(Icons.search),
               suffixIcon: _searching
                   ? const Padding(

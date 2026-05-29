@@ -11,7 +11,9 @@ internal static class TestSeed
 {
     public static async Task<TestScenario> SeedClassWithTeacherAndStudentsAsync(
         AnchorApiFactory factory,
-        int studentCount = 2)
+        int studentCount = 2,
+        string? schoolTag = null,
+        string? classCode = null)
     {
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
@@ -35,6 +37,8 @@ internal static class TestSeed
         {
             Name = "Class-" + Guid.NewGuid().ToString("N").Substring(0, 6),
             SchoolYear = "2025-2026",
+            SchoolTag = schoolTag,
+            ClassCode = classCode,
         };
 
         var memberships = new List<ClassMembership>
