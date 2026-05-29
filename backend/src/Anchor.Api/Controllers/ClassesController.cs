@@ -1,3 +1,4 @@
+using Anchor.Api.Users;
 using Anchor.Domain.Classes;
 using Anchor.Domain.Users;
 using Anchor.Infrastructure.Persistence;
@@ -16,11 +17,19 @@ public sealed class ClassesController : ControllerBase
 
     private readonly AnchorDbContext _db;
     private readonly IUserStore _users;
+    private readonly IUserDirectorySearch _directory;
+    private readonly ILogger<ClassesController> _logger;
 
-    public ClassesController(AnchorDbContext db, IUserStore users)
+    public ClassesController(
+        AnchorDbContext db,
+        IUserStore users,
+        IUserDirectorySearch directory,
+        ILogger<ClassesController> logger)
     {
         _db = db;
         _users = users;
+        _directory = directory;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -152,21 +161,52 @@ public sealed class ClassesController : ControllerBase
         if (auth.Result is not null) return auth.Result;
 
         var results = new List<ClassMembershipImportResult>(request.Rows.Count);
-        foreach (var row in request.Rows)
+        try
         {
-            if (row is null || row.EntraOid == Guid.Empty)
+            foreach (var row in request.Rows)
             {
-                results.Add(new ClassMembershipImportResult(
-                    row?.EntraOid ?? Guid.Empty,
-                    null,
-                    ClassMembershipImportStatus.NotFoundInEntra,
-                    "missing entraOid"));
-                continue;
-            }
+                var upn = row?.Upn?.Trim();
+                if (string.IsNullOrEmpty(upn))
+                {
+                    results.Add(new ClassMembershipImportResult(
+                        null,
+                        null,
+                        ClassMembershipImportStatus.NotFoundInEntra,
+                        "missing upn",
+                        upn));
+                    continue;
+                }
 
-            var role = row.Role ?? ClassMembershipRole.Member;
-            var result = await UpsertMembershipAsync(id, row.EntraOid, row.DisplayName, role, cancellationToken);
-            results.Add(result);
+                var resolved = await _directory.ResolveByUpnAsync(upn, cancellationToken);
+                if (resolved is null)
+                {
+                    results.Add(new ClassMembershipImportResult(
+                        null,
+                        null,
+                        ClassMembershipImportStatus.NotFoundInEntra,
+                        "could not resolve UPN in directory",
+                        upn));
+                    continue;
+                }
+
+                var role = row!.Role ?? ClassMembershipRole.Member;
+                var result = await UpsertMembershipAsync(
+                    id, resolved.EntraOid, resolved.DisplayName, role, cancellationToken);
+                results.Add(result with { Upn = upn });
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // ResolveByUpnAsync only throws for systemic directory failures
+            // (consent/secret missing, throttling, outage) — same surface as
+            // UsersController. Per-row "not found" returns null and is handled
+            // above, so reaching here means we can't resolve anything.
+            _logger.LogWarning(ex, "Roster import directory lookup failed");
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "directory lookup unavailable" });
         }
 
         return Ok(new ImportClassMembersResponse(results));
@@ -279,17 +319,17 @@ public sealed record AddClassMemberRequest(
 public sealed record ImportClassMembersRequest(IReadOnlyList<ImportClassMemberRow> Rows);
 
 public sealed record ImportClassMemberRow(
-    Guid EntraOid,
-    string? DisplayName,
+    string Upn,
     ClassMembershipRole? Role);
 
 public sealed record ImportClassMembersResponse(IReadOnlyList<ClassMembershipImportResult> Results);
 
 public sealed record ClassMembershipImportResult(
-    Guid EntraOid,
+    Guid? EntraOid,
     Guid? UserId,
     ClassMembershipImportStatus Status,
-    string? Detail);
+    string? Detail,
+    string? Upn = null);
 
 public enum ClassMembershipImportStatus
 {

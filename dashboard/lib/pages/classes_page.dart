@@ -372,15 +372,21 @@ class _ImportResultsBar extends StatelessWidget {
     final already = results
         .where((r) => r.status == ClassMembershipImportStatus.alreadyMember)
         .length;
-    final failed = results
+    final unresolved = results
         .where((r) => r.status == ClassMembershipImportStatus.notFoundInEntra)
-        .length;
+        .toList();
     return Wrap(
       spacing: 12,
       children: [
         _chip(context, '$added added', Colors.green),
         _chip(context, '$already already member', Colors.amber),
-        if (failed > 0) _chip(context, '$failed unresolved', Colors.red),
+        if (unresolved.isNotEmpty)
+          Tooltip(
+            message: unresolved
+                .map((r) => r.upn ?? r.entraOid ?? '(blank)')
+                .join('\n'),
+            child: _chip(context, '${unresolved.length} unresolved', Colors.red),
+          ),
       ],
     );
   }
@@ -420,7 +426,9 @@ class _CsvPasteDialogState extends State<_CsvPasteDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Paste a CSV with a header row. Required columns: display_name, entra_oid.',
+              'Paste a CSV with a header row. Required column: upn '
+              '(the user principal name, e.g. student@school.be). '
+              'Names are looked up in the directory automatically.',
             ),
             const SizedBox(height: 12),
             TextField(
@@ -428,8 +436,7 @@ class _CsvPasteDialogState extends State<_CsvPasteDialog> {
               maxLines: 12,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
-                hintText:
-                    'display_name,entra_oid\nAlice,00000000-0000-0000-0000-000000000001\n...',
+                hintText: 'upn\nalice@school.be\nbob@school.be\n...',
               ),
             ),
           ],
@@ -455,9 +462,10 @@ class CsvParseResult {
   final String? error;
 }
 
-/// Parses a CSV roster of the shape `display_name,entra_oid` (header
-/// required, order-insensitive). Tolerates leading/trailing whitespace and
-/// quoted values, skips blank lines. Rows missing a valid GUID are dropped.
+/// Parses a CSV roster keyed on `upn` (header required, order-insensitive).
+/// Tolerates leading/trailing whitespace and quoted values, skips blank lines.
+/// The backend resolves each UPN to an Entra OID + display name at import time
+/// and reports any that don't resolve, so we don't validate UPN shape here.
 CsvParseResult parseRosterCsv(String csv) {
   final lines = csv
       .split(RegExp(r'\r?\n'))
@@ -467,22 +475,17 @@ CsvParseResult parseRosterCsv(String csv) {
     return CsvParseResult(rows: const [], error: 'CSV is empty.');
   }
   final header = _splitCsvLine(lines.first).map((s) => s.toLowerCase()).toList();
-  final oidIdx = header.indexOf('entra_oid');
-  final nameIdx = header.indexOf('display_name');
-  if (oidIdx < 0) {
-    return CsvParseResult(
-      rows: const [],
-      error: 'Header must include entra_oid.',
-    );
+  final upnIdx = header.indexOf('upn');
+  if (upnIdx < 0) {
+    return CsvParseResult(rows: const [], error: 'Header must include upn.');
   }
   final rows = <ImportRow>[];
   for (var i = 1; i < lines.length; i++) {
     final cells = _splitCsvLine(lines[i]);
-    if (cells.length <= oidIdx) continue;
-    final oid = _tryParseGuid(cells[oidIdx]);
-    if (oid == null) continue;
-    final name = nameIdx >= 0 && cells.length > nameIdx ? cells[nameIdx] : null;
-    rows.add(ImportRow(entraOid: oid, displayName: name));
+    if (cells.length <= upnIdx) continue;
+    final upn = cells[upnIdx].trim();
+    if (upn.isEmpty) continue;
+    rows.add(ImportRow(upn: upn));
   }
   return CsvParseResult(rows: rows);
 }
@@ -515,12 +518,4 @@ List<String> _splitCsvLine(String line) {
   }
   out.add(buf.toString().trim());
   return out;
-}
-
-String? _tryParseGuid(String raw) {
-  final s = raw.trim();
-  final match = RegExp(
-    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
-  ).firstMatch(s);
-  return match == null ? null : s;
 }

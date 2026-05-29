@@ -3,39 +3,51 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('parseRosterCsv', () {
-    test('reads header-mapped rows and ignores invalid GUIDs', () {
+    test('reads upn rows, tolerating quotes and blank lines', () {
       const csv = '''
-display_name,entra_oid
-Alice,00000000-0000-0000-0000-000000000001
-"Bob, Jr.",00000000-0000-0000-0000-000000000002
-Bad Row,not-a-guid
+upn
+alice@school.be
+"bob@school.be"
+
+charlie@school.be
 ''';
       final result = parseRosterCsv(csv);
       expect(result.error, isNull);
-      expect(result.rows, hasLength(2));
-      expect(result.rows[0].displayName, 'Alice');
-      expect(result.rows[0].entraOid, '00000000-0000-0000-0000-000000000001');
-      expect(result.rows[1].displayName, 'Bob, Jr.');
+      expect(result.rows, hasLength(3));
+      expect(result.rows[0].upn, 'alice@school.be');
+      expect(result.rows[1].upn, 'bob@school.be');
+      expect(result.rows[2].upn, 'charlie@school.be');
     });
 
-    test('accepts reversed column order', () {
+    test('ignores extra columns and finds upn regardless of position', () {
       const csv = '''
-entra_oid,display_name
-00000000-0000-0000-0000-000000000001,Alice
+display_name,upn
+Alice,alice@school.be
 ''';
       final result = parseRosterCsv(csv);
       expect(result.rows, hasLength(1));
-      expect(result.rows.first.displayName, 'Alice');
+      expect(result.rows.first.upn, 'alice@school.be');
     });
 
-    test('rejects header without entra_oid', () {
+    test('skips rows with a blank upn cell', () {
       const csv = '''
 display_name,upn
-Alice,alice@example.com
+Alice,
+Bob,bob@school.be
+''';
+      final result = parseRosterCsv(csv);
+      expect(result.rows, hasLength(1));
+      expect(result.rows.first.upn, 'bob@school.be');
+    });
+
+    test('rejects header without upn', () {
+      const csv = '''
+display_name,entra_oid
+Alice,00000000-0000-0000-0000-000000000001
 ''';
       final result = parseRosterCsv(csv);
       expect(result.rows, isEmpty);
-      expect(result.error, contains('entra_oid'));
+      expect(result.error, contains('upn'));
     });
 
     test('treats empty input as error', () {

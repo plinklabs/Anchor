@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using Anchor.Api.Controllers;
+using Anchor.Api.Tests.FakeAuth;
+using Anchor.Api.Users;
 using Anchor.Domain.Classes;
 using Anchor.Domain.Users;
 using Anchor.Infrastructure.Persistence;
@@ -17,6 +19,9 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
     {
         _factory = factory;
     }
+
+    private FakeUserDirectorySearch Fake()
+        => _factory.Services.GetRequiredService<FakeUserDirectorySearch>();
 
     [Fact]
     public async Task GET_classes_unauthenticated_returns_401()
@@ -232,18 +237,30 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
-    public async Task POST_class_members_import_processes_rows_with_per_row_results()
+    public async Task POST_class_members_import_resolves_upns_and_reports_per_row()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
         var existingStudent = scenario.Students[0];
         var newOid = Guid.NewGuid();
 
+        const string newUpn = "imported.alex@school.be";
+        const string existingUpn = "existing.student@school.be";
+        const string unknownUpn = "ghost@school.be";
+
+        var directory = new Dictionary<string, DirectoryUser>(StringComparer.OrdinalIgnoreCase)
+        {
+            [newUpn] = new DirectoryUser(newOid, "Imported Alex", newUpn),
+            [existingUpn] = new DirectoryUser(existingStudent.EntraOid, existingStudent.DisplayName, existingUpn),
+        };
+        Fake().ResolveHandler = (upn, _) =>
+            Task.FromResult(directory.TryGetValue(upn, out var u) ? u : null);
+
         var rows = new List<ImportClassMemberRow>
         {
-            new(newOid, "Imported Alex", ClassMembershipRole.Member),
-            new(existingStudent.EntraOid, existingStudent.DisplayName, ClassMembershipRole.Member),
-            new(Guid.Empty, "Bad Row", ClassMembershipRole.Member),
-            new(Guid.NewGuid(), null, ClassMembershipRole.Member),
+            new(newUpn, ClassMembershipRole.Member),
+            new(existingUpn, ClassMembershipRole.Member),
+            new(unknownUpn, ClassMembershipRole.Member),
+            new("   ", ClassMembershipRole.Member),
         };
 
         using var client = _factory.CreateClient();
@@ -257,13 +274,44 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
         var body = await response.Content.ReadFromJsonAsync<ImportClassMembersResponse>();
         Assert.NotNull(body);
         Assert.Equal(4, body!.Results.Count);
+
         Assert.Equal(ClassMembershipImportStatus.Added, body.Results[0].Status);
+        Assert.Equal(newUpn, body.Results[0].Upn);
         Assert.Equal(ClassMembershipImportStatus.AlreadyMember, body.Results[1].Status);
+        // Unresolved UPN — reported per-row, not silently dropped, and echoes the UPN.
         Assert.Equal(ClassMembershipImportStatus.NotFoundInEntra, body.Results[2].Status);
+        Assert.Equal(unknownUpn, body.Results[2].Upn);
+        Assert.Null(body.Results[2].EntraOid);
+        // Blank UPN row.
         Assert.Equal(ClassMembershipImportStatus.NotFoundInEntra, body.Results[3].Status);
+
+        // The placeholder user was created with the display name Graph returned.
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var created = await db.Users.SingleAsync(u => u.EntraOid == newOid);
+        Assert.Equal("Imported Alex", created.DisplayName);
 
         var roster = await client.GetFromJsonAsync<ClassMembersResponse>($"/classes/{scenario.Class.Id}/members");
         Assert.Contains(roster!.Members, m => m.EntraOid == newOid);
+    }
+
+    [Fact]
+    public async Task POST_class_members_import_returns_502_when_directory_throws()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        Fake().ResolveHandler = (_, _) => throw new InvalidOperationException("consent required");
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            $"/classes/{scenario.Class.Id}/members/import",
+            new ImportClassMembersRequest(new List<ImportClassMemberRow>
+            {
+                new("someone@school.be", ClassMembershipRole.Member),
+            }));
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
     }
 
     [Fact]
@@ -271,7 +319,7 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
         var rows = Enumerable.Range(0, ClassesController.MaxImportRows + 1)
-            .Select(_ => new ImportClassMemberRow(Guid.NewGuid(), "x", ClassMembershipRole.Member))
+            .Select(i => new ImportClassMemberRow($"user{i}@school.be", ClassMembershipRole.Member))
             .ToList();
 
         using var client = _factory.CreateClient();
@@ -297,7 +345,7 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
             $"/classes/{other.Class.Id}/members/import",
             new ImportClassMembersRequest(new List<ImportClassMemberRow>
             {
-                new(Guid.NewGuid(), "Nope", ClassMembershipRole.Member),
+                new("nope@school.be", ClassMembershipRole.Member),
             }));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);

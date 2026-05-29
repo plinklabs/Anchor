@@ -92,19 +92,22 @@ ClassMembershipImportStatus _parseImportStatus(Object raw) {
 class ClassMembershipImportResult {
   ClassMembershipImportResult({
     required this.entraOid,
+    required this.upn,
     required this.userId,
     required this.status,
     required this.detail,
   });
 
-  final String entraOid;
+  final String? entraOid;
+  final String? upn;
   final String? userId;
   final ClassMembershipImportStatus status;
   final String? detail;
 
   factory ClassMembershipImportResult.fromJson(Map<String, dynamic> json) =>
       ClassMembershipImportResult(
-        entraOid: json['entraOid'] as String,
+        entraOid: json['entraOid'] as String?,
+        upn: json['upn'] as String?,
         userId: json['userId'] as String?,
         status: _parseImportStatus(json['status'] as Object),
         detail: json['detail'] as String?,
@@ -112,22 +115,12 @@ class ClassMembershipImportResult {
 }
 
 class ImportRow {
-  ImportRow({
-    required this.entraOid,
-    required this.displayName,
-    this.role = 'Member',
-  });
+  ImportRow({required this.upn, this.role = 'Member'});
 
-  final String entraOid;
-  final String? displayName;
+  final String upn;
   final String role;
 
-  Map<String, dynamic> toJson() => {
-    'entraOid': entraOid,
-    if (displayName != null && displayName!.isNotEmpty)
-      'displayName': displayName,
-    'role': role,
-  };
+  Map<String, dynamic> toJson() => {'upn': upn, 'role': role};
 }
 
 class ClassesApi {

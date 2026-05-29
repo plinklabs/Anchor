@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Graph;
 
 namespace Anchor.Api.Users;
@@ -46,5 +47,34 @@ internal sealed class GraphUserDirectorySearch : IUserDirectorySearch
             result.Add(new DirectoryUser(oid, u.DisplayName, u.UserPrincipalName));
         }
         return result;
+    }
+
+    public async Task<DirectoryUser?> ResolveByUpnAsync(
+        string upn,
+        CancellationToken cancellationToken)
+    {
+        User user;
+        try
+        {
+            // GET /users/{upn} is a direct lookup — the UPN is a valid key.
+            user = await _graph.Users[upn].Request()
+                .Select("id,displayName,userPrincipalName")
+                .GetAsync(cancellationToken);
+        }
+        catch (ServiceException ex) when (
+            ex.StatusCode == HttpStatusCode.NotFound ||
+            ex.StatusCode == HttpStatusCode.BadRequest)
+        {
+            // Unknown or malformed UPN — a per-row failure, not a systemic one.
+            // Anything else (auth/consent, throttling, outage) propagates so the
+            // caller can surface a 502 for the whole import.
+            return null;
+        }
+
+        if (user is null || string.IsNullOrEmpty(user.Id) || !Guid.TryParse(user.Id, out var oid))
+            return null;
+        if (string.IsNullOrEmpty(user.DisplayName))
+            return null;
+        return new DirectoryUser(oid, user.DisplayName, user.UserPrincipalName);
     }
 }
