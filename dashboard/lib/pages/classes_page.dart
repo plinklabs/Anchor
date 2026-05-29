@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../api/classes_api.dart';
 import '../api/sessions_api.dart';
+import 'add_student_search.dart';
 
 class ClassesPage extends StatefulWidget {
   const ClassesPage({super.key, required this.sessions, required this.classes});
@@ -79,7 +80,7 @@ class _ClassesPageState extends State<ClassesPage> {
     _loadRoster(klass);
   }
 
-  Future<void> _addByOid(String entraOid, String? displayName) async {
+  Future<void> _addMember(String entraOid, String? displayName) async {
     final klass = _selected;
     if (klass == null) return;
     try {
@@ -185,7 +186,8 @@ class _ClassesPageState extends State<ClassesPage> {
                     loading: _loadingRoster,
                     error: _error,
                     lastImportResults: _lastImportResults,
-                    onAdd: _addByOid,
+                    onSearch: widget.classes.searchUsers,
+                    onAdd: _addMember,
                     onRemove: _removeMember,
                     onImport: _importCsv,
                   ),
@@ -236,13 +238,14 @@ class _ClassList extends StatelessWidget {
   }
 }
 
-class _RosterPane extends StatefulWidget {
+class _RosterPane extends StatelessWidget {
   const _RosterPane({
     required this.klass,
     required this.roster,
     required this.loading,
     required this.error,
     required this.lastImportResults,
+    required this.onSearch,
     required this.onAdd,
     required this.onRemove,
     required this.onImport,
@@ -253,111 +256,58 @@ class _RosterPane extends StatefulWidget {
   final bool loading;
   final String? error;
   final List<ClassMembershipImportResult>? lastImportResults;
+  final Future<List<DirectoryUser>> Function(String query) onSearch;
   final Future<void> Function(String entraOid, String? displayName) onAdd;
   final Future<void> Function(ClassMember member) onRemove;
   final Future<void> Function() onImport;
 
   @override
-  State<_RosterPane> createState() => _RosterPaneState();
-}
-
-class _RosterPaneState extends State<_RosterPane> {
-  final _oidController = TextEditingController();
-  final _nameController = TextEditingController();
-  String? _oidValidationError;
-
-  @override
-  void dispose() {
-    _oidController.dispose();
-    _nameController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submitAdd() async {
-    final oid = _oidController.text.trim();
-    if (oid.isEmpty) return;
-    final parsed = _tryParseGuid(oid);
-    if (parsed == null) {
-      setState(() => _oidValidationError = 'Not a valid GUID.');
-      return;
-    }
-    setState(() => _oidValidationError = null);
-    final name = _nameController.text.trim();
-    await widget.onAdd(parsed, name.isEmpty ? null : name);
-    _oidController.clear();
-    _nameController.clear();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final roster = widget.roster;
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${widget.klass.name} (${widget.klass.schoolYear})',
+            '${klass.name} (${klass.schoolYear})',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                width: 320,
-                child: TextField(
-                  controller: _oidController,
-                  decoration: InputDecoration(
-                    labelText: 'Entra oid',
-                    hintText: 'e.g. 00000000-0000-0000-0000-000000000000',
-                    errorText: _oidValidationError,
-                  ),
+              AddStudentSearch(onSearch: onSearch, onAdd: onAdd),
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.upload_file),
+                  label: const Text('Import CSV'),
+                  onPressed: onImport,
                 ),
-              ),
-              SizedBox(
-                width: 240,
-                child: TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Display name (for new users)',
-                  ),
-                ),
-              ),
-              FilledButton.icon(
-                icon: const Icon(Icons.person_add_alt_1),
-                label: const Text('Add student'),
-                onPressed: _submitAdd,
-              ),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.upload_file),
-                label: const Text('Import CSV'),
-                onPressed: widget.onImport,
               ),
             ],
           ),
-          if (widget.error != null) ...[
+          if (error != null) ...[
             const SizedBox(height: 12),
             Text(
-              widget.error!,
+              error!,
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
-          if (widget.lastImportResults != null) ...[
+          if (lastImportResults != null) ...[
             const SizedBox(height: 12),
-            _ImportResultsBar(results: widget.lastImportResults!),
+            _ImportResultsBar(results: lastImportResults!),
           ],
           const SizedBox(height: 16),
           Expanded(
-            child: widget.loading && roster == null
+            child: loading && roster == null
                 ? const Center(child: CircularProgressIndicator())
                 : roster == null
                 ? const SizedBox.shrink()
                 : _RosterTable(
-                    members: roster.members,
-                    onRemove: widget.onRemove,
+                    members: roster!.members,
+                    onRemove: onRemove,
                   ),
           ),
         ],
@@ -384,7 +334,6 @@ class _RosterTable extends StatelessWidget {
         child: DataTable(
           columns: const [
             DataColumn(label: Text('Display name')),
-            DataColumn(label: Text('Entra oid')),
             DataColumn(label: Text('Role')),
             DataColumn(label: Text('Joined')),
             DataColumn(label: Text('')),
@@ -394,7 +343,6 @@ class _RosterTable extends StatelessWidget {
               DataRow(
                 cells: [
                   DataCell(Text(m.displayName)),
-                  DataCell(Text(m.entraOid)),
                   DataCell(Text(m.membershipRole)),
                   DataCell(Text(_formatDate(m.joinedAt))),
                   DataCell(

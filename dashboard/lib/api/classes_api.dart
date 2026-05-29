@@ -54,6 +54,24 @@ class ClassMembersResponse {
       );
 }
 
+class DirectoryUser {
+  DirectoryUser({
+    required this.entraOid,
+    required this.displayName,
+    required this.upn,
+  });
+
+  final String entraOid;
+  final String displayName;
+  final String? upn;
+
+  factory DirectoryUser.fromJson(Map<String, dynamic> json) => DirectoryUser(
+    entraOid: json['entraOid'] as String,
+    displayName: json['displayName'] as String,
+    upn: json['upn'] as String?,
+  );
+}
+
 enum ClassMembershipImportStatus { added, alreadyMember, notFoundInEntra }
 
 ClassMembershipImportStatus _parseImportStatus(Object raw) {
@@ -122,6 +140,17 @@ class ClassesApi {
     return ClassMembersResponse.fromJson(
       jsonDecode(res.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<List<DirectoryUser>> searchUsers(String query, {int top = 10}) async {
+    final res = await _client.get(
+      'users/search?q=${Uri.encodeQueryComponent(query)}&top=$top',
+    );
+    _ensureOk(res);
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list
+        .map((e) => DirectoryUser.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false);
   }
 
   Future<ClassMembershipImportResult> addMember(

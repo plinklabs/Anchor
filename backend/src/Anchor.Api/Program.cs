@@ -9,13 +9,25 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Anchor.Api.Users;
 using Microsoft.Identity.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"));
+    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"))
+    // OBO token acquisition for downstream Graph calls (directory search).
+    // The dashboard requests `<clientId>/.default`, so the user token includes
+    // every preconsented delegated scope on the app registration; we just
+    // need to request the Graph scope here for the OBO exchange. Production
+    // also requires AzureAd:ClientCredentials (client secret/cert) — without
+    // it the OBO exchange fails at first call, not at startup.
+    .EnableTokenAcquisitionToCallDownstreamApi()
+    .AddMicrosoftGraph(GraphUserDirectorySearch.GraphBaseUrl, GraphUserDirectorySearch.GraphScope)
+    .AddInMemoryTokenCaches();
+
+builder.Services.AddScoped<IUserDirectorySearch, GraphUserDirectorySearch>();
 
 builder.Services.Configure<JwtBearerOptions>(
     JwtBearerDefaults.AuthenticationScheme,

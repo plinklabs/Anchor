@@ -1,5 +1,6 @@
 using Anchor.Api.Realtime;
 using Anchor.Api.Tests.FakeAuth;
+using Anchor.Api.Users;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Hosting;
@@ -77,6 +78,13 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             services.RemoveAll<ISessionBroadcaster>();
             services.AddSingleton<RecordingSessionBroadcaster>();
             services.AddSingleton<ISessionBroadcaster>(sp => sp.GetRequiredService<RecordingSessionBroadcaster>());
+
+            // Graph isn't reachable in tests; swap the directory search for a
+            // fake. Tests resolve FakeUserDirectorySearch from the service
+            // provider to set its Handler per case.
+            services.RemoveAll<IUserDirectorySearch>();
+            services.AddSingleton<FakeUserDirectorySearch>();
+            services.AddSingleton<IUserDirectorySearch>(sp => sp.GetRequiredService<FakeUserDirectorySearch>());
         });
     }
 
