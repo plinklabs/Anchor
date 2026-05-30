@@ -335,13 +335,6 @@ class _BundlesPageState extends State<BundlesPage> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go('/'),
         ),
-        actions: [
-          IconButton(
-            tooltip: 'New bundle',
-            icon: const Icon(Icons.add),
-            onPressed: _startNew,
-          ),
-        ],
       ),
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -379,6 +372,18 @@ class _BundlesPageState extends State<BundlesPage> {
                 ),
               ),
             ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const Key('bundles-new-button'),
+              icon: const Icon(Icons.add),
+              label: const Text('New bundle'),
+              onPressed: _startNew,
+            ),
           ),
         ),
         const Divider(height: 1),
