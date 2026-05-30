@@ -58,9 +58,13 @@ void main() {
       // The create affordance is in the list pane (#98), not buried in the
       // AppBar. We don't pump the editor state here because rendering the
       // match-type dropdown trips a pre-existing layout overflow (#115).
-      final newBundleButton = find.widgetWithText(FilledButton, 'New bundle');
+      // Found by Key because FilledButton.icon wraps in an internal widget
+      // that find.widgetWithText doesn't reliably match across Flutter
+      // versions.
+      final newBundleButton = find.byKey(const Key('bundles-new-button'));
       expect(newBundleButton, findsOneWidget);
-      final button = tester.widget<FilledButton>(newBundleButton);
+      expect(find.descendant(of: newBundleButton, matching: find.text('New bundle')), findsOneWidget);
+      final button = tester.widget<ButtonStyleButton>(newBundleButton);
       expect(button.onPressed, isNotNull);
     },
   );

@@ -379,6 +379,7 @@ class _BundlesPageState extends State<BundlesPage> {
           child: SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
+              key: const Key('bundles-new-button'),
               icon: const Icon(Icons.add),
               label: const Text('New bundle'),
               onPressed: _startNew,
