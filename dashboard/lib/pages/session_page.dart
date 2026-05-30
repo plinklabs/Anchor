@@ -181,11 +181,22 @@ class _SessionPageState extends State<SessionPage> {
     super.dispose();
   }
 
+  String _titleText() {
+    final started = _detail?.startedAt.toLocal();
+    if (started == null) return 'Session';
+    final y = started.year.toString().padLeft(4, '0');
+    final mo = started.month.toString().padLeft(2, '0');
+    final d = started.day.toString().padLeft(2, '0');
+    final h = started.hour.toString().padLeft(2, '0');
+    final mi = started.minute.toString().padLeft(2, '0');
+    return 'Session $y-$mo-$d $h:$mi';
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Session ${widget.sessionId}'),
+        title: Text(_titleText()),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.go('/'),
