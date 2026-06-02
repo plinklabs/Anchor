@@ -8,6 +8,7 @@ using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Anchor.Api.Controllers;
 
@@ -32,6 +33,7 @@ public sealed class SessionsController : ControllerBase
     private readonly TimeProvider _clock;
     private readonly JoinByCodeRateLimiter _joinByCodeLimiter;
     private readonly ISessionAllowlistExpander _allowlist;
+    private readonly ParticipantLiveStateResolver _liveState;
 
     public SessionsController(
         AnchorDbContext db,
@@ -39,7 +41,8 @@ public sealed class SessionsController : ControllerBase
         ISessionBroadcaster broadcaster,
         TimeProvider clock,
         JoinByCodeRateLimiter joinByCodeLimiter,
-        ISessionAllowlistExpander allowlist)
+        ISessionAllowlistExpander allowlist,
+        ParticipantLiveStateResolver liveState)
     {
         _db = db;
         _users = users;
@@ -47,6 +50,7 @@ public sealed class SessionsController : ControllerBase
         _clock = clock;
         _joinByCodeLimiter = joinByCodeLimiter;
         _allowlist = allowlist;
+        _liveState = liveState;
     }
 
     [HttpPost]
@@ -348,16 +352,31 @@ public sealed class SessionsController : ControllerBase
             .Select(c => c.Name)
             .FirstAsync(cancellationToken);
 
-        var participants = await _db.SessionParticipants.AsNoTracking()
+        // Live per-student state (#100) layers heartbeat liveness (in-memory,
+        // not in the DB) on top of the lifecycle timestamps, so resolve it after
+        // materialising. Name order is a stable secondary sort; the dashboard
+        // re-groups by state.
+        var participantRows = await _db.SessionParticipants.AsNoTracking()
             .Where(p => p.SessionId == id)
             .OrderBy(p => p.User!.DisplayName)
-            .Select(p => new SessionParticipantSummary(
+            .Select(p => new
+            {
                 p.UserId,
-                p.User!.DisplayName,
+                DisplayName = p.User!.DisplayName,
                 p.JoinedAt,
                 p.DeclinedAt,
-                p.LeftAt))
+                p.LeftAt,
+            })
             .ToListAsync(cancellationToken);
+        var participants = participantRows
+            .Select(p => new SessionParticipantSummary(
+                p.UserId,
+                p.DisplayName,
+                p.JoinedAt,
+                p.DeclinedAt,
+                p.LeftAt,
+                _liveState.Resolve(id, p.UserId, p.JoinedAt, p.DeclinedAt, p.LeftAt).ToString()))
+            .ToList();
 
         var recentEventRows = await _db.Events.AsNoTracking()
             .Where(e => e.SessionId == id)
@@ -901,7 +920,8 @@ public sealed record SessionParticipantSummary(
     string DisplayName,
     DateTimeOffset? JoinedAt,
     DateTimeOffset? DeclinedAt,
-    DateTimeOffset? LeftAt);
+    DateTimeOffset? LeftAt,
+    string State);
 
 public sealed record SessionRecentEvent(
     Guid Id,

@@ -201,6 +201,80 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task Join_broadcasts_participant_state_changed_to_session_group()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var call = Assert.Single(broadcaster.ParticipantStateChangedCalls,
+            c => c.SessionId == session.Id && c.UserId == student.Id);
+        Assert.Equal(nameof(ParticipantLiveState.Joined), call.State);
+        Assert.Equal("Test Student", call.DisplayName);
+    }
+
+    [Fact]
+    public async Task Leave_broadcasts_left_state_to_session_group()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+        await connection.InvokeAsync("LeaveSession", session.Id);
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        Assert.Contains(broadcaster.ParticipantStateChangedCalls,
+            c => c.SessionId == session.Id && c.UserId == student.Id &&
+                 c.State == nameof(ParticipantLiveState.Left));
+    }
+
+    [Fact]
+    public async Task Decline_broadcasts_declined_state_to_session_group()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync(
+            "DeclineSession", new DeclineSessionRequest(session.Id, Reason: "user_cancelled"));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        Assert.Contains(broadcaster.ParticipantStateChangedCalls,
+            c => c.SessionId == session.Id && c.UserId == student.Id &&
+                 c.State == nameof(ParticipantLiveState.Declined));
+    }
+
+    [Fact]
+    public async Task Owning_teacher_join_does_not_broadcast_participant_state()
+    {
+        var (_, session) = await SeedSessionWithStudentAsync();
+
+        Guid teacherOid;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            teacherOid = (await db.Users.AsNoTracking().SingleAsync(u => u.Id == session.TeacherId)).EntraOid;
+        }
+
+        await using var connection = BuildConnection(teacherOid, "Teacher");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        // The owning teacher is not a participant, so their own subscribe must
+        // never surface on the roster.
+        Assert.DoesNotContain(broadcaster.ParticipantStateChangedCalls,
+            c => c.SessionId == session.Id && c.UserId == session.TeacherId);
+    }
+
+    [Fact]
     public async Task Heartbeat_from_active_participant_records_to_tracker()
     {
         var (student, session) = await SeedSessionWithStudentAsync();

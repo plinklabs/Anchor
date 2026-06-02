@@ -303,6 +303,9 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
                 return Task.CompletedTask;
             }
 
+            public Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
+
             public Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default)
                 => Task.CompletedTask;
 

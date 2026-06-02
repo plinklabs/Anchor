@@ -10,6 +10,7 @@ public interface ISessionBroadcaster
         CancellationToken cancellationToken = default);
     Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default);
+    Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default);
     Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default);
     Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default);
     Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default);
@@ -55,6 +56,11 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         // grants (#73), so this targets the user group (reaching both the
         // student's agent and extension) rather than the whole session group.
         => _hub.Clients.Group(SessionHub.UserGroupName(userId)).SessionBundlesUpdated(payload);
+
+    public Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default)
+        // Session group: the owning teacher's dashboard is the consumer. Mirrors
+        // HeartbeatLost — the roster's other state transitions arrive the same way.
+        => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).ParticipantStateChanged(payload);
 
     public Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default)
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).HeartbeatLost(payload);

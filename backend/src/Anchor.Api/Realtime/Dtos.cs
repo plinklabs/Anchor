@@ -44,6 +44,44 @@ public sealed record SessionBundlesUpdatedPayload(
     IReadOnlyList<AllowedAppDto> Apps,
     IReadOnlyList<AllowedDomainDto> Domains);
 
+/// <summary>
+/// The teacher-facing live state of one class member in a session (#100).
+/// Serialised as its name on the wire and mirrored by the dashboard. The
+/// taxonomy lives here so the staleness threshold (<see cref="HeartbeatOptions"/>)
+/// and the state machine have a single home; the dashboard only renders + sorts.
+/// </summary>
+public enum ParticipantLiveState
+{
+    /// <summary>In the class roster but no join recorded for this session.</summary>
+    NeverJoined,
+
+    /// <summary>Joined and heartbeat fresh.</summary>
+    Joined,
+
+    /// <summary>Joined but no heartbeat for longer than the configured timeout.</summary>
+    HeartbeatStale,
+
+    /// <summary>Cancelled during the join-confirmation toast.</summary>
+    Declined,
+
+    /// <summary>Manually left or the agent stopped reporting after having joined.</summary>
+    Left,
+}
+
+/// <summary>
+/// Live notification that a class member's lifecycle state changed
+/// (joined / declined / left) so the teacher's roster updates without polling
+/// (#100). Heartbeat-driven transitions are carried by the existing
+/// <see cref="HeartbeatLostPayload"/> / <see cref="AgentReconnectedPayload"/>
+/// instead. Pushed to the session group.
+/// </summary>
+public sealed record ParticipantStateChangedPayload(
+    Guid SessionId,
+    Guid UserId,
+    string DisplayName,
+    string State,
+    DateTimeOffset At);
+
 public sealed record HeartbeatLostPayload(Guid SessionId, Guid UserId, DateTimeOffset LastSeenAt);
 
 public sealed record AgentReconnectedPayload(Guid SessionId, Guid UserId, DateTimeOffset ReconnectedAt);

@@ -125,6 +125,18 @@ public sealed class SessionHub : Hub<ISessionHubClient>
 
         await _db.SaveChangesAsync(ct);
         await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(session.Id), ct);
+
+        // Tell the teacher's roster a member just joined (#100). The owning
+        // teacher isn't a participant, so their own subscribe doesn't emit.
+        if (!isOwningTeacher)
+        {
+            await _broadcaster.ParticipantStateChangedAsync(
+                new ParticipantStateChangedPayload(
+                    session.Id, user.Id, user.DisplayName,
+                    nameof(ParticipantLiveState.Joined), now),
+                ct);
+        }
+
         return new JoinSessionResult(session.Id, user.Id);
     }
 
@@ -137,8 +149,15 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             .FirstOrDefaultAsync(p => p.SessionId == sessionId && p.UserId == user.Id, ct);
         if (participant is not null)
         {
-            participant.LeftAt = _clock.GetUtcNow();
+            var leftAt = _clock.GetUtcNow();
+            participant.LeftAt = leftAt;
             await _db.SaveChangesAsync(ct);
+
+            await _broadcaster.ParticipantStateChangedAsync(
+                new ParticipantStateChangedPayload(
+                    sessionId, user.Id, user.DisplayName,
+                    nameof(ParticipantLiveState.Left), leftAt),
+                ct);
         }
 
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(sessionId), ct);
@@ -186,6 +205,12 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         });
 
         await _db.SaveChangesAsync(ct);
+
+        await _broadcaster.ParticipantStateChangedAsync(
+            new ParticipantStateChangedPayload(
+                session.Id, user.Id, user.DisplayName,
+                nameof(ParticipantLiveState.Declined), now),
+            ct);
     }
 
     public async Task Heartbeat(Guid sessionId)

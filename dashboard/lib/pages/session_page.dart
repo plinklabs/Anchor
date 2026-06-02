@@ -188,6 +188,14 @@ class _SessionPageState extends State<SessionPage> {
         if (evt.kind == 'UnblockRequested') {
           _loadPendingRequests();
         }
+        // Roster transitions (#100): a member joined/declined/left, or their
+        // agent stopped/resumed reporting. Re-fetch the detail so the roster
+        // reflects the server-computed per-student state.
+        if (evt.kind == 'ParticipantStateChanged' ||
+            evt.kind == 'HeartbeatLost' ||
+            evt.kind == 'AgentReconnected') {
+          _loadDetail();
+        }
       });
     } catch (e) {
       if (!mounted) return;
@@ -291,6 +299,8 @@ class _SessionPageState extends State<SessionPage> {
                 _updateBundles(next);
               },
             ),
+          if (!_ended && (_detail?.participants.isNotEmpty ?? false))
+            _RosterPanel(participants: _detail!.participants),
           if (_ended)
             Container(
               width: double.infinity,
@@ -328,6 +338,139 @@ class _SessionPageState extends State<SessionPage> {
                       );
                     },
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Visual treatment for one live participant state (#100). The stale state is
+/// the loudest — per design §5.4 it's "agent stopped reporting", the signal
+/// teachers actually act on.
+class _RosterStateStyle {
+  const _RosterStateStyle(this.label, this.icon, this.sortRank);
+  final String label;
+  final IconData icon;
+
+  /// Lower sorts higher. Attention-needing states cluster at the top; the bulk
+  /// of normally-joined students sits below.
+  final int sortRank;
+
+  static _RosterStateStyle of(ParticipantLiveState state) {
+    switch (state) {
+      case ParticipantLiveState.heartbeatStale:
+        return const _RosterStateStyle('Agent stopped reporting', Icons.sensors_off, 0);
+      case ParticipantLiveState.left:
+        return const _RosterStateStyle('Left', Icons.logout, 1);
+      case ParticipantLiveState.declined:
+        return const _RosterStateStyle('Declined', Icons.cancel_outlined, 2);
+      case ParticipantLiveState.neverJoined:
+        return const _RosterStateStyle('Not joined', Icons.radio_button_unchecked, 3);
+      case ParticipantLiveState.joined:
+        return const _RosterStateStyle('In session', Icons.check_circle, 4);
+      case ParticipantLiveState.unknown:
+        return const _RosterStateStyle('Unknown', Icons.help_outline, 5);
+    }
+  }
+
+  Color color(ColorScheme scheme) {
+    switch (icon) {
+      case Icons.sensors_off:
+        return scheme.error;
+      case Icons.check_circle:
+        return Colors.green;
+      case Icons.cancel_outlined:
+        return Colors.orange.shade800;
+      default:
+        return scheme.onSurfaceVariant;
+    }
+  }
+}
+
+class _RosterPanel extends StatelessWidget {
+  const _RosterPanel({required this.participants});
+
+  final List<SessionParticipantInfo> participants;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    // Sort by state (attention-first) then name — the acceptance criterion.
+    final sorted = [...participants]..sort((a, b) {
+        final byState = _RosterStateStyle.of(a.state).sortRank
+            .compareTo(_RosterStateStyle.of(b.state).sortRank);
+        if (byState != 0) return byState;
+        return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+      });
+
+    final joinedCount = participants
+        .where((p) => p.state == ParticipantLiveState.joined)
+        .length;
+
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.groups, size: 18, color: theme.colorScheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Text(
+                'Students ($joinedCount/${participants.length} in session)',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Bounded so a 30-student class doesn't push the event log off-screen.
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 240),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: sorted.length,
+              itemBuilder: (context, i) =>
+                  _RosterRow(participant: sorted[i]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RosterRow extends StatelessWidget {
+  const _RosterRow({required this.participant});
+
+  final SessionParticipantInfo participant;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = _RosterStateStyle.of(participant.state);
+    final color = style.color(theme.colorScheme);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(style.icon, size: 18, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              participant.displayName,
+              style: theme.textTheme.bodyMedium,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Text(
+            style.label,
+            style: theme.textTheme.bodySmall?.copyWith(color: color),
           ),
         ],
       ),

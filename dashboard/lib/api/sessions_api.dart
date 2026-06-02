@@ -158,6 +158,35 @@ class SessionRecentEvent {
       );
 }
 
+/// Teacher-facing live state of a class member (#100). Mirrors the backend
+/// `ParticipantLiveState` enum names on the wire; [unknown] guards against a
+/// value the dashboard doesn't recognise yet.
+enum ParticipantLiveState {
+  neverJoined,
+  joined,
+  heartbeatStale,
+  declined,
+  left,
+  unknown;
+
+  static ParticipantLiveState parse(String? wire) {
+    switch (wire) {
+      case 'NeverJoined':
+        return ParticipantLiveState.neverJoined;
+      case 'Joined':
+        return ParticipantLiveState.joined;
+      case 'HeartbeatStale':
+        return ParticipantLiveState.heartbeatStale;
+      case 'Declined':
+        return ParticipantLiveState.declined;
+      case 'Left':
+        return ParticipantLiveState.left;
+      default:
+        return ParticipantLiveState.unknown;
+    }
+  }
+}
+
 class SessionParticipantInfo {
   SessionParticipantInfo({
     required this.userId,
@@ -165,12 +194,14 @@ class SessionParticipantInfo {
     required this.joinedAt,
     required this.declinedAt,
     required this.leftAt,
+    required this.state,
   });
   final String userId;
   final String displayName;
   final DateTime? joinedAt;
   final DateTime? declinedAt;
   final DateTime? leftAt;
+  final ParticipantLiveState state;
 
   factory SessionParticipantInfo.fromJson(Map<String, dynamic> json) =>
       SessionParticipantInfo(
@@ -185,6 +216,7 @@ class SessionParticipantInfo {
         leftAt: json['leftAt'] == null
             ? null
             : DateTime.parse(json['leftAt'] as String),
+        state: ParticipantLiveState.parse(json['state'] as String?),
       );
 }
 

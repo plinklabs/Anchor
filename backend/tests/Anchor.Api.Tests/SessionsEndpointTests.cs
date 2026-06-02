@@ -585,6 +585,47 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task GET_session_resolves_per_participant_live_state_including_heartbeat_stale()
+    {
+        // One student per state (#100): never-joined (untouched), joined+fresh,
+        // joined+stale, declined, left.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 5);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        var never = scenario.Students[0];
+        var joinedFresh = scenario.Students[1];
+        var joinedStale = scenario.Students[2];
+        var declined = scenario.Students[3];
+        var left = scenario.Students[4];
+
+        await SetParticipantStateAsync(session.Id, joinedFresh.Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        await SetParticipantStateAsync(session.Id, joinedStale.Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        await SetParticipantStateAsync(session.Id, declined.Id, declinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        await SetParticipantStateAsync(session.Id, left.Id,
+            joinedAt: DateTimeOffset.UtcNow.AddMinutes(-3), leftAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        // Heartbeat liveness lives in the singleton tracker, not the DB. A fresh
+        // ping reads Joined; a ping older than the 20s default timeout reads stale.
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        tracker.Record(session.Id, joinedFresh.Id, DateTimeOffset.UtcNow);
+        tracker.Record(session.Id, joinedStale.Id, DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<SessionDetailResponse>($"/sessions/{session.Id}");
+
+        Assert.NotNull(body);
+        string StateOf(Guid userId) => body!.Participants.Single(p => p.UserId == userId).State;
+        Assert.Equal(nameof(ParticipantLiveState.NeverJoined), StateOf(never.Id));
+        Assert.Equal(nameof(ParticipantLiveState.Joined), StateOf(joinedFresh.Id));
+        Assert.Equal(nameof(ParticipantLiveState.HeartbeatStale), StateOf(joinedStale.Id));
+        Assert.Equal(nameof(ParticipantLiveState.Declined), StateOf(declined.Id));
+        Assert.Equal(nameof(ParticipantLiveState.Left), StateOf(left.Id));
+    }
+
+    [Fact]
     public async Task GET_session_returns_detail_for_participating_student()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);

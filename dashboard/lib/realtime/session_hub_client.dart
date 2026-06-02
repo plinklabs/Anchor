@@ -69,6 +69,21 @@ class SessionHubClient {
       );
     });
 
+    // Roster state signals (#100): a member joined/declined/left, or their
+    // agent stopped/resumed reporting. The page re-fetches the detail on each
+    // so the roster reflects server truth — same pattern as UnblockRequested.
+    for (final kind in const ['ParticipantStateChanged', 'HeartbeatLost', 'AgentReconnected']) {
+      connection.on(kind, (args) {
+        final payload =
+            args != null && args.isNotEmpty && args.first is Map
+                ? Map<String, dynamic>.from(args.first as Map)
+                : <String, dynamic>{};
+        _events.add(
+          SessionEvent(kind: kind, payload: payload, at: DateTime.now()),
+        );
+      });
+    }
+
     await connection.start();
     _connection = connection;
   }

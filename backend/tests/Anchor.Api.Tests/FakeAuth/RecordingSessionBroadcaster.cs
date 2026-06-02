@@ -20,6 +20,7 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     public ConcurrentBag<SessionStartedCall> SessionStartedCalls { get; } = new();
     public ConcurrentBag<Guid> SessionEndedCalls { get; } = new();
     public ConcurrentBag<SessionBundlesUpdatedCall> SessionBundlesUpdatedCalls { get; } = new();
+    public ConcurrentBag<ParticipantStateChangedPayload> ParticipantStateChangedCalls { get; } = new();
     public ConcurrentBag<HeartbeatLostPayload> HeartbeatLostCalls { get; } = new();
     public ConcurrentBag<AgentReconnectedPayload> AgentReconnectedCalls { get; } = new();
     public ConcurrentBag<AllowlistAmendedPayload> AllowlistAmendedCalls { get; } = new();
@@ -51,6 +52,12 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     {
         SessionBundlesUpdatedCalls.Add(new SessionBundlesUpdatedCall(userId, payload));
         return _hub.Clients.Group(SessionHub.UserGroupName(userId)).SessionBundlesUpdated(payload);
+    }
+
+    public Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default)
+    {
+        ParticipantStateChangedCalls.Add(payload);
+        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).ParticipantStateChanged(payload);
     }
 
     public Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default)
