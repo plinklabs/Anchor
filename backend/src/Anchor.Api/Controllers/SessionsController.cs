@@ -441,13 +441,17 @@ public sealed class SessionsController : ControllerBase
         if (caller is null)
             return Unauthorized();
 
-        var query = _db.Sessions.AsNoTracking().Where(s => s.EndedAt == null);
-
-        query = caller.Role == UserRole.Teacher
-            ? query.Where(s => s.TeacherId == caller.Id)
-            : query.Where(s => _db.SessionParticipants.Any(p => p.SessionId == s.Id && p.UserId == caller.Id));
-
-        var rows = await query
+        // A non-ended session is "active for me" when I own it (teacher/admin,
+        // via TeacherId) OR I'm a participant (student). Branching on the DB role
+        // alone hid sessions from admin-promoted teachers: they own sessions via
+        // TeacherId, but their DB role is Admin (the #75 dev bootstrap promotes
+        // the first teacher), so the old `role == Teacher` check sent them down
+        // the participant path — which never matches an owner — and returned an
+        // empty list, orphaning their running sessions on the dashboard (#126).
+        var rows = await _db.Sessions.AsNoTracking()
+            .Where(s => s.EndedAt == null)
+            .Where(s => s.TeacherId == caller.Id ||
+                        _db.SessionParticipants.Any(p => p.SessionId == s.Id && p.UserId == caller.Id))
             .Select(s => new SessionSummary(s.Id, s.ClassId, s.TeacherId, s.StartedAt, s.EndedAt, s.JoinCode))
             .ToListAsync(cancellationToken);
         var sessions = rows.OrderByDescending(s => s.StartedAt).ToList();

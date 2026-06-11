@@ -76,7 +76,7 @@ dotnet restore
 dotnet run --project src/Anchor.Api
 ```
 
-Defaults to `http://localhost:5000`. Configuration (Entra tenant/client IDs, SQL connection string) lives in [backend/src/Anchor.Api/appsettings.Development.json](backend/src/Anchor.Api/appsettings.Development.json). The dev profile uses a local SQLite file (`anchor.dev.db`) so no Azure SQL is required for local work.
+Defaults to `http://localhost:5276` (see [backend/src/Anchor.Api/Properties/launchSettings.json](backend/src/Anchor.Api/Properties/launchSettings.json)). Configuration (Entra tenant/client IDs, SQL connection string) lives in [backend/src/Anchor.Api/appsettings.Development.json](backend/src/Anchor.Api/appsettings.Development.json). The dev profile uses a local SQLite file (`anchor.dev.db`) so no Azure SQL is required for local work.
 
 Run tests:
 
@@ -92,8 +92,10 @@ See [dashboard/README.md](dashboard/README.md) for full details (auth flow, `--d
 ```powershell
 cd dashboard
 flutter pub get
-flutter run -d chrome
+flutter run -d chrome --web-port 5173
 ```
+
+`--web-port 5173` is required: the backend's dev CORS policy (`Cors:AllowedOrigins` in [appsettings.Development.json](backend/src/Anchor.Api/appsettings.Development.json)) only allows `http://localhost:5173`, so serving the dashboard on any other port makes every API call fail with "Failed to fetch". VS Code users can instead just press **F5** — the committed *dashboard (Chrome/Edge, port 5173)* configs in [.vscode/launch.json](.vscode/launch.json) pin the port for you.
 
 ### Student agent
 

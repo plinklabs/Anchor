@@ -6,23 +6,25 @@ Teacher dashboard for the Anchor focus-session system. Flutter Web app, deployed
 
 ```bash
 flutter pub get
-flutter run -d chrome \
-  --dart-define=API_BASE_URL=http://localhost:5000 \
+flutter run -d chrome --web-port 5173 \
+  --dart-define=API_BASE_URL=http://localhost:5276 \
   --dart-define=ENTRA_TENANT_ID=<tenant-guid> \
   --dart-define=ENTRA_CLIENT_ID=<spa-app-client-id> \
   --dart-define=API_SCOPE=<api-client-id>/.default
 ```
 
-All `--dart-define` values are optional and default to the development values in the backend `appsettings.json` (same tenant + app registration used as both SPA and API audience).
+`--web-port 5173` is **required**: the backend's dev CORS policy (`Cors:AllowedOrigins`) only allows `http://localhost:5173`. Serving on any other port (which is what `flutter run` does by default) makes every API call fail in the browser with "Failed to fetch", even though sign-in still works (MSAL talks to Microsoft directly, not the backend). VS Code users can press **F5** instead — `../.vscode/launch.json` pins the port.
+
+All `--dart-define` values are optional and default to the development values baked into the app (`lib/main.dart`, `lib/auth/msal_config.dart`) — the same tenant + app registration used as both SPA and API audience.
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| `API_BASE_URL` | `http://localhost:5000` | ASP.NET Core backend base URL. |
+| `API_BASE_URL` | `http://localhost:5276` | ASP.NET Core backend base URL. |
 | `ENTRA_TENANT_ID` | dev tenant | Entra tenant the dashboard signs into. |
 | `ENTRA_CLIENT_ID` | dev SPA client | Entra app registration client id used by MSAL.js. |
 | `API_SCOPE` | `<dev-client-id>/.default` | Scope requested when obtaining an access token for the backend. Use the bare GUID (no `api://` prefix) when the SPA and API share the same app registration — Entra rejects `api://`-form requests with `AADSTS90009`. The backend accepts both audience forms. |
 
-The Entra app registration must include `http://localhost:<port>` as an SPA redirect URI (see the port Flutter prints on `flutter run`).
+The Entra app registration must include `http://localhost:5173` as an SPA redirect URI (matching `--web-port 5173` above). Entra treats `http://localhost` loopback as valid on any port for SPA/public clients, so sign-in works even before you pin the port — but the backend CORS policy does not, which is why the port still has to match.
 
 ## Routes
 

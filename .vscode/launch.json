@@ -10,6 +10,16 @@
       "args": [
         "--web-port=5173"
       ]
+    },
+    {
+      "name": "dashboard (Chrome, port 5173)",
+      "request": "launch",
+      "type": "dart",
+      "cwd": "dashboard",
+      "deviceId": "chrome",
+      "args": [
+        "--web-port=5173"
+      ]
     }
   ]
 }

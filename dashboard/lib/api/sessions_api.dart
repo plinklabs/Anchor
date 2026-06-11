@@ -281,6 +281,27 @@ class SessionEventSummary {
       );
 }
 
+/// A still-running session owned by the calling teacher (#126). Returned by
+/// `GET /sessions/active`, this is what lets `HomePage` offer a "Resume"
+/// affordance after the teacher navigates back / refreshes / relaunches — the
+/// session id is otherwise gone from the URL and the session becomes orphaned.
+class ActiveSession {
+  ActiveSession({
+    required this.id,
+    required this.classId,
+    required this.startedAt,
+  });
+  final String id;
+  final String classId;
+  final DateTime startedAt;
+
+  factory ActiveSession.fromJson(Map<String, dynamic> json) => ActiveSession(
+    id: json['id'] as String,
+    classId: json['classId'] as String,
+    startedAt: DateTime.parse(json['startedAt'] as String),
+  );
+}
+
 class SessionHistoryEntry {
   SessionHistoryEntry({
     required this.id,
@@ -321,6 +342,18 @@ class SessionsApi {
     final list = jsonDecode(res.body) as List<dynamic>;
     return list
         .map((e) => SessionHistoryEntry.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  /// Non-ended sessions the caller owns (#126). Drives the `HomePage` resume
+  /// banner so a session that lost its URL (browser Back, refresh, relaunch)
+  /// is still reachable and endable.
+  Future<List<ActiveSession>> activeSessions() async {
+    final res = await _client.get('sessions/active');
+    _ensureOk(res);
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list
+        .map((e) => ActiveSession.fromJson(e as Map<String, dynamic>))
         .toList(growable: false);
   }
 

@@ -756,6 +756,35 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(live.Id, body![0].Id);
     }
 
+    [Fact]
+    public async Task GET_sessions_active_returns_owned_sessions_for_admin_role_owner()
+    {
+        // The dev / first teacher is a Teacher in Entra (JWT role) but promoted
+        // to Admin in the DB by the #75 bootstrap. They still own sessions via
+        // TeacherId, so /sessions/active must return them despite the Admin DB
+        // role — otherwise the dashboard's resume banner never appears and a
+        // back-button / refresh orphans the session (#126).
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        await SetUserRoleAsync(scenario.Teacher.Id, Anchor.Domain.Users.UserRole.Admin);
+
+        var live = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        // Ended session for the same owner — must not appear.
+        await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+
+        using var client = _factory.CreateClient();
+        // JWT role stays Teacher (the Entra app role) — only the DB role is Admin,
+        // mirroring the real promoted-teacher split.
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<List<SessionSummary>>("/sessions/active");
+
+        Assert.NotNull(body);
+        Assert.Single(body!);
+        Assert.Equal(live.Id, body![0].Id);
+    }
+
     // ------- GET /sessions/rejoinable -------
 
     [Fact]
@@ -986,6 +1015,15 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
 
         Assert.NotNull(body);
         Assert.Empty(body!);
+    }
+
+    private async Task SetUserRoleAsync(Guid userId, Anchor.Domain.Users.UserRole role)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var user = await db.Users.SingleAsync(u => u.Id == userId);
+        user.Role = role;
+        await db.SaveChangesAsync();
     }
 
     private async Task SetSessionEndedAtAsync(Guid sessionId, DateTimeOffset endedAt)
