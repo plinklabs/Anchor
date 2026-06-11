@@ -1,6 +1,7 @@
 import { HubClient } from './shared/hub-client';
 import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
+import { selectTabsToBlock } from './shared/tab-scan';
 import { loadSettings } from './shared/settings';
 import {
   clearActiveSession,
@@ -86,6 +87,9 @@ async function handleSessionStarted(payload: SessionStartedPayload): Promise<voi
     sessionId: state.sessionId,
     domainCount: state.domains.length,
   });
+  // Catch tabs the student opened before the session started — they predate
+  // any navigation event, so only an explicit scan can close that loophole.
+  await scanAndBlockOpenTabs(state);
 }
 
 async function handleSessionEnded(sessionId: string): Promise<void> {
@@ -154,9 +158,10 @@ async function handleSessionBundlesUpdated(payload: SessionBundlesUpdatedPayload
     sessionId: payload.sessionId,
     domainCount: next.domains.length,
   });
-  // New navigations are filtered against the new set immediately; already-open
-  // tabs re-evaluate on their next navigation (parity with the agent, which
-  // re-checks the foreground app on its next change).
+  // Removing a bundle can turn a currently-open tab off-list, and that tab
+  // won't navigate on its own. Re-scan so a mid-session bundle change closes
+  // the loophole retroactively, same as it does at session start (#91).
+  await scanAndBlockOpenTabs(next);
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +242,33 @@ async function evaluateAndMaybeBlock(tabId: number, url: string): Promise<void> 
   log.info('blocking off-allowlist navigation', { tabId, url, sessionId: session.sessionId });
   await redirectToBlockPage(tabId, url, session);
   await reportBlockedUrl(session.sessionId, tabId, url);
+}
+
+// Scan every open tab against the session's allowlist and redirect off-list
+// ones to the block page. Triggered by allowlist *arrival* (session start, or
+// a mid-session bundle change), not by a timer — the session passed in is the
+// allowlist that just landed, so there's no window where this races the
+// forward-navigation listeners: both judge against the same cached domains.
+async function scanAndBlockOpenTabs(session: ActiveSessionState): Promise<void> {
+  let tabs: chrome.tabs.Tab[];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch (err) {
+    log.error('open-tab scan failed: tabs.query rejected', err);
+    return;
+  }
+
+  const toBlock = selectTabsToBlock(tabs, session.domains, chrome.runtime.getURL(''));
+  if (toBlock.length === 0) return;
+
+  log.info('redirecting off-allowlist tabs found at allowlist arrival', {
+    sessionId: session.sessionId,
+    count: toBlock.length,
+  });
+  for (const { tabId, url } of toBlock) {
+    await redirectToBlockPage(tabId, url, session);
+    await reportBlockedUrl(session.sessionId, tabId, url);
+  }
 }
 
 async function redirectToBlockPage(tabId: number, blockedUrl: string, session: ActiveSessionState): Promise<void> {
