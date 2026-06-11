@@ -167,23 +167,14 @@ public sealed class FocusSessionController : IAsyncDisposable
         if (sessionId is not Guid id || matcher is null)
             return;
 
-        // Coalesce duplicate fires for the same app within the configured window
-        // (typical: SetWinEventHook firing twice for the same window, rapid
-        // alt-tabs that bounce back to the same app).
-        var now = _clock.GetUtcNow();
-        lock (_gate)
-        {
-            if (string.Equals(_lastReportedProcessName, change.App.ProcessName, StringComparison.OrdinalIgnoreCase) &&
-                (now - _lastReportedAt) < _settings.DuplicateCoalesceWindow)
-            {
-                return;
-            }
-            _lastReportedProcessName = change.App.ProcessName;
-            _lastReportedAt = now;
-        }
-
         var allowed = matcher.IsAllowed(change.App);
 
+        // Enforcement runs on EVERY foreground event, including repeats of the
+        // same app inside the coalesce window. Design §5.2 requires re-checking
+        // and re-minimizing an off-list window each time it returns to the
+        // foreground — e.g. a student repeatedly clicking the taskbar entry of a
+        // just-minimized blocked app (#92). Minimizing is idempotent, so
+        // re-running it for genuine OS double-fires is harmless.
         try
         {
             if (allowed)
@@ -213,6 +204,22 @@ public sealed class FocusSessionController : IAsyncDisposable
             _log.LogError(ex,
                 "Enforcer threw for {ProcessName} (pid={Pid}); reporting anyway",
                 change.App.ProcessName, change.ProcessId);
+        }
+
+        // Coalesce only the backend *report* — not enforcement above. Genuine OS
+        // double-fires of the same app within the window (SetWinEventHook firing
+        // twice for one window, rapid alt-tabs bouncing back) are reporting
+        // noise; the enforcement already ran for each.
+        var now = _clock.GetUtcNow();
+        lock (_gate)
+        {
+            if (string.Equals(_lastReportedProcessName, change.App.ProcessName, StringComparison.OrdinalIgnoreCase) &&
+                (now - _lastReportedAt) < _settings.DuplicateCoalesceWindow)
+            {
+                return;
+            }
+            _lastReportedProcessName = change.App.ProcessName;
+            _lastReportedAt = now;
         }
 
         _ = ReportAsync(id, change, blocked: !allowed);

@@ -60,6 +60,29 @@ public class ForegroundWatcherTests
         Assert.True(sc.PostCount >= 1);
     }
 
+    [Theory]
+    [InlineData(0x0003u, true)]  // EVENT_SYSTEM_FOREGROUND — genuine focus change
+    [InlineData(0x0017u, true)]  // EVENT_SYSTEM_MINIMIZEEND — restore-from-minimized (#92)
+    [InlineData(0x0016u, false)] // EVENT_SYSTEM_MINIMIZESTART — minimize itself is not a visit
+    [InlineData(0x0008u, false)] // EVENT_SYSTEM_CAPTURESTART — unrelated
+    public void ShouldHandle_accepts_foreground_and_restore_events_only(uint eventType, bool expected)
+    {
+        // #92: a window minimized by our own process keeps logical foreground
+        // status, so the student re-activating it fires MINIMIZEEND but no
+        // FOREGROUND event. Both must flow into the same enforcement path.
+        Assert.Equal(expected, ForegroundWatcher.ShouldHandle(eventType, idObject: 0, idChild: 0, hwnd: 0x100));
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0x100L)]  // child object (not OBJID_WINDOW)
+    [InlineData(0, 2, 0x100L)]  // child id set
+    [InlineData(0, 0, 0L)]      // no hwnd
+    public void ShouldHandle_rejects_non_window_notifications(int idObject, int idChild, long hwnd)
+    {
+        Assert.False(ForegroundWatcher.ShouldHandle(0x0003u, idObject, idChild, (nint)hwnd));
+        Assert.False(ForegroundWatcher.ShouldHandle(0x0017u, idObject, idChild, (nint)hwnd));
+    }
+
     private sealed class RecordingSyncContext : SynchronizationContext
     {
         public int SendCount;

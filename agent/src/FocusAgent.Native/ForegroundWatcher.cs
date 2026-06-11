@@ -9,10 +9,14 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FocusAgent.Native;
 
 /// <summary>
-/// Wraps <c>SetWinEventHook(EVENT_SYSTEM_FOREGROUND)</c>. Marshals raw OS
-/// callbacks through a <see cref="SynchronizationContext"/> so subscribers
-/// see <see cref="Changed"/> on the agent UI thread, and resolves the active
-/// HWND/PID into an <see cref="AppInfo"/> via the injected
+/// Wraps <c>SetWinEventHook(EVENT_SYSTEM_FOREGROUND)</c> plus a second hook on
+/// <c>EVENT_SYSTEM_MINIMIZEEND</c>. The restore hook is essential: minimizing a
+/// window from another process leaves it the *logical* foreground window, so
+/// re-activating it (taskbar click) is not a foreground change and fires no
+/// FOREGROUND event — only MINIMIZEEND fires for that transition (#92).
+/// Marshals raw OS callbacks through a <see cref="SynchronizationContext"/> so
+/// subscribers see <see cref="Changed"/> on the agent UI thread, and resolves
+/// the active HWND/PID into an <see cref="AppInfo"/> via the injected
 /// <see cref="IAppIdentifier"/>.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -28,6 +32,7 @@ public sealed class ForegroundWatcher : IForegroundWatcher
     private readonly NativeMethods.WinEventDelegate _callback;
 
     private nint _hook;
+    private nint _restoreHook;
     private bool _disposed;
 
     public ForegroundWatcher(
@@ -82,20 +87,44 @@ public sealed class ForegroundWatcher : IForegroundWatcher
                     Environment.CurrentManagedThreadId);
                 return;
             }
+            // Second hook for restore-from-minimized. SW_MINIMIZE issued from
+            // our process leaves the minimized window as the logical foreground
+            // window, so the student re-activating it produces no FOREGROUND
+            // event — only MINIMIZEEND. Without this hook an off-list window
+            // stays up on its second visit (#92).
+            _restoreHook = NativeMethods.SetWinEventHook(
+                NativeMethods.EVENT_SYSTEM_MINIMIZEEND,
+                NativeMethods.EVENT_SYSTEM_MINIMIZEEND,
+                hmodWinEventProc: IntPtr.Zero,
+                _callback,
+                idProcess: 0,
+                idThread: 0,
+                NativeMethods.WINEVENT_OUTOFCONTEXT | NativeMethods.WINEVENT_SKIPOWNPROCESS);
+            if (_restoreHook == IntPtr.Zero)
+                _log.LogError(
+                    "SetWinEventHook(MINIMIZEEND) returned NULL on thread {ThreadId}; restore-from-minimized will not be re-enforced",
+                    Environment.CurrentManagedThreadId);
             _log.LogInformation(
-                "ForegroundWatcher started (hook=0x{Hook:X} thread={ThreadId})",
-                _hook, Environment.CurrentManagedThreadId);
+                "ForegroundWatcher started (hook=0x{Hook:X} restoreHook=0x{RestoreHook:X} thread={ThreadId})",
+                _hook, _restoreHook, Environment.CurrentManagedThreadId);
         }
     }
 
     private void StopCore()
     {
         nint hook;
+        nint restoreHook;
         lock (_gate)
         {
             hook = _hook;
+            restoreHook = _restoreHook;
             _hook = IntPtr.Zero;
+            _restoreHook = IntPtr.Zero;
         }
+        if (restoreHook != IntPtr.Zero && !NativeMethods.UnhookWinEvent(restoreHook))
+            _log.LogWarning(
+                "UnhookWinEvent returned false (restoreHook=0x{Hook:X} thread={ThreadId})",
+                restoreHook, Environment.CurrentManagedThreadId);
         if (hook != IntPtr.Zero)
         {
             if (!NativeMethods.UnhookWinEvent(hook))
@@ -151,10 +180,7 @@ public sealed class ForegroundWatcher : IForegroundWatcher
             "OnWinEvent: event=0x{EventType:X} hwnd=0x{Hwnd:X} obj={IdObject} child={IdChild} thread={ThreadId}",
             eventType, hwnd, idObject, idChild, Environment.CurrentManagedThreadId);
 
-        // OBJID_WINDOW = 0; ignore child-object foreground notifications.
-        if (idObject != 0 || idChild != 0 || hwnd == IntPtr.Zero)
-            return;
-        if (eventType != NativeMethods.EVENT_SYSTEM_FOREGROUND)
+        if (!ShouldHandle(eventType, idObject, idChild, hwnd))
             return;
 
         ForegroundChange? change;
@@ -190,6 +216,20 @@ public sealed class ForegroundWatcher : IForegroundWatcher
         {
             _log.LogError(ex, "ForegroundWatcher subscriber threw for {ProcessName}", change.App.ProcessName);
         }
+    }
+
+    /// <summary>
+    /// Event filter for the hook callback. FOREGROUND covers genuine focus
+    /// changes; MINIMIZEEND covers restore-from-minimized, which produces no
+    /// FOREGROUND event when the minimized window never lost logical foreground
+    /// status (#92). OBJID_WINDOW only — child-object notifications are noise.
+    /// </summary>
+    internal static bool ShouldHandle(uint eventType, int idObject, int idChild, nint hwnd)
+    {
+        if (idObject != 0 || idChild != 0 || hwnd == IntPtr.Zero)
+            return false;
+        return eventType is NativeMethods.EVENT_SYSTEM_FOREGROUND
+            or NativeMethods.EVENT_SYSTEM_MINIMIZEEND;
     }
 
     private ForegroundChange? BuildChange(nint hwnd)

@@ -135,6 +135,32 @@ public class FocusSessionControllerTests
     }
 
     [Fact]
+    public async Task Blocked_app_is_reminimized_on_every_reactivation_within_window()
+    {
+        // #92: a student who restores a just-minimized off-list window (e.g. by
+        // clicking its taskbar entry) within the coalesce window must see it
+        // re-minimized every time. Per design §5.2 enforcement runs on every
+        // foreground event; only the backend report is coalesced.
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
+
+        fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
+        fixtures.Clock.Advance(TimeSpan.FromMilliseconds(100));
+        fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
+        fixtures.Clock.Advance(TimeSpan.FromMilliseconds(100));
+        fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
+
+        // Re-minimized on every event (design §5.2)...
+        Assert.Equal(new[] { (nint)0x200, (nint)0x200, (nint)0x200 }, fixtures.Enforcer.Blocked);
+        // ...while the backend report stays coalesced to one within the window.
+        Assert.Single(fixtures.Reporter.Reports);
+    }
+
+    [Fact]
     public async Task Distinct_apps_are_each_reported()
     {
         var fixtures = new Fixtures();

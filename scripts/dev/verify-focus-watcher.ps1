@@ -216,6 +216,64 @@ try {
     }
     Write-Pass "Watcher fired and enforcer blocked Notepad: $signal"
 
+    # --------------------------------------------------- #92: re-minimize check
+    # The bug: SW_MINIMIZE from the agent leaves the minimized window as the
+    # *logical* foreground window, so the student restoring it (taskbar click)
+    # fires no EVENT_SYSTEM_FOREGROUND -- and the agent never re-minimized it.
+    # The fix hooks EVENT_SYSTEM_MINIMIZEEND, which fires on restore regardless
+    # of foreground state. Drive real SW_RESTOREs against the blocked Notepad
+    # window and assert additional "Blocking off-list" lines appear: each
+    # restore must be re-enforced.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class Win92 {
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+'@ -ErrorAction SilentlyContinue
+
+    $reNotepadPid = if ($signal -match 'pid=(\d+)') { [int]$Matches[1] } else { $null }
+    if ($null -eq $reNotepadPid) { throw 'Could not parse Notepad pid from the enforcement log line.' }
+
+    $npHwnd = [IntPtr]::Zero
+    $deadline = (Get-Date).AddSeconds(2)
+    do {
+        try { $npHwnd = (Get-Process -Id $reNotepadPid -ErrorAction Stop).MainWindowHandle } catch { $npHwnd = [IntPtr]::Zero }
+        if ($npHwnd -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $deadline)
+    if ($npHwnd -eq [IntPtr]::Zero) { throw "Notepad (pid=$reNotepadPid) exposes no MainWindowHandle to restore." }
+
+    function Get-BlockLineCount {
+        $t = Get-Content -Path $logFile -Tail 800 -ErrorAction SilentlyContinue
+        return @($t | Where-Object { $_ -match 'Blocking off-list foreground app notepad' }).Count
+    }
+
+    $baseline = Get-BlockLineCount
+    Write-Step "Restoring blocked Notepad 4x (baseline block lines=$baseline); each restore must re-minimize..."
+    # Pace restores slower than the agent's observed block latency (~20ms) but
+    # inside the 500ms report-coalesce window for some, outside for others --
+    # enforcement must fire for ALL of them either way.
+    for ($i = 0; $i -lt 4; $i++) {
+        [void][Win92]::ShowWindow($npHwnd, 9)   # SW_RESTORE -> EVENT_SYSTEM_MINIMIZEEND
+        Start-Sleep -Milliseconds 300
+    }
+
+    $reblocks = 0
+    $deadline = (Get-Date).AddSeconds(4)
+    do {
+        Start-Sleep -Milliseconds 250
+        $reblocks = (Get-BlockLineCount) - $baseline
+    } while ($reblocks -lt 2 -and (Get-Date) -lt $deadline)
+
+    if ($reblocks -lt 2) {
+        Write-Host '--- last 60 lines of agent log ---' -ForegroundColor DarkGray
+        Get-Content -Path $logFile -Tail 60 | ForEach-Object { Write-Host $_ -ForegroundColor DarkGray }
+        Write-Host '--- end log ---' -ForegroundColor DarkGray
+        throw "Restoring Notepad 4x produced only $reblocks additional 'Blocking off-list' line(s) (need >=2) -- restore-from-minimized is not being re-enforced (#92)."
+    }
+    Write-Pass "Notepad re-minimized on restore: $reblocks additional block line(s) after 4 restores (#92)."
+
     # ---------------------- informational: did focus actually move away?
     # The agent's "blocking off-list" log line is #64's authoritative signal
     # -- it proves the watcher fired and the enforcer ran. Whether the
