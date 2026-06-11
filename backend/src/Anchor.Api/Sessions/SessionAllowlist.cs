@@ -29,6 +29,32 @@ public static class SessionAllowlist
         new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "fonts.googleapis.com"),
         new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "fonts.gstatic.com"),
     };
+
+    /// <summary>
+    /// Extra always-allowed apps present ONLY in a Development build (#125),
+    /// so a session can't lock a developer out of their editor. Gated behind
+    /// <c>IHostEnvironment.IsDevelopment()</c> in <see cref="SessionAllowlistExpander"/>;
+    /// a non-Development (Release) build must never receive these. The agent
+    /// normalizes process names case-insensitively and strips <c>.exe</c>, so
+    /// "Code" matches <c>Code.exe</c>.
+    /// </summary>
+    public static readonly IReadOnlyList<AllowedAppDto> DevelopmentApps = new[]
+    {
+        new AllowedAppDto(AllowedAppMatchKinds.ProcessName, "Code"),
+    };
+
+    /// <summary>
+    /// Extra always-allowed domains present ONLY in a Development build (#125),
+    /// so the dashboard (<c>:5173</c>) and backend (<c>:5276</c>) stay reachable
+    /// to stop an active session. Matching is hostname-only/port-agnostic, so
+    /// the bare host covers every local port. Same Development gate and Release
+    /// exclusion as <see cref="DevelopmentApps"/>.
+    /// </summary>
+    public static readonly IReadOnlyList<AllowedDomainDto> DevelopmentDomains = new[]
+    {
+        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "localhost"),
+        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "127.0.0.1"),
+    };
 }
 
 /// <summary>

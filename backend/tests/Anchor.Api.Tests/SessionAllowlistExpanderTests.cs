@@ -6,6 +6,8 @@ using Anchor.Domain.Users;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 
 namespace Anchor.Api.Tests;
 
@@ -39,7 +41,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
     [Fact]
     public async Task Empty_bundle_set_returns_baseline_only()
     {
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
 
         var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
 
@@ -59,7 +61,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.Domain, "exact.example.com", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "school.local", BundleEntryMatchType.Suffix),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
@@ -78,7 +80,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "winword", BundleEntryMatchType.Exact),
             (BundleEntryKind.App, "International GeoGebra Institute", BundleEntryMatchType.SignedPublisher),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
@@ -94,7 +96,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "MSEDGE", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "*.office.com", BundleEntryMatchType.Wildcard),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
@@ -113,7 +115,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         {
             (BundleEntryKind.Domain, "*.b.example", BundleEntryMatchType.Wildcard),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
 
         var expanded = await expander.ExpandAsync(new[] { a, b });
 
@@ -149,7 +151,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         _db.SessionBundles.Add(new SessionBundle { SessionId = sessionId, BundleId = bundleId });
         await _db.SaveChangesAsync();
 
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
         var expanded = await expander.ExpandForSessionAsync(sessionId);
 
         Assert.Contains(expanded.Domains, d => d.Value == "*.live.example");
@@ -164,13 +166,60 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "real.example", BundleEntryMatchType.Exact),
         });
-        var expander = new SessionAllowlistExpander(_db);
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
         Assert.Contains(expanded.Domains, d => d.Value == "real.example");
         Assert.DoesNotContain(expanded.Domains, d => string.IsNullOrWhiteSpace(d.Value));
         Assert.DoesNotContain(expanded.Apps, a => string.IsNullOrWhiteSpace(a.Value));
+    }
+
+    [Fact]
+    public async Task Development_build_adds_localhost_and_vscode_carveouts()
+    {
+        // #125: a dev build must keep the dashboard/backend reachable (localhost)
+        // and the editor usable (VS Code) even while a session enforces the list.
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Development));
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
+
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "localhost");
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "127.0.0.1");
+        Assert.Contains(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value == "Code");
+        // Baseline survives alongside the carve-outs.
+        Assert.Contains(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value == "msedge");
+    }
+
+    [Fact]
+    public async Task NonDevelopment_build_includes_neither_carveout()
+    {
+        // Acceptance: a Release/non-Development build must include NEITHER the
+        // localhost domain nor VS Code — production stays fully locked down.
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
+
+        Assert.DoesNotContain(expanded.Domains, d => d.Value == "localhost");
+        Assert.DoesNotContain(expanded.Domains, d => d.Value == "127.0.0.1");
+        Assert.DoesNotContain(expanded.Apps, a => a.Value == "Code");
+        // Baseline still present — we only stripped the dev carve-outs.
+        Assert.Contains(expanded.Apps, a => a.Value == "msedge");
+    }
+
+    private static IHostEnvironment Env(string environmentName) =>
+        new StubHostEnvironment { EnvironmentName = environmentName };
+
+    /// <summary>
+    /// Minimal <see cref="IHostEnvironment"/> whose only meaningful state is the
+    /// environment name — that is all <c>IsDevelopment()</c> reads.
+    /// </summary>
+    private sealed class StubHostEnvironment : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = Environments.Production;
+        public string ApplicationName { get; set; } = "Anchor.Api.Tests";
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
     private async Task<Guid> SeedBundleAsync(

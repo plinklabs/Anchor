@@ -27,10 +27,14 @@ public sealed record ExpandedAllowlist(
 public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
 {
     private readonly AnchorDbContext _db;
+    private readonly bool _includeDevelopmentCarveouts;
 
-    public SessionAllowlistExpander(AnchorDbContext db)
+    public SessionAllowlistExpander(AnchorDbContext db, IHostEnvironment environment)
     {
         _db = db;
+        // Dev-only carve-outs (#125): localhost + VS Code. Computed once here so
+        // a Release build never merges them, no matter which expansion path runs.
+        _includeDevelopmentCarveouts = environment.IsDevelopment();
     }
 
     public async Task<ExpandedAllowlist> ExpandAsync(IReadOnlyCollection<Guid> bundleIds, CancellationToken cancellationToken = default)
@@ -56,10 +60,16 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
         return Merge(entries);
     }
 
-    private static ExpandedAllowlist Merge(IReadOnlyCollection<BundleEntry> entries)
+    private ExpandedAllowlist Merge(IReadOnlyCollection<BundleEntry> entries)
     {
         var apps = new List<AllowedAppDto>(SessionAllowlist.BaselineApps);
         var domains = new List<AllowedDomainDto>(SessionAllowlist.BaselineDomains);
+
+        if (_includeDevelopmentCarveouts)
+        {
+            apps.AddRange(SessionAllowlist.DevelopmentApps);
+            domains.AddRange(SessionAllowlist.DevelopmentDomains);
+        }
 
         foreach (var entry in entries)
         {
