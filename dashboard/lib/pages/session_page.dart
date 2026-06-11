@@ -29,6 +29,9 @@ class SessionPage extends StatefulWidget {
   State<SessionPage> createState() => _SessionPageState();
 }
 
+/// What the teacher chose in the back-arrow guard dialog (#126).
+enum _ExitChoice { endSession, leaveRunning, cancel }
+
 class _SessionPageState extends State<SessionPage> {
   late final SessionHubClient _hub;
   StreamSubscription<SessionEvent>? _eventsSub;
@@ -223,6 +226,67 @@ class _SessionPageState extends State<SessionPage> {
     }
   }
 
+  /// Back-arrow guard (#126): leaving an active session without a decision is
+  /// how it gets orphaned, so ask the teacher to either end it for everyone or
+  /// leave it running (reachable later from the home banner). An already-ended
+  /// session has nothing to guard — just go home.
+  Future<void> _confirmExit() async {
+    if (_ended) {
+      context.go('/');
+      return;
+    }
+
+    final choice = await showDialog<_ExitChoice>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Leave this session?'),
+        content: const Text(
+          'This session is still running and students stay enforced. End it for '
+          'everyone, or leave it running and come back to it later from the home '
+          'screen?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, _ExitChoice.cancel),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, _ExitChoice.leaveRunning),
+            child: const Text('Leave running'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, _ExitChoice.endSession),
+            child: const Text('End session'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || choice == null || choice == _ExitChoice.cancel) return;
+
+    if (choice == _ExitChoice.leaveRunning) {
+      context.go('/');
+      return;
+    }
+
+    // End, then leave. Unlike the AppBar's End button (which stays to show the
+    // summary), the teacher asked to leave — so navigate home on success.
+    setState(() {
+      _ending = true;
+      _error = null;
+    });
+    try {
+      await widget.sessions.endSession(widget.sessionId);
+      if (!mounted) return;
+      context.go('/');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Failed to end session: $e');
+    } finally {
+      if (mounted) setState(() => _ending = false);
+    }
+  }
+
   @override
   void dispose() {
     _eventsSub?.cancel();
@@ -248,7 +312,7 @@ class _SessionPageState extends State<SessionPage> {
         title: Text(_titleText()),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/'),
+          onPressed: _confirmExit,
         ),
         actions: [
           if (!_ended)
