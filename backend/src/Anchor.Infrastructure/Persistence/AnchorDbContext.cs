@@ -22,6 +22,7 @@ public sealed class AnchorDbContext : DbContext
     public DbSet<SessionBundle> SessionBundles => Set<SessionBundle>();
     public DbSet<SessionParticipant> SessionParticipants => Set<SessionParticipant>();
     public DbSet<SessionUnblockGrant> SessionUnblockGrants => Set<SessionUnblockGrant>();
+    public DbSet<SessionWideUnblockGrant> SessionWideUnblockGrants => Set<SessionWideUnblockGrant>();
     public DbSet<Event> Events => Set<Event>();
     public DbSet<SessionEventSummary> SessionEventSummaries => Set<SessionEventSummary>();
 

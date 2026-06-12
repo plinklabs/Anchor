@@ -57,7 +57,26 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
             .SelectMany(sb => _db.BundleEntries.Where(e => e.BundleId == sb.BundleId))
             .ToArrayAsync(cancellationToken);
 
-        return Merge(entries);
+        var merged = Merge(entries);
+
+        // Whole-class unblock grants (#101) apply to everyone in the session, so
+        // a rejoin (#54) or join-by-code rehydration must include them — without
+        // this a late joiner or a reconnecting agent would miss a host the
+        // teacher already opened for the class. Per-student grants are NOT folded
+        // here: they're scoped to one user and layered in by the caller instead.
+        var classHosts = await _db.SessionWideUnblockGrants
+            .AsNoTracking()
+            .Where(g => g.SessionId == sessionId)
+            .Select(g => g.Host)
+            .ToListAsync(cancellationToken);
+        if (classHosts.Count == 0)
+            return merged;
+
+        var domains = new List<AllowedDomainDto>(merged.Domains);
+        foreach (var host in classHosts)
+            domains.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host));
+
+        return new ExpandedAllowlist(merged.Apps, DedupeDomains(domains));
     }
 
     private ExpandedAllowlist Merge(IReadOnlyCollection<BundleEntry> entries)

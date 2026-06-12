@@ -102,6 +102,9 @@ class _FakeSessions extends SessionsApi {
   List<UnblockRequestSummary> pending = const [];
   List<SessionBundleInfo> sessionBundles = const [];
   final List<List<String>> updateBundlesCalls = [];
+  // Records approval calls so a test can assert which scope the UI chose (#101).
+  final List<(String, String)> perStudentApprovals = [];
+  final List<String> classApprovals = [];
 
   @override
   Future<MeResponse> me() async =>
@@ -144,6 +147,19 @@ class _FakeSessions extends SessionsApi {
   @override
   Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async =>
       pending;
+
+  @override
+  Future<void> approveUnblock(String sessionId, String userId, String host) async {
+    perStudentApprovals.add((userId, host));
+  }
+
+  @override
+  Future<void> approveUnblockForClass(String sessionId, String host) async {
+    classApprovals.add(host);
+    // The host is now open for the whole class, so it drops off the pending
+    // list — mirror that so the panel updates the way the backend would drive it.
+    pending = const [];
+  }
 
   @override
   Future<List<SessionBundleInfo>> updateBundles(
@@ -279,6 +295,45 @@ void main() {
     // finder keeps this stable across Flutter versions (the `*.tonalIcon`
     // button isn't reliably typed as a `FilledButton` ancestor on all of them).
     expect(find.text('Approve'), findsOneWidget);
+  });
+
+  testWidgets('approving a request for the whole class issues a class grant (#101)', (
+    tester,
+  ) async {
+    final h = await _bootToLiveSession(tester);
+
+    final now = DateTime(2026, 6, 12, 9, 20);
+    h.sessions.pending = [
+      UnblockRequestSummary(
+        host: 'chat.example.com',
+        count: 1,
+        firstRequestedAt: now,
+        latestRequestedAt: now,
+        requesters: [
+          UnblockRequestRequester(
+            userId: 'Ada',
+            displayName: 'Ada',
+            requestedAt: now,
+          ),
+        ],
+      ),
+    ];
+    h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+    await tester.pumpAndSettle();
+    expect(find.text('chat.example.com'), findsOneWidget);
+
+    // The whole-class scope is behind the kebab — the safer per-student action
+    // stays the primary button (#101).
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Approve for whole class'));
+    await tester.pumpAndSettle();
+
+    // The UI chose the class scope, not a per-student grant, and the now-granted
+    // host has dropped off the pending panel.
+    expect(h.sessions.classApprovals, ['chat.example.com']);
+    expect(h.sessions.perStudentApprovals, isEmpty);
+    expect(find.text('Pending requests'), findsNothing);
   });
 
   testWidgets('toggling a bundle chip issues PUT /sessions/{id}/bundles (#132)', (

@@ -425,11 +425,25 @@ class SessionsApi {
         .toList(growable: false);
   }
 
+  /// Approve a pending request for the requesting student only (#73) — the
+  /// safer default scope. The backend treats a missing scope as per-student.
   Future<void> approveUnblock(String sessionId, String userId, String host) async {
     final res = await _client.post(
       'sessions/$sessionId/unblock',
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'userId': userId, 'host': host}),
+    );
+    _ensureOk(res);
+  }
+
+  /// Approve a host for the whole class (#101): adds it to the live session
+  /// allowlist for every participant and persists for the rest of the session.
+  /// No userId — the grant isn't tied to a single student.
+  Future<void> approveUnblockForClass(String sessionId, String host) async {
+    final res = await _client.post(
+      'sessions/$sessionId/unblock',
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'host': host, 'scope': 'class'}),
     );
     _ensureOk(res);
   }

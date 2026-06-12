@@ -272,6 +272,24 @@ public sealed class SessionsController : ControllerBase
             .Select(p => p.UserId)
             .ToListAsync(cancellationToken);
 
+        // Whole-class grants (#101) apply to everyone, so fold them into the
+        // shared base before layering each student's own per-student grants on
+        // top — otherwise a mid-session bundle change would silently drop a
+        // host the teacher had opened for the whole class.
+        var classHosts = await _db.SessionWideUnblockGrants.AsNoTracking()
+            .Where(g => g.SessionId == id)
+            .Select(g => g.Host)
+            .ToListAsync(cancellationToken);
+
+        var baseDomains = expanded.Domains;
+        if (classHosts.Count > 0)
+        {
+            var withClass = new List<AllowedDomainDto>(expanded.Domains);
+            foreach (var host in classHosts)
+                withClass.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host));
+            baseDomains = DedupeDomains(withClass);
+        }
+
         var grantsByUser = (await _db.SessionUnblockGrants.AsNoTracking()
                 .Where(g => g.SessionId == id)
                 .Select(g => new { g.UserId, g.Host })
@@ -281,11 +299,11 @@ public sealed class SessionsController : ControllerBase
 
         foreach (var participantId in activeParticipantIds)
         {
-            var domains = expanded.Domains;
+            var domains = baseDomains;
             if (grantsByUser.TryGetValue(participantId, out var hosts) && hosts.Count > 0)
             {
                 // Suffix match mirrors the shape Unblock emits when granting a host.
-                var withGrants = new List<AllowedDomainDto>(expanded.Domains);
+                var withGrants = new List<AllowedDomainDto>(baseDomains);
                 foreach (var host in hosts)
                     withGrants.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host));
                 domains = DedupeDomains(withGrants);
@@ -412,7 +430,20 @@ public sealed class SessionsController : ControllerBase
             .Where(g => g.SessionId == id)
             .Select(g => new SessionUnblockGrantDto(g.UserId, g.User!.DisplayName, g.Host, g.GrantedAt))
             .ToListAsync(cancellationToken);
-        var grants = grantRows.OrderBy(g => g.GrantedAt).ToList();
+
+        // Whole-class grants (#101) share the audit list so the past-session
+        // "Approved exceptions" view stays complete. They have no single student
+        // subject — surface them under a "Whole class" label with an empty userId.
+        var classGrantRows = await _db.SessionWideUnblockGrants.AsNoTracking()
+            .Where(g => g.SessionId == id)
+            .Select(g => new { g.Host, g.GrantedAt })
+            .ToListAsync(cancellationToken);
+
+        var grants = grantRows
+            .Concat(classGrantRows.Select(g =>
+                new SessionUnblockGrantDto(Guid.Empty, "Whole class", g.Host, g.GrantedAt)))
+            .OrderBy(g => g.GrantedAt)
+            .ToList();
 
         return Ok(new SessionDetailResponse(
             session.Id,
@@ -714,6 +745,15 @@ public sealed class SessionsController : ControllerBase
             .Select(g => (g.UserId, Host: g.Host.ToLowerInvariant()))
             .ToHashSet();
 
+        // A whole-class grant (#101) covers every student, so its host is no
+        // longer "pending" for anyone — drop it regardless of who requested.
+        var classGrantedHosts = (await _db.SessionWideUnblockGrants.AsNoTracking()
+                .Where(g => g.SessionId == id)
+                .Select(g => g.Host)
+                .ToListAsync(cancellationToken))
+            .Select(h => h.ToLowerInvariant())
+            .ToHashSet();
+
         var byHost = new Dictionary<string, List<UnblockRequestRequester>>(StringComparer.Ordinal);
         var hostFirstSeen = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
         var hostLatest = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
@@ -723,6 +763,7 @@ public sealed class SessionsController : ControllerBase
         {
             var host = ExtractHostFromPayload(row.PayloadJson);
             if (host is null) continue;
+            if (classGrantedHosts.Contains(host)) continue;
             if (granted.Contains((row.UserId, host))) continue;
             // Collapse repeat clicks from the same student on the same host —
             // a student spamming the button shouldn't inflate the per-host
@@ -783,38 +824,112 @@ public sealed class SessionsController : ControllerBase
         if (session.EndedAt is not null)
             return ValidationProblem("Session has ended.");
 
+        var now = _clock.GetUtcNow();
+
+        // Suffix match so reddit.com also covers www.reddit.com — students
+        // typically request the bare host and expect the navigation chain to
+        // work. Mirrors the matcher rules (#72). Same delta shape for both scopes.
+        var addedDomain = new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host);
+
+        // "class" → whole-class grant (#101); anything else (null/"student") is
+        // the safer per-student default. An unrecognised value falls through to
+        // per-student rather than silently widening the scope.
+        if (string.Equals(request.Scope, "class", StringComparison.OrdinalIgnoreCase))
+            return await ApproveForClassAsync(id, caller.Id, host, addedDomain, now, cancellationToken);
+
+        return await ApproveForStudentAsync(id, request.UserId, host, addedDomain, now, cancellationToken);
+    }
+
+    private async Task<ActionResult<UnblockGrantResponse>> ApproveForStudentAsync(
+        Guid sessionId, Guid? targetUserId, string host, AllowedDomainDto addedDomain,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (targetUserId is not { } userId)
+            return ValidationProblem("userId is required for a per-student approval.");
+
         var isParticipant = await _db.SessionParticipants.AsNoTracking().AnyAsync(
-            p => p.SessionId == id && p.UserId == request.UserId, cancellationToken);
+            p => p.SessionId == sessionId && p.UserId == userId, cancellationToken);
         if (!isParticipant)
             return ValidationProblem("Target user is not a participant of this session.");
 
-        var now = _clock.GetUtcNow();
         var existing = await _db.SessionUnblockGrants.FirstOrDefaultAsync(
-            g => g.SessionId == id && g.UserId == request.UserId && g.Host == host,
+            g => g.SessionId == sessionId && g.UserId == userId && g.Host == host,
             cancellationToken);
 
         if (existing is null)
         {
             _db.SessionUnblockGrants.Add(new SessionUnblockGrant
             {
-                SessionId = id,
-                UserId = request.UserId,
+                SessionId = sessionId,
+                UserId = userId,
                 Host = host,
                 GrantedAt = now,
             });
-            await _db.SaveChangesAsync(cancellationToken);
         }
 
-        // Suffix match so reddit.com also covers www.reddit.com — students
-        // typically request the bare host and expect the navigation chain to
-        // work. Mirrors the matcher rules (#72).
-        var addedDomain = new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host);
+        // Record the scope for later review (#101). A re-approve writes a fresh
+        // audit row even when the grant already exists — a deliberate teacher
+        // action worth logging.
+        _db.Events.Add(BuildUnblockApprovedEvent(sessionId, userId, host, "student", now));
+        await _db.SaveChangesAsync(cancellationToken);
+
         await _broadcaster.AllowlistAmendedAsync(
-            new AllowlistAmendedPayload(id, request.UserId, new[] { addedDomain }),
+            new AllowlistAmendedPayload(sessionId, userId, new[] { addedDomain }),
             cancellationToken);
 
-        return Ok(new UnblockGrantResponse(id, request.UserId, host, existing?.GrantedAt ?? now));
+        return Ok(new UnblockGrantResponse(sessionId, userId, host, existing?.GrantedAt ?? now, "student"));
     }
+
+    private async Task<ActionResult<UnblockGrantResponse>> ApproveForClassAsync(
+        Guid sessionId, Guid teacherId, string host, AllowedDomainDto addedDomain,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var existing = await _db.SessionWideUnblockGrants.FirstOrDefaultAsync(
+            g => g.SessionId == sessionId && g.Host == host, cancellationToken);
+
+        if (existing is null)
+        {
+            _db.SessionWideUnblockGrants.Add(new SessionWideUnblockGrant
+            {
+                SessionId = sessionId,
+                Host = host,
+                GrantedAt = now,
+            });
+        }
+
+        // Attributed to the teacher: a whole-class grant has no single student
+        // subject. The scope lives in the payload for §7.4 review.
+        _db.Events.Add(BuildUnblockApprovedEvent(sessionId, teacherId, host, "class", now));
+        await _db.SaveChangesAsync(cancellationToken);
+
+        // Push the amendment to every actively-joined participant's user group so
+        // each student's extension folds the host into its cached allowlist. New
+        // joiners pick it up from the SessionStarted expansion instead (#101).
+        var activeParticipantIds = await _db.SessionParticipants.AsNoTracking()
+            .Where(p => p.SessionId == sessionId && p.JoinedAt != null && p.LeftAt == null && p.DeclinedAt == null)
+            .Select(p => p.UserId)
+            .ToListAsync(cancellationToken);
+
+        foreach (var participantId in activeParticipantIds)
+        {
+            await _broadcaster.AllowlistAmendedAsync(
+                new AllowlistAmendedPayload(sessionId, participantId, new[] { addedDomain }),
+                cancellationToken);
+        }
+
+        return Ok(new UnblockGrantResponse(sessionId, null, host, existing?.GrantedAt ?? now, "class"));
+    }
+
+    private static Event BuildUnblockApprovedEvent(
+        Guid sessionId, Guid userId, string host, string scope, DateTimeOffset at) =>
+        new()
+        {
+            SessionId = sessionId,
+            UserId = userId,
+            Kind = EventKind.UnblockApproved,
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { host, scope }),
+            OccurredAt = at,
+        };
 
     private static string? NormaliseHost(string? raw)
     {
@@ -947,9 +1062,20 @@ public sealed record JoinByCodeResponse(Guid SessionId);
 
 public sealed record JoinByCodeErrorResponse(string Message);
 
-public sealed record UnblockGrantRequest(Guid UserId, string Host);
+/// <summary>
+/// Approve a pending unblock request (#101). <see cref="Scope"/> is
+/// <c>"class"</c> for a whole-class grant (host added to the live session
+/// allowlist for everyone) or null/<c>"student"</c> for the safer per-student
+/// default. <see cref="UserId"/> is required for the per-student scope and
+/// ignored for the class scope.
+/// </summary>
+public sealed record UnblockGrantRequest(Guid? UserId, string Host, string? Scope = null);
 
-public sealed record UnblockGrantResponse(Guid SessionId, Guid UserId, string Host, DateTimeOffset GrantedAt);
+/// <summary>
+/// Result of an approval. <see cref="UserId"/> is null for a whole-class grant.
+/// <see cref="Scope"/> echoes the granted scope (<c>"student"</c>/<c>"class"</c>).
+/// </summary>
+public sealed record UnblockGrantResponse(Guid SessionId, Guid? UserId, string Host, DateTimeOffset GrantedAt, string Scope);
 
 public sealed record UnblockRequestSummary(
     string Host,

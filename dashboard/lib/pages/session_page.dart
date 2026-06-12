@@ -169,6 +169,24 @@ class _SessionPageState extends State<SessionPage> {
     }
   }
 
+  /// Whole-class approval (#101): one POST that adds the host to the live
+  /// session allowlist for everyone, rather than a grant per requesting student.
+  Future<void> _approveHostForClass(UnblockRequestSummary summary) async {
+    setState(() {
+      _approving.add(summary.host);
+      _unblockError = null;
+    });
+    try {
+      await widget.sessions.approveUnblockForClass(widget.sessionId, summary.host);
+      await _loadPendingRequests();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _unblockError = 'Approve failed: $e');
+    } finally {
+      if (mounted) setState(() => _approving.remove(summary.host));
+    }
+  }
+
   Future<void> _copyJoinCode(String code) async {
     await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
@@ -387,6 +405,7 @@ class _SessionPageState extends State<SessionPage> {
               approving: _approving,
               error: _unblockError,
               onApprove: _approveHost,
+              onApproveClass: _approveHostForClass,
             ),
           Expanded(
             child: _events.isEmpty
@@ -555,12 +574,14 @@ class _PendingRequestsPanel extends StatelessWidget {
     required this.approving,
     required this.error,
     required this.onApprove,
+    required this.onApproveClass,
   });
 
   final List<UnblockRequestSummary> requests;
   final Set<String> approving;
   final String? error;
   final void Function(UnblockRequestSummary) onApprove;
+  final void Function(UnblockRequestSummary) onApproveClass;
 
   @override
   Widget build(BuildContext context) {
@@ -600,6 +621,7 @@ class _PendingRequestsPanel extends StatelessWidget {
                 summary: r,
                 isApproving: approving.contains(r.host),
                 onApprove: () => onApprove(r),
+                onApproveClass: () => onApproveClass(r),
               ),
             ),
         ],
@@ -613,11 +635,13 @@ class _PendingRequestRow extends StatelessWidget {
     required this.summary,
     required this.isApproving,
     required this.onApprove,
+    required this.onApproveClass,
   });
 
   final UnblockRequestSummary summary;
   final bool isApproving;
   final VoidCallback onApprove;
+  final VoidCallback onApproveClass;
 
   @override
   Widget build(BuildContext context) {
@@ -644,6 +668,9 @@ class _PendingRequestRow extends StatelessWidget {
             ],
           ),
         ),
+        // Primary action is per-student — the design's safer default (#101).
+        // The broader "whole class" scope is tucked behind the kebab so it
+        // takes a deliberate extra tap.
         FilledButton.tonalIcon(
           onPressed: isApproving ? null : onApprove,
           icon: isApproving
@@ -654,6 +681,19 @@ class _PendingRequestRow extends StatelessWidget {
                 )
               : const Icon(Icons.check),
           label: const Text('Approve'),
+        ),
+        PopupMenuButton<String>(
+          tooltip: 'More approval options',
+          enabled: !isApproving,
+          onSelected: (value) {
+            if (value == 'class') onApproveClass();
+          },
+          itemBuilder: (context) => const [
+            PopupMenuItem<String>(
+              value: 'class',
+              child: Text('Approve for whole class'),
+            ),
+          ],
         ),
       ],
     );

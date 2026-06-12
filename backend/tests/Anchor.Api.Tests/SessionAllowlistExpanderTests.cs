@@ -158,6 +158,43 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExpandForSessionAsync_folds_whole_class_unblock_grants()
+    {
+        // #101: a whole-class grant applies to everyone in the session, so the
+        // rejoin / join-by-code expansion must carry it — otherwise a late
+        // joiner or reconnecting student would miss a host opened for the class.
+        var teacher = new User { EntraOid = Guid.NewGuid(), DisplayName = "T", Role = UserRole.Teacher };
+        var @class = new Class { Name = "Maths 4", SchoolYear = "2025-2026" };
+        _db.Users.Add(teacher);
+        _db.Classes.Add(@class);
+        await _db.SaveChangesAsync();
+
+        var sessionId = Guid.NewGuid();
+        _db.Sessions.Add(new Session
+        {
+            Id = sessionId,
+            TeacherId = teacher.Id,
+            ClassId = @class.Id,
+            StartedAt = DateTimeOffset.UtcNow,
+            JoinCode = "111111",
+        });
+        _db.SessionWideUnblockGrants.Add(new SessionWideUnblockGrant
+        {
+            SessionId = sessionId,
+            Host = "reddit.com",
+            GrantedAt = DateTimeOffset.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expanded = await expander.ExpandForSessionAsync(sessionId);
+
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Suffix" && d.Value == "reddit.com");
+        // Baseline still present — the grant is additive, not a replacement.
+        Assert.Contains(expanded.Domains, d => d.Value == "*.office.com");
+    }
+
+    [Fact]
     public async Task Empty_or_whitespace_bundle_values_are_skipped()
     {
         var bundleId = await SeedBundleAsync("Sloppy", entries: new[]
