@@ -77,6 +77,35 @@ public class FocusSessionControllerTests
     }
 
     [Fact]
+    public async Task System_shell_surface_is_neither_enforced_nor_reported()
+    {
+        // #140: foregrounding a Windows shell surface (taskbar Search, Start, the
+        // touch keyboard, …) must not minimize it, steal foreground, surface the
+        // overlay, or report it as activity — doing so blanks Search/Start and can
+        // cascade into an explorer taskbar restart. Without the fix SearchHost is
+        // off-list, so it would be blocked, reported, and the overlay shown.
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
+
+        // Student is on an allowed app, then clicks taskbar Search.
+        fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x100));
+        fixtures.Clock.Advance(TimeSpan.FromMilliseconds(50));
+        fixtures.Watcher.Raise(ForegroundFor("SearchHost", hwnd: 0x900));
+
+        // The surface itself is never minimized, overlaid, or reported.
+        Assert.Empty(fixtures.Enforcer.Blocked);
+        Assert.Empty(fixtures.Overlay.Shown);
+        Assert.DoesNotContain(fixtures.Reporter.Reports, r => r.Change.App.ProcessName == "SearchHost");
+        // The allowed app stays the remembered fallback — the surface didn't
+        // overwrite _lastAllowed.
+        Assert.Equal(new[] { (nint)0x100 }, fixtures.Enforcer.Remembered);
+    }
+
+    [Fact]
     public async Task Edge_is_unblocked_when_payload_carries_it_as_baseline()
     {
         // Baseline lives on the backend post-#70 — the agent's matcher no

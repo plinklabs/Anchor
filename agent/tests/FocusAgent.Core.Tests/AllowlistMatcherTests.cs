@@ -117,6 +117,43 @@ public class AllowlistMatcherTests
         Assert.False(matcher.IsAllowed(new AppInfo("notepad", null, "Microsoft Corporation")));
     }
 
+    [Theory]
+    [InlineData("SearchHost")]
+    [InlineData("searchhost.exe")]
+    [InlineData("StartMenuExperienceHost")]
+    [InlineData("ShellExperienceHost")]
+    [InlineData("TextInputHost")]
+    [InlineData("TEXTINPUTHOST.EXE")]
+    public void IsSystemSurface_is_true_for_os_shell_hosts(string processName)
+    {
+        // #140: these UWP shell hosts must never be enforced against. Matching
+        // is case-insensitive and .exe-agnostic, like the allowlist rules.
+        Assert.True(AllowlistMatcher.IsSystemSurface(new AppInfo(processName, null, null)));
+    }
+
+    [Theory]
+    [InlineData("notepad")]
+    [InlineData("winword")]
+    [InlineData("explorer")]   // baseline-allowed every session — reported normally, not a surface (#140)
+    [InlineData("msedge")]     // baseline-allowed every session — reported normally, not a surface (#140)
+    public void IsSystemSurface_is_false_for_regular_and_baseline_apps(string processName)
+    {
+        Assert.False(AllowlistMatcher.IsSystemSurface(new AppInfo(processName, null, null)));
+    }
+
+    [Fact]
+    public void System_surfaces_are_not_exposed_as_user_rules()
+    {
+        // The overlay renders UserRules; shell surfaces must never leak into it.
+        var matcher = new AllowlistMatcher(new[]
+        {
+            new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "winword" },
+        });
+
+        Assert.DoesNotContain("SearchHost", matcher.UserRules.Select(r => r.Value), StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(new[] { "winword" }, matcher.UserRules.Select(r => r.Value).ToArray());
+    }
+
     [Fact]
     public void UserRules_exposes_whatever_was_passed_in()
     {
