@@ -347,6 +347,99 @@ public class FocusSessionControllerTests
         Assert.Empty(fixtures.Enforcer.Blocked);
     }
 
+    [Fact]
+    public async Task Session_start_sweep_minimizes_only_off_list_open_windows()
+    {
+        // #104: windows already open when the session starts must be swept —
+        // off-list ones minimized, allowed apps left up, and OS shell surfaces
+        // (#140) untouched just like the live foreground path.
+        var fixtures = new Fixtures();
+        fixtures.Windows.Windows.AddRange(new[]
+        {
+            OpenWindowFor("winword", hwnd: 0x10),     // allowed
+            OpenWindowFor("notepad", hwnd: 0x20),     // off-list
+            OpenWindowFor("SearchHost", hwnd: 0x30),  // OS shell surface
+            OpenWindowFor("calc", hwnd: 0x40),        // off-list
+        });
+        var (_, _) = BuildController(fixtures);
+
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
+
+        // Only the off-list windows are minimized, in enumeration order.
+        Assert.Equal(new[] { (nint)0x20, (nint)0x40 }, fixtures.Enforcer.Minimized);
+        // The sweep never routes through Block — that path is for live
+        // foreground changes and would fight focus per window.
+        Assert.Empty(fixtures.Enforcer.Blocked);
+    }
+
+    [Fact]
+    public async Task Session_start_sweep_leaves_baseline_edge_up_and_minimizes_the_rest()
+    {
+        // AC: a session starting with no bundles minimizes everything except the
+        // baseline (Edge), which the backend carries in the payload's Apps list.
+        var fixtures = new Fixtures();
+        fixtures.Windows.Windows.AddRange(new[]
+        {
+            OpenWindowFor("msedge", hwnd: 0x10),                    // baseline-allowed
+            OpenWindowFor("notepad", hwnd: 0x20),                  // off-list
+            OpenWindowFor("StartMenuExperienceHost", hwnd: 0x30),  // OS shell surface
+        });
+        var (_, _) = BuildController(fixtures);
+
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "msedge"),
+        }));
+
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
+    }
+
+    [Fact]
+    public async Task Session_start_sweep_result_is_recorded_for_status()
+    {
+        var fixtures = new Fixtures();
+        fixtures.Windows.Windows.AddRange(new[]
+        {
+            OpenWindowFor("winword", hwnd: 0x10),
+            OpenWindowFor("notepad", hwnd: 0x20),
+            OpenWindowFor("calc", hwnd: 0x40),
+        });
+        var (controller, _) = BuildController(fixtures);
+
+        Assert.Null(controller.GetLastStartupSweep());
+
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
+
+        var sweep = controller.GetLastStartupSweep();
+        Assert.NotNull(sweep);
+        Assert.Equal(3, sweep!.WindowsExamined);
+        Assert.Equal(new[] { "notepad", "calc" }, sweep.MinimizedProcesses);
+    }
+
+    [Fact]
+    public async Task Session_start_sweep_does_not_run_when_student_declines()
+    {
+        // No join → no enforcement → no sweep: a declined toast must never
+        // minimize the student's windows.
+        var fixtures = new Fixtures { UiDecision = JoinDecision.Declined };
+        fixtures.Windows.Windows.Add(OpenWindowFor("notepad", hwnd: 0x20));
+        var (controller, _) = BuildController(fixtures);
+
+        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Null(controller.GetLastStartupSweep());
+    }
+
+    private static OpenWindow OpenWindowFor(string process, nint hwnd, string? exePath = null, string? publisher = null) =>
+        new(hwnd, new AppInfo(process, exePath, publisher));
+
     private static SessionStartedPayload NewPayload(Guid? id = null, IReadOnlyList<AllowedAppDto>? apps = null) => new(
         SessionId: id ?? Guid.NewGuid(),
         ClassId: Guid.NewGuid(),
@@ -374,6 +467,7 @@ public class FocusSessionControllerTests
             coordinator,
             fixtures.Watcher,
             fixtures.Enforcer,
+            fixtures.Windows,
             fixtures.Reporter,
             fixtures.Overlay,
             settings,
@@ -387,6 +481,7 @@ public class FocusSessionControllerTests
         public FakeHub Hub { get; } = new();
         public FakeForegroundWatcher Watcher { get; } = new();
         public RecordingEnforcer Enforcer { get; } = new();
+        public FakeWindowEnumerator Windows { get; } = new();
         public RecordingReporter Reporter { get; } = new();
         public RecordingOverlay Overlay { get; } = new();
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UnixEpoch);
@@ -456,6 +551,7 @@ public class FocusSessionControllerTests
     {
         public List<nint> Remembered { get; } = new();
         public List<nint> Blocked { get; } = new();
+        public List<nint> Minimized { get; } = new();
         public int ResetCount { get; private set; }
         /// <summary>
         /// When true, <see cref="Block"/> claims it successfully restored
@@ -464,12 +560,19 @@ public class FocusSessionControllerTests
         /// </summary>
         public bool BlockRestoresFallback { get; set; }
         public void RememberAllowed(nint windowHandle) => Remembered.Add(windowHandle);
+        public void Minimize(nint windowHandle) => Minimized.Add(windowHandle);
         public bool Block(nint offendingWindowHandle)
         {
             Blocked.Add(offendingWindowHandle);
             return BlockRestoresFallback;
         }
         public void Reset() => ResetCount++;
+    }
+
+    private sealed class FakeWindowEnumerator : IWindowEnumerator
+    {
+        public List<OpenWindow> Windows { get; } = new();
+        public IReadOnlyList<OpenWindow> GetOpenWindows() => Windows;
     }
 
     private sealed class RecordingOverlay : IFocusOverlay

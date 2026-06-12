@@ -18,6 +18,7 @@ public sealed class FocusSessionController : IAsyncDisposable
     private readonly SessionCoordinator _sessions;
     private readonly IForegroundWatcher _watcher;
     private readonly IFocusEnforcer _enforcer;
+    private readonly IWindowEnumerator _windows;
     private readonly IFocusEventReporter _reporter;
     private readonly IFocusOverlay _overlay;
     private readonly SessionSettings _settings;
@@ -29,11 +30,13 @@ public sealed class FocusSessionController : IAsyncDisposable
     private AllowlistMatcher? _matcher;
     private string? _lastReportedProcessName;
     private DateTimeOffset _lastReportedAt;
+    private StartupSweepResult? _lastSweep;
 
     public FocusSessionController(
         SessionCoordinator sessions,
         IForegroundWatcher watcher,
         IFocusEnforcer enforcer,
+        IWindowEnumerator windows,
         IFocusEventReporter reporter,
         IFocusOverlay overlay,
         IOptions<SessionSettings> settings,
@@ -43,6 +46,7 @@ public sealed class FocusSessionController : IAsyncDisposable
         _sessions = sessions;
         _watcher = watcher;
         _enforcer = enforcer;
+        _windows = windows;
         _reporter = reporter;
         _overlay = overlay;
         _settings = settings.Value;
@@ -58,6 +62,18 @@ public sealed class FocusSessionController : IAsyncDisposable
     public Guid? ActiveSessionId
     {
         get { lock (_gate) return _activeSessionId; }
+    }
+
+    /// <summary>
+    /// Result of the most recent session-start window sweep (#104), or
+    /// <c>null</c> before the first session of this process. Dev-only: lets the
+    /// status endpoint surface what the sweep minimized so the headless e2e can
+    /// assert it ran instead of screenshotting the desktop.
+    /// </summary>
+    public StartupSweepResult? GetLastStartupSweep()
+    {
+        lock (_gate)
+            return _lastSweep;
     }
 
     /// <summary>
@@ -96,11 +112,65 @@ public sealed class FocusSessionController : IAsyncDisposable
                 payload.SessionId,
                 payload.Apps.Count,
                 payload.Domains.Count);
+
+            // #104: the foreground hook only reacts to focus *changes*, so an
+            // off-list app already foregrounded when the session began would
+            // never be enforced against until the student alt-tabbed. Sweep the
+            // currently-open windows now and minimize the off-list ones.
+            SweepOpenWindows(matcher);
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Failed to start focus enforcement for session {SessionId}", payload.SessionId);
         }
+    }
+
+    /// <summary>
+    /// Minimizes every off-list top-level window open at session start, applying
+    /// the same precedence as the foreground hook: OS shell surfaces are left
+    /// alone (#140), allowed apps stay up, everything else is minimized. Records
+    /// the outcome for <see cref="GetLastStartupSweep"/>. Best-effort — a failure
+    /// to enumerate or minimize one window must not abort the session start.
+    /// </summary>
+    private void SweepOpenWindows(AllowlistMatcher matcher)
+    {
+        IReadOnlyList<OpenWindow> open;
+        try
+        {
+            open = _windows.GetOpenWindows();
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Session-start sweep failed to enumerate open windows");
+            return;
+        }
+
+        var minimized = new List<string>();
+        foreach (var window in open)
+        {
+            if (AllowlistMatcher.IsSystemSurface(window.App))
+                continue;
+            if (matcher.IsAllowed(window.App))
+                continue;
+            try
+            {
+                _enforcer.Minimize(window.Handle);
+                minimized.Add(window.App.ProcessName);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex,
+                    "Session-start sweep failed to minimize off-list window for {ProcessName}",
+                    window.App.ProcessName);
+            }
+        }
+
+        lock (_gate)
+            _lastSweep = new StartupSweepResult(open.Count, minimized);
+
+        _log.LogInformation(
+            "Session-start sweep examined {Examined} window(s) and minimized {Minimized} off-list window(s)",
+            open.Count, minimized.Count);
     }
 
     private void OnAllowlistUpdated(object? sender, SessionBundlesUpdatedPayload payload)

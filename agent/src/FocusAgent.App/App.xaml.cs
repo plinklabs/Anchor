@@ -406,6 +406,7 @@ public partial class App : Application
 
         builder.Services.AddSingleton<IAppIdentifier, AppIdentifier>();
         builder.Services.AddSingleton<IForegroundWatcher, ForegroundWatcher>();
+        builder.Services.AddSingleton<IWindowEnumerator, WindowEnumerator>();
         builder.Services.AddSingleton<IFocusEnforcer, FocusEnforcer>();
         builder.Services.AddSingleton<IFocusEventReporter, SignalRFocusEventReporter>();
         builder.Services.AddSingleton<IFocusOverlay, WinUiFocusOverlay>();

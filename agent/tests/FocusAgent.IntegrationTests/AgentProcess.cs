@@ -17,7 +17,17 @@ internal sealed record StatusSnapshot(
     [property: JsonPropertyName("lastError")] string? LastError,
     [property: JsonPropertyName("activeSessionId")] Guid? ActiveSessionId,
     [property: JsonPropertyName("joinedSessionId")] Guid? JoinedSessionId,
-    [property: JsonPropertyName("allowedApps")] string[]? AllowedApps);
+    [property: JsonPropertyName("allowedApps")] string[]? AllowedApps,
+    [property: JsonPropertyName("startupSweep")] StartupSweepSnapshot? StartupSweep);
+
+/// <summary>
+/// The agent's session-start sweep result (#104) as exposed on /status: how many
+/// top-level windows it examined at join and which off-list processes it
+/// minimized. Null until the first session of the agent process has started.
+/// </summary>
+internal sealed record StartupSweepSnapshot(
+    [property: JsonPropertyName("windowsExamined")] int WindowsExamined,
+    [property: JsonPropertyName("minimizedProcesses")] string[]? MinimizedProcesses);
 
 /// <summary>
 /// Launches the real agent exe headless and exposes its /status state to the

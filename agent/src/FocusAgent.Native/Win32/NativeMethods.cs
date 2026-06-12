@@ -16,6 +16,10 @@ internal static class NativeMethods
     public const int SW_SHOWNOACTIVATE = 4;
     public const int SW_RESTORE = 9;
 
+    // GetWindowLong index + extended window styles
+    public const int GWL_EXSTYLE = -20;
+    public const int WS_EX_TOOLWINDOW = 0x00000080;
+
     // QueryFullProcessImageName flags
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
@@ -104,6 +108,13 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindowVisible(nint hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsIconic(nint hWnd);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+    public static extern int GetWindowLongW(nint hWnd, int nIndex);
 
     [DllImport("user32.dll")]
     public static extern nint GetWindow(nint hWnd, uint uCmd);
