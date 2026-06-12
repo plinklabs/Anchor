@@ -1,0 +1,58 @@
+name: Agent E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - 'backend/**'
+      - '.github/workflows/agent-e2e.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - 'backend/**'
+      - '.github/workflows/agent-e2e.yml'
+
+concurrency:
+  group: agent-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # Windows runner: the agent is WinUI 3 / Windows-only, and the e2e suite
+    # launches the real agent exe + drives a real backend over loopback. The
+    # runner has a desktop session, which the agent's WinUI bootstrap needs.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The e2e harness launches this exact exe (x64 Debug). Build it first so
+      # the suite isn't launching a stale or missing binary.
+      - name: Build agent (x64)
+        run: dotnet build agent/src/FocusAgent.App/FocusAgent.App.csproj -p:Platform=x64 -c Debug
+
+      # The agent had no CI at all before #131 — run its unit/native suites here
+      # too, on the same Windows runner that already has to build the agent.
+      - name: Agent unit tests
+        run: dotnet test agent/FocusAgent.sln -c Debug
+
+      # Warm the backend build so the harness's 180s readiness window isn't spent
+      # on a cold restore+build when it `dotnet run`s the backend.
+      - name: Build backend
+        run: dotnet build backend/Anchor.sln -c Debug
+
+      - name: Run agent e2e suite
+        run: dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj -c Debug --logger "trx;LogFileName=agent-e2e.trx"
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-e2e-results
+          path: agent/tests/FocusAgent.IntegrationTests/TestResults/
+          retention-days: 7

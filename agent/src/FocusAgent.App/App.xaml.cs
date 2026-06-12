@@ -322,6 +322,21 @@ public partial class App : Application
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true);
 
+        // --inject-token is the dev/headless gate (production never passes it).
+        // Under it, layer environment variables LAST so they win over the JSON
+        // above and a headless harness can override any setting per launch —
+        // e.g. Backend__BaseUrl to point at a throwaway test backend on its own
+        // port, Dev__ImpersonateOid to pick which seeded student to play, or
+        // Session__HeartbeatIntervalSeconds to speed up the heartbeat e2e. This
+        // is the agent-side analog of how the extension e2e harness overrides
+        // the backend's config via env vars (extension/e2e/run-backend.ts). It
+        // stays gated so production keeps its config strictly from the signed
+        // appsettings files — a student can't repoint the agent via an env var.
+        if (Program.InjectToken)
+        {
+            builder.Configuration.AddEnvironmentVariables();
+        }
+
         builder.Services.AddOptions<BackendSettings>()
             .Bind(builder.Configuration.GetSection(BackendSettings.SectionName));
         builder.Services.AddOptions<AuthSettings>()

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Headless end-to-end suite for the FocusAgent (#131). Boots the *real*
+    backend + the *real* agent exe and drives session lifecycle over REST,
+    asserting against the agent's /status endpoint and the backend's event
+    feed. The agent-side analog of the extension's Playwright harness
+    (extension/e2e, #124 / #130).
+
+    Deliberately NOT in FocusAgent.sln: `dotnet test FocusAgent.sln` should stay
+    a fast unit run. This project is driven by its own CI workflow
+    (.github/workflows/agent-e2e.yml) and the documented one-command dev loop.
+    It launches the built WinUI agent exe, so it is Windows-only and needs the
+    agent built first (the CI workflow and the dev loop both build it).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

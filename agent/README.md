@@ -64,6 +64,62 @@ cd agent
 dotnet test
 ```
 
+This runs the fast unit/native suites (`FocusAgent.Core.Tests`,
+`FocusAgent.Native.Tests`). The headless end-to-end suite is separate — see
+below.
+
+## End-to-end (headless) verification
+
+`tests/FocusAgent.IntegrationTests` is an asserting integration suite that boots
+the **real backend** and launches the **real agent exe** headless, then drives
+session lifecycle over REST (as the dashboard would) and asserts against the
+agent's `/status` endpoint and the backend's event feed. It's the agent-side
+analog of the extension's Playwright harness (`extension/e2e`, #124/#130) and
+replaces the manual `scripts/dev/verify-*.ps1` smokes for the state paths.
+
+The harness needs no WAM picker and no second machine: the agent runs with
+`--inject-token` (bypasses WAM, authenticates via `X-Dev-Impersonate-Oid`),
+`--status-endpoint <port>` (JSON state on loopback), and — for participant
+flows — `--auto-join`. Under `--inject-token` the agent also layers environment
+variables over its config, so each launch is pointed at a throwaway test
+backend (`Backend__BaseUrl`) and impersonates the seeded student it needs
+(`Dev__ImpersonateOid`) without rewriting any file.
+
+Covered flows (Phase 1): session start, mid-session bundle switch, session end,
+join-by-code (incl. 404/429 error paths), and heartbeat liveness (the agent
+keeps the session alive; killing it makes the backend record `HeartbeatLost`).
+
+```powershell
+# Build the agent exe the suite launches (x64 Debug), then run the suite.
+dotnet build agent/src/FocusAgent.App/FocusAgent.App.csproj -p:Platform=x64 -c Debug
+dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj
+```
+
+The suite boots its own backend on a dedicated port (5282) against a throwaway
+SQLite DB under the temp dir, so it never touches a running dev backend or
+`anchor.dev.db`. It runs in CI on a Windows runner via
+[`.github/workflows/agent-e2e.yml`](../.github/workflows/agent-e2e.yml).
+
+**Visual enforcement (Phase 2) is deferred.** The overlay, the join toast, and
+the #92 off-list re-minimize are visual and need screenshot capture (BitBlt +
+`CAPTUREBLT`, process DPI-aware) to assert on — inherently flakier on a headless
+CI runner. The `/status`-observable state paths above are the high-value,
+low-flake layer; the visual paths are tracked as a follow-up
+([#133](https://github.com/yvanvds/Anchor/issues/133)). The manual
+`scripts/dev/verify-overlay.ps1` / `verify-toast.ps1` scripts still cover them
+by eye in the meantime.
+
+### One-command dev loop
+
+`scripts/dev/dev-agent.ps1` is the agent analog of `npm run dev:extension`: it
+boots a seeded backend (reusing one already running), launches the real agent
+headless impersonating the seeded Dev Student, and opens a small REST console to
+start / amend / end a session and print the agent's live `/status`.
+
+```powershell
+./scripts/dev/dev-agent.ps1
+```
+
 ## Configuration
 
 `src/FocusAgent.App/appsettings.json` carries:
