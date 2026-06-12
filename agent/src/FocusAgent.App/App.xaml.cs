@@ -285,15 +285,21 @@ public partial class App : Application
 
         overlay.Show(rules, blockedAppName: "notepad");
 
-        // Hold for ~5s so the verify script has time to find the HWND, settle,
-        // and capture. Then close cleanly (clears HWND_TOPMOST per AC) and exit.
+        // Deterministic show -> close -> exit cycle so both consumers can observe
+        // it without a real backend or off-list app:
+        //   * scripts/dev/verify-overlay.ps1 finds the HWND and screenshots it
+        //     partway through the initial ~5s hold;
+        //   * the visual e2e (#133) captures it during that hold AND then asserts
+        //     the close path actually tore the window down — by Close()-ing it a
+        //     full 3s before the process exits, so its HWND goes invalid while
+        //     the process is still alive, proving teardown rather than the window
+        //     merely vanishing because the process died.
+        // Close clears HWND_TOPMOST per the #33 AC.
         _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ =>
         {
-            dispatcher.TryEnqueue(() =>
-            {
-                overlay.Close();
-                Exit();
-            });
+            dispatcher.TryEnqueue(overlay.Close);
+            _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(__ =>
+                dispatcher.TryEnqueue(Exit));
         });
     }
 

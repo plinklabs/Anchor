@@ -24,6 +24,9 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- Visual-enforcement e2e (#133): BitBlt screenshot capture + PNG save for
+         the overlay/toast WinUI surfaces. Windows-only, which this TFM already is. -->
+    <PackageReference Include="System.Drawing.Common" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

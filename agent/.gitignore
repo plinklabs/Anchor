@@ -28,3 +28,8 @@ artifacts/
 
 # Local-only config overrides (tenant/client IDs, login hints, etc.)
 **/appsettings.Development.json
+
+# Test output: trx logs + the visual e2e's captured overlay/toast PNGs
+# (agent/tests/FocusAgent.IntegrationTests/TestResults/). CI uploads these as a
+# run artifact; they must never be committed.
+**/TestResults/

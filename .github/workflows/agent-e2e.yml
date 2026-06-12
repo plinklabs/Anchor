@@ -46,8 +46,24 @@ jobs:
       - name: Build backend
         run: dotnet build backend/Anchor.sln -c Debug
 
-      - name: Run agent e2e suite
-        run: dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj -c Debug --logger "trx;LogFileName=agent-e2e.trx"
+      # State paths (#131): session lifecycle / bundles / heartbeat / join-by-code,
+      # asserted against the agent's JSON /status. Low-flake — this is the
+      # blocking gate. Excludes the Visual category, which runs non-blocking below.
+      - name: Run agent e2e suite (state paths)
+        run: dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj -c Debug --filter "Category!=Visual" --logger "trx;LogFileName=agent-e2e.trx"
+
+      # Visual enforcement (#133): the overlay + join-toast WinUI surfaces,
+      # asserted by screenshot capture (BitBlt + CAPTUREBLT, DPI-aware). These
+      # render real DirectComposition surfaces, so they're inherently flakier on a
+      # headless runner than the JSON-state suite above. Kept NON-BLOCKING
+      # (continue-on-error) and run even if the state suite failed, so we can
+      # characterize the flake rate over several runs before promoting it to a
+      # blocking gate. The captured PNGs land in TestResults/ and are uploaded
+      # below for eyeball triage.
+      - name: Run visual enforcement e2e (non-blocking, flake characterization)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj -c Debug --filter "Category=Visual" --logger "trx;LogFileName=agent-visual-e2e.trx"
 
       - name: Upload test results
         if: ${{ !cancelled() }}

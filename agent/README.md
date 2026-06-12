@@ -85,9 +85,10 @@ variables over its config, so each launch is pointed at a throwaway test
 backend (`Backend__BaseUrl`) and impersonates the seeded student it needs
 (`Dev__ImpersonateOid`) without rewriting any file.
 
-Covered flows (Phase 1): session start, mid-session bundle switch, session end,
-join-by-code (incl. 404/429 error paths), and heartbeat liveness (the agent
-keeps the session alive; killing it makes the backend record `HeartbeatLost`).
+Covered flows (Phase 1 — state paths): session start, mid-session bundle switch,
+session end, join-by-code (incl. 404/429 error paths), and heartbeat liveness
+(the agent keeps the session alive; killing it makes the backend record
+`HeartbeatLost`).
 
 ```powershell
 # Build the agent exe the suite launches (x64 Debug), then run the suite.
@@ -100,14 +101,38 @@ SQLite DB under the temp dir, so it never touches a running dev backend or
 `anchor.dev.db`. It runs in CI on a Windows runner via
 [`.github/workflows/agent-e2e.yml`](../.github/workflows/agent-e2e.yml).
 
-**Visual enforcement (Phase 2) is deferred.** The overlay, the join toast, and
-the #92 off-list re-minimize are visual and need screenshot capture (BitBlt +
-`CAPTUREBLT`, process DPI-aware) to assert on — inherently flakier on a headless
-CI runner. The `/status`-observable state paths above are the high-value,
-low-flake layer; the visual paths are tracked as a follow-up
-([#133](https://github.com/yvanvds/Anchor/issues/133)). The manual
-`scripts/dev/verify-overlay.ps1` / `verify-toast.ps1` scripts still cover them
-by eye in the meantime.
+### Visual enforcement (Phase 2, #133)
+
+The overlay and the join toast are pure WinUI surfaces — there's no `/status`
+field to poll — so they're asserted by **screenshot capture** instead: the spec
+drives the agent's `--show-test-overlay` / `--show-test-toast` self-tests
+(synthetic payloads, no backend), finds the surface's HWND, and BitBlts its rect
+with `CAPTUREBLT` while the process is per-monitor DPI-aware (see
+`WindowCapture.cs`; same path as `scripts/dev/verify-overlay.ps1` /
+`verify-toast.ps1`). The overlay spec asserts the real window renders (not blank)
+and that its close path tears the window down; the toast spec asserts it renders.
+Captured PNGs are written under `TestResults/visual-artifacts/` for eyeball
+triage.
+
+These specs carry the `Category=Visual` trait and are **not** in the state
+collection (they need no backend). Run them on their own:
+
+```powershell
+dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj --filter "Category=Visual"
+```
+
+Because they render real DirectComposition surfaces, they're flakier on a
+headless runner than the JSON-state suite. In CI they run as a separate,
+**non-blocking** (`continue-on-error`) step while the flake rate is characterized
+over several runs; the blocking state run uses `--filter "Category!=Visual"`. The
+state suite stays the high-value, low-flake gate.
+
+**Still deferred:** the #92 off-list-window re-minimize-on-restore path. Unlike
+the overlay/toast it has no self-test seam — exercising it end-to-end needs a
+real off-list window foregrounded and a real `EVENT_SYSTEM_FOREGROUND` hook fire,
+which is high-flake on a headless desktop. Its enforcement logic is covered by
+`FocusSessionControllerTests` (`Blocked_app_is_reminimized_on_every_reactivation_within_window`);
+a real-window e2e is tracked as a follow-up.
 
 ### One-command dev loop
 
