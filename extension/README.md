@@ -76,9 +76,74 @@ on the extension card at `edge://extensions`.
 npm test
 ```
 
-Vitest runs the host-matcher unit tests (exact / wildcard / suffix / chrome
-internals / malformed inputs). The matcher is pure — no chrome APIs touched —
-so it runs in plain Node without a browser shim.
+Vitest runs the pure-logic unit tests under `src/` (host-matcher, session-state,
+tab-scan). These touch no chrome APIs, so they run in plain Node without a
+browser shim.
+
+## End-to-end tests
+
+```powershell
+npm run e2e          # build + run the Playwright suite (headed Edge)
+npm run e2e:report   # open the last HTML report
+```
+
+`npm run e2e` drives the **real** unpacked extension in Edge against a **real**
+backend — no mocked `chrome`, no stubbed SignalR hub. The harness (under
+[`e2e/`](e2e/)):
+
+1. Boots the backend itself (Playwright `webServer` → `node e2e/run-backend.ts`
+   → `dotnet run`) in Development on port **5281** with a throwaway, freshly
+   seeded SQLite DB under the OS temp dir — never the dev `anchor.dev.db`.
+2. Loads `dist/` into Edge via a Playwright persistent context, writes the
+   backend URL + the seeded **Dev Student** OID into `chrome.storage.local`, and
+   `chrome.runtime.reload()`s so the MV3 service worker re-reads them and
+   connects to the live hub.
+3. Drives session lifecycle over **REST** with the dev-impersonation header
+   (`POST /sessions`, `PUT /sessions/{id}/bundles`, `POST /sessions/{id}/end`) —
+   the same wire contract the dashboard uses.
+
+The specs assert real behaviour, and navigate only to loopback hosts (Edge's
+`--host-resolver-rules` maps the synthetic test hosts to a local static server,
+so no spec touches the public internet):
+
+| Spec | Covers |
+| ---- | ------ |
+| `extension-loads` | the SW boots, refuses without auth, then connects once configured (spike) |
+| `block-on-start` | a tab already off-list when a session starts is redirected (#91) |
+| `block-on-navigation` | off-list navigations are blocked; on-list ones are left untouched (#72) |
+| `amend-bundles` | dropping a bundle mid-session re-scans and blocks a now-off-list tab (#93) |
+
+Prerequisites: Node ≥ 22 (the harness is TypeScript run via Node's built-in type
+stripping), Microsoft Edge, and the .NET SDK on `PATH` (the harness builds and
+runs the backend). Loading an MV3 extension needs a **headed** browser, so the
+suite runs headed by default; CI runs it on a Windows runner with Edge
+preinstalled (`.github/workflows/extension-e2e.yml`).
+
+> Not covered: session-end does **not** restore a blocked tab to its original
+> URL (the block page only offers a manual **Go back**), so there is no
+> restore-on-end spec — that behaviour isn't implemented in the extension.
+
+## Dev loop (one command)
+
+```powershell
+npm run dev:extension
+```
+
+Removes the manual multi-process startup: it builds the extension, boots a
+seeded backend if one isn't already running (reusing a dev backend on
+`http://localhost:5276` if present), opens Edge with the extension preconfigured
+as the Dev Student, and drops you into a tiny console:
+
+```
+s  start a session (Microsoft 365 bundle)
+a  amend → drop all bundles (turns open tabs off-list)
+m  amend → restore the Microsoft 365 bundle
+e  end the current session
+q  quit (closes Edge, stops the backend if it started one)
+```
+
+With a session running, open `https://reddit.com` → block page; open
+`https://outlook.office.com` → loads. No dashboard, no agent.
 
 ## Dev load
 
