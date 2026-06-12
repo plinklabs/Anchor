@@ -9,6 +9,11 @@ namespace FocusAgent.Core.Sessions;
 
 public sealed class SessionCoordinator : IAsyncDisposable
 {
+    // Must parse (case-insensitive) to Anchor.Domain.Events.EventKind.ManualLeave
+    // on the backend's ReportEvent. Mirrors SignalRFocusEventReporter's kind
+    // strings — the agent doesn't reference the backend enum.
+    private const string ManualLeaveKind = "ManualLeave";
+
     private readonly ISessionHubConnection _hub;
     private readonly ISessionUiHost _ui;
     private readonly TimeProvider _clock;
@@ -220,6 +225,68 @@ public sealed class SessionCoordinator : IAsyncDisposable
         {
             _log.LogInformation("Rejoined session {SessionId} after agent restart.", payload.SessionId);
             SessionJoined?.Invoke(this, payload);
+        }
+    }
+
+    /// <summary>
+    /// The student chose to leave the current session from the agent UI (#102).
+    /// Records a <c>ManualLeave</c> event for the teacher's post-session review,
+    /// tells the backend the participant left (which broadcasts a "Left" state to
+    /// the teacher's live roster), then ends the session locally so focus
+    /// enforcement and the heartbeat stop. The agent itself keeps running.
+    ///
+    /// No-op when not currently in a session.
+    /// </summary>
+    public async Task LeaveSessionManuallyAsync(CancellationToken ct = default)
+    {
+        Guid sessionId;
+        lock (_gate)
+        {
+            if (_joinedSessionId is not Guid joined)
+            {
+                _log.LogDebug("LeaveSessionManuallyAsync no-op — not in a session.");
+                return;
+            }
+            sessionId = joined;
+        }
+
+        // Report the event *before* leaving: the hub's ReportEvent rejects an
+        // event from a participant whose LeftAt is set, and LeaveSession is what
+        // sets it. Best-effort — a failed report must not strand the student in
+        // a session they asked to leave, so we still tear down locally below.
+        try
+        {
+            await _hub.ReportEventAsync(sessionId, ManualLeaveKind, payloadJson: "{}", _clock.GetUtcNow(), ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Reporting ManualLeave failed for {SessionId}", sessionId);
+        }
+
+        try
+        {
+            await _hub.LeaveSessionAsync(sessionId, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "LeaveSession failed for {SessionId}", sessionId);
+        }
+
+        bool fire;
+        lock (_gate)
+        {
+            // Only this path's session should be torn down; a concurrent
+            // SessionEnded may have already cleared it.
+            fire = _joinedSessionId == sessionId;
+            if (_joinedSessionId == sessionId) _joinedSessionId = null;
+            if (_activeSessionId == sessionId) _activeSessionId = null;
+        }
+
+        if (fire)
+        {
+            _log.LogInformation("Student manually left session {SessionId}", sessionId);
+            SessionLeft?.Invoke(this, sessionId);
         }
     }
 

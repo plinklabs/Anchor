@@ -5,8 +5,11 @@ using FocusAgent.Core.Settings;
 using Microsoft.Extensions.Options;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using WinRT.Interop;
 
 namespace FocusAgent.App;
 
@@ -20,30 +23,38 @@ public sealed partial class MainWindow : Window
     private readonly SessionCoordinator _coordinator;
     private readonly SessionHeartbeatService _heartbeat;
     private readonly TimeSpan _heartbeatInterval;
-    private readonly Action _onQuit;
     private readonly DispatcherQueue _dispatcher;
     private readonly DispatcherQueueTimer _freshnessTimer;
+    private readonly AppWindow _appWindow;
 
     private ConnectionStatusSnapshot _connectionSnapshot;
     private Guid? _joinedSessionId;
     private DateTimeOffset? _sessionStartedAt;
     private DateTimeOffset? _lastPingAt;
+    // Set just before a real shutdown (tray → Exit) so the close-to-tray
+    // interception below steps aside and lets the window actually close.
+    private bool _exiting;
 
     public MainWindow(
         ConnectionManager connection,
         SessionCoordinator coordinator,
         SessionHeartbeatService heartbeat,
-        IOptions<SessionSettings> sessionSettings,
-        Action onQuit)
+        IOptions<SessionSettings> sessionSettings)
     {
         InitializeComponent();
         _connection = connection;
         _coordinator = coordinator;
         _heartbeat = heartbeat;
         _heartbeatInterval = TimeSpan.FromSeconds(Math.Max(1, sessionSettings.Value.HeartbeatIntervalSeconds));
-        _onQuit = onQuit;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         Title = "FocusAgent";
+
+        // #102: closing the window only hides it to the tray — the agent keeps
+        // running and the heartbeat continues. Intercept the title-bar X here
+        // and route it through the same hide path as the Close button.
+        var hwnd = WindowNative.GetWindowHandle(this);
+        _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
+        _appWindow.Closing += OnAppWindowClosing;
 
         _connectionSnapshot = _connection.Snapshot;
 
@@ -169,9 +180,12 @@ public sealed partial class MainWindow : Window
         if (_joinedSessionId is null)
         {
             SessionPanel.Visibility = Visibility.Collapsed;
+            // "Leave session" only makes sense while actually in one (#102).
+            LeaveButton.Visibility = Visibility.Collapsed;
             return;
         }
         SessionPanel.Visibility = Visibility.Visible;
+        LeaveButton.Visibility = Visibility.Visible;
         SessionStatusText.Text = _sessionStartedAt is { } started
             ? $"In session since {started.ToLocalTime():HH:mm}"
             : "In session";
@@ -208,10 +222,69 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnQuitClicked(object sender, RoutedEventArgs e) => _onQuit();
+    private void OnCloseClicked(object sender, RoutedEventArgs e) => HideToTray();
+
+    private async void OnLeaveClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Leave session?",
+            Content = "Leaving will tell your teacher you left the session. Continue?",
+            PrimaryButtonText = "Leave session",
+            CloseButtonText = "Stay",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = Content.XamlRoot,
+        };
+
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            return;
+
+        LeaveButton.IsEnabled = false;
+        try
+        {
+            await _coordinator.LeaveSessionManuallyAsync();
+        }
+        catch
+        {
+            // LeaveSessionManuallyAsync is best-effort and logs its own failures;
+            // SessionLeft still clears the panel, so there's nothing to do here.
+        }
+        finally
+        {
+            LeaveButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Hide the window to the tray without ending the session or stopping the
+    /// agent (#102). Re-opened via the tray's "Open" item — see
+    /// <see cref="ShowFromTray"/>.
+    /// </summary>
+    public void HideToTray() => _appWindow.Hide();
+
+    /// <summary>Re-show the window after it was hidden to the tray.</summary>
+    public void ShowFromTray()
+    {
+        _appWindow.Show();
+        Activate();
+    }
+
+    /// <summary>
+    /// Allow the next close to actually tear the window down instead of hiding
+    /// it. Called by the app right before <c>Application.Exit</c> (tray → Exit).
+    /// </summary>
+    public void AllowClose() => _exiting = true;
+
+    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_exiting) return; // genuine shutdown — let the window close.
+        args.Cancel = true;
+        sender.Hide();
+    }
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _appWindow.Closing -= OnAppWindowClosing;
         _connection.StatusChanged -= OnConnectionStatusChanged;
         _coordinator.SessionJoined -= OnSessionJoined;
         _coordinator.SessionLeft -= OnSessionLeft;
