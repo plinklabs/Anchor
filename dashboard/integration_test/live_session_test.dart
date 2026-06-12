@@ -275,7 +275,10 @@ void main() {
 
     expect(find.text('Pending requests'), findsOneWidget);
     expect(find.text('chat.example.com'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Approve'), findsOneWidget);
+    // The Approve label only renders on the pending row's button — a plain text
+    // finder keeps this stable across Flutter versions (the `*.tonalIcon`
+    // button isn't reliably typed as a `FilledButton` ancestor on all of them).
+    expect(find.text('Approve'), findsOneWidget);
   });
 
   testWidgets('toggling a bundle chip issues PUT /sessions/{id}/bundles (#132)', (
