@@ -42,11 +42,13 @@ internal sealed class AgentProcess : IAsyncDisposable
     private readonly Process _process;
     private readonly HttpClient _http;
     private readonly string _statusUrl;
+    private readonly string _controlBase;
 
     private AgentProcess(Process process, int statusPort)
     {
         _process = process;
-        _statusUrl = $"http://127.0.0.1:{statusPort}/status";
+        _controlBase = $"http://127.0.0.1:{statusPort}";
+        _statusUrl = $"{_controlBase}/status";
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
     }
 
@@ -136,6 +138,27 @@ internal sealed class AgentProcess : IAsyncDisposable
             await Task.Delay(200);
         }
         return last;
+    }
+
+    /// <summary>
+    /// Drive the agent's "Leave session" action (#102) via the status endpoint's
+    /// POST /leave control — the headless stand-in for clicking the button. The
+    /// agent emits ManualLeave, leaves the session, and keeps running.
+    /// </summary>
+    public async Task LeaveSessionAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/leave", content: null);
+        res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Drive the agent's window "Close" action (#102) via POST /close — hides the
+    /// window to the tray. The agent must keep running and stay in any session.
+    /// </summary>
+    public async Task CloseWindowAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/close", content: null);
+        res.EnsureSuccessStatusCode();
     }
 
     /// <summary>Kill the agent (e.g. the heartbeat spec's "agent goes away" trigger).</summary>

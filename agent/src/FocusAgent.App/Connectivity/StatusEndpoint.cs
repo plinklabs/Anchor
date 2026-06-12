@@ -29,6 +29,13 @@ namespace FocusAgent.App.Connectivity;
 /// Poll <c>activeSessionId</c> to know whether SessionStarted reached the
 /// agent UI — it flips to non-null the moment the coordinator handles the
 /// hub event, before the 5s countdown elapses.
+///
+/// It also exposes two POST controls so the headless e2e can drive the #102 UI
+/// actions without UI automation (both no-op if the agent wasn't given the
+/// corresponding callback):
+///   POST /leave -> the student "Leave session" button: emits ManualLeave and
+///                  ends the session locally while the agent keeps running.
+///   POST /close -> the window "Close" button: hides the window to the tray.
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
@@ -36,6 +43,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly SessionCoordinator _coordinator;
     private readonly FocusSessionController _focus;
     private readonly ILogger<StatusEndpoint> _log;
+    private readonly Func<CancellationToken, Task>? _onLeaveSession;
+    private readonly Action? _onCloseWindow;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -44,12 +53,16 @@ public sealed class StatusEndpoint : IAsyncDisposable
         ConnectionManager connection,
         SessionCoordinator coordinator,
         FocusSessionController focus,
-        ILogger<StatusEndpoint> log)
+        ILogger<StatusEndpoint> log,
+        Func<CancellationToken, Task>? onLeaveSession = null,
+        Action? onCloseWindow = null)
     {
         _connection = connection;
         _coordinator = coordinator;
         _focus = focus;
         _log = log;
+        _onLeaveSession = onLeaveSession;
+        _onCloseWindow = onCloseWindow;
         _listener = new HttpListener();
     }
 
@@ -86,7 +99,27 @@ public sealed class StatusEndpoint : IAsyncDisposable
     {
         try
         {
-            if (ctx.Request.Url?.AbsolutePath != "/status")
+            var path = ctx.Request.Url?.AbsolutePath;
+            var method = ctx.Request.HttpMethod;
+
+            if (method == "POST" && path == "/leave")
+            {
+                if (_onLeaveSession is { } leave)
+                    await leave(CancellationToken.None).ConfigureAwait(false);
+                ctx.Response.StatusCode = _onLeaveSession is null ? 404 : 204;
+                ctx.Response.Close();
+                return;
+            }
+
+            if (method == "POST" && path == "/close")
+            {
+                _onCloseWindow?.Invoke();
+                ctx.Response.StatusCode = _onCloseWindow is null ? 404 : 204;
+                ctx.Response.Close();
+                return;
+            }
+
+            if (path != "/status")
             {
                 ctx.Response.StatusCode = 404;
                 ctx.Response.Close();

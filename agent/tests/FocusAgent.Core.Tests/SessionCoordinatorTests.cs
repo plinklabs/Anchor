@@ -231,6 +231,74 @@ public class SessionCoordinatorTests
     }
 
     [Fact]
+    public async Task LeaveSessionManually_reports_ManualLeave_then_leaves_and_ends_locally()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        Guid? left = null;
+        coordinator.SessionLeft += (_, id) => left = id;
+
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        await coordinator.LeaveSessionManuallyAsync();
+
+        // The event must be reported, with the exact kind the backend parses,
+        // and *before* LeaveSession — which sets LeftAt and would otherwise make
+        // the backend reject the event.
+        var report = Assert.Single(hub.ReportCalls);
+        Assert.Equal(payload.SessionId, report.SessionId);
+        Assert.Equal("ManualLeave", report.Kind);
+        Assert.Equal(payload.SessionId, Assert.Single(hub.LeaveCalls));
+        Assert.Equal(new[] { "report:ManualLeave", "leave" }, hub.Operations);
+
+        // Ended locally: SessionLeft fired and the session state is cleared so
+        // enforcement/heartbeat stop and join-by-code is re-enabled.
+        Assert.Equal(payload.SessionId, left);
+        Assert.Null(coordinator.JoinedSessionId);
+        Assert.Null(coordinator.ActiveSessionId);
+    }
+
+    [Fact]
+    public async Task LeaveSessionManually_when_not_in_a_session_is_a_no_op()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi();
+        var coordinator = NewCoordinator(hub, ui);
+
+        var leftFired = false;
+        coordinator.SessionLeft += (_, _) => leftFired = true;
+
+        await coordinator.LeaveSessionManuallyAsync();
+
+        Assert.Empty(hub.ReportCalls);
+        Assert.Empty(hub.LeaveCalls);
+        Assert.False(leftFired);
+    }
+
+    [Fact]
+    public async Task LeaveSessionManually_fires_SessionLeft_once_even_if_called_twice()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var leftCount = 0;
+        coordinator.SessionLeft += (_, _) => leftCount++;
+
+        await coordinator.HandleSessionStartedAsync(Payload());
+
+        await coordinator.LeaveSessionManuallyAsync();
+        await coordinator.LeaveSessionManuallyAsync();
+
+        Assert.Equal(1, leftCount);
+        Assert.Single(hub.ReportCalls);
+        Assert.Single(hub.LeaveCalls);
+    }
+
+    [Fact]
     public async Task Payload_propagates_to_ui_with_placeholder_teacher_name()
     {
         var hub = new FakeHub();
@@ -312,6 +380,11 @@ public class SessionCoordinatorTests
         public List<(Guid SessionId, string? JoinCode)> JoinCalls { get; } = new();
         public List<Guid> LeaveCalls { get; } = new();
         public List<(Guid SessionId, string Reason)> DeclineCalls { get; } = new();
+        public List<(Guid SessionId, string Kind, string PayloadJson)> ReportCalls { get; } = new();
+        // Ordered record of report/leave calls so tests can assert ManualLeave
+        // is reported *before* the participant leaves (the backend rejects the
+        // event once LeftAt is set).
+        public List<string> Operations { get; } = new();
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
@@ -323,6 +396,7 @@ public class SessionCoordinatorTests
         public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default)
         {
             LeaveCalls.Add(sessionId);
+            Operations.Add("leave");
             return Task.CompletedTask;
         }
         public Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default)
@@ -330,8 +404,12 @@ public class SessionCoordinatorTests
             DeclineCalls.Add((sessionId, reason));
             return Task.CompletedTask;
         }
-        public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) =>
-            Task.CompletedTask;
+        public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default)
+        {
+            ReportCalls.Add((sessionId, kind, payloadJson));
+            Operations.Add($"report:{kind}");
+            return Task.CompletedTask;
+        }
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

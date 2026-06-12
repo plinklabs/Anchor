@@ -91,8 +91,7 @@ public partial class App : Application
                 _connection,
                 _coordinator,
                 _heartbeat,
-                _host.Services.GetRequiredService<IOptions<SessionSettings>>(),
-                onQuit: ShutdownCleanly);
+                _host.Services.GetRequiredService<IOptions<SessionSettings>>());
             _joinByCodeFlow = _host.Services.GetRequiredService<JoinByCodeFlow>();
             _tray = new TrayIconHost(
                 onOpen: () => ShowMainWindow(),
@@ -118,7 +117,13 @@ public partial class App : Application
                     _connection,
                     _coordinator,
                     _focus,
-                    _host.Services.GetRequiredService<ILogger<StatusEndpoint>>());
+                    _host.Services.GetRequiredService<ILogger<StatusEndpoint>>(),
+                    // #102: let the headless e2e drive the two new UI actions —
+                    // leaving a session and closing the window to the tray —
+                    // without UI automation. Loopback + dev-only, like /status.
+                    onLeaveSession: ct => _coordinator.LeaveSessionManuallyAsync(ct),
+                    onCloseWindow: () => _mainWindow?.DispatcherQueue.TryEnqueue(
+                        () => _mainWindow!.HideToTray()));
                 _statusEndpoint.Start(port);
             }
         }
@@ -181,11 +186,16 @@ public partial class App : Application
     private void ShowMainWindow()
     {
         if (_mainWindow is null) return;
-        _mainWindow.Activate();
+        // Re-show through the AppWindow so a window previously hidden to the
+        // tray (#102) comes back, not just a focus poke on a visible one.
+        _mainWindow.ShowFromTray();
     }
 
     private void ShutdownCleanly()
     {
+        // Let the main window's close-to-tray interception step aside for the
+        // genuine exit, otherwise Exit() would just hide it (#102).
+        _mainWindow?.AllowClose();
         Exit();
     }
 

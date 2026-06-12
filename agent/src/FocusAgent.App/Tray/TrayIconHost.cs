@@ -51,9 +51,11 @@ internal sealed class TrayIconHost : IDisposable
 
         menu.Items.Add(new MenuFlyoutSeparator());
 
+        // #102: true exit lives here now (the main window's button only closes
+        // to the tray). Labelled "Exit" to distinguish it from window "Close".
         menu.Items.Add(new MenuFlyoutItem
         {
-            Text = "Quit",
+            Text = "Exit",
             Command = new RelayCommand(onQuit),
         });
 

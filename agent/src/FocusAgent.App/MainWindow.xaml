@@ -43,18 +43,25 @@
             </StackPanel>
         </StackPanel>
 
-        <StackPanel Grid.Row="1"
-                    Orientation="Horizontal"
-                    Spacing="12"
-                    HorizontalAlignment="Right"
-                    Padding="32,16,32,32">
-            <Button x:Name="PrimaryButton"
-                    Content="Sign in"
-                    Click="OnPrimaryClicked"
-                    MinWidth="140" />
-            <Button Content="Quit"
-                    Click="OnQuitClicked"
-                    MinWidth="80" />
-        </StackPanel>
+        <Grid Grid.Row="1"
+              Padding="32,16,32,32">
+            <Button x:Name="LeaveButton"
+                    Content="Leave session"
+                    Click="OnLeaveClicked"
+                    HorizontalAlignment="Left"
+                    MinWidth="140"
+                    Visibility="Collapsed" />
+            <StackPanel Orientation="Horizontal"
+                        Spacing="12"
+                        HorizontalAlignment="Right">
+                <Button x:Name="PrimaryButton"
+                        Content="Sign in"
+                        Click="OnPrimaryClicked"
+                        MinWidth="140" />
+                <Button Content="Close"
+                        Click="OnCloseClicked"
+                        MinWidth="80" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>
