@@ -713,10 +713,18 @@ class _EntrySection extends StatelessWidget {
               child: Row(
                 children: [
                   SizedBox(
-                    width: 160,
+                    // 200 (not 160) so the widest option label
+                    // "SignedPublisher" fits the dropdown's inner row without
+                    // a RenderFlex overflow (#115). Fixed width keeps the
+                    // match-type column aligned across rows.
+                    width: 200,
                     child: DropdownButtonFormField<BundleEntryMatchType>(
                       initialValue: row.matchType,
                       isDense: true,
+                      // Fill the box and ellipsize rather than overflow, so a
+                      // long label can never trip a RenderFlex error even if
+                      // metrics differ (font/locale) from the 200px budget.
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
                         isDense: true,
