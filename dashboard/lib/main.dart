@@ -7,6 +7,7 @@ import 'api/classes_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
 import 'auth/msal_config.dart';
+import 'realtime/session_hub_client.dart';
 import 'router.dart';
 
 void main() {
@@ -53,6 +54,7 @@ class AnchorDashboard extends StatefulWidget {
     required this.bundles,
     required this.classes,
     required this.apiBaseUrl,
+    this.hubClientFactory,
   });
 
   final AuthTokenStore tokens;
@@ -62,6 +64,11 @@ class AnchorDashboard extends StatefulWidget {
   final BundlesApi bundles;
   final ClassesApi classes;
   final Uri apiBaseUrl;
+
+  /// Overrides the live-feed builder for the session view (#132). Null in
+  /// production; an integration test injects a stubbed feed to drive the real
+  /// app without a real SignalR hub.
+  final SessionHubClientFactory? hubClientFactory;
 
   @override
   State<AnchorDashboard> createState() => _AnchorDashboardState();
@@ -75,6 +82,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     bundles: widget.bundles,
     classes: widget.classes,
     apiBaseUrl: widget.apiBaseUrl,
+    hubClientFactory: widget.hubClientFactory,
   );
 
   @override

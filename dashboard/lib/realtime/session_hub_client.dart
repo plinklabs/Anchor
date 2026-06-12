@@ -9,6 +9,15 @@ class SessionEvent {
   final DateTime at;
 }
 
+/// How [SessionPage] obtains its live feed. Defaults to `SessionHubClient.new`
+/// (the real SignalR client); an integration test injects a factory that
+/// returns a stubbed feed it can push events through, since the dashboard is
+/// MSAL-only and can't be dev-impersonated to drive a real hub (#132).
+typedef SessionHubClientFactory = SessionHubClient Function({
+  required Uri apiBaseUrl,
+  required Future<String?> Function() tokenProvider,
+});
+
 class SessionHubClient {
   SessionHubClient({
     required Uri apiBaseUrl,

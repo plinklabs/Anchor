@@ -5,6 +5,7 @@ import 'api/bundles_api.dart';
 import 'api/classes_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
+import 'realtime/session_hub_client.dart';
 import 'pages/bundles_page.dart';
 import 'pages/classes_page.dart';
 import 'pages/history_page.dart';
@@ -20,6 +21,7 @@ GoRouter buildRouter({
   required BundlesApi bundles,
   required ClassesApi classes,
   required Uri apiBaseUrl,
+  SessionHubClientFactory? hubClientFactory,
 }) {
   return GoRouter(
     refreshListenable: tokens,
@@ -53,6 +55,7 @@ GoRouter buildRouter({
           sessions: sessions,
           bundles: bundles,
           apiBaseUrl: apiBaseUrl,
+          hubClientFactory: hubClientFactory,
         ),
       ),
       GoRoute(

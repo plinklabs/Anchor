@@ -1,0 +1,53 @@
+name: Dashboard E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/**'
+      - '.github/workflows/dashboard-e2e.yml'
+  pull_request:
+    paths:
+      - 'dashboard/**'
+      - '.github/workflows/dashboard-e2e.yml'
+
+concurrency:
+  group: dashboard-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # Linux runner: the dashboard is Flutter Web, and the GitHub-hosted ubuntu
+    # image ships Google Chrome + a matching chromedriver (under $CHROMEWEBDRIVER),
+    # which is all `flutter drive` needs for a real-browser run. No backend: the
+    # dashboard is MSAL-only and can't be dev-impersonated, so the suite boots the
+    # real app against fake APIs + a stubbed SignalR feed (#132).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.38.3'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Boots AnchorDashboard in headless Chrome and drives the live-session view:
+      # a SignalR roster transition, an unblock-request push, a UI bundle PUT, and
+      # the event feed. chromedriver is started in-step so it outlives into the
+      # drive; $CHROMEWEBDRIVER is preset on the GitHub-hosted ubuntu image.
+      - name: Run live-session e2e (web, headless Chrome)
+        run: |
+          "$CHROMEWEBDRIVER/chromedriver" --port=4444 &
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/live_session_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless

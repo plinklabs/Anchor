@@ -17,6 +17,7 @@ class SessionPage extends StatefulWidget {
     required this.sessions,
     required this.bundles,
     required this.apiBaseUrl,
+    this.hubClientFactory,
   });
 
   final String sessionId;
@@ -24,6 +25,11 @@ class SessionPage extends StatefulWidget {
   final SessionsApi sessions;
   final BundlesApi bundles;
   final Uri apiBaseUrl;
+
+  /// Overrides how the live feed is built (#132). Null in production — the
+  /// real [SessionHubClient] is used; an integration test injects a stubbed
+  /// feed here to push roster / unblock events at the real app.
+  final SessionHubClientFactory? hubClientFactory;
 
   @override
   State<SessionPage> createState() => _SessionPageState();
@@ -51,7 +57,8 @@ class _SessionPageState extends State<SessionPage> {
   @override
   void initState() {
     super.initState();
-    _hub = SessionHubClient(
+    final buildHub = widget.hubClientFactory ?? SessionHubClient.new;
+    _hub = buildHub(
       apiBaseUrl: widget.apiBaseUrl,
       tokenProvider: () async => widget.tokens.token,
     );
