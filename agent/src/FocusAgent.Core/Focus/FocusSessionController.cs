@@ -167,6 +167,20 @@ public sealed class FocusSessionController : IAsyncDisposable
         if (sessionId is not Guid id || matcher is null)
             return;
 
+        // OS shell surfaces (taskbar Search, Start, the touch keyboard, …) are
+        // neither allowed nor blocked: minimizing them and stealing foreground
+        // blanks Search/Start and can restart the taskbar (#140). Bail before the
+        // allowed/blocked branch so we don't enforce, report, or remember one as
+        // the fallback window — leaving _lastAllowed pointing at the real app the
+        // student returns to when the transient shell surface closes.
+        if (AllowlistMatcher.IsSystemSurface(change.App))
+        {
+            _log.LogDebug(
+                "Ignoring OS shell surface {ProcessName} (pid={Pid}) in session {SessionId}; not enforcing or reporting",
+                change.App.ProcessName, change.ProcessId, id);
+            return;
+        }
+
         var allowed = matcher.IsAllowed(change.App);
 
         // Enforcement runs on EVERY foreground event, including repeats of the
