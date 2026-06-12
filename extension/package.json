@@ -2,17 +2,23 @@
   "name": "anchor-extension",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Anchor Edge MV3 extension — URL filter and friendly block page.",
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c -w",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "npm run build && playwright test",
+    "e2e:headed": "npm run build && playwright test --headed",
+    "e2e:report": "playwright show-report",
+    "dev:extension": "npm run build && node e2e/dev-launcher.ts"
   },
   "dependencies": {
     "@microsoft/signalr": "^8.0.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@rollup/plugin-node-resolve": "^15.3.0",
     "@rollup/plugin-typescript": "^12.1.1",
     "@types/chrome": "^0.0.287",

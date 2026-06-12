@@ -1,0 +1,63 @@
+name: Extension E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'extension/**'
+      - 'backend/**'
+      - '.github/workflows/extension-e2e.yml'
+  pull_request:
+    paths:
+      - 'extension/**'
+      - 'backend/**'
+      - '.github/workflows/extension-e2e.yml'
+
+concurrency:
+  group: extension-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    # Windows runner: Edge is preinstalled (so `channel: 'msedge'` needs no
+    # browser download), and it has a desktop session for the headed browser
+    # an MV3 extension load requires. The harness boots the real backend itself
+    # via Playwright's webServer (node e2e/run-backend.ts → dotnet run).
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Warm the backend build once so the webServer's 180s readiness window
+      # isn't spent on a cold restore+build inside the Playwright run.
+      - name: Build backend
+        working-directory: backend
+        run: dotnet build Anchor.sln --configuration Debug
+
+      - name: Run e2e suite
+        run: npm run e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: extension/playwright-report/
+          retention-days: 7
