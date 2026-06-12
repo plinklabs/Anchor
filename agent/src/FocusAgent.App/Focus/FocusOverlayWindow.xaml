@@ -3,39 +3,37 @@
     x:Class="FocusAgent.App.Focus.FocusOverlayWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Padding="32"
-          RowSpacing="16"
-          Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+    <!-- The overlay is shown fullscreen to cover its entire monitor (issue
+         #103), so the opaque background fills the whole display and the message
+         card is centred within it rather than pinned to a fixed-size window. -->
+    <Grid Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+        <StackPanel MaxWidth="560"
+                    Padding="32"
+                    Spacing="16"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
 
-        <TextBlock Grid.Row="0"
-                   Text="Focus session active"
-                   FontSize="22"
-                   FontWeight="SemiBold" />
+            <TextBlock Text="Focus session active"
+                       FontSize="22"
+                       FontWeight="SemiBold" />
 
-        <TextBlock Grid.Row="1"
-                   x:Name="MessageText"
-                   Opacity="0.85"
-                   TextWrapping="Wrap"
-                   Text="This app isn't part of the current focus session. Switch to one of these instead." />
+            <TextBlock x:Name="MessageText"
+                       Opacity="0.85"
+                       TextWrapping="Wrap"
+                       Text="This app isn't part of the current focus session. Switch to one of these instead." />
 
-        <TextBlock Grid.Row="2"
-                   x:Name="BlockedText"
-                   FontSize="12"
-                   Opacity="0.65"
-                   TextWrapping="Wrap"
-                   Visibility="Collapsed" />
+            <TextBlock x:Name="BlockedText"
+                       FontSize="12"
+                       Opacity="0.65"
+                       TextWrapping="Wrap"
+                       Visibility="Collapsed" />
 
-        <ScrollViewer Grid.Row="3"
-                      VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled">
-            <StackPanel x:Name="AllowedAppsPanel"
-                        Spacing="6" />
-        </ScrollViewer>
+            <ScrollViewer MaxHeight="360"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="AllowedAppsPanel"
+                            Spacing="6" />
+            </ScrollViewer>
+        </StackPanel>
     </Grid>
 </Window>

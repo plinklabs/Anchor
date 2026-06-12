@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using FocusAgent.Core.Focus;
 using FocusAgent.Native.Win32;
@@ -8,7 +7,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
-using Windows.Graphics;
 using WinRT.Interop;
 
 namespace FocusAgent.App.Focus;
@@ -22,9 +20,6 @@ namespace FocusAgent.App.Focus;
 [SupportedOSPlatform("windows10.0.17763.0")]
 public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
 {
-    private const int OverlayWidthDip = 480;
-    private const int OverlayHeightDip = 320;
-
     private readonly DispatcherQueue _dispatcher;
     private readonly IAppIdentifier _launcher;
     private readonly ILogger<WinUiFocusOverlay> _log;
@@ -151,33 +146,21 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
         var appWindow = AppWindow.GetFromWindowId(windowId);
 
-        if (appWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsAlwaysOnTop = true;
-            presenter.IsResizable = false;
-            presenter.IsMaximizable = false;
-            presenter.IsMinimizable = false;
-            presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
-        }
+        // Fully cover the monitor the overlay lands on — taskbar included — so a
+        // student can't snap another window beside it or reach a taskbar entry
+        // behind it (#103). The FullScreen presenter triggers the shell's
+        // fullscreen handling, which gives true edge-to-edge coverage of the
+        // current monitor; an ordinary topmost window merely sized to the
+        // monitor does NOT cover the Win11 taskbar (the shell keeps it drawn on
+        // top). Multi-monitor: it covers the monitor the overlay is placed on;
+        // chasing the offending window onto a second monitor is deferred per the
+        // issue's scope note.
+        appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
 
-        var dpi = GetDpiForWindow(hwnd);
-        if (dpi == 0) dpi = 96;
-        var scale = dpi / 96.0;
-
-        var width = (int)(OverlayWidthDip * scale);
-        var height = (int)(OverlayHeightDip * scale);
-
-        var displayArea = DisplayArea.GetFromWindowId(windowId, DisplayAreaFallback.Primary);
-        var workArea = displayArea.WorkArea;
-        var x = workArea.X + (workArea.Width - width) / 2;
-        var y = workArea.Y + (workArea.Height - height) / 2;
-
-        appWindow.MoveAndResize(new RectInt32(x, y, width, height));
-
-        // Belt-and-braces: OverlappedPresenter.IsAlwaysOnTop should already
-        // map to HWND_TOPMOST, but #33 explicitly calls SetWindowPos out as
-        // the contract — call it directly so the behaviour matches the spec
-        // even if the WinUI mapping ever changes.
+        // Belt-and-braces topmost: the FullScreen presenter already raises the
+        // window, but #33 makes the explicit HWND_TOPMOST call the contract (and
+        // CloseOnUiThread clears it on teardown), so keep it regardless of how
+        // the presenter maps internally.
         NativeMethods.SetWindowPos(
             hwnd,
             NativeMethods.HWND_TOPMOST,
@@ -194,7 +177,4 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
             0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
-
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(nint hwnd);
 }

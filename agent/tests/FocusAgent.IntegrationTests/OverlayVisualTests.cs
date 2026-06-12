@@ -31,6 +31,11 @@ public sealed class OverlayVisualTests
     // (0% change), while leaving slack for whatever sits behind it.
     private const double MinShownVsClearedFraction = 0.10;
 
+    // The overlay is shown fullscreen to cover its whole monitor (#103); the
+    // FullScreen presenter should land pixel-exact on the monitor bounds, but
+    // allow a couple of px of slack for any rounding GetWindowRect may report.
+    private const int MonitorCoverageTolerancePx = 2;
+
     // WinUI needs a beat after the HWND appears to paint and raise the window to
     // its HWND_TOPMOST slot; capturing sooner grabs whatever is still behind it.
     // Matches the dwell the verify-overlay.ps1 script uses.
@@ -46,6 +51,22 @@ public sealed class OverlayVisualTests
         var hwnd = await agent.WaitForWindowAsync(TimeSpan.FromSeconds(15));
         await Task.Delay(SettleTime);
         var rect = WindowCapture.GetWindowScreenRect(hwnd);
+
+        // #103: the overlay must cover its ENTIRE monitor — otherwise a student
+        // can snap another window into the leftover space or click a taskbar
+        // entry beside it. Assert the window rect matches the monitor's full
+        // bounds (incl. taskbar) on every edge within a small tolerance. This
+        // fails on the pre-#103 480x320 centred window and passes once the
+        // overlay is shown fullscreen.
+        var monitor = WindowCapture.GetMonitorRectForWindow(hwnd);
+        Assert.True(
+            Math.Abs(rect.Left - monitor.Left) <= MonitorCoverageTolerancePx &&
+            Math.Abs(rect.Top - monitor.Top) <= MonitorCoverageTolerancePx &&
+            Math.Abs(rect.Width - monitor.Width) <= MonitorCoverageTolerancePx &&
+            Math.Abs(rect.Height - monitor.Height) <= MonitorCoverageTolerancePx,
+            $"Overlay does not cover its monitor: window is {rect.Width}x{rect.Height} at " +
+            $"({rect.Left},{rect.Top}) but the monitor is {monitor.Width}x{monitor.Height} at " +
+            $"({monitor.Left},{monitor.Top}). Expected full-monitor coverage (#103).");
 
         // ...and actually render (not a blank/transparent window).
         using var shown = WindowCapture.CaptureRect(rect);

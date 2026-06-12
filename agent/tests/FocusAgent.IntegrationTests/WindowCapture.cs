@@ -89,6 +89,23 @@ internal static class WindowCapture
         return new ScreenRect(r.Left, r.Top, w, h);
     }
 
+    /// <summary>
+    /// Full bounds (incl. taskbar) of the monitor that currently contains
+    /// <paramref name="hwnd"/>, in physical pixels. The lever the overlay spec
+    /// uses to assert the surface covers its <em>entire</em> monitor (#103):
+    /// compare the window rect against this. <c>rcMonitor</c> is the whole
+    /// display rect — the work area minus the taskbar would be <c>rcWork</c>.
+    /// </summary>
+    public static ScreenRect GetMonitorRectForWindow(IntPtr hwnd)
+    {
+        var hMonitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+        var info = new MonitorInfo { cbSize = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfoW(hMonitor, ref info))
+            throw new InvalidOperationException("GetMonitorInfo failed for the agent window's monitor.");
+        var r = info.rcMonitor;
+        return new ScreenRect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+    }
+
     /// <summary>Capture the window's current on-screen rect.</summary>
     public static Bitmap Capture(IntPtr hwnd) => CaptureRect(GetWindowScreenRect(hwnd));
 
@@ -199,12 +216,22 @@ internal static class WindowCapture
 
     private const uint SRCCOPY = 0x00CC0020;
     private const uint CAPTUREBLT = 0x40000000;
+    private const uint MonitorDefaultToNearest = 0x00000002;
     private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int cbSize;
+        public Rect rcMonitor;
+        public Rect rcWork;
+        public uint dwFlags;
+    }
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetDC(IntPtr hwnd);
@@ -235,4 +262,11 @@ internal static class WindowCapture
     [DllImport("user32.dll", EntryPoint = "IsWindow")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindowNative(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MonitorInfo lpmi);
 }
