@@ -127,6 +127,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
             }
 
             var snap = _connection.Snapshot;
+            var sweep = _focus.GetLastStartupSweep();
             var payload = new
             {
                 connectionStatus = snap.Status.ToString(),
@@ -135,6 +136,16 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 activeSessionId = _coordinator.ActiveSessionId,
                 joinedSessionId = _coordinator.JoinedSessionId,
                 allowedApps = _focus.GetActiveAllowedApps(),
+                // #104: the session-start sweep result, so the headless e2e can
+                // assert the off-list windows were minimized. Null until the
+                // first session of this process has started.
+                startupSweep = sweep is null
+                    ? null
+                    : (object)new
+                    {
+                        windowsExamined = sweep.WindowsExamined,
+                        minimizedProcesses = sweep.MinimizedProcesses,
+                    },
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

@@ -31,19 +31,26 @@ public sealed class FocusEnforcer : IFocusEnforcer
             _lastAllowed = windowHandle;
     }
 
+    public void Minimize(nint windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero) return;
+
+        try
+        {
+            if (!NativeMethods.ShowWindow(windowHandle, NativeMethods.SW_MINIMIZE))
+                _log.LogWarning("ShowWindow(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "ShowWindow threw for 0x{Hwnd:X}", windowHandle);
+        }
+    }
+
     public bool Block(nint offendingWindowHandle)
     {
         if (offendingWindowHandle == IntPtr.Zero) return false;
 
-        try
-        {
-            if (!NativeMethods.ShowWindow(offendingWindowHandle, NativeMethods.SW_MINIMIZE))
-                _log.LogWarning("ShowWindow(SW_MINIMIZE) returned false for 0x{Hwnd:X}", offendingWindowHandle);
-        }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "ShowWindow threw for 0x{Hwnd:X}", offendingWindowHandle);
-        }
+        Minimize(offendingWindowHandle);
 
         nint target;
         lock (_gate)
