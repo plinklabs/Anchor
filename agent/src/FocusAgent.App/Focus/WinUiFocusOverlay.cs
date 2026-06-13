@@ -113,9 +113,19 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         if (window is null) return;
         try
         {
+            var hwnd = WindowNative.GetWindowHandle(window);
+
+            // Leave the FullScreen presenter BEFORE closing. The shell's
+            // fullscreen handling can otherwise hold the window so Close() stalls
+            // and the HWND survives until the process exits (seen when another
+            // agent surface had been shown earlier on the same desktop) — i.e. the
+            // overlay only "vanishes" on process death, not on the close path.
+            // Dropping back to the default presenter releases that hold so Close()
+            // tears the window down deterministically.
+            ExitFullScreen(hwnd);
+
             // Clear HWND_TOPMOST before destroying so the OS doesn't leave a
             // phantom topmost slot in its Z-order (per #33 AC).
-            var hwnd = WindowNative.GetWindowHandle(window);
             ClearTopmost(hwnd);
             window.Close();
             _log.LogDebug("Focus overlay closed");
@@ -123,6 +133,20 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Focus overlay Close failed");
+        }
+    }
+
+    private void ExitFullScreen(nint hwnd)
+    {
+        try
+        {
+            var appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
+            if (appWindow?.Presenter?.Kind == AppWindowPresenterKind.FullScreen)
+                appWindow.SetPresenter(AppWindowPresenterKind.Default);
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Focus overlay presenter reset before close failed");
         }
     }
 

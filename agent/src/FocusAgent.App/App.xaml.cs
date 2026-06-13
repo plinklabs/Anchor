@@ -322,6 +322,16 @@ public partial class App : Application
         var log = _testLoggerFactory.CreateLogger<App>();
         log.LogInformation("--show-test-overlay: starting overlay self-test");
 
+        // WinUI's default DispatcherShutdownMode is OnLastWindowClose, which exits
+        // the whole app the instant the overlay (our only window) is Close()d. That
+        // made "Close() the overlay, then linger, then Exit()" impossible: the
+        // process tore itself down ~½s after Close, turning the overlay's
+        // torn-down-but-alive window into a sub-second transient that the #133
+        // visual e2e raced — and lost under load (#160). Switch to explicit
+        // shutdown so closing the overlay only destroys that window; this process
+        // then stays up until we (or an observer that kills it) say so.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
         var identifier = new AppIdentifier();
         var overlay = new WinUiFocusOverlay(
             dispatcher,
@@ -338,23 +348,43 @@ public partial class App : Application
 
         overlay.Show(rules, blockedAppName: "notepad");
 
-        // Deterministic show -> close -> exit cycle so both consumers can observe
+        // Deterministic show -> close -> linger cycle so both consumers can observe
         // it without a real backend or off-list app:
         //   * scripts/dev/verify-overlay.ps1 finds the HWND and screenshots it
         //     partway through the initial ~5s hold;
         //   * the visual e2e (#133) captures it during that hold AND then asserts
-        //     the close path actually tore the window down — by Close()-ing it a
-        //     full 3s before the process exits, so its HWND goes invalid while
-        //     the process is still alive, proving teardown rather than the window
-        //     merely vanishing because the process died.
-        // Close clears HWND_TOPMOST per the #33 AC.
+        //     the close path actually tore the window down — its HWND goes invalid
+        //     while the process is still alive, proving teardown rather than the
+        //     window merely vanishing because the process died.
+        // After the hold, Close() the overlay (which clears HWND_TOPMOST per the
+        // #33 AC; the window's HWND goes invalid within tens of ms) and then keep
+        // the process ALIVE for a long, fixed linger. The observer — not this
+        // process — is the authority on teardown: it asserts it saw the HWND go
+        // invalid while we were still running. The old code exited a fixed 3s
+        // after Close, turning "torn down while alive" into a brief transient an
+        // observer under load could miss (it reaches its teardown poll only after
+        // a full-screen capture + PNG save + per-pixel analysis, which can overrun
+        // by seconds) — that was the #160 flake. Lingering makes the torn-down-but-
+        // alive state PERSIST until the observer samples it; both consumers kill
+        // this process the moment they're done, so the linger only ever runs in
+        // full as a safety net against a leaked process. A genuinely broken Close()
+        // (window survives until process exit) still fails the e2e correctly: the
+        // HWND stays valid for its whole poll, so it never observes teardown.
         _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ =>
         {
             dispatcher.TryEnqueue(overlay.Close);
-            _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(__ =>
+            _ = Task.Delay(OverlayLingerAfterClose).ContinueWith(__ =>
                 dispatcher.TryEnqueue(Exit));
         });
     }
+
+    // How long the --show-test-overlay process stays alive after Close()ing the
+    // overlay, so the torn-down-but-alive window state persists far longer than any
+    // observer's teardown-poll budget (the #133 e2e polls ~12s) plus its capture
+    // jitter. Both the e2e and verify-overlay.ps1 kill the process as soon as
+    // they've captured/observed what they need, so this full linger only elapses as
+    // a safety net against a leaked process. See RunOverlaySelfTest (#160).
+    private static readonly TimeSpan OverlayLingerAfterClose = TimeSpan.FromSeconds(30);
 
     private static void WriteStartupFailure(Exception ex)
     {

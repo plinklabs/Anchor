@@ -77,18 +77,36 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     /// still running</em> — i.e. the window was actually torn down, not merely
     /// destroyed as a side effect of the process exiting. Returns false if the
     /// process exits first (no teardown observed) or the timeout elapses.
+    /// Records <see cref="LastTeardownTrace"/> with the outcome so a failing
+    /// assertion can say *why* (process exited early vs. HWND never invalidated) —
+    /// the distinction that diagnosed the #160 flake.
     /// </summary>
     public async Task<bool> WaitForWindowTornDownWhileAliveAsync(IntPtr hwnd, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var start = DateTime.UtcNow;
+        var deadline = start + timeout;
+        var polls = 0;
         while (DateTime.UtcNow < deadline)
         {
-            if (_process.HasExited) return false;            // died before we saw teardown
-            if (!WindowCapture.IsWindow(hwnd)) return true;  // gone, and (just checked) still alive
+            polls++;
+            if (_process.HasExited)
+            {
+                LastTeardownTrace = $"process EXITED after {(DateTime.UtcNow - start).TotalSeconds:N1}s / {polls} polls (code {_process.ExitCode})";
+                return false;            // died before we saw teardown
+            }
+            if (!WindowCapture.IsWindow(hwnd))
+            {
+                LastTeardownTrace = $"torn down after {(DateTime.UtcNow - start).TotalSeconds:N1}s / {polls} polls";
+                return true;  // gone, and (just checked) still alive
+            }
             await Task.Delay(150);
         }
+        LastTeardownTrace = $"TIMED OUT after {(DateTime.UtcNow - start).TotalSeconds:N1}s / {polls} polls; hwnd still valid, process alive={!_process.HasExited}";
         return false;
     }
+
+    /// <summary>Outcome of the last <see cref="WaitForWindowTornDownWhileAliveAsync"/> call, for failure messages.</summary>
+    public string? LastTeardownTrace { get; private set; }
 
     public void Kill()
     {

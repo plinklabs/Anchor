@@ -77,14 +77,15 @@ public sealed class OverlayVisualTests
             $"Overlay capture looks blank: only {colors} distinct colours " +
             $"(need >= {MinDistinctColors}) over {shown.Width}x{shown.Height}px. Saved: {saved}.");
 
-        // HIDE/teardown: the self-test Close()s the overlay ~3s before it exits,
-        // so the HWND must go invalid while the process is still alive — proving
-        // the close path destroyed the window, not just process exit.
+        // HIDE/teardown: the self-test Close()s the overlay and then lingers alive
+        // well past this poll's budget, so the HWND must go invalid while the
+        // process is still running — proving the close path destroyed the window,
+        // not just process exit (#160).
         var tornDown = await agent.WaitForWindowTornDownWhileAliveAsync(hwnd, TimeSpan.FromSeconds(12));
         Assert.True(
             tornDown,
             "Overlay window was not torn down while the agent was still running " +
-            "(its HWND stayed valid until the process exited).");
+            $"(its HWND stayed valid until the process exited). hwnd=0x{hwnd.ToInt64():X} trace=[{agent.LastTeardownTrace}]");
 
         // ...and that patch of screen must now look different. If the "shown"
         // capture had really been the background (overlay never on top), this
