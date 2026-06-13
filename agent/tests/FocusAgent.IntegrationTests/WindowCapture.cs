@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -73,6 +74,42 @@ internal static class WindowCapture
 
     /// <summary>True while <paramref name="hwnd"/> is still a valid window handle.</summary>
     public static bool IsWindow(IntPtr hwnd) => IsWindowNative(hwnd);
+
+    /// <summary>
+    /// True while <paramref name="hwnd"/> is minimized. The window-state lever the
+    /// #92 re-minimize spec asserts on instead of a screenshot: an off-list window
+    /// the agent has minimized reads iconic, restoring it clears that, and the
+    /// re-enforcement (MINIMIZEEND hook) must drive it iconic again.
+    /// </summary>
+    public static bool IsIconic(IntPtr hwnd) => IsIconicNative(hwnd);
+
+    /// <summary>
+    /// Restore <paramref name="hwnd"/> from minimized — the headless stand-in for a
+    /// student clicking the taskbar entry of a just-minimized off-list window. This
+    /// is the exact transition #92 fixed: it raises EVENT_SYSTEM_MINIMIZEEND (not
+    /// FOREGROUND), which is the only event the agent gets to re-minimize on.
+    /// </summary>
+    public static void RestoreWindow(IntPtr hwnd) => ShowWindow(hwnd, SW_RESTORE);
+
+    /// <summary>
+    /// The current top-level main-window handle of a running process named
+    /// <paramref name="processName"/> (no extension), or <see cref="IntPtr.Zero"/>
+    /// if none is up yet. Resolves a fresh <see cref="Process"/> each call so the
+    /// handle isn't stale-cached, and matches by name not pid because Win11's
+    /// notepad launcher spawns the visible window under a different pid.
+    /// </summary>
+    public static IntPtr FindMainWindowByProcessName(string processName)
+    {
+        foreach (var p in Process.GetProcessesByName(processName))
+        {
+            using (p)
+            {
+                if (p.MainWindowHandle != IntPtr.Zero)
+                    return p.MainWindowHandle;
+            }
+        }
+        return IntPtr.Zero;
+    }
 
     /// <summary>A window's on-screen rect, in physical pixels.</summary>
     public readonly record struct ScreenRect(int Left, int Top, int Width, int Height);
@@ -216,6 +253,7 @@ internal static class WindowCapture
 
     private const uint SRCCOPY = 0x00CC0020;
     private const uint CAPTUREBLT = 0x40000000;
+    private const int SW_RESTORE = 9;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
 
@@ -262,6 +300,14 @@ internal static class WindowCapture
     [DllImport("user32.dll", EntryPoint = "IsWindow")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindowNative(IntPtr hWnd);
+
+    [DllImport("user32.dll", EntryPoint = "IsIconic")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconicNative(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
