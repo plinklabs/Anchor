@@ -1,0 +1,9 @@
+{
+  "name": "net.anchor.witness",
+  "description": "Anchor focus-agent witness link (#146): native-messaging bridge between the Anchor extension and the on-box FocusAgent.",
+  "path": "REPLACED_AT_REGISTRATION_WITH_ABSOLUTE_EXE_PATH",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://akkfdaclmpfcnjalcifkcbhgjnnopman/"
+  ]
+}
