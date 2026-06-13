@@ -4,6 +4,7 @@ import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { loadSettings } from './shared/settings';
 import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
+import { WitnessClient, WITNESS_HOST_NAME } from './shared/witness';
 import {
   clearActiveSession,
   getActiveSession,
@@ -31,6 +32,7 @@ const log = logger('background');
 const BLOCK_PAGE_FILE = 'block-page.html';
 
 let hubClient: HubClient | null = null;
+let witness: WitnessClient | null = null;
 
 chrome.runtime.onInstalled.addListener((details) => {
   log.info('extension installed', { reason: details.reason });
@@ -39,12 +41,14 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.runtime.onStartup.addListener(() => {
   log.info('runtime startup');
   void ensureHub();
+  ensureWitness();
 });
 
 // Service worker waking up after hibernation — re-establish the hub. Re-entry
 // is idempotent because ensureHub() guards on the existing instance.
 log.info('service worker started');
 void ensureHub();
+ensureWitness();
 
 // ---------------------------------------------------------------------------
 // Hub lifecycle
@@ -303,12 +307,13 @@ async function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: st
 }
 
 // ---------------------------------------------------------------------------
-// Tamper detection (#105)
+// Tamper detection (#105, #146)
 // ---------------------------------------------------------------------------
 // Soft enforcement (design §5.4): make tampering visible to the teacher rather
 // than trying to prevent it. These listeners catch what the extension can
-// witness itself while running; the agent covers the rest (disabled/removed,
-// on-box InPrivate) as on-box witness in a follow-up.
+// witness itself while running; the agent covers what the extension cannot
+// witness about itself (disabled/removed) as the on-box witness, over the
+// native-messaging link below (#146 part 1).
 
 chrome.windows.onCreated.addListener((window) => {
   const kind = classifyCreatedWindow(window);
@@ -318,6 +323,21 @@ chrome.windows.onCreated.addListener((window) => {
 chrome.permissions.onRemoved.addListener((removed) => {
   if (isHostAccessLoss(removed)) void reportTamperIfInSession('host_permission_revoked');
 });
+
+// The native-messaging witness link to the on-box FocusAgent (#146 part 1). The
+// agent watches this link to detect the extension being disabled/removed (the
+// browser tears the host down → the agent's pipe drops); in return the host
+// tells us when the *agent* went away, which we surface as `agent_unavailable`.
+// Always-on like the hub: the SignalR connection already keeps the service
+// worker alive, and reporting stays gated to an active session.
+function ensureWitness(): void {
+  if (witness) return;
+  witness = new WitnessClient({
+    connect: () => chrome.runtime.connectNative(WITNESS_HOST_NAME),
+    onAgentUnavailable: () => void reportTamperIfInSession('agent_unavailable'),
+  });
+  witness.start();
+}
 
 async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
   // Tampering is only actionable while a session is enforcing — outside one the

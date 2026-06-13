@@ -89,15 +89,19 @@ export interface SessionBundlesUpdatedPayload {
 }
 
 /**
- * The kinds of tamper the extension can witness in-browser (#105):
+ * The kinds of tamper the extension can witness in-browser (#105, #146):
  * - `inprivate_opened` — an InPrivate window was created during a session.
  * - `host_permission_revoked` — "Site access" was downgraded from "On all
  *   sites", so the navigation filter lost the host access it needs.
+ * - `agent_unavailable` — the on-box FocusAgent witness went away mid-session
+ *   (#146 part 1): the native-messaging host relays that its pipe to the agent
+ *   dropped, so the agent can no longer witness the browser. The mirror signal
+ *   (`extension_disabled`, when the extension itself is disabled/removed) is
+ *   reported by the *agent* over the same TamperDetected event, not here.
  * Sent as the `kind` field of a TamperDetected event's payload; the backend
- * surfaces it verbatim on the teacher's roster. The agent reports further kinds
- * (extension disabled/removed, on-box InPrivate) over the same event later.
+ * surfaces it verbatim on the teacher's roster.
  */
-export type TamperKind = 'inprivate_opened' | 'host_permission_revoked';
+export type TamperKind = 'inprivate_opened' | 'host_permission_revoked' | 'agent_unavailable';
 
 /**
  * Payload the extension sends when it observes a tamper attempt during an

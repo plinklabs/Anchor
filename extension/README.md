@@ -224,12 +224,24 @@ What the extension itself can witness while running:
 | ------ | --------- | --------------- |
 | Site access downgraded ("On all sites" → "On click"/"On specific sites") | `chrome.permissions.onRemoved` | `host_permission_revoked` |
 | InPrivate window opened | `chrome.windows.onCreated` (`incognito: true`) | `inprivate_opened` |
+| On-box FocusAgent went away mid-session | native-messaging host relays its pipe to the agent dropped | `agent_unavailable` |
 
 InPrivate detection is **best-effort**: the extension only sees incognito windows
 once it's been allowed in InPrivate — which is also the case where it still
-filters them — so the *reliable* InPrivate signal, plus "extension disabled /
-removed" (detectable only by **absence**), comes from the agent acting as an
-on-box witness (native-messaging heartbeat) in a follow-up (#146).
+filters them — so the *reliable* InPrivate signal comes from the agent acting as
+an on-box witness (a follow-up, #148).
+
+### Agent-as-witness link (#146 part 1)
+
+The signal the extension **cannot** witness about itself — being disabled or
+removed — comes from the agent. The extension opens a native-messaging link to a
+small host the FocusAgent registers (`chrome.runtime.connectNative`, see
+[`witness.ts`](src/shared/witness.ts) and the [`nativeMessaging`](src/manifest.json)
+permission). While the link is up the agent has a live witness; when the
+extension is disabled/removed the browser tears the host down and the agent
+reports `extension_disabled`. The reverse — the agent dying — is relayed back to
+the extension as `agent_unavailable` (above). Host, pipe protocol, and dev
+registration: [`agent/src/FocusAgent.WitnessHost/README.md`](../agent/src/FocusAgent.WitnessHost/README.md).
 
 ## Stable extension ID
 
