@@ -213,15 +213,27 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             ct);
     }
 
-    public async Task Heartbeat(Guid sessionId)
+    public Task Heartbeat(Guid sessionId) => RecordHeartbeatAsync(sessionId, WitnessSource.Agent);
+
+    /// <summary>
+    /// The Edge extension's liveness ping (#149). A separate hub method rather
+    /// than an extra parameter on <see cref="Heartbeat"/> so the already-deployed
+    /// agent's single-argument <c>Heartbeat</c> invocation stays wire-compatible.
+    /// Recorded under <see cref="WitnessSource.Extension"/> so it tracks
+    /// independently of the agent: the extension going silent is the absence-net
+    /// (<c>extension_silent</c>), not an agent HeartbeatLost.
+    /// </summary>
+    public Task ExtensionHeartbeat(Guid sessionId) => RecordHeartbeatAsync(sessionId, WitnessSource.Extension);
+
+    private async Task RecordHeartbeatAsync(Guid sessionId, WitnessSource source)
     {
         var ct = Context.ConnectionAborted;
         var user = await ResolveCurrentUserAsync(ct);
 
-        // The hub is the agent's only liveness witness, so we don't want a
-        // stale or finished session keeping participant slots warm. Confirm
-        // the participant is actively joined before recording the ping —
-        // mirrors ReportEvent's check.
+        // The hub is the only liveness witness, so we don't want a stale or
+        // finished session keeping participant slots warm. Confirm the
+        // participant is actively joined before recording the ping — mirrors
+        // ReportEvent's check.
         var isActiveParticipant = await _db.SessionParticipants.AsNoTracking().AnyAsync(
             p => p.SessionId == sessionId &&
                  p.UserId == user.Id &&
@@ -231,7 +243,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (!isActiveParticipant)
             throw new HubException("Not an active participant of this session.");
 
-        _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow());
+        _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow(), source);
     }
 
     public async Task ReportEvent(ReportEventRequest request)

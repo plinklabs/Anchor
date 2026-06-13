@@ -293,6 +293,44 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task ExtensionHeartbeat_from_active_participant_records_under_extension_source()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession",
+            new JoinSessionRequest(session.Id, JoinCode: null));
+
+        await connection.InvokeAsync("ExtensionHeartbeat", session.Id);
+
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.True(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
+        // The whole point of the source dimension (#149): the extension's ping
+        // must not register as the agent's, or it would mask a dead agent.
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Agent));
+    }
+
+    [Fact]
+    public async Task ExtensionHeartbeat_from_non_joined_user_is_rejected()
+    {
+        var (_, session) = await SeedSessionWithStudentAsync();
+        var stranger = await SeedUserAsync(UserRole.Student, "Stranger");
+
+        await using var connection = BuildConnection(stranger.EntraOid, "Student");
+        await connection.StartAsync();
+
+        var ex = await Assert.ThrowsAsync<HubException>(() =>
+            connection.InvokeAsync("ExtensionHeartbeat", session.Id));
+        Assert.Contains("Not an active participant", ex.Message);
+
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.False(tracker.TryGet(session.Id, stranger.Id, out _, WitnessSource.Extension));
+    }
+
+    [Fact]
     public async Task Heartbeat_from_non_joined_user_is_rejected()
     {
         var (_, session) = await SeedSessionWithStudentAsync();

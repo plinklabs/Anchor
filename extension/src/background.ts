@@ -1,4 +1,5 @@
 import { HubClient } from './shared/hub-client';
+import { SessionHeartbeat } from './shared/heartbeat';
 import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
@@ -33,6 +34,7 @@ const BLOCK_PAGE_FILE = 'block-page.html';
 
 let hubClient: HubClient | null = null;
 let witness: WitnessClient | null = null;
+let heartbeat: SessionHeartbeat | null = null;
 
 chrome.runtime.onInstalled.addListener((details) => {
   log.info('extension installed', { reason: details.reason });
@@ -76,6 +78,21 @@ async function ensureHub(): Promise<void> {
   } catch (err) {
     log.error('hub start failed; will rely on automatic reconnect', err);
   }
+  ensureHeartbeat();
+}
+
+// Extension witness heartbeat (#149). Always-on like the hub and the native
+// witness: the loop only pings while a session is active, and a connected hub
+// keeps the service worker alive so it ticks reliably. Started here (not on
+// SessionStarted) so a worker revived mid-session by a navigation event resumes
+// pinging without waiting for the next SessionStarted.
+function ensureHeartbeat(): void {
+  if (heartbeat) return;
+  heartbeat = new SessionHeartbeat({
+    sendHeartbeat: (sessionId) => hubClient?.sendExtensionHeartbeat(sessionId),
+    getActiveSessionId: async () => (await getActiveSession())?.sessionId ?? null,
+  });
+  heartbeat.start();
 }
 
 async function handleSessionStarted(payload: SessionStartedPayload): Promise<void> {

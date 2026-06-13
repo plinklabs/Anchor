@@ -9,10 +9,15 @@ namespace Anchor.Api.Realtime;
 /// <summary>
 /// Periodically walks the in-memory <see cref="HeartbeatTracker"/> and, for
 /// participants whose last heartbeat is older than the configured timeout,
-/// persists exactly one <see cref="EventKind.HeartbeatLost"/> per outage and
-/// broadcasts it on the session group. When a previously-lost participant
-/// resumes pinging, an <see cref="EventKind.AgentReconnected"/> event is
-/// emitted so the dashboard can flip the indicator back.
+/// persists exactly one staleness event per outage and broadcasts it on the
+/// session group. The event depends on the witness <see cref="WitnessSource"/>:
+/// an <see cref="WitnessSource.Agent"/> going stale is a
+/// <see cref="EventKind.HeartbeatLost"/> (cleared by an
+/// <see cref="EventKind.AgentReconnected"/> when it resumes), while an
+/// <see cref="WitnessSource.Extension"/> going stale is the witness-independent
+/// absence-net (#149): a <see cref="EventKind.TamperDetected"/> with kind
+/// <see cref="TamperKinds.ExtensionSilent"/>. The tamper flag is sticky, so a
+/// returning extension re-arms silently rather than emitting a reconnect.
 /// </summary>
 public sealed class HeartbeatMonitor : BackgroundService
 {
@@ -86,15 +91,60 @@ public sealed class HeartbeatMonitor : BackgroundService
 
             if (isStale && !p.Reported)
             {
-                await EmitLostAsync(db, p, now, ct).ConfigureAwait(false);
-                _tracker.MarkReported(p.SessionId, p.UserId);
+                await EmitStaleAsync(db, p, now, ct).ConfigureAwait(false);
+                _tracker.MarkReported(p.SessionId, p.UserId, p.Source);
             }
             else if (!isStale && p.Reported)
             {
-                await EmitReconnectedAsync(db, p, now, ct).ConfigureAwait(false);
-                _tracker.ClearReported(p.SessionId, p.UserId);
+                await EmitResumedAsync(db, p, now, ct).ConfigureAwait(false);
+                _tracker.ClearReported(p.SessionId, p.UserId, p.Source);
             }
         }
+    }
+
+    private Task EmitStaleAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
+        => p.Source switch
+        {
+            // The extension witness going silent is the absence-net (#149):
+            // surface it as a tamper flag, not an agent HeartbeatLost.
+            WitnessSource.Extension => EmitExtensionSilentAsync(db, p, now, ct),
+            _ => EmitLostAsync(db, p, now, ct),
+        };
+
+    private Task EmitResumedAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
+        => p.Source switch
+        {
+            // A tamper flag is sticky by design (soft enforcement, §5.4) — there
+            // is no "un-tamper" event — so a returning extension just re-arms
+            // silently: clear Reported (done by the caller) and emit nothing,
+            // so a *second* outage flags again.
+            WitnessSource.Extension => Task.CompletedTask,
+            _ => EmitReconnectedAsync(db, p, now, ct),
+        };
+
+    private async Task EmitExtensionSilentAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
+    {
+        var displayName = await db.Users.AsNoTracking()
+            .Where(u => u.Id == p.UserId)
+            .Select(u => u.DisplayName)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false) ?? string.Empty;
+
+        db.Events.Add(new Event
+        {
+            SessionId = p.SessionId,
+            UserId = p.UserId,
+            Kind = EventKind.TamperDetected,
+            PayloadJson = JsonSerializer.Serialize(new { kind = TamperKinds.ExtensionSilent }),
+            OccurredAt = now,
+        });
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        await _broadcaster.TamperDetectedAsync(
+            new TamperDetectedPayload(p.SessionId, p.UserId, displayName, TamperKinds.ExtensionSilent, now),
+            ct).ConfigureAwait(false);
+        _log.LogInformation(
+            "TamperDetected(extension_silent) session={SessionId} user={UserId} lastSeen={LastSeenAt:o}",
+            p.SessionId, p.UserId, p.LastSeenAt);
     }
 
     private async Task EmitLostAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)

@@ -171,6 +171,24 @@ export class HubClient {
     }
   }
 
+  /**
+   * Sends an extension liveness heartbeat to the backend (#149). Best-effort
+   * like reportBlockedUrl: if the hub isn't connected we drop it silently —
+   * sustained silence is exactly what the backend's absence-net watches for, so
+   * a dropped ping needs no retry. The backend records it under a separate
+   * witness source, so it never masks the agent's own HeartbeatLost.
+   */
+  async sendExtensionHeartbeat(sessionId: string): Promise<void> {
+    if (this.connection.state !== signalR.HubConnectionState.Connected) {
+      return;
+    }
+    try {
+      await this.connection.invoke('ExtensionHeartbeat', sessionId);
+    } catch (err) {
+      log.debug('ExtensionHeartbeat failed', err);
+    }
+  }
+
   private buildHubUrl(): string {
     const base = this.settings.backendUrl + HUB_PATH;
     if (!this.settings.devImpersonateOid) return base;

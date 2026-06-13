@@ -1,4 +1,5 @@
 using Anchor.Api.Realtime;
+using Anchor.Api.Tests.FakeAuth;
 using Anchor.Domain.Events;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -147,6 +148,124 @@ public sealed class HeartbeatMonitorTests : IClassFixture<HeartbeatMonitorTests.
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
         Assert.False(await db.Events.AnyAsync(e => e.SessionId == sessionId && e.UserId == userId));
+    }
+
+    [Fact]
+    public async Task Extension_source_going_stale_emits_one_extension_silent_tamper_event_and_broadcast()
+    {
+        var (sessionId, userId) = await SeedSessionAndStudentAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Extension);
+
+        clock.Advance(TimeSpan.FromSeconds(25));
+        await monitor.ScanOnceAsync(CancellationToken.None);
+        await monitor.ScanOnceAsync(CancellationToken.None); // one per outage, not per scan
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var tamper = await db.Events.AsNoTracking()
+            .Where(e => e.SessionId == sessionId && e.UserId == userId && e.Kind == EventKind.TamperDetected)
+            .ToListAsync();
+        var evt = Assert.Single(tamper);
+        Assert.Contains("extension_silent", evt.PayloadJson);
+
+        // The extension witness never produces the agent-style transitions.
+        Assert.False(await db.Events.AnyAsync(e =>
+            e.SessionId == sessionId && e.UserId == userId &&
+            (e.Kind == EventKind.HeartbeatLost || e.Kind == EventKind.AgentReconnected)));
+
+        // Pushed to the teacher's roster so the #105 dashboard flag flips live.
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        Assert.Contains(broadcaster.TamperDetectedCalls,
+            c => c.SessionId == sessionId && c.UserId == userId && c.Kind == "extension_silent");
+    }
+
+    [Fact]
+    public async Task Extension_heartbeat_does_not_suppress_agent_HeartbeatLost()
+    {
+        // Acceptance criterion (#149): agent and extension share a userId, so a
+        // fresh extension ping must not keep the agent's HeartbeatLost rule warm.
+        var (sessionId, userId) = await SeedSessionAndStudentAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Agent);
+        // The agent goes silent; the extension keeps pinging right up to the scan.
+        clock.Advance(TimeSpan.FromSeconds(25));
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Extension);
+
+        await monitor.ScanOnceAsync(CancellationToken.None);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        Assert.True(await db.Events.AnyAsync(e =>
+            e.SessionId == sessionId && e.UserId == userId && e.Kind == EventKind.HeartbeatLost));
+        // The still-fresh extension is not itself flagged.
+        Assert.False(await db.Events.AnyAsync(e =>
+            e.SessionId == sessionId && e.UserId == userId && e.Kind == EventKind.TamperDetected));
+    }
+
+    [Fact]
+    public async Task Agent_heartbeat_does_not_suppress_extension_silent_flag()
+    {
+        // The mirror of the above: a live agent must not hide a silent extension.
+        var (sessionId, userId) = await SeedSessionAndStudentAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Extension);
+        clock.Advance(TimeSpan.FromSeconds(25));
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Agent);
+
+        await monitor.ScanOnceAsync(CancellationToken.None);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var tamper = await db.Events.AsNoTracking()
+            .Where(e => e.SessionId == sessionId && e.UserId == userId && e.Kind == EventKind.TamperDetected)
+            .ToListAsync();
+        var evt = Assert.Single(tamper);
+        Assert.Contains("extension_silent", evt.PayloadJson);
+        Assert.False(await db.Events.AnyAsync(e =>
+            e.SessionId == sessionId && e.UserId == userId && e.Kind == EventKind.HeartbeatLost));
+    }
+
+    [Fact]
+    public async Task Returning_extension_rearms_silently_and_flags_again_on_a_second_outage()
+    {
+        var (sessionId, userId) = await SeedSessionAndStudentAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Extension);
+        clock.Advance(TimeSpan.FromSeconds(25));
+        await monitor.ScanOnceAsync(CancellationToken.None); // first flag
+
+        // Browser reopens — the extension pings again, re-arming the flag.
+        clock.Advance(TimeSpan.FromSeconds(2));
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Extension);
+        await monitor.ScanOnceAsync(CancellationToken.None); // re-arm, emits nothing
+
+        // It goes silent a second time.
+        clock.Advance(TimeSpan.FromSeconds(25));
+        await monitor.ScanOnceAsync(CancellationToken.None); // second flag
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var tamper = await db.Events.AsNoTracking()
+            .Where(e => e.SessionId == sessionId && e.UserId == userId && e.Kind == EventKind.TamperDetected)
+            .ToListAsync();
+        Assert.Equal(2, tamper.Count);
+        // The tamper flag is sticky (soft enforcement) — re-arming never emits a
+        // reconnect event the way the agent path does.
+        Assert.False(await db.Events.AnyAsync(e =>
+            e.SessionId == sessionId && e.UserId == userId && e.Kind == EventKind.AgentReconnected));
     }
 
     private HeartbeatMonitor BuildMonitor(HeartbeatTracker tracker, FakeTimeProvider clock)
