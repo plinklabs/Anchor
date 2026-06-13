@@ -146,6 +146,36 @@ class ClassesApi {
   ClassesApi(this._client);
   final ApiClient _client;
 
+  /// Creates a class and makes the caller its teacher. Name + school year are
+  /// required; schoolTag / classCode are optional. Returns the new
+  /// [ClassSummary].
+  Future<ClassSummary> createClass({
+    required String name,
+    required String schoolYear,
+    String? schoolTag,
+    String? classCode,
+  }) async {
+    final res = await _client.post(
+      'classes',
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'name': name,
+        'schoolYear': schoolYear,
+        if (schoolTag != null && schoolTag.isNotEmpty) 'schoolTag': schoolTag,
+        if (classCode != null && classCode.isNotEmpty) 'classCode': classCode,
+      }),
+    );
+    _ensureOk(res);
+    return ClassSummary.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  /// Deletes a class the caller teaches. The backend refuses (409) when the
+  /// class has session history.
+  Future<void> deleteClass(String classId) async {
+    final res = await _client.delete('classes/$classId');
+    _ensureOk(res);
+  }
+
   Future<ClassMembersResponse> members(String classId) async {
     final res = await _client.get('classes/$classId/members');
     _ensureOk(res);

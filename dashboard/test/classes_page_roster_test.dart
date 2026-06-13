@@ -17,21 +17,54 @@ class _FakeSessions extends SessionsApi {
 }
 
 class _FakeClasses extends ClassesApi {
-  _FakeClasses(this._roster, {List<String>? schools, this.onBulkImport})
-    : _schools = schools ?? const <String>[],
-      super(_dummyClient());
+  _FakeClasses(
+    this._roster, {
+    List<String>? schools,
+    this.onBulkImport,
+    this.onCreate,
+    this.onDelete,
+  }) : _schools = schools ?? const <String>[],
+       super(_dummyClient());
 
   final ClassMembersResponse _roster;
   final List<String> _schools;
   final Future<List<ClassMembershipImportResult>> Function(String classId)? onBulkImport;
+  final ClassSummary Function(String name, String schoolYear)? onCreate;
+  final void Function(String classId)? onDelete;
   int updateCodesCalls = 0;
   int bulkImportCalls = 0;
+  int createCalls = 0;
+  final List<String> deletedClassIds = [];
 
   @override
   Future<ClassMembersResponse> members(String classId) async => _roster;
 
   @override
   Future<List<String>> schools() async => _schools;
+
+  @override
+  Future<ClassSummary> createClass({
+    required String name,
+    required String schoolYear,
+    String? schoolTag,
+    String? classCode,
+  }) async {
+    createCalls++;
+    return onCreate?.call(name, schoolYear) ??
+        ClassSummary(
+          id: 'new-$name',
+          name: name,
+          schoolYear: schoolYear,
+          schoolTag: schoolTag,
+          classCode: classCode,
+        );
+  }
+
+  @override
+  Future<void> deleteClass(String classId) async {
+    deletedClassIds.add(classId);
+    onDelete?.call(classId);
+  }
 
   @override
   Future<ClassSummary> updateCodes(
@@ -330,4 +363,92 @@ void main() {
       expect(fakeClasses.bulkImportCalls, 1);
     },
   );
+
+  testWidgets('New class dialog creates a class and adds it to the list', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final klass = ClassSummary(id: 'c1', name: '3A', schoolYear: '2025-2026');
+    final roster = ClassMembersResponse(
+      id: 'c1',
+      name: '3A',
+      schoolYear: '2025-2026',
+      members: const [],
+    );
+    final fakeClasses = _FakeClasses(
+      roster,
+      schools: const ['SSM'],
+      onCreate: (name, schoolYear) =>
+          ClassSummary(id: 'c2', name: name, schoolYear: schoolYear),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ClassesPage(
+          sessions: _FakeSessions([klass]),
+          classes: fakeClasses,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Open the New class dialog from the list header.
+    await tester.tap(find.widgetWithText(FilledButton, 'New'));
+    await tester.pumpAndSettle();
+
+    // Name the class and submit.
+    await tester.enterText(find.widgetWithText(TextField, 'Name'), '4B');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+
+    expect(fakeClasses.createCalls, 1);
+    // The new class is now in the left list and selected (its roster header shows).
+    expect(find.text('4B'), findsWidgets);
+  });
+
+  testWidgets('Delete class confirms then calls deleteClass and drops it', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final klass = ClassSummary(id: 'c1', name: '3A', schoolYear: '2025-2026');
+    final roster = ClassMembersResponse(
+      id: 'c1',
+      name: '3A',
+      schoolYear: '2025-2026',
+      members: const [],
+    );
+    final fakeClasses = _FakeClasses(roster);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ClassesPage(
+          sessions: _FakeSessions([klass]),
+          classes: fakeClasses,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Trigger delete from the roster header.
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Delete class'));
+    await tester.pumpAndSettle();
+
+    // Confirmation dialog up; confirm.
+    expect(find.widgetWithText(AlertDialog, 'Delete class'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    expect(fakeClasses.deletedClassIds, ['c1']);
+    // Only class is gone — the empty-state hint shows in the list pane.
+    expect(find.textContaining('No classes you teach'), findsOneWidget);
+  });
 }

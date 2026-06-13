@@ -63,6 +63,169 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task POST_classes_unauthenticated_returns_401()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync(
+            "/classes", new CreateClassRequest("3A", "2025-2026"));
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_classes_as_student_returns_403()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetStudent(client, scenario.Students[0]);
+
+        var response = await client.PostAsJsonAsync(
+            "/classes", new CreateClassRequest("3A", "2025-2026"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_classes_creates_class_with_caller_as_teacher_and_appears_in_list()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var uniqueName = "Created-" + Guid.NewGuid().ToString("N").Substring(0, 6);
+        var response = await client.PostAsJsonAsync(
+            "/classes", new CreateClassRequest(uniqueName, "2025-2026", "SSM", "3A"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<ClassSummary>();
+        Assert.NotNull(created);
+        Assert.Equal(uniqueName, created!.Name);
+        Assert.Equal("2025-2026", created.SchoolYear);
+        Assert.Equal("SSM", created.SchoolTag);
+        Assert.Equal("3A", created.ClassCode);
+
+        // The caller is now a Teacher of the new class, so it lists for them.
+        var classes = await client.GetFromJsonAsync<List<ClassSummary>>("/classes");
+        Assert.Contains(classes!, c => c.Id == created.Id);
+
+        // And the membership is persisted as Teacher.
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var membership = await db.ClassMemberships.SingleAsync(
+            m => m.ClassId == created.Id && m.UserId == scenario.Teacher.Id);
+        Assert.Equal(ClassMembershipRole.Teacher, membership.Role);
+    }
+
+    [Fact]
+    public async Task POST_classes_returns_400_when_name_missing()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            "/classes", new CreateClassRequest("   ", "2025-2026"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_classes_returns_409_for_duplicate_name_and_year()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        // Same name + year as the already-seeded class collides on the unique index.
+        var response = await client.PostAsJsonAsync(
+            "/classes",
+            new CreateClassRequest(scenario.Class.Name, scenario.Class.SchoolYear));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DELETE_class_removes_class_and_memberships()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.DeleteAsync($"/classes/{scenario.Class.Id}");
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            Assert.False(await db.Classes.AnyAsync(c => c.Id == scenario.Class.Id));
+            // Memberships cascade away with the class.
+            Assert.False(await db.ClassMemberships.AnyAsync(m => m.ClassId == scenario.Class.Id));
+        }
+
+        // It no longer lists for the teacher.
+        var classes = await client.GetFromJsonAsync<List<ClassSummary>>("/classes");
+        Assert.DoesNotContain(classes!, c => c.Id == scenario.Class.Id);
+
+        // Deleting again is a 404.
+        var again = await client.DeleteAsync($"/classes/{scenario.Class.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, again.StatusCode);
+    }
+
+    [Fact]
+    public async Task DELETE_class_returns_404_for_missing_class()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.DeleteAsync($"/classes/{Guid.NewGuid()}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DELETE_class_as_non_teacher_of_class_returns_403()
+    {
+        var owned = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, owned.Teacher);
+
+        var response = await client.DeleteAsync($"/classes/{other.Class.Id}");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DELETE_class_with_session_history_returns_409_and_keeps_the_class()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        await TestSeed.AddSessionAsync(
+            _factory,
+            scenario.Teacher.Id,
+            scenario.Class.Id,
+            new[] { scenario.Students[0].Id },
+            ended: true);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.DeleteAsync($"/classes/{scenario.Class.Id}");
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        // The class (and its session history) must survive the refused delete.
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        Assert.True(await db.Classes.AnyAsync(c => c.Id == scenario.Class.Id));
+    }
+
+    [Fact]
     public async Task GET_class_members_returns_404_for_missing_class()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);

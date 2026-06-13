@@ -22,6 +22,8 @@ public sealed class ClassesController : ControllerBase
 
     public const int MaxSchoolTagLength = 64;
     public const int MaxClassCodeLength = 32;
+    public const int MaxClassNameLength = 128;
+    public const int MaxSchoolYearLength = 16;
 
     private readonly AnchorDbContext _db;
     private readonly IUserStore _users;
@@ -66,6 +68,72 @@ public sealed class ClassesController : ControllerBase
             .ToListAsync(cancellationToken);
 
         return Ok(classes);
+    }
+
+    /// Creates a class and makes the caller its Teacher. Name + school year are
+    /// required and unique together (matching the DB index); schoolTag /
+    /// classCode are optional and scope the roster's Graph queries (#96).
+    [HttpPost]
+    [ProducesResponseType(typeof(ClassSummary), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ClassSummary>> Create(
+        [FromBody] CreateClassRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+            return BadRequest(new { error = "body is required" });
+
+        var name = request.Name?.Trim();
+        var schoolYear = request.SchoolYear?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return BadRequest(new { error = "name is required" });
+        if (string.IsNullOrWhiteSpace(schoolYear))
+            return BadRequest(new { error = "schoolYear is required" });
+        if (name.Length > MaxClassNameLength)
+            return BadRequest(new { error = $"name must be at most {MaxClassNameLength} characters" });
+        if (schoolYear.Length > MaxSchoolYearLength)
+            return BadRequest(new { error = $"schoolYear must be at most {MaxSchoolYearLength} characters" });
+        if (request.SchoolTag is { Length: > MaxSchoolTagLength })
+            return BadRequest(new { error = $"schoolTag must be at most {MaxSchoolTagLength} characters" });
+        if (request.ClassCode is { Length: > MaxClassCodeLength })
+            return BadRequest(new { error = $"classCode must be at most {MaxClassCodeLength} characters" });
+
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        // Mirror the unique (SchoolYear, Name) index with a friendly 409 rather
+        // than letting SaveChanges throw a raw DbUpdateException.
+        var clash = await _db.Classes.AsNoTracking().AnyAsync(
+            c => c.SchoolYear == schoolYear && c.Name == name, cancellationToken);
+        if (clash)
+            return Conflict(new { error = $"a class named '{name}' already exists for {schoolYear}" });
+
+        var @class = new Class
+        {
+            Name = name,
+            SchoolYear = schoolYear,
+            SchoolTag = NormalizeOrNull(request.SchoolTag),
+            ClassCode = NormalizeOrNull(request.ClassCode),
+        };
+        _db.Classes.Add(@class);
+        _db.ClassMemberships.Add(new ClassMembership
+        {
+            ClassId = @class.Id,
+            UserId = caller.Id,
+            Role = ClassMembershipRole.Teacher,
+        });
+        await _db.SaveChangesAsync(cancellationToken);
+
+        var summary = new ClassSummary(
+            @class.Id, @class.Name, @class.SchoolYear, @class.SchoolTag, @class.ClassCode);
+        return CreatedAtAction(nameof(Members), new { id = @class.Id }, summary);
     }
 
     [HttpGet("{id:guid}/members")]
@@ -133,6 +201,37 @@ public sealed class ClassesController : ControllerBase
 
         return Ok(new ClassSummary(
             tracked.Id, tracked.Name, tracked.SchoolYear, tracked.SchoolTag, tracked.ClassCode));
+    }
+
+    /// Deletes a class the caller teaches, along with its memberships (which
+    /// cascade). Refuses with 409 when the class has session history — sessions
+    /// reference the class with DeleteBehavior.Restrict, and silently
+    /// cascade-destroying recorded sessions/events is not something a delete
+    /// button should do.
+    [HttpDelete("{id:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> DeleteClass(Guid id, CancellationToken cancellationToken)
+    {
+        var auth = await AuthorizeTeacherOfClassAsync(id, cancellationToken);
+        if (auth.Result is not null) return auth.Result;
+
+        var hasSessions = await _db.Sessions.AnyAsync(s => s.ClassId == id, cancellationToken);
+        if (hasSessions)
+        {
+            return Conflict(new
+            {
+                error = "class has session history and cannot be deleted",
+            });
+        }
+
+        var tracked = await _db.Classes.FirstAsync(c => c.Id == id, cancellationToken);
+        _db.Classes.Remove(tracked);
+        await _db.SaveChangesAsync(cancellationToken);
+        return NoContent();
     }
 
     private static string? NormalizeOrNull(string? value)
@@ -460,6 +559,12 @@ public sealed record AddClassMemberRequest(
     Guid EntraOid,
     string? DisplayName,
     ClassMembershipRole? Role);
+
+public sealed record CreateClassRequest(
+    string Name,
+    string SchoolYear,
+    string? SchoolTag = null,
+    string? ClassCode = null);
 
 public sealed record UpdateClassRequest(string? SchoolTag, string? ClassCode);
 

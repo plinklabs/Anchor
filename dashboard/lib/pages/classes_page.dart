@@ -118,6 +118,81 @@ class _ClassesPageState extends State<ClassesPage> {
     if (refreshRoster) _loadRoster(klass);
   }
 
+  Future<void> _createClass() async {
+    final created = await showDialog<ClassSummary>(
+      context: context,
+      builder: (_) => _NewClassDialog(
+        schools: _schools ?? const <String>[],
+        onCreate:
+            ({
+              required String name,
+              required String schoolYear,
+              String? schoolTag,
+              String? classCode,
+            }) => widget.classes.createClass(
+              name: name,
+              schoolYear: schoolYear,
+              schoolTag: schoolTag,
+              classCode: classCode,
+            ),
+      ),
+    );
+    if (created == null) return;
+    if (!mounted) return;
+    setState(() {
+      _classes = [...?_classes, created]
+        ..sort((a, b) => a.name.compareTo(b.name));
+    });
+    _selectClass(created);
+  }
+
+  Future<void> _deleteClass() async {
+    final klass = _selected;
+    if (klass == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete class'),
+        content: Text(
+          'Delete ${klass.name} (${klass.schoolYear})? '
+          'This removes the class and its roster. '
+          'Classes with past sessions cannot be deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.classes.deleteClass(klass.id);
+      if (!mounted) return;
+      setState(() {
+        _classes = _classes
+            ?.where((c) => c.id != klass.id)
+            .toList(growable: false);
+        _selected = null;
+        _roster = null;
+        _lastImportResults = null;
+        _error = null;
+      });
+      final remaining = _classes;
+      if (remaining != null && remaining.isNotEmpty) {
+        _selectClass(remaining.first);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not delete class: $e');
+    }
+  }
+
   Future<void> _saveCodes() async {
     final klass = _selected;
     if (klass == null) return;
@@ -279,6 +354,7 @@ class _ClassesPageState extends State<ClassesPage> {
               selected: _selected,
               loading: _loadingClasses,
               onSelect: _selectClass,
+              onCreate: _createClass,
             ),
           ),
           const VerticalDivider(width: 1),
@@ -287,6 +363,7 @@ class _ClassesPageState extends State<ClassesPage> {
                 ? const Center(child: Text('Pick a class on the left.'))
                 : _RosterPane(
                     klass: _selected!,
+                    onDeleteClass: _deleteClass,
                     roster: _roster,
                     schools: _schools,
                     loadingSchools: _loadingSchools,
@@ -321,36 +398,62 @@ class _ClassList extends StatelessWidget {
     required this.selected,
     required this.loading,
     required this.onSelect,
+    required this.onCreate,
   });
 
   final List<ClassSummary>? classes;
   final ClassSummary? selected;
   final bool loading;
   final void Function(ClassSummary) onSelect;
+  final Future<void> Function() onCreate;
 
   @override
   Widget build(BuildContext context) {
-    if (loading && classes == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
     final list = classes ?? const <ClassSummary>[];
-    if (list.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('No classes you teach.'),
-      );
-    }
-    return ListView.builder(
-      itemCount: list.length,
-      itemBuilder: (_, i) {
-        final c = list[i];
-        return ListTile(
-          title: Text(c.name),
-          subtitle: Text(c.schoolYear),
-          selected: selected?.id == c.id,
-          onTap: () => onSelect(c),
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Classes',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              FilledButton.icon(
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('New'),
+                onPressed: () => onCreate(),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: loading && classes == null
+              ? const Center(child: CircularProgressIndicator())
+              : list.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Text('No classes you teach. Create one with "New".'),
+                )
+              : ListView.builder(
+                  itemCount: list.length,
+                  itemBuilder: (_, i) {
+                    final c = list[i];
+                    return ListTile(
+                      title: Text(c.name),
+                      subtitle: Text(c.schoolYear),
+                      selected: selected?.id == c.id,
+                      onTap: () => onSelect(c),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }
@@ -358,6 +461,7 @@ class _ClassList extends StatelessWidget {
 class _RosterPane extends StatelessWidget {
   const _RosterPane({
     required this.klass,
+    required this.onDeleteClass,
     required this.roster,
     required this.schools,
     required this.loadingSchools,
@@ -380,6 +484,7 @@ class _RosterPane extends StatelessWidget {
   });
 
   final ClassSummary klass;
+  final Future<void> Function() onDeleteClass;
   final ClassMembersResponse? roster;
   final List<String>? schools;
   final bool loadingSchools;
@@ -409,9 +514,23 @@ class _RosterPane extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '${klass.name} (${klass.schoolYear})',
-            style: Theme.of(context).textTheme.titleLarge,
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${klass.name} (${klass.schoolYear})',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Delete class'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: () => onDeleteClass(),
+              ),
+            ],
           ),
           const SizedBox(height: 12),
           _ScopeRow(
@@ -668,6 +787,174 @@ class _ImportResultsBar extends StatelessWidget {
     return Chip(
       backgroundColor: color.shade100,
       label: Text(text, style: TextStyle(color: color.shade900)),
+    );
+  }
+}
+
+typedef CreateClassCallback =
+    Future<ClassSummary> Function({
+      required String name,
+      required String schoolYear,
+      String? schoolTag,
+      String? classCode,
+    });
+
+/// Collects the fields for a new class and calls [onCreate], popping with the
+/// resulting [ClassSummary] on success. Keeps its own busy/error state so a
+/// duplicate-name 409 surfaces in-dialog rather than dismissing the form.
+class _NewClassDialog extends StatefulWidget {
+  const _NewClassDialog({required this.schools, required this.onCreate});
+
+  final List<String> schools;
+  final CreateClassCallback onCreate;
+
+  @override
+  State<_NewClassDialog> createState() => _NewClassDialogState();
+}
+
+class _NewClassDialogState extends State<_NewClassDialog> {
+  final _name = TextEditingController();
+  final _schoolYear = TextEditingController();
+  final _classCode = TextEditingController();
+  String? _schoolTag;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _schoolYear.text = _currentSchoolYear();
+  }
+
+  /// Academic year guess for the New class form. Belgian school years run
+  /// Sept–June, so anything from August on belongs to the year that just
+  /// started; earlier months still belong to the previous September's year.
+  static String _currentSchoolYear() {
+    final now = DateTime.now();
+    final start = now.month >= 8 ? now.year : now.year - 1;
+    return '$start-${start + 1}';
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _schoolYear.dispose();
+    _classCode.dispose();
+    super.dispose();
+  }
+
+  bool get _valid =>
+      _name.text.trim().isNotEmpty && _schoolYear.text.trim().isNotEmpty;
+
+  Future<void> _submit() async {
+    if (!_valid) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final created = await widget.onCreate(
+        name: _name.text.trim(),
+        schoolYear: _schoolYear.text.trim(),
+        schoolTag: _schoolTag,
+        classCode: _classCode.text.trim().isEmpty
+            ? null
+            : _classCode.text.trim(),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(created);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = 'Could not create class: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New class'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _name,
+              autofocus: true,
+              enabled: !_saving,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                hintText: 'e.g. 3A',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _schoolYear,
+              enabled: !_saving,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'School year',
+                hintText: 'e.g. 2025-2026',
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String?>(
+              initialValue: _schoolTag,
+              decoration: const InputDecoration(
+                labelText: 'School (optional)',
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('(none)'),
+                ),
+                for (final s in widget.schools)
+                  DropdownMenuItem<String?>(value: s, child: Text(s)),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (v) => setState(() => _schoolTag = v),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _classCode,
+              enabled: !_saving,
+              decoration: const InputDecoration(
+                labelText: 'Class code (optional)',
+                hintText: 'e.g. 3A',
+              ),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: (_valid && !_saving) ? _submit : null,
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Create'),
+        ),
+      ],
     );
   }
 }
