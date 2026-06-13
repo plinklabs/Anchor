@@ -3,12 +3,20 @@
 // below it is trustworthy.
 
 import { test, expect } from '../fixtures.ts';
-import { BACKEND_URL, STUDENT_OID } from '../config.ts';
+import { BACKEND_URL, STABLE_EXTENSION_ID, STUDENT_OID } from '../config.ts';
 
 test('extension loads in Edge and its service worker boots', async ({ ext }) => {
   // A real MV3 extension id is 32 lowercase letters.
   expect(ext.extensionId).toMatch(/^[a-p]{32}$/);
   await expect(ext.waitForLog('service worker started')).resolves.toContain('service worker started');
+});
+
+test('Edge derives the pinned stable extension id from the manifest key', async ({ ext }) => {
+  // End-to-end proof of #123: a real Edge load of the unpacked dist/ assigns the
+  // id the manifest `key` pins — the same id on every machine, so the school's
+  // ExtensionInstallForcelist entry keeps matching. The unit test locks the
+  // manifest→id derivation; this proves the browser actually does the same.
+  expect(ext.extensionId).toBe(STABLE_EXTENSION_ID);
 });
 
 test('unconfigured extension refuses to connect to the hub', async ({ ext }) => {

@@ -37,6 +37,16 @@ export const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
  */
 export const E2E_DB_PATH = path.join(os.tmpdir(), 'anchor-e2e.db');
 
+// --- Stable extension identity --------------------------------------------
+/**
+ * The pinned extension id Edge derives from the manifest `key` (#123). Stable
+ * across every machine so the school can force-install Anchor by id via Edge
+ * policy. Documented canonically in extension/README.md ("Stable extension ID")
+ * and locked by src/manifest.test.ts (manifest key → id). If you regenerate the
+ * signing key, update all three together.
+ */
+export const STABLE_EXTENSION_ID = 'akkfdaclmpfcnjalcifkcbhgjnnopman';
+
 // --- Seeded dev identities (mirror DevDataSeeder) -------------------------
 export const TEACHER_OID = '11111111-1111-1111-1111-111111111111';
 export const STUDENT_OID = '22222222-2222-2222-2222-222222222222';

@@ -208,6 +208,63 @@ the seeded teacher/student data in place:
 7. End the session from the dashboard. The background SW logs `active session
    cleared`. Any URL loads normally again.
 
+## Stable extension ID
+
+The extension ID is **pinned**:
+
+```
+akkfdaclmpfcnjalcifkcbhgjnnopman
+```
+
+Edge/Chrome derive an unpacked extension's ID from its public key. Without a
+`key` in the manifest they fall back to the *install path*, so the ID changes
+per machine and per load — which a managed-Edge policy (`ExtensionInstallForcelist`
+/ `ExtensionInstallAllowlist`) can't pin, because policy keys an extension by
+ID. We commit the public key as the `key` field in [src/manifest.json](src/manifest.json),
+so loading `dist/` (unpacked) or the packed `.crx` yields the **same ID on every
+machine** (#123).
+
+The ID is a pure function of that public key:
+`sha256(DER-public-key)`, first 16 bytes, hex, each hex digit `0–f` mapped to
+`a–p`. Two checks guard it so a key change can't silently break deployed policy:
+
+- [src/manifest.test.ts](src/manifest.test.ts) re-derives the ID from the committed
+  `key` and asserts it equals the value above (runs under `npm test`).
+- the `extension-loads` e2e spec asserts a **real Edge load** assigns that exact
+  ID (`STABLE_EXTENSION_ID` in [e2e/config.ts](e2e/config.ts)).
+
+### Signing key
+
+The matching **private key signs the packed `.crx`** and must never enter the
+repo (`*.pem` / `*.crx` are gitignored). It is kept in two places:
+
+- **Authoritative copy:** offline in the school's secret store — the source of
+  truth, never on a dev machine.
+- **CI:** a GitHub Actions secret `EDGE_EXTENSION_PRIVATE_KEY` (PEM), consumed by
+  the future `.crx` packaging/signing workflow. Set it with
+  `gh secret set EDGE_EXTENSION_PRIVATE_KEY --body "<pem>"` (pass `--body`; never
+  pipe — PowerShell appends a CRLF that corrupts the secret).
+
+**Regenerating the key changes the ID** and invalidates every deployed policy
+entry, so treat it as a last resort. If you must, regenerate the keypair, replace
+`manifest.json` `key` with the new base64 SPKI public key, and update the ID in
+this file, `src/manifest.test.ts`, and `e2e/config.ts` together (the tests will
+fail until all three agree). The public key + ID were produced with Node:
+
+```js
+const { generateKeyPairSync, createHash } = require('node:crypto');
+const { publicKey, privateKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'spki', format: 'der' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+});
+const key = publicKey.toString('base64');               // → manifest `key`
+const id = createHash('sha256').update(publicKey).digest()
+  .subarray(0, 16).toString('hex').split('')
+  .map((c) => String.fromCharCode(97 + parseInt(c, 16))).join(''); // → extension ID
+// privateKey → offline store + EDGE_EXTENSION_PRIVATE_KEY (never committed)
+```
+
 ## Sideload (production install path)
 
 Once the extension ships, managed devices will receive it via a Group Policy /
@@ -216,19 +273,18 @@ here for future reference — not implemented in this scaffold):
 
 ```
 HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist
-  1 = REG_SZ  <extension-id>;<update-url>
+  1 = REG_SZ  akkfdaclmpfcnjalcifkcbhgjnnopman;<update-url>
 ```
 
-`<extension-id>` is derived from the extension's public key (set via the
-`key` field in `manifest.json` so the ID is stable across machines).
-`<update-url>` points at an `updates.xml` manifest hosted on a local file
-share or HTTPS endpoint and referencing the packed `.crx`.
+The ID is the pinned `akkfdaclmpfcnjalcifkcbhgjnnopman` (see **Stable extension
+ID** above). `<update-url>` points at an `updates.xml` manifest hosted on a local
+file share or HTTPS endpoint and referencing the packed `.crx`.
 
 For unpacked dev installs the simpler shape is:
 
 ```
 HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallAllowlist
-  1 = REG_SZ  <extension-id>
+  1 = REG_SZ  akkfdaclmpfcnjalcifkcbhgjnnopman
 ```
 
 paired with a developer-mode-loaded unpacked extension at a known path.

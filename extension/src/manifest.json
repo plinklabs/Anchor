@@ -3,6 +3,7 @@
   "name": "Anchor",
   "version": "0.2.0",
   "description": "Anchor focus-session enforcement — URL filter and friendly block page.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyzCpfvEGkTi9IdzOuSDz6qSY44YFusS17QCAvaQEdWMuITDhW30zPja8NBvE2HAz/2Vwc8oQlyHYPG7mZ9rh8hW868UozzmkK7N1+LYUrt8McYPp5GjMK/eIa+wXPBdnCPj1uRvZuvTguXxei/QUR98XwzP5LRy17nkGFTdYwzvsl8OI3yclJLlX5R4TEpHkwb4dn62/gTNXojR1vxdSwscs9Lq9Y5X4tKDTZfNGSvat9bLbvEtsdPG2MCzWl7Wk3FA75dpF/Xlp+hpuZN8IUBwfzq5v/Ex9tqoddC2CJuFxm/AuWjGMb8/fgD9vgIgrz9Y4ErSyhGGZ/iByfbxBowIDAQAB",
   "permissions": [
     "tabs",
     "webNavigation",

@@ -1,6 +1,12 @@
 node_modules/
 dist/
 
+# Extension signing material — the private key signs the packed .crx and must
+# never be committed (kept offline + as the EDGE_EXTENSION_PRIVATE_KEY secret).
+# See README "Stable extension ID → Signing key".
+*.pem
+*.crx
+
 # Playwright e2e harness artifacts
 test-results/
 playwright-report/
