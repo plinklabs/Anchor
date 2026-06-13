@@ -386,6 +386,22 @@ public sealed class SessionsController : ControllerBase
                 p.LeftAt,
             })
             .ToListAsync(cancellationToken);
+        // A student is flagged as tampered (#105) if any TamperDetected event
+        // exists for them this session. Union the raw events with the per-kind
+        // summary so the flag survives the 30-day raw-event prune (#77) the same
+        // way the aggregate counts do — the dashboard never branches on retention.
+        var tamperedUserIds = (await _db.Events.AsNoTracking()
+                .Where(e => e.SessionId == id && e.Kind == EventKind.TamperDetected)
+                .Select(e => e.UserId)
+                .Distinct()
+                .ToListAsync(cancellationToken))
+            .Concat(await _db.SessionEventSummaries.AsNoTracking()
+                .Where(s => s.SessionId == id && s.Kind == EventKind.TamperDetected && s.Count > 0)
+                .Select(s => s.UserId)
+                .Distinct()
+                .ToListAsync(cancellationToken))
+            .ToHashSet();
+
         var participants = participantRows
             .Select(p => new SessionParticipantSummary(
                 p.UserId,
@@ -393,7 +409,8 @@ public sealed class SessionsController : ControllerBase
                 p.JoinedAt,
                 p.DeclinedAt,
                 p.LeftAt,
-                _liveState.Resolve(id, p.UserId, p.JoinedAt, p.DeclinedAt, p.LeftAt).ToString()))
+                _liveState.Resolve(id, p.UserId, p.JoinedAt, p.DeclinedAt, p.LeftAt).ToString(),
+                tamperedUserIds.Contains(p.UserId)))
             .ToList();
 
         var recentEventRows = await _db.Events.AsNoTracking()
@@ -1040,7 +1057,8 @@ public sealed record SessionParticipantSummary(
     DateTimeOffset? JoinedAt,
     DateTimeOffset? DeclinedAt,
     DateTimeOffset? LeftAt,
-    string State);
+    string State,
+    bool Tampered);
 
 public sealed record SessionRecentEvent(
     Guid Id,

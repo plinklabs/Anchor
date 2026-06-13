@@ -10,4 +10,5 @@ public interface ISessionHubClient
     Task AgentReconnected(AgentReconnectedPayload payload);
     Task AllowlistAmended(AllowlistAmendedPayload payload);
     Task UnblockRequested(UnblockRequestedPayload payload);
+    Task TamperDetected(TamperDetectedPayload payload);
 }

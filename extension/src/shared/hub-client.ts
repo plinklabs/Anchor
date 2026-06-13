@@ -16,6 +16,7 @@ import type {
   BlockedUrlPayload,
   SessionBundlesUpdatedPayload,
   SessionStartedPayload,
+  TamperDetectedPayload,
   UnblockRequestPayload,
 } from './types';
 
@@ -143,6 +144,31 @@ export class HubClient {
       payloadJson: JSON.stringify(payload),
       occurredAt: new Date().toISOString(),
     });
+  }
+
+  /**
+   * Reports a TamperDetected event to the backend (#105). Best-effort like
+   * reportBlockedUrl: a tamper signal only matters live, so if the hub isn't
+   * connected we drop it with a warning rather than queue a stale report.
+   */
+  async reportTamper(sessionId: string, payload: TamperDetectedPayload): Promise<void> {
+    if (this.connection.state !== signalR.HubConnectionState.Connected) {
+      log.warn('reportTamper skipped — hub not connected', {
+        state: this.connection.state,
+        kind: payload.kind,
+      });
+      return;
+    }
+    try {
+      await this.connection.invoke('ReportEvent', {
+        sessionId,
+        kind: 'TamperDetected',
+        payloadJson: JSON.stringify(payload),
+        occurredAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      log.error('ReportEvent(TamperDetected) failed', err);
+    }
   }
 
   private buildHubUrl(): string {

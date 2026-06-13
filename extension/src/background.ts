@@ -3,6 +3,7 @@ import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { loadSettings } from './shared/settings';
+import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
 import {
   clearActiveSession,
   getActiveSession,
@@ -16,6 +17,7 @@ import type {
   ExtensionRuntimeMessage,
   SessionBundlesUpdatedPayload,
   SessionStartedPayload,
+  TamperKind,
   UnblockRequestPayload,
 } from './shared/types';
 
@@ -298,4 +300,38 @@ async function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: st
     tabId,
     occurredAt: new Date().toISOString(),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Tamper detection (#105)
+// ---------------------------------------------------------------------------
+// Soft enforcement (design §5.4): make tampering visible to the teacher rather
+// than trying to prevent it. These listeners catch what the extension can
+// witness itself while running; the agent covers the rest (disabled/removed,
+// on-box InPrivate) as on-box witness in a follow-up.
+
+chrome.windows.onCreated.addListener((window) => {
+  const kind = classifyCreatedWindow(window);
+  if (kind) void reportTamperIfInSession(kind);
+});
+
+chrome.permissions.onRemoved.addListener((removed) => {
+  if (isHostAccessLoss(removed)) void reportTamperIfInSession('host_permission_revoked');
+});
+
+async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
+  // Tampering is only actionable while a session is enforcing — outside one the
+  // student may browse and reconfigure freely, so an InPrivate window or a
+  // permission change isn't a violation (#105, "during session").
+  const session = await getActiveSession();
+  if (!session) {
+    log.debug('tamper signal ignored — no active session', { kind });
+    return;
+  }
+  if (!hubClient) {
+    log.warn('tamper signal observed but hub not initialised', { kind });
+    return;
+  }
+  log.warn('tamper detected', { kind, sessionId: session.sessionId });
+  await hubClient.reportTamper(session.sessionId, { kind });
 }

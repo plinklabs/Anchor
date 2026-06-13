@@ -217,11 +217,13 @@ class _SessionPageState extends State<SessionPage> {
           _loadPendingRequests();
         }
         // Roster transitions (#100): a member joined/declined/left, or their
-        // agent stopped/resumed reporting. Re-fetch the detail so the roster
+        // agent stopped/resumed reporting. TamperDetected (#105) likewise flips
+        // the server-computed `tampered` flag. Re-fetch the detail so the roster
         // reflects the server-computed per-student state.
         if (evt.kind == 'ParticipantStateChanged' ||
             evt.kind == 'HeartbeatLost' ||
-            evt.kind == 'AgentReconnected') {
+            evt.kind == 'AgentReconnected' ||
+            evt.kind == 'TamperDetected') {
           _loadDetail();
         }
       });
@@ -558,6 +560,20 @@ class _RosterRow extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          // Tamper flag (#105): soft enforcement can't prevent a student from
+          // sidestepping the extension, so we make the attempt visible here.
+          // Orthogonal to live state — a tampered student may still be "joined".
+          if (participant.tampered) ...[
+            Tooltip(
+              message: 'Tampering detected',
+              child: Icon(
+                Icons.gpp_maybe,
+                size: 18,
+                color: theme.colorScheme.error,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           Text(
             style.label,
             style: theme.textTheme.bodySmall?.copyWith(color: color),

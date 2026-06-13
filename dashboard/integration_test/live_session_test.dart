@@ -37,7 +37,11 @@ ApiClient _dummyClient() => ApiClient(
   tokenProvider: () async => null,
 );
 
-SessionParticipantInfo _participant(String name, ParticipantLiveState state) =>
+SessionParticipantInfo _participant(
+  String name,
+  ParticipantLiveState state, {
+  bool tampered = false,
+}) =>
     SessionParticipantInfo(
       userId: name,
       displayName: name,
@@ -45,6 +49,7 @@ SessionParticipantInfo _participant(String name, ParticipantLiveState state) =>
       declinedAt: null,
       leftAt: null,
       state: state,
+      tampered: tampered,
     );
 
 /// Past the /login redirect without MSAL: the router only checks
@@ -259,6 +264,28 @@ void main() {
     expect(find.text('Agent stopped reporting'), findsOneWidget);
     expect(find.text('In session'), findsNothing);
     expect(find.text('Students (0/1 in session)'), findsOneWidget);
+  });
+
+  testWidgets('a tamper push flags the student on the live roster (#105)', (
+    tester,
+  ) async {
+    final h = await _bootToLiveSession(tester);
+
+    // Ada starts clean — no flag.
+    expect(find.byTooltip('Tampering detected'), findsNothing);
+
+    // The student opens InPrivate / downgrades site access; the extension
+    // reports it, the backend persists a TamperDetected event and broadcasts.
+    // The page re-fetches the detail, whose snapshot now flags Ada.
+    h.sessions.roster = [
+      _participant('Ada', ParticipantLiveState.joined, tampered: true),
+    ];
+    h.hub.emit('TamperDetected', {'userId': 'Ada', 'kind': 'inprivate_opened'});
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Tampering detected'), findsOneWidget);
+    // Ada is still "in session" — tampering is orthogonal to live state.
+    expect(find.text('In session'), findsOneWidget);
   });
 
   testWidgets('an unblock-request push surfaces the pending panel (#132)', (

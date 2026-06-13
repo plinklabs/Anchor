@@ -317,6 +317,9 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
 
             public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
                 => Task.CompletedTask;
+
+            public Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
         }
 
         public sealed record SessionStartedCall(SessionStartedPayload Payload, IReadOnlyList<Guid> RecipientUserIds);

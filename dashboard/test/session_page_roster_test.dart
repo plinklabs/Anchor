@@ -21,8 +21,9 @@ class _FakeBundles extends BundlesApi {
 
 SessionParticipantInfo _participant(
   String name,
-  ParticipantLiveState state,
-) =>
+  ParticipantLiveState state, {
+  bool tampered = false,
+}) =>
     SessionParticipantInfo(
       userId: name,
       displayName: name,
@@ -30,6 +31,7 @@ SessionParticipantInfo _participant(
       declinedAt: null,
       leftAt: null,
       state: state,
+      tampered: tampered,
     );
 
 class _FakeSessions extends SessionsApi {
@@ -111,5 +113,22 @@ void main() {
     final staleY = tester.getTopLeft(find.text('Zoe')).dy;
     final joinedY = tester.getTopLeft(find.text('Ada')).dy;
     expect(staleY, lessThan(joinedY));
+  });
+
+  testWidgets('roster flags only tampered students, on the right row (#105)',
+      (tester) async {
+    await _pumpSession(tester, [
+      _participant('Ada', ParticipantLiveState.joined, tampered: true),
+      _participant('Bo', ParticipantLiveState.joined),
+    ]);
+
+    // Exactly one flag — Bo (not tampered) carries none.
+    expect(find.byTooltip('Tampering detected'), findsOneWidget);
+
+    // …and it sits in Ada's row, not Bo's.
+    final flagY = tester.getCenter(find.byTooltip('Tampering detected')).dy;
+    final adaY = tester.getCenter(find.text('Ada')).dy;
+    final boY = tester.getCenter(find.text('Bo')).dy;
+    expect((flagY - adaY).abs(), lessThan((flagY - boY).abs()));
   });
 }

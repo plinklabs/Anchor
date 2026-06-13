@@ -195,6 +195,7 @@ class SessionParticipantInfo {
     required this.declinedAt,
     required this.leftAt,
     required this.state,
+    this.tampered = false,
   });
   final String userId;
   final String displayName;
@@ -202,6 +203,11 @@ class SessionParticipantInfo {
   final DateTime? declinedAt;
   final DateTime? leftAt;
   final ParticipantLiveState state;
+
+  /// True when this student has at least one TamperDetected event in the
+  /// session (#105). Drives the roster's tamper flag; computed server-side so
+  /// it survives a dashboard reload, independent of the live SignalR push.
+  final bool tampered;
 
   factory SessionParticipantInfo.fromJson(Map<String, dynamic> json) =>
       SessionParticipantInfo(
@@ -217,6 +223,7 @@ class SessionParticipantInfo {
             ? null
             : DateTime.parse(json['leftAt'] as String),
         state: ParticipantLiveState.parse(json['state'] as String?),
+        tampered: json['tampered'] as bool? ?? false,
       );
 }
 

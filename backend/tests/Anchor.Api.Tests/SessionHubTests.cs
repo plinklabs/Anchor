@@ -421,6 +421,60 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task ReportEvent_tamper_detected_broadcasts_kind_to_session_group()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        var payload = System.Text.Json.JsonSerializer.Serialize(new { kind = "inprivate_opened" });
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.TamperDetected), payload, OccurredAt: null));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var call = Assert.Single(broadcaster.TamperDetectedCalls,
+            c => c.SessionId == session.Id && c.UserId == student.Id);
+        Assert.Equal("inprivate_opened", call.Kind);
+        Assert.Equal("Test Student", call.UserDisplayName);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var @event = await db.Events.AsNoTracking()
+            .SingleAsync(e => e.SessionId == session.Id && e.UserId == student.Id);
+        Assert.Equal(EventKind.TamperDetected, @event.Kind);
+    }
+
+    [Fact]
+    public async Task ReportEvent_tamper_detected_with_unparseable_payload_still_broadcasts_unknown()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        // No "kind" field — unlike UnblockRequest, the broadcast must NOT be
+        // skipped: a tamper happened regardless, so the teacher is still flagged
+        // with kind "unknown" (#105, design §5.4).
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.TamperDetected), "{\"oops\":true}", OccurredAt: null));
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var call = Assert.Single(broadcaster.TamperDetectedCalls,
+            c => c.SessionId == session.Id && c.UserId == student.Id);
+        Assert.Equal("unknown", call.Kind);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        Assert.True(await db.Events.AnyAsync(
+            e => e.SessionId == session.Id && e.UserId == student.Id && e.Kind == EventKind.TamperDetected));
+    }
+
+    [Fact]
     public async Task SessionStarted_REST_call_reaches_roster_members_only()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);

@@ -25,6 +25,7 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     public ConcurrentBag<AgentReconnectedPayload> AgentReconnectedCalls { get; } = new();
     public ConcurrentBag<AllowlistAmendedPayload> AllowlistAmendedCalls { get; } = new();
     public ConcurrentBag<UnblockRequestedPayload> UnblockRequestedCalls { get; } = new();
+    public ConcurrentBag<TamperDetectedPayload> TamperDetectedCalls { get; } = new();
 
     public Task SessionStartedAsync(
         SessionStartedPayload payload,
@@ -82,6 +83,12 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     {
         UnblockRequestedCalls.Add(payload);
         return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnblockRequested(payload);
+    }
+
+    public Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default)
+    {
+        TamperDetectedCalls.Add(payload);
+        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).TamperDetected(payload);
     }
 }
 

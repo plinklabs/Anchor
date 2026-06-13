@@ -208,6 +208,29 @@ the seeded teacher/student data in place:
 7. End the session from the dashboard. The background SW logs `active session
    cleared`. Any URL loads normally again.
 
+## Tamper detection
+
+Soft enforcement (design §5.4): we can't stop a student reconfiguring or
+sidestepping the extension via Edge's own `edge://extensions` page — no extension
+can hide that page, and Anchor deliberately uses **no enterprise policy** (it's
+BYOD). Instead the extension makes tampering **visible to the teacher**: during an
+active session it reports a `TamperDetected` event (an `EventKind` on the
+backend), which the dashboard surfaces as a flag on the student's live-roster row
+(#105). The flag is computed server-side, so it survives a dashboard reload.
+
+What the extension itself can witness while running:
+
+| Signal | Mechanism | Reported `kind` |
+| ------ | --------- | --------------- |
+| Site access downgraded ("On all sites" → "On click"/"On specific sites") | `chrome.permissions.onRemoved` | `host_permission_revoked` |
+| InPrivate window opened | `chrome.windows.onCreated` (`incognito: true`) | `inprivate_opened` |
+
+InPrivate detection is **best-effort**: the extension only sees incognito windows
+once it's been allowed in InPrivate — which is also the case where it still
+filters them — so the *reliable* InPrivate signal, plus "extension disabled /
+removed" (detectable only by **absence**), comes from the agent acting as an
+on-box witness (native-messaging heartbeat) in a follow-up (#146).
+
 ## Stable extension ID
 
 The extension ID is **pinned**:

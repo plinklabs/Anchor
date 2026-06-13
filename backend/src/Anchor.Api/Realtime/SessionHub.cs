@@ -292,6 +292,21 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                     user.Id, request.SessionId);
             }
         }
+        // TamperDetected pushes a live flag to the teacher's roster (#105).
+        // Unlike UnblockRequest we never skip the broadcast on a bad payload —
+        // the tamper happened regardless of whether the sub-kind parsed, and
+        // soft enforcement (§5.4) is about making it visible.
+        else if (kind == EventKind.TamperDetected)
+        {
+            await _broadcaster.TamperDetectedAsync(
+                new TamperDetectedPayload(
+                    request.SessionId,
+                    user.Id,
+                    user.DisplayName,
+                    ExtractTamperKind(payloadJson),
+                    occurredAt),
+                ct);
+        }
     }
 
     private static UnblockRequestPayloadShape? TryParseUnblockRequestPayload(string payloadJson)
@@ -320,6 +335,34 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     }
 
     private sealed record UnblockRequestPayloadShape(string Url, string Host);
+
+    /// <summary>
+    /// Pulls the tamper sub-kind out of a TamperDetected payload
+    /// (<c>{"kind":"…"}</c>). Defaults to <c>"unknown"</c> rather than throwing —
+    /// the event is still worth flagging even if the client sent a garbled
+    /// payload (#105).
+    /// </summary>
+    private static string ExtractTamperKind(string payloadJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("kind", out var k) &&
+                k.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var kind = k.GetString();
+                if (!string.IsNullOrWhiteSpace(kind))
+                    return kind.Trim();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Fall through to the default — a malformed payload still flags.
+        }
+
+        return "unknown";
+    }
 
     private async Task<User> ResolveCurrentUserAsync(CancellationToken ct)
     {

@@ -89,6 +89,25 @@ export interface SessionBundlesUpdatedPayload {
 }
 
 /**
+ * The kinds of tamper the extension can witness in-browser (#105):
+ * - `inprivate_opened` — an InPrivate window was created during a session.
+ * - `host_permission_revoked` — "Site access" was downgraded from "On all
+ *   sites", so the navigation filter lost the host access it needs.
+ * Sent as the `kind` field of a TamperDetected event's payload; the backend
+ * surfaces it verbatim on the teacher's roster. The agent reports further kinds
+ * (extension disabled/removed, on-box InPrivate) over the same event later.
+ */
+export type TamperKind = 'inprivate_opened' | 'host_permission_revoked';
+
+/**
+ * Payload the extension sends when it observes a tamper attempt during an
+ * active session. Maps to EventKind.TamperDetected on the backend (#105).
+ */
+export interface TamperDetectedPayload {
+  kind: TamperKind;
+}
+
+/**
  * Wire format for chrome.runtime messages exchanged between the background
  * service worker and the block page. Kept in one discriminated union so a
  * recipient can switch on `kind` without speculating about the shape.

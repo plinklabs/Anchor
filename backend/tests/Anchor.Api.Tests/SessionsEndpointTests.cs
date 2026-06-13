@@ -626,6 +626,34 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task GET_session_flags_tampered_participants_in_roster_snapshot()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        var tampered = scenario.Students[0];
+        var clean = scenario.Students[1];
+
+        // Only one student tampered — the flag must survive a fresh GET so the
+        // teacher's roster shows it after a dashboard reload (#105).
+        await SeedEventsAsync(session.Id, new[]
+        {
+            (tampered.Id, EventKind.TamperDetected, DateTimeOffset.UtcNow.AddMinutes(-1)),
+        });
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<SessionDetailResponse>($"/sessions/{session.Id}");
+
+        Assert.NotNull(body);
+        bool TamperedOf(Guid userId) => body!.Participants.Single(p => p.UserId == userId).Tampered;
+        Assert.True(TamperedOf(tampered.Id));
+        Assert.False(TamperedOf(clean.Id));
+    }
+
+    [Fact]
     public async Task GET_session_returns_detail_for_participating_student()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);

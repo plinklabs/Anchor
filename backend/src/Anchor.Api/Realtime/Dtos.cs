@@ -112,3 +112,21 @@ public sealed record UnblockRequestedPayload(
     string Host,
     string Url,
     DateTimeOffset RequestedAt);
+
+/// <summary>
+/// Live notification that a tamper attempt was observed on a student's machine
+/// during an active session (#105). Pushed to the session group so the teacher's
+/// live roster can flag the student without polling. The corresponding
+/// <see cref="Anchor.Domain.Events.EventKind.TamperDetected"/> event is also
+/// persisted, so the flag is recoverable from the roster snapshot after a
+/// dashboard reload. <see cref="Kind"/> is the tamper sub-kind reported by the
+/// client (e.g. <c>inprivate_opened</c>, <c>host_permission_revoked</c>);
+/// unknown values are surfaced verbatim rather than rejected, since the goal is
+/// visibility, not classification (design §5.4).
+/// </summary>
+public sealed record TamperDetectedPayload(
+    Guid SessionId,
+    Guid UserId,
+    string UserDisplayName,
+    string Kind,
+    DateTimeOffset DetectedAt);

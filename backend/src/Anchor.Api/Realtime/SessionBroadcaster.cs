@@ -15,6 +15,7 @@ public interface ISessionBroadcaster
     Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default);
     Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default);
     Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default);
+    Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default);
 }
 
 internal sealed class SessionBroadcaster : ISessionBroadcaster
@@ -79,4 +80,9 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         // session). Pushing to the session group lets any active connection
         // pick this up; the dashboard filters/groups by host.
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnblockRequested(payload);
+
+    public Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default)
+        // Session group: same routing as UnblockRequested — the owning teacher's
+        // dashboard is the consumer and may have reconnected mid-session.
+        => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).TamperDetected(payload);
 }
