@@ -59,6 +59,24 @@ public sealed class HeartbeatTracker
             (_, existing) => existing with { Reported = false });
     }
 
+    /// <summary>
+    /// Drops every witness source for a single participant. Used when a
+    /// participant leaves a session deliberately (e.g. #110 AgentKilled): once
+    /// they're gone the now-dead agent's last ping must not age into a spurious
+    /// <c>HeartbeatLost</c>, and a still-running extension is blocked from
+    /// re-recording because <c>ReportEvent</c>/<c>Heartbeat</c> now reject the
+    /// left participant.
+    /// </summary>
+    public void Clear(Guid sessionId, Guid userId)
+    {
+        foreach (var key in _entries.Keys
+                     .Where(k => k.SessionId == sessionId && k.UserId == userId)
+                     .ToArray())
+        {
+            _entries.TryRemove(key, out _);
+        }
+    }
+
     public void ClearSession(Guid sessionId)
     {
         // Drops every witness source for the session — the key includes Source,

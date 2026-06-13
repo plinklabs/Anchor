@@ -14,6 +14,10 @@ public sealed class SessionCoordinator : IAsyncDisposable
     // strings — the agent doesn't reference the backend enum.
     private const string ManualLeaveKind = "ManualLeave";
 
+    // Parses (case-insensitive) to Anchor.Domain.Events.EventKind.AgentKilled on
+    // the backend's ReportEvent (#110).
+    private const string AgentKilledKind = "AgentKilled";
+
     private readonly ISessionHubConnection _hub;
     private readonly ISessionUiHost _ui;
     private readonly TimeProvider _clock;
@@ -287,6 +291,45 @@ public sealed class SessionCoordinator : IAsyncDisposable
         {
             _log.LogInformation("Student manually left session {SessionId}", sessionId);
             SessionLeft?.Invoke(this, sessionId);
+        }
+    }
+
+    /// <summary>
+    /// The student is deliberately quitting the agent while in a session (#110).
+    /// Best-effort post of an <c>AgentKilled</c> event so the teacher's live
+    /// roster shows the departure at once instead of waiting out the
+    /// <c>HeartbeatLost</c> timeout — the agent already knows the answer at the
+    /// moment of Quit.
+    ///
+    /// Unlike <see cref="LeaveSessionManuallyAsync"/> this does NOT call
+    /// <c>LeaveSession</c> or clear local state: the process is on its way out, so
+    /// there is nothing left to tear down, and the backend marks the participant
+    /// left off the <c>AgentKilled</c> event itself. No-op outside a session.
+    /// Errors are swallowed — a flaky network must never delay or block Quit; the
+    /// caller additionally time-boxes the wait.
+    /// </summary>
+    public async Task ReportAgentKilledAsync(CancellationToken ct = default)
+    {
+        Guid sessionId;
+        lock (_gate)
+        {
+            if (_joinedSessionId is not Guid joined)
+            {
+                _log.LogDebug("ReportAgentKilledAsync no-op — not in a session.");
+                return;
+            }
+            sessionId = joined;
+        }
+
+        try
+        {
+            await _hub.ReportEventAsync(sessionId, AgentKilledKind, payloadJson: "{}", _clock.GetUtcNow(), ct)
+                .ConfigureAwait(false);
+            _log.LogInformation("Reported AgentKilled for session {SessionId} on quit", sessionId);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Reporting AgentKilled failed for {SessionId}", sessionId);
         }
     }
 

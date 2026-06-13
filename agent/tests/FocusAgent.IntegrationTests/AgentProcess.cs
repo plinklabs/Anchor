@@ -177,6 +177,30 @@ internal sealed class AgentProcess : IAsyncDisposable
         res.EnsureSuccessStatusCode();
     }
 
+    /// <summary>
+    /// Drive the agent's "Quit" action (#110) via POST /quit — the headless
+    /// stand-in for tray → Quit. Distinct from <see cref="Kill"/>: this is a
+    /// clean shutdown, so mid-session it emits a best-effort AgentKilled event
+    /// before the process exits. A hard <see cref="Kill"/> is the crash case and
+    /// emits nothing.
+    /// </summary>
+    public async Task QuitAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/quit", content: null);
+        res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>Wait for the agent process to exit (e.g. after <see cref="QuitAsync"/>).</summary>
+    public async Task WaitForExitAsync(TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        try { await _process.WaitForExitAsync(cts.Token); }
+        catch (OperationCanceledException)
+        {
+            throw new TimeoutException($"Agent did not exit within {timeout.TotalSeconds:N0}s of quit.");
+        }
+    }
+
     /// <summary>Kill the agent (e.g. the heartbeat spec's "agent goes away" trigger).</summary>
     public void Kill()
     {

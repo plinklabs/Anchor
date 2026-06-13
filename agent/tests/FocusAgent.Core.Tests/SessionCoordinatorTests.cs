@@ -299,6 +299,63 @@ public class SessionCoordinatorTests
     }
 
     [Fact]
+    public async Task ReportAgentKilled_when_joined_posts_AgentKilled_without_leaving()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var leftFired = false;
+        coordinator.SessionLeft += (_, _) => leftFired = true;
+
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        await coordinator.ReportAgentKilledAsync();
+
+        // Exactly one AgentKilled, for the joined session, with the kind the
+        // backend parses to EventKind.AgentKilled.
+        var report = Assert.Single(hub.ReportCalls);
+        Assert.Equal(payload.SessionId, report.SessionId);
+        Assert.Equal("AgentKilled", report.Kind);
+
+        // Unlike a manual leave this does not call LeaveSession, fire SessionLeft,
+        // or clear local state — the process is exiting; the backend marks the
+        // participant left off the event itself.
+        Assert.Empty(hub.LeaveCalls);
+        Assert.False(leftFired);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task ReportAgentKilled_when_not_in_a_session_is_a_no_op()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi();
+        var coordinator = NewCoordinator(hub, ui);
+
+        await coordinator.ReportAgentKilledAsync();
+
+        Assert.Empty(hub.ReportCalls);
+    }
+
+    [Fact]
+    public async Task ReportAgentKilled_swallows_a_failed_post()
+    {
+        var hub = new FakeHub { ReportThrows = new InvalidOperationException("network down") };
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        await coordinator.HandleSessionStartedAsync(Payload());
+
+        // A flaky network must never block Quit: the post is attempted but its
+        // failure must not surface as an exception to the caller.
+        await coordinator.ReportAgentKilledAsync();
+
+        Assert.Single(hub.ReportCalls);
+    }
+
+    [Fact]
     public async Task Payload_propagates_to_ui_with_placeholder_teacher_name()
     {
         var hub = new FakeHub();
@@ -404,11 +461,15 @@ public class SessionCoordinatorTests
             DeclineCalls.Add((sessionId, reason));
             return Task.CompletedTask;
         }
+        // When set, ReportEventAsync records the call then faults — lets the
+        // AgentKilled-on-quit test prove a failed post is swallowed.
+        public Exception? ReportThrows { get; set; }
+
         public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default)
         {
             ReportCalls.Add((sessionId, kind, payloadJson));
             Operations.Add($"report:{kind}");
-            return Task.CompletedTask;
+            return ReportThrows is null ? Task.CompletedTask : Task.FromException(ReportThrows);
         }
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

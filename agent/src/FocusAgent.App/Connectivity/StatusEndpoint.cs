@@ -38,6 +38,9 @@ namespace FocusAgent.App.Connectivity;
 ///   POST /leave -> the student "Leave session" button: emits ManualLeave and
 ///                  ends the session locally while the agent keeps running.
 ///   POST /close -> the window "Close" button: hides the window to the tray.
+///   POST /quit  -> the tray/window "Quit" action (#110): shuts the agent down
+///                  cleanly, which emits a best-effort AgentKilled event first
+///                  if quit happens mid-session.
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
@@ -48,6 +51,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly ILogger<StatusEndpoint> _log;
     private readonly Func<CancellationToken, Task>? _onLeaveSession;
     private readonly Action? _onCloseWindow;
+    private readonly Action? _onQuit;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -59,7 +63,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         InPrivateWitnessMonitor inPrivate,
         ILogger<StatusEndpoint> log,
         Func<CancellationToken, Task>? onLeaveSession = null,
-        Action? onCloseWindow = null)
+        Action? onCloseWindow = null,
+        Action? onQuit = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -68,6 +73,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _log = log;
         _onLeaveSession = onLeaveSession;
         _onCloseWindow = onCloseWindow;
+        _onQuit = onQuit;
         _listener = new HttpListener();
     }
 
@@ -121,6 +127,18 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 _onCloseWindow?.Invoke();
                 ctx.Response.StatusCode = _onCloseWindow is null ? 404 : 204;
                 ctx.Response.Close();
+                return;
+            }
+
+            if (method == "POST" && path == "/quit")
+            {
+                // Respond *before* triggering quit: ShutdownCleanly tears the
+                // process down, so the 204 must already be on the wire. The
+                // callback marshals onto the UI thread (see App.OnLaunched).
+                var canQuit = _onQuit is not null;
+                ctx.Response.StatusCode = canQuit ? 204 : 404;
+                ctx.Response.Close();
+                if (canQuit) _onQuit!.Invoke();
                 return;
             }
 

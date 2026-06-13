@@ -513,6 +513,50 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task ReportEvent_agent_killed_marks_participant_left_evicts_heartbeat_and_broadcasts()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        // A live heartbeat first, so we can prove AgentKilled evicts it — otherwise
+        // the now-dead agent's last ping would age into a spurious HeartbeatLost.
+        await connection.InvokeAsync("Heartbeat", session.Id);
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.True(tracker.TryGet(session.Id, student.Id, out _));
+
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.AgentKilled), PayloadJson: "{}", OccurredAt: null));
+
+        // Pushed to the teacher's roster as a Left transition, without waiting for
+        // the HeartbeatLost timeout.
+        // Exactly one Left transition for this participant — JoinSession above
+        // already emitted a Joined for the same (session, user), so scope to Left.
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var call = Assert.Single(broadcaster.ParticipantStateChangedCalls,
+            c => c.SessionId == session.Id && c.UserId == student.Id
+                 && c.State == nameof(ParticipantLiveState.Left));
+        Assert.Equal("Test Student", call.DisplayName);
+
+        // Heartbeat tracking dropped: no stale-out into a spurious HeartbeatLost.
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        // Participant marked left so the GET roster snapshot resolves to Left
+        // (the resolver keys off LeftAt) and agrees with the live broadcast.
+        var participant = await db.SessionParticipants.AsNoTracking()
+            .SingleAsync(p => p.SessionId == session.Id && p.UserId == student.Id);
+        Assert.NotNull(participant.LeftAt);
+        // The event itself is persisted as the durable record.
+        Assert.True(await db.Events.AnyAsync(
+            e => e.SessionId == session.Id && e.UserId == student.Id && e.Kind == EventKind.AgentKilled));
+    }
+
+    [Fact]
     public async Task SessionStarted_REST_call_reaches_roster_members_only()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);

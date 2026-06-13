@@ -138,7 +138,11 @@ public partial class App : Application
                     // without UI automation. Loopback + dev-only, like /status.
                     onLeaveSession: ct => _coordinator.LeaveSessionManuallyAsync(ct),
                     onCloseWindow: () => _mainWindow?.DispatcherQueue.TryEnqueue(
-                        () => _mainWindow!.HideToTray()));
+                        () => _mainWindow!.HideToTray()),
+                    // #110: drive tray → Quit headlessly. ShutdownCleanly touches
+                    // the window and Application.Exit, so it must run on the UI
+                    // thread — same marshalling as onCloseWindow above.
+                    onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly));
                 _statusEndpoint.Start(port);
             }
         }
@@ -211,7 +215,31 @@ public partial class App : Application
         // Let the main window's close-to-tray interception step aside for the
         // genuine exit, otherwise Exit() would just hide it (#102).
         _mainWindow?.AllowClose();
+        ReportAgentKilledBeforeExit();
         Exit();
+    }
+
+    /// <summary>
+    /// #110: if the student is quitting mid-session, tell the backend it was a
+    /// deliberate departure (an <c>AgentKilled</c> event) so the teacher's roster
+    /// updates immediately instead of waiting out the <c>HeartbeatLost</c>
+    /// timeout. Time-boxed and best-effort: the bounded wait below is the only
+    /// thing standing between a slow or failing network and the student's Quit, so
+    /// a stalled report can never delay process exit. No-op outside a session
+    /// (the coordinator gates on <c>JoinedSessionId</c>).
+    /// </summary>
+    private void ReportAgentKilledBeforeExit()
+    {
+        if (_coordinator is not { } coordinator) return;
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+            coordinator.ReportAgentKilledAsync(cts.Token).Wait(cts.Token);
+        }
+        catch
+        {
+            // Best-effort: a timeout (token fired) or any failure must not stop Quit.
+        }
     }
 
     private static AgentConnectionState MapToTrayState(ConnectionStatus status) => status switch

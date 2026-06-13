@@ -319,6 +319,32 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                     occurredAt),
                 ct);
         }
+        // AgentKilled (#110): the student deliberately quit the agent mid-session.
+        // Mark the participant left so the roster resolves to Left immediately —
+        // the live-state resolver keys off LeftAt, and the dashboard re-fetches
+        // that snapshot on the broadcast below, so without it the Left transition
+        // would flash and then revert to Joined. Drop heartbeat tracking too, so
+        // the now-dead agent's last ping can't age into a spurious HeartbeatLost
+        // after they've already left. The persisted Event row above is the
+        // durable record; this is the live push.
+        else if (kind == EventKind.AgentKilled)
+        {
+            var participant = await _db.SessionParticipants
+                .FirstOrDefaultAsync(p => p.SessionId == request.SessionId && p.UserId == user.Id, ct);
+            if (participant is not null && participant.LeftAt is null)
+            {
+                participant.LeftAt = occurredAt;
+                await _db.SaveChangesAsync(ct);
+            }
+
+            _heartbeats.Clear(request.SessionId, user.Id);
+
+            await _broadcaster.ParticipantStateChangedAsync(
+                new ParticipantStateChangedPayload(
+                    request.SessionId, user.Id, user.DisplayName,
+                    nameof(ParticipantLiveState.Left), occurredAt),
+                ct);
+        }
     }
 
     private static UnblockRequestPayloadShape? TryParseUnblockRequestPayload(string payloadJson)
