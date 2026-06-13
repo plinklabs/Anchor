@@ -426,8 +426,10 @@ class _RosterPane extends StatelessWidget {
             onSave: onSaveCodes,
           ),
           const SizedBox(height: 16),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            crossAxisAlignment: WrapCrossAlignment.start,
             children: [
               AddStudentSearch(
                 onSearch: onSearch,
@@ -435,7 +437,6 @@ class _RosterPane extends StatelessWidget {
                 disabled: !scopeReady,
                 disabledReason: 'Set school + code first',
               ),
-              const SizedBox(width: 12),
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: OutlinedButton.icon(
@@ -444,7 +445,6 @@ class _RosterPane extends StatelessWidget {
                   onPressed: scopeReady ? onImport : null,
                 ),
               ),
-              const SizedBox(width: 12),
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: FilledButton.icon(
@@ -518,8 +518,10 @@ class _ScopeRow extends StatelessWidget {
       ...options,
       if (editSchoolTag != null && editSchoolTag!.isNotEmpty) editSchoolTag!,
     }.toList();
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      crossAxisAlignment: WrapCrossAlignment.end,
       children: [
         SizedBox(
           width: 220,
@@ -540,7 +542,6 @@ class _ScopeRow extends StatelessWidget {
             onChanged: saving ? null : onSchoolChanged,
           ),
         ),
-        const SizedBox(width: 12),
         SizedBox(
           width: 160,
           child: TextField(
@@ -553,17 +554,21 @@ class _ScopeRow extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(width: 12),
-        FilledButton.icon(
-          icon: saving
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.save),
-          label: const Text('Save'),
-          onPressed: (!saving && dirty) ? onSave : null,
+        // Bottom-pad the Save button so it lines up with the field baselines
+        // when the controls sit on one row; harmless once they wrap.
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: FilledButton.icon(
+            icon: saving
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.save),
+            label: const Text('Save'),
+            onPressed: (!saving && dirty) ? onSave : null,
+          ),
         ),
       ],
     );

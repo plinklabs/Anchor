@@ -222,6 +222,59 @@ void main() {
   );
 
   testWidgets(
+    'scope + action rows reflow without overflow when the editor pane is narrow (#151)',
+    (tester) async {
+      // The list pane (260) + divider (1) + 16px padding each side eat ~293px,
+      // so a 750px window leaves the editor ~457px — wide enough for the 420px
+      // search field but narrower than the ~492px scope row. With the old fixed
+      // `Row`s this tripped a "RIGHT OVERFLOWED" RenderFlex error; the `Wrap`s
+      // reflow instead.
+      tester.view.physicalSize = const Size(750, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final klass = ClassSummary(
+        id: 'c1',
+        name: '3A',
+        schoolYear: '2025-2026',
+        schoolTag: 'SSM',
+        classCode: '3A',
+      );
+      final roster = ClassMembersResponse(
+        id: 'c1',
+        name: '3A',
+        schoolYear: '2025-2026',
+        schoolTag: 'SSM',
+        classCode: '3A',
+        members: const [],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ClassesPage(
+            sessions: _FakeSessions([klass]),
+            classes: _FakeClasses(roster, schools: const ['SSM', 'SJI']),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The scope + action controls all rendered...
+      expect(find.text('School'), findsOneWidget);
+      expect(find.text('Class code'), findsOneWidget);
+      expect(find.text('Save'), findsOneWidget);
+      expect(find.text('Import CSV'), findsOneWidget);
+      expect(find.text('Populate from Graph'), findsOneWidget);
+
+      // ...and nothing overflowed. A RenderFlex overflow surfaces through
+      // FlutterError, which the binding stashes here; before the fix this was
+      // non-null.
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'Populate from Graph enabled once scope is saved and calls bulkImportFromDirectory',
     (tester) async {
       tester.view.physicalSize = const Size(1600, 1000);
