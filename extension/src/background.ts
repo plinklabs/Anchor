@@ -3,6 +3,7 @@ import { SessionHeartbeat } from './shared/heartbeat';
 import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
+import { selectTabsToRestore } from './shared/tab-restore';
 import { loadSettings } from './shared/settings';
 import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
 import { WitnessClient, WITNESS_HOST_NAME } from './shared/witness';
@@ -126,6 +127,40 @@ async function handleSessionEnded(sessionId: string): Promise<void> {
   }
   await clearActiveSession();
   log.info('active session cleared', { sessionId });
+  await restoreRedirectedTabs(sessionId);
+}
+
+// On session end, navigate any tab Anchor parked on the block page for this
+// session back to the page it was showing before — the original URL is encoded
+// in the block-page URL (#121), so no separate state store is needed.
+async function restoreRedirectedTabs(sessionId: string): Promise<void> {
+  let tabs: chrome.tabs.Tab[];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch (err) {
+    log.error('tab restore failed: tabs.query rejected', err);
+    return;
+  }
+
+  const toRestore = selectTabsToRestore(
+    tabs,
+    chrome.runtime.getURL(''),
+    BLOCK_PAGE_FILE,
+    sessionId,
+  );
+  if (toRestore.length === 0) return;
+
+  log.info('restoring tabs redirected during the ended session', {
+    sessionId,
+    count: toRestore.length,
+  });
+  for (const { tabId, url } of toRestore) {
+    try {
+      await chrome.tabs.update(tabId, { url });
+    } catch (err) {
+      log.error('tabs.update to restore original url failed', { tabId, err });
+    }
+  }
 }
 
 async function handleAllowlistAmended(payload: AllowlistAmendedPayload): Promise<void> {
