@@ -236,20 +236,28 @@ The ID is a pure function of that public key:
 ### Signing key
 
 The matching **private key signs the packed `.crx`** and must never enter the
-repo (`*.pem` / `*.crx` are gitignored). It is kept in two places:
+repo (`*.pem` / `*.crx` are gitignored). Note the ID above is a function of the
+*public* key (committed here) — the private key plays no part in it, so the ID
+stays pinned even if the private key is unavailable. The private key is kept in
+two places:
 
-- **Authoritative copy:** offline in the school's secret store — the source of
-  truth, never on a dev machine.
-- **CI:** a GitHub Actions secret `EDGE_EXTENSION_PRIVATE_KEY` (PEM), consumed by
-  the future `.crx` packaging/signing workflow. Set it with
+- **CI / source of truth:** a GitHub Actions secret `EDGE_EXTENSION_PRIVATE_KEY`
+  (PEM), consumed by the future `.crx` packaging/signing workflow so signing
+  happens in CI and the PEM never sits on a dev machine. Set it with
   `gh secret set EDGE_EXTENSION_PRIVATE_KEY --body "<pem>"` (pass `--body`; never
-  pipe — PowerShell appends a CRLF that corrupts the secret).
+  pipe — PowerShell appends a CRLF that corrupts the secret). GH secrets are
+  write-only, so this copy can't be read back — hence the second copy below.
+- **Retrievable backup:** a secure note in the maintainer's password manager
+  (cloud-backed, survives hardware loss). This is the copy to grab for a manual
+  local `.crx` pack.
 
-**Regenerating the key changes the ID** and invalidates every deployed policy
-entry, so treat it as a last resort. If you must, regenerate the keypair, replace
-`manifest.json` `key` with the new base64 SPKI public key, and update the ID in
-this file, `src/manifest.test.ts`, and `e2e/config.ts` together (the tests will
-fail until all three agree). The public key + ID were produced with Node:
+**Losing the private key is recoverable, not catastrophic.** You can't produce a
+new `.crx` with the *same* ID without it, but for an internal force-install
+deployment the fallback is cheap: regenerate the keypair, replace `manifest.json`
+`key` with the new base64 SPKI public key, update the ID in this file,
+`src/manifest.test.ts`, and `e2e/config.ts` together (the tests fail until all
+three agree), and re-push the new ID in the Edge policy entry. The public key +
+ID were produced with Node:
 
 ```js
 const { generateKeyPairSync, createHash } = require('node:crypto');
