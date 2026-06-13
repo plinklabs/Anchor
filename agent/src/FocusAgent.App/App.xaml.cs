@@ -3,6 +3,7 @@ using FocusAgent.App.Connectivity;
 using FocusAgent.App.Focus;
 using FocusAgent.App.Realtime;
 using FocusAgent.App.Sessions;
+using FocusAgent.App.Tamper;
 using FocusAgent.App.Tray;
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
@@ -11,6 +12,7 @@ using FocusAgent.Core.Logging;
 using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
+using FocusAgent.Core.Tamper;
 using FocusAgent.Native;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -32,6 +34,7 @@ public partial class App : Application
     private TrayIconHost? _tray;
     private SessionCoordinator? _coordinator;
     private SessionHeartbeatService? _heartbeat;
+    private ExtensionWitnessMonitor? _witnessMonitor;
     private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
@@ -81,6 +84,12 @@ public partial class App : Application
             // its SessionJoined / SessionLeft subscriptions before the first
             // SessionStarted broadcast can possibly arrive.
             _heartbeat = _host.Services.GetRequiredService<SessionHeartbeatService>();
+            // Resolve + start the extension witness eagerly (#146 part 1) so the
+            // named-pipe server is listening before the native host can connect,
+            // and so its SessionCoordinator-backed gate is wired before the first
+            // session. Reports only fire on a drop during a joined session.
+            _witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
+            _ = _witnessMonitor.StartAsync();
             // Also resolve the rehydration service eagerly so it's ready when
             // the connection manager fires its first Connected event below.
             _rehydration = _host.Services.GetRequiredService<SessionRehydrationService>();
@@ -411,6 +420,20 @@ public partial class App : Application
         builder.Services.AddSingleton<IFocusEventReporter, SignalRFocusEventReporter>();
         builder.Services.AddSingleton<IFocusOverlay, WinUiFocusOverlay>();
         builder.Services.AddSingleton<FocusSessionController>();
+
+        // #146 part 1 -- agent-as-witness tamper detection. The named-pipe
+        // transport hosts the link the browser's native messaging host connects
+        // to; the monitor turns a drop during a joined session into a
+        // TamperDetected{extension_disabled} report. JoinedSessionId (not
+        // ActiveSessionId) gates it: the hub only accepts events from a joined
+        // participant, and a drop outside a session is just a closed browser.
+        builder.Services.AddSingleton<ITamperReporter, SignalRTamperReporter>();
+        builder.Services.AddSingleton<IExtensionWitnessTransport, NamedPipeWitnessTransport>();
+        builder.Services.AddSingleton(sp => new ExtensionWitnessMonitor(
+            sp.GetRequiredService<IExtensionWitnessTransport>(),
+            sp.GetRequiredService<ITamperReporter>(),
+            () => sp.GetRequiredService<SessionCoordinator>().JoinedSessionId,
+            sp.GetRequiredService<ILogger<ExtensionWitnessMonitor>>()));
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();
         Directory.CreateDirectory(logDir);
