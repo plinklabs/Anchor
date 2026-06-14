@@ -1,11 +1,11 @@
 {
-    "name": "anchor_dashboard",
-    "short_name": "anchor_dashboard",
+    "name": "Anchor",
+    "short_name": "Anchor",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FAF7F2",
+    "theme_color": "#FAF7F2",
+    "description": "Anchor — keep a class focused. Start a session and see who's connected.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

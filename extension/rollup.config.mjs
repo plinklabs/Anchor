@@ -19,6 +19,7 @@ export default [
         targets: [
           { src: 'src/manifest.json', dest: 'dist' },
           { src: 'src/content/block-page.html', dest: 'dist' },
+          { src: 'src/icons', dest: 'dist' },
         ],
       }),
     ],
