@@ -20,6 +20,13 @@ export default [
           { src: 'src/manifest.json', dest: 'dist' },
           { src: 'src/content/block-page.html', dest: 'dist' },
           { src: 'src/icons', dest: 'dist' },
+          // Design-system vanilla binding (AF3, #164): the block page links
+          // plink.css from here. Copied with assets/fonts kept as a sibling of
+          // the stylesheet so its `../assets/fonts/…` @font-face paths resolve
+          // unmodified. (Upstream ships it under dist/; vendored as css/ here so
+          // the extension's dist/ .gitignore can't swallow it.) See
+          // src/vendor/plink-design-system/README.md for provenance.
+          { src: 'src/vendor/plink-design-system', dest: 'dist/vendor' },
         ],
       }),
     ],

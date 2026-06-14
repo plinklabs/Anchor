@@ -38,6 +38,16 @@ dependencies:
   http: ^1.6.0
   signalr_core: ^1.1.2
 
+  # Plink Labs design system — Flutter binding (PlinkTheme + brand widgets +
+  # bundled fonts). Not on pub.dev; consumed as a git dependency (AF3, #164).
+  # Pinned to the upstream develop commit where the DS-2 binding lives until it
+  # merges to plink-design-system main.
+  plink_design_system:
+    git:
+      url: https://github.com/plinklabs/plink-design-system.git
+      path: bindings/flutter
+      ref: 527e2dc0e350b1a21b78d6cefcfd847c16e9f501
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

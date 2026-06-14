@@ -1,0 +1,376 @@
+/* ============================================================================
+   Plink Labs — vanilla web binding  ·  dist/plink.css
+   ----------------------------------------------------------------------------
+   A single, framework-free stylesheet: brand tokens + webfonts + plain
+   component classes (button / badge / card / input / eyebrow) + the ping.
+   Link THIS one file from any plain HTML/CSS/TS surface (e.g. a browser
+   extension) — no React, no _ds_bundle.js required.
+
+   The component classes mirror the `.pl-*` classes emitted by the React
+   components 1:1, so vanilla and React surfaces render identically. The one
+   addition is `.plink-ink` — a base class that puts a whole section on ink
+   (the first consumer, the Anchor block page, renders on ink).
+
+   Font paths are relative to this file: it expects `assets/fonts/` one level
+   up (the repo layout). A consumer copying this into an extension should copy
+   `assets/fonts/` alongside, keeping `../assets/fonts/…` resolvable, or edit
+   the @font-face `src` paths below.
+
+   Generated counterpart of the React layer — keep in sync with tokens/ and
+   components/ if those change. See readme.md / issue DS-4.
+   ========================================================================== */
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Webfonts  (mirrors tokens/fonts.css — self-hosted, OFL, no CDN)
+   ────────────────────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 300 650;
+  font-display: swap;
+  src: url('../assets/fonts/fraunces/Fraunces-Variable.woff2') format('woff2'),
+       url('../assets/fonts/fraunces/Fraunces-Variable.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Hanken Grotesk';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../assets/fonts/hanken-grotesk/HankenGrotesk-Variable.woff2') format('woff2'),
+       url('../assets/fonts/hanken-grotesk/HankenGrotesk-Variable.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Space Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/space-mono/SpaceMono-Regular.woff2') format('woff2'),
+       url('../assets/fonts/space-mono/SpaceMono-Regular.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Space Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../assets/fonts/space-mono/SpaceMono-Bold.woff2') format('woff2'),
+       url('../assets/fonts/space-mono/SpaceMono-Bold.ttf') format('truetype');
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Tokens  (mirrors tokens/colors.css · typography.css · spacing.css)
+   ────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* ── colour: ink + paper do ~90%; magenta is the spark (<5% of pixels) ── */
+  --ink: #1B1B23;
+  --paper: #FAF7F2;
+  --paper-2: #F3EFE7;
+  --paper-3: #ECE7DC;
+
+  --ink-80: #3A3A42;
+  --ink-60: #6E6A62;
+  --muted:  #9A958B;
+  --hairline: rgba(27, 27, 35, 0.14);
+  --hairline-strong: rgba(27, 27, 35, 0.26);
+
+  --magenta: #DB2777;
+  --magenta-press: #C01F68;
+  --magenta-on-dark: #EC4899;
+
+  --on-ink: #FAF7F2;
+  --on-ink-muted: #8E8A82;
+  --hairline-on-ink: rgba(250, 247, 242, 0.16);
+
+  /* semantic aliases */
+  --surface: var(--paper);
+  --surface-raised: var(--paper-2);
+  --surface-inset: var(--paper-3);
+  --surface-ink: var(--ink);
+  --text: var(--ink);
+  --text-muted: var(--ink-60);
+  --text-caption: var(--muted);
+  --border: var(--hairline);
+  --border-strong: var(--hairline-strong);
+  --accent: var(--magenta);
+  --accent-press: var(--magenta-press);
+  --focus-ring: var(--magenta);
+
+  /* per-product accent (DS-5): foundations + ONE per-app accent. An app
+     overrides this one token (and supplies its own product mark) to layer
+     its identity on top. Reserved for the product mark/lockup and ONE thin
+     identity element (.pl-identity-rule) — it must NEVER become a second
+     spark (primary action, ping, focus ring stay magenta). Defaults to ink
+     so an un-overridden app renders neutrally. See readme.md / dist/README. */
+  --product-accent: var(--ink);
+
+  /* ── type ── */
+  --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --font-body: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Space Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --display-1: 5.4rem;
+  --display-2: 3.4rem;
+  --display-3: 2.4rem;
+  --display-1-lh: 0.98;
+  --display-2-lh: 1.02;
+  --display-3-lh: 1.06;
+  --display-tracking: -0.018em;
+  --display-weight: 300;
+
+  --text-xl: 1.1875rem;
+  --text-lg: 1.0625rem;
+  --text-base: 1rem;
+  --text-sm: 0.875rem;
+  --body-lh: 1.5;
+  --body-weight: 400;
+  --body-weight-medium: 500;
+  --body-weight-strong: 600;
+
+  --label: 0.75rem;
+  --label-sm: 0.6875rem;
+  --label-tracking: 0.14em;
+  --label-tracking-tight: 0.04em;
+  --label-weight: 400;
+  --label-weight-strong: 700;
+
+  /* ── spacing / radius / motion ── */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 5.25rem;
+  --space-10: 7rem;
+  --baseline: 0.5rem;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 0;
+  --border-width: 1px;
+
+  --measure: 46ch;
+  --container: 1120px;
+  --gutter: 40px;
+
+  --ease-ping: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 140ms;
+  --dur: 220ms;
+  --dur-ping: 1900ms;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   The ink treatment, as a base class.
+   Put `.plink-ink` on a section/container to render it (and any `.pl-*`
+   components inside) on the full-bleed ink panel. It re-maps the palette so
+   default components adopt their on-ink form automatically — no per-component
+   modifier needed. Background/colour use literals here because the same rule
+   re-defines --ink/--paper (a `var()` would resolve to the new value).
+   ────────────────────────────────────────────────────────────────────────── */
+.plink-ink {
+  background: #1B1B23;   /* --ink   */
+  color: #FAF7F2;        /* --on-ink */
+
+  --paper:   #1B1B23;
+  --paper-2: #232330;
+  --paper-3: #2B2B38;
+
+  --ink:     #FAF7F2;
+  --ink-80:  #D8D4CC;
+  --ink-60:  #B8B4AC;
+  --muted:   #8E8A82;
+
+  --hairline: rgba(250, 247, 242, 0.16);
+  --hairline-strong: rgba(250, 247, 242, 0.28);
+  --border: var(--hairline);
+  --border-strong: var(--hairline-strong);
+
+  --magenta: #EC4899;
+  --magenta-press: #F472B6;
+  --accent: var(--magenta);
+  --accent-press: var(--magenta-press);
+  --focus-ring: var(--magenta);
+
+  --text: var(--ink);
+  --text-muted: var(--ink-60);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Button  (mirrors components/core/Button.jsx)
+   ────────────────────────────────────────────────────────────────────────── */
+.pl-btn{
+  font-family: var(--font-body);
+  font-weight: var(--body-weight-strong);
+  font-size: var(--text-sm);
+  line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+  padding: 0.75rem 1.15rem;
+  border-radius: var(--radius);
+  border: var(--border-width) solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-standard),
+              color var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-standard),
+              border-color var(--dur-fast) var(--ease-standard);
+  -webkit-font-smoothing: antialiased;
+}
+.pl-btn:active{ transform: translateY(0.5px) scale(0.985); }
+.pl-btn:focus-visible{ outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.pl-btn[disabled]{ opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.pl-btn--primary{ background: var(--magenta); color: #fff; }
+.pl-btn--primary:hover:not([disabled]){ background: var(--magenta-press); }
+
+.pl-btn--secondary{ background: var(--ink); color: var(--paper); }
+.pl-btn--secondary:hover:not([disabled]){ background: #2c2c36; }
+
+.pl-btn--outline{ background: transparent; color: var(--ink); border-color: var(--border-strong); }
+.pl-btn--outline:hover:not([disabled]){ background: rgba(27,27,35,0.04); border-color: var(--ink); }
+
+.pl-btn--ghost{
+  background: transparent; color: var(--ink);
+  font-family: var(--font-mono); font-weight: 400; font-size: var(--text-sm);
+  padding: 0.75rem 0.4rem; letter-spacing: var(--label-tracking-tight);
+}
+.pl-btn--ghost:hover:not([disabled]){ color: var(--magenta); }
+
+.pl-btn--sm{ padding: 0.5rem 0.8rem; font-size: var(--text-sm); }
+.pl-btn--lg{ padding: 0.95rem 1.5rem; font-size: var(--text-base); }
+.pl-btn--block{ width: 100%; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Badge  (mirrors components/core/Badge.jsx)
+   ────────────────────────────────────────────────────────────────────────── */
+.pl-badge{
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-family: var(--font-mono); font-size: var(--label-sm);
+  letter-spacing: var(--label-tracking-tight);
+  text-transform: uppercase;
+  padding: 0.28rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: var(--border-width) solid transparent;
+  white-space: nowrap; line-height: 1;
+}
+.pl-badge--outline{ color: var(--ink-60); border-color: var(--border-strong); background: transparent; }
+.pl-badge--ink{ color: var(--paper); background: var(--ink); }
+.pl-badge--accent{ color: #fff; background: var(--magenta); }
+.pl-badge--spark{ color: var(--magenta); border-color: var(--magenta); background: transparent; }
+.pl-badge__dot{ width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Card  (mirrors components/core/Card.jsx)
+   ────────────────────────────────────────────────────────────────────────── */
+.pl-card{
+  position: relative;
+  background: var(--paper);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  color: var(--ink);
+}
+.pl-card--raised{ background: var(--paper-2); }
+.pl-card--ink{ background: var(--ink); color: var(--on-ink); border-color: var(--hairline-on-ink); }
+.pl-card--interactive{ transition: border-color var(--dur-fast) var(--ease-standard); cursor: pointer; }
+.pl-card--interactive:hover{ border-color: var(--ink); }
+.pl-card--ink.pl-card--interactive:hover{ border-color: var(--magenta-on-dark); }
+.pl-card__num{
+  position: absolute; top: var(--space-4); right: var(--space-4);
+  font-family: var(--font-mono); font-size: var(--label-sm);
+  color: var(--muted); letter-spacing: var(--label-tracking-tight);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Input / field  (mirrors components/forms/Input.jsx)
+   ────────────────────────────────────────────────────────────────────────── */
+.pl-field{ display: flex; flex-direction: column; gap: 0.4rem; }
+.pl-field__label{
+  font-family: var(--font-mono); font-size: var(--label); letter-spacing: var(--label-tracking-tight);
+  text-transform: uppercase; color: var(--muted);
+}
+.pl-input{
+  font-family: var(--font-body); font-size: var(--text-base); color: var(--ink);
+  background: var(--paper); border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--radius); padding: 0.7rem 0.85rem; width: 100%; box-sizing: border-box;
+  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
+  -webkit-font-smoothing: antialiased;
+}
+.pl-input::placeholder{ color: var(--muted); }
+.pl-input:hover{ border-color: var(--ink); }
+.pl-input:focus{ outline: none; border-color: var(--magenta); box-shadow: 0 0 0 3px rgba(219,39,119,0.18); }
+.pl-input[disabled]{ opacity: 0.5; cursor: not-allowed; }
+.pl-input--invalid{ border-color: var(--magenta); }
+textarea.pl-input{ resize: vertical; min-height: 5rem; line-height: var(--body-lh); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Eyebrow  (mirrors components/brand/Eyebrow.jsx)
+   ────────────────────────────────────────────────────────────────────────── */
+.pl-eyebrow{
+  display: inline-flex; align-items: center; gap: 0.65rem;
+  font-family: var(--font-mono); font-size: var(--label);
+  letter-spacing: var(--label-tracking); text-transform: uppercase;
+  color: var(--ink); margin: 0;
+}
+.pl-eyebrow__dot{ width: 9px; height: 9px; border-radius: 50%; background: var(--magenta); flex: none; }
+.pl-eyebrow--on-ink{ color: var(--on-ink); }
+.pl-eyebrow--on-ink .pl-eyebrow__dot{ background: var(--magenta-on-dark); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Identity rule — the one per-product identity element (DS-5)
+   A thin horizontal bar in the per-product accent, for an app to mark its own
+   surface (typically pinned to the very top of the app shell / window chrome).
+   Besides the app's own product mark/lockup, this is the ONLY element the
+   product accent is allowed to colour — it is not a divider and not a spark.
+   Set the colour per app by overriding `--product-accent` (see :root); it
+   defaults to ink, so without an override it reads as a plain ink hairline-bar.
+   Markup:  <div class="pl-identity-rule" aria-hidden="true"></div>
+   ────────────────────────────────────────────────────────────────────────── */
+.pl-identity-rule{
+  height: 2px;
+  width: 100%;
+  background: var(--product-accent);
+  border: 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Ping — the signature concentric-ring pulse  (mirrors components/brand/Ping.jsx)
+   Framework-free: size via the `--pl-ping-size` custom property (default 28px)
+   instead of inline width/height, so no JS is needed.
+   Markup:
+     <span class="pl-ping pl-ping--pulse" aria-hidden="true">
+       <span class="pl-ping__ring"></span>
+       <span class="pl-ping__ring b"></span>
+       <span class="pl-ping__core"></span>
+     </span>
+   For a static bullet, use `pl-ping--static` with a single ring.
+   ────────────────────────────────────────────────────────────────────────── */
+.pl-ping{
+  --pl-ping-size: 28px;
+  display: inline-grid; place-items: center; position: relative; line-height: 0;
+  width: var(--pl-ping-size); height: var(--pl-ping-size);
+}
+.pl-ping__ring{
+  position: absolute; inset: 0; margin: auto;
+  border-radius: 50%; border: 2px solid var(--magenta);
+  transform-origin: center;
+}
+.pl-ping__core{
+  width: calc(var(--pl-ping-size) * 0.26); height: calc(var(--pl-ping-size) * 0.26);
+  min-width: 4px; min-height: 4px;
+  border-radius: 50%; background: var(--magenta);
+}
+.pl-ping--on-ink .pl-ping__ring{ border-color: var(--magenta-on-dark); }
+.pl-ping--on-ink .pl-ping__core{ background: var(--magenta-on-dark); }
+.pl-ping--static .pl-ping__ring{ opacity: 0.45; transform: scale(0.72); }
+@media (prefers-reduced-motion: no-preference){
+  .pl-ping--pulse .pl-ping__ring{ animation: pl-ping-kf var(--dur-ping) var(--ease-ping) infinite; }
+  .pl-ping--pulse .pl-ping__ring.b{ animation-delay: calc(var(--dur-ping) / -2); }
+}
+@keyframes pl-ping-kf{
+  0%{ transform: scale(0.3); opacity: 0.55; }
+  100%{ transform: scale(1); opacity: 0; }
+}

@@ -24,7 +24,13 @@ jobs:
     # runner has a desktop session, which the agent's WinUI bootstrap needs.
     runs-on: windows-latest
     steps:
+      # submodules: the agent references the design-system WinUI binding
+      # (PlinkDesignSystem.csproj) from a git submodule under
+      # agent/external/plink-design-system (AF3, #164). Without this the build
+      # fails with "project file ... was not found".
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4

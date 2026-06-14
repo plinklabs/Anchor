@@ -7,7 +7,22 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+                <!-- The whole Plink Labs design-system WinUI binding in one merge
+                     (AF3, #164): colour brushes incl. the full ink/on-ink family,
+                     the type ramp, control styles, and the bundled brand fonts.
+                     The agent's windows are student-facing, so they compose on
+                     the DS ink treatment (ANCHOR_BRAND.md §3). -->
+                <ResourceDictionary Source="ms-appx:///PlinkDesignSystem/PlinkResources.xaml" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- DS-5: Anchor layers its identity on the foundations by overriding
+                 the one per-product accent slot — the deep indigo, on its ink
+                 value (#7E80D2, ANCHOR_BRAND.md §2) since the agent renders on
+                 ink. Reserved for the product mark and the one identity rule; the
+                 magenta spark is untouched. Defined after the merge so it wins
+                 over the binding's neutral (ink) default. -->
+            <Color x:Key="PlinkProductAccentColor">#FF7E80D2</Color>
+            <SolidColorBrush x:Key="PlinkProductAccentBrush" Color="{StaticResource PlinkProductAccentColor}" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>
