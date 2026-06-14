@@ -197,6 +197,27 @@ To smoke-test the Production layer locally, fill the placeholders in a copy of
 `appsettings.Production.json` next to the built exe and launch with
 `DOTNET_ENVIRONMENT=Production`.
 
+#### Backend URL handed to the extension (#204)
+
+The browser extension is **backend-agnostic**: one published Edge listing serves
+every fork, so it learns which backend to target from the on-box agent at
+runtime rather than baking the URL in. The agent's native-messaging witness host
+(`anchor-witness-host.exe`) hands the URL to the extension over the existing
+witness channel as soon as the link opens — and only the registered host can
+reach the extension's port, so an arbitrary web page can't repoint it.
+
+The host resolves which URL to send, in order:
+
+1. `ANCHOR_WITNESS_BACKEND_URL` env var — the per-deployment source the agent
+   installer sets (and the extension e2e harness sets to point at its throwaway
+   backend).
+2. a `backend-url.json` file (`{"backendUrl":"https://…"}`) next to the host exe.
+3. the dev fallback `http://localhost:5276` so a plain dev loop works before any
+   deployment config exists.
+
+A production installer should set `ANCHOR_WITNESS_BACKEND_URL` (or drop the file)
+to the same backend the agent's `Backend:BaseUrl` targets.
+
 ### Single-machine dev verification
 
 Verifying student-agent behaviour (`SessionStarted`, the join-confirmation
