@@ -141,8 +141,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Real navigation from home into the Classes editor.
-      final classesNav = find.widgetWithText(TextButton, 'Manage classes');
+      // Real navigation from home into the Classes editor, via the shared
+      // app-bar nav (AD1, #166).
+      final classesNav = find.byKey(const Key('nav-classes'));
       expect(classesNav, findsOneWidget);
       await tester.tap(classesNav);
       await tester.pumpAndSettle();
