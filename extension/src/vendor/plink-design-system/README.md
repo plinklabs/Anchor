@@ -12,13 +12,17 @@ stylesheet (AF3, #164).
 - **Source repo:** `github.com/plinklabs/plink-design-system`
 - **Ref:** `develop` @ `527e2dc0e350b1a21b78d6cefcfd847c16e9f501`
   (the bindings live on `develop` until they merge to that repo's `main`)
-- **Copied paths (unchanged):**
-  - `dist/plink.css`            → `dist/plink.css`
+- **Copied paths:**
+  - `dist/plink.css`            → `css/plink.css`  (folder renamed — see below)
   - `assets/fonts/**`           → `assets/fonts/**`
 
-The layout (a `dist/plink.css` with `assets/fonts/` one level up) is preserved
-exactly so the stylesheet's `@font-face src: url('../assets/fonts/…')` paths
-resolve **without editing the CSS** — `plink.css` here is byte-for-byte upstream.
+The stylesheet itself is **byte-for-byte upstream** — only its containing folder
+is renamed from `dist/` to `css/`. Upstream ships it as `dist/plink.css`, but a
+folder named `dist/` here is swallowed by the extension's `dist/` `.gitignore`
+rule (build output), so the file would never get committed. Renaming the folder
+to `css/` keeps `assets/fonts/` as its sibling, so the stylesheet's
+`@font-face src: url('../assets/fonts/…')` paths still resolve **without editing
+the CSS**.
 
 ## Keeping in sync
 

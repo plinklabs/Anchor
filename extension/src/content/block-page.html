@@ -9,9 +9,11 @@
          `.plink-ink` and composes from `.pl-*` classes + DS tokens. plink.css
          is vendored verbatim (src/vendor/plink-design-system) and copied to
          dist/vendor by rollup; its `../assets/fonts/…` paths resolve from
-         there. The only Anchor-specific bits below are the per-product accent
-         (--product-accent) and block-page chrome built from DS tokens. -->
-    <link rel="stylesheet" href="vendor/plink-design-system/dist/plink.css" />
+         there. (The upstream `dist/` folder is vendored as `css/` here so it
+         isn't swallowed by the extension's `dist/` .gitignore rule.) The only
+         Anchor-specific bits below are the per-product accent (--product-accent)
+         and block-page chrome built from DS tokens. -->
+    <link rel="stylesheet" href="vendor/plink-design-system/css/plink.css" />
     <style>
       /* Block-page chrome — composed from DS tokens (custom properties defined
          by plink.css). No brand colours are redefined here; the only token this
