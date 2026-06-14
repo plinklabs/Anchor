@@ -1,19 +1,24 @@
+using System.Drawing;
 using System.Runtime.Versioning;
 
 namespace FocusAgent.IntegrationTests;
 
 /// <summary>
 /// Visual-enforcement e2e for the focus overlay (#133, the Phase-2 visual layer
-/// deferred from #131). Drives the agent's <c>--show-test-overlay</c> self-test,
-/// which renders the real <c>WinUiFocusOverlay</c> against a synthetic allowlist
-/// with no backend, and asserts on the actual on-screen surface via screenshot
-/// capture — the layer a unit test structurally can't reach: that the real WinUI
-/// composition paints (not blank) and that the close path tears the window down.
+/// deferred from #131; re-skinned to the DS ink treatment in AA2 / #174). Drives
+/// the agent's <c>--show-test-overlay</c> self-test, which renders the real
+/// <c>WinUiFocusOverlay</c> against a synthetic allowlist with no backend, and
+/// asserts on the actual on-screen surface via screenshot capture — the layer a
+/// unit test structurally can't reach: that the real WinUI composition paints
+/// (not blank), that it is the calm DS <em>ink</em> surface (#174, dark-dominant,
+/// not the desktop behind a window that never showed), and that the close path
+/// tears the window down.
 ///
 /// The overlay's enforcement <em>wiring</em> (show on blocked foreground, hide on
 /// allowed return, re-minimize on every reactivation #92) is covered by
 /// <c>FocusSessionControllerTests</c>; this spec covers the rendering + teardown
-/// of the real window those unit tests stub out with a RecordingOverlay.
+/// of the real window those unit tests stub out with a RecordingOverlay — the
+/// composition / font / DS-token layer (#174) only a full-app run reaches.
 /// </summary>
 [Trait("Category", "Visual")]
 [Collection(VisualE2ECollection.Name)]
@@ -24,6 +29,15 @@ public sealed class OverlayVisualTests
     // title, the blocked-app line, the allowed-app list); a blank/failed render
     // is a flat fill (~1 colour). 8 separates the two with wide margin.
     private const int MinDistinctColors = 8;
+
+    // #174: the overlay is now the DS full-bleed ink surface (#FF1B1B23, a
+    // near-black warm ink). Most of its pixels are that ink, so the captured
+    // surface must be dominated by dark pixels — a capture of a typical (light)
+    // desktop behind a window that never showed would not be. >=60% leaves slack
+    // for the title bar, the headline, and the allowed-app rows while still
+    // failing hard on a non-ink/background capture. Matches the MainWindow spec's
+    // ink check (MainWindowVisualTests).
+    private const double MinDarkFraction = 0.60;
 
     // The overlay paints a SOLID, opaque background, so once it's gone the same
     // patch of screen changes drastically. Requiring >=10% of pixels to change
@@ -77,6 +91,18 @@ public sealed class OverlayVisualTests
             $"Overlay capture looks blank: only {colors} distinct colours " +
             $"(need >= {MinDistinctColors}) over {shown.Width}x{shown.Height}px. Saved: {saved}.");
 
+        // #174: the redesigned overlay is the calm DS ink surface — the capture
+        // must be dominated by the ink background, proving we grabbed the actual
+        // ink window (the composition/font/token layer the unit tests stub out),
+        // not the light desktop behind a window that never showed. This fails on
+        // the pre-#174 system-chrome overlay (a light/grey window on a light OS)
+        // and passes once the ink treatment paints (ANCHOR_BRAND.md §3, §6).
+        var dark = SampleDarkFraction(shown);
+        Assert.True(
+            dark >= MinDarkFraction,
+            $"Overlay capture is not the ink surface: only {dark:P0} of sampled pixels are dark " +
+            $"(need >= {MinDarkFraction:P0}); the capture may be the desktop, not the ink overlay. Saved: {saved}.");
+
         // HIDE/teardown: the self-test Close()s the overlay and then lingers alive
         // well past this poll's budget, so the HWND must go invalid while the
         // process is still running — proving the close path destroyed the window,
@@ -98,5 +124,24 @@ public sealed class OverlayVisualTests
             changed >= MinShownVsClearedFraction,
             $"The overlay's screen region barely changed after teardown ({changed:P1} of pixels); " +
             $"the captured surface may have been the background, not the overlay. Saved: {saved}.");
+    }
+
+    // Fraction of sampled pixels that are the DS ink background (a near-black warm
+    // ink, #FF1B1B23) — the lever proving the capture is the redesigned ink
+    // surface (#174). Same thresholds as MainWindowVisualTests.SampleSurface, so
+    // both ink windows are held to one definition of "dark".
+    private static double SampleDarkFraction(Bitmap bmp, int gridStep = 4)
+    {
+        int sampled = 0, dark = 0;
+        for (var y = 0; y < bmp.Height; y += gridStep)
+        {
+            for (var x = 0; x < bmp.Width; x += gridStep)
+            {
+                var c = bmp.GetPixel(x, y);
+                sampled++;
+                if (c.R < 70 && c.G < 70 && c.B < 80) dark++;
+            }
+        }
+        return sampled == 0 ? 0 : (double)dark / sampled;
     }
 }
