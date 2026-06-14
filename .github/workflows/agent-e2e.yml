@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   e2e:
+    name: Agent E2E
     # Windows runner: the agent is WinUI 3 / Windows-only, and the e2e suite
     # launches the real agent exe + drives a real backend over loopback. The
     # runner has a desktop session, which the agent's WinUI bootstrap needs.

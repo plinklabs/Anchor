@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   e2e:
+    name: Extension E2E
     # Windows runner: Edge is preinstalled (so `channel: 'msedge'` needs no
     # browser download), and it has a desktop session for the headed browser
     # an MV3 extension load requires. The harness boots the real backend itself
