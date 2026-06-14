@@ -67,6 +67,12 @@ public partial class App : Application
             return;
         }
 
+        if (Program.ShowTestMainWindow)
+        {
+            RunMainWindowSelfTest();
+            return;
+        }
+
         if (Program.VerifyDsTheme)
         {
             RunDsThemeVerification();
@@ -393,6 +399,25 @@ public partial class App : Application
     // they've captured/observed what they need, so this full linger only elapses as
     // a safety net against a leaked process. See RunOverlaySelfTest (#160).
     private static readonly TimeSpan OverlayLingerAfterClose = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Dev-only path (#173): show the redesigned <see cref="MainWindow"/> against
+    /// a synthetic "connected, in a focus session" state with no host / WAM / hub
+    /// / coordinator bootstrap, then keep the process alive so the visual e2e
+    /// (MainWindowVisualTests) and scripts/dev can screenshot the real ink surface.
+    /// The window's rendering path is production code — only the source of its
+    /// state is synthetic (see MainWindow.CreateSelfTest). See Program.cs.
+    /// </summary>
+    private void RunMainWindowSelfTest()
+    {
+        // Like the overlay self-test: switch to explicit shutdown so the process
+        // stays up after the window is shown (it isn't torn down here), and the
+        // observer — the e2e or a verify script — kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        _mainWindow = MainWindow.CreateSelfTest();
+        _mainWindow.Activate();
+    }
 
     /// <summary>
     /// Dev-only path (#164): assert the design-system WinUI binding actually
