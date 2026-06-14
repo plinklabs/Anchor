@@ -61,6 +61,16 @@ npm run build
 
 Output lands in `extension/dist/` — that directory is the unpacked extension.
 
+### Versioning
+
+`package.json` is the **single source of truth** for the extension version
+(#208). The build stamps its `version` into the manifest copied to `dist/`, so
+the shipped `dist/manifest.json` can never drift from `package.json` — there's
+only one number to bump. The committed `src/manifest.json` keeps a mirror that
+`manifest.test.ts` locks (so an editor reading the unbuilt source isn't misled).
+To release, bump `version` in `package.json` and rebuild. The agent versions
+independently from its own single source (`agent/Directory.Build.props`).
+
 For a dev iteration loop:
 
 ```powershell

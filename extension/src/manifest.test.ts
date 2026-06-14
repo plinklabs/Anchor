@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
@@ -64,10 +64,25 @@ describe('manifest key (stable extension id)', () => {
 
 // Issue #204: manifest.json and package.json versions used to drift (0.2.0 vs
 // 0.1.0). Lock them together so a bump to one without the other fails CI.
-describe('version sync (#204)', () => {
-  it('manifest and package.json declare the same version', () => {
+//
+// Issue #208: package.json is now the single source of truth — the rollup build
+// stamps its version into the manifest copied to dist/ (see rollup.config.mjs).
+// The committed src/manifest.json keeps a mirror locked here so an editor reading
+// the unbuilt source isn't misled; if a built dist manifest is present, also lock
+// it to package.json so the *shipped* artifact can't drift from the source.
+describe('version sync (#204, #208)', () => {
+  it('committed src manifest mirrors the package.json version', () => {
     expect(manifest.version).toBeTypeOf('string');
     expect(pkg.version).toBe(manifest.version);
+  });
+
+  it('built dist manifest is stamped from package.json (when built)', () => {
+    const distUrl = new URL('../dist/manifest.json', import.meta.url);
+    if (!existsSync(fileURLToPath(distUrl))) return; // dist not built in this run
+    const dist = JSON.parse(readFileSync(fileURLToPath(distUrl), 'utf8')) as {
+      version?: string;
+    };
+    expect(dist.version).toBe(pkg.version);
   });
 });
 
