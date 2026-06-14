@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   e2e:
+    name: Dashboard E2E
     # Linux runner: the dashboard is Flutter Web, and the GitHub-hosted ubuntu
     # image ships Google Chrome + a matching chromedriver (under $CHROMEWEBDRIVER),
     # which is all `flutter drive` needs for a real-browser run. No backend: the

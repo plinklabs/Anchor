@@ -1,0 +1,117 @@
+name: CI Gate
+
+# Single always-present status check that stands in for the five path-filtered
+# CI workflows. Each of those (backend-ci, agent-e2e, dashboard-e2e,
+# dashboard-deploy, extension-e2e) only runs when a PR touches its paths, so none
+# of them can be a GitHub *required* status check on its own: a required check
+# that doesn't run is reported "pending" forever and blocks the PR permanently.
+#
+# This gate runs on EVERY pull request (no path filter), so it always reports.
+# It detects which areas the PR changed (mirroring each workflow's exact PR path
+# filters) and waits ONLY for the suites those changes actually trigger, failing
+# if any of them did not succeed. A PR that touches no gated area passes the gate
+# immediately. Mark *this* check (CI Gate / gate) as the required status check on
+# main and develop.
+#
+# Keep the filters below in lock-step with the `on.pull_request.paths` of each
+# referenced workflow — if a workflow's filter changes, change the matching
+# filter here too, or the gate will wait for a check that never runs.
+
+on:
+  pull_request:
+
+permissions:
+  checks: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed areas
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/backend-ci.yml'
+            agent:
+              - 'agent/**'
+              - 'backend/**'
+              - '.github/workflows/agent-e2e.yml'
+            dashboard_e2e:
+              - 'dashboard/**'
+              - '.github/workflows/dashboard-e2e.yml'
+            dashboard_deploy:
+              - 'dashboard/**'
+              - '.github/workflows/dashboard-deploy.yml'
+            extension:
+              - 'extension/**'
+              - 'backend/**'
+              - '.github/workflows/extension-e2e.yml'
+
+      # Each wait targets a suite's check by its (now unique) job name and only
+      # runs when that suite's paths changed — exactly when the suite itself runs.
+      - name: Wait for Backend CI
+        if: steps.changes.outputs.backend == 'true'
+        uses: lewagon/wait-on-check-action@v1.8.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: build-and-test
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 20
+          allowed-conclusions: success
+
+      - name: Wait for Agent E2E
+        if: steps.changes.outputs.agent == 'true'
+        uses: lewagon/wait-on-check-action@v1.8.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: Agent E2E
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 20
+          allowed-conclusions: success
+
+      - name: Wait for Dashboard E2E
+        if: steps.changes.outputs.dashboard_e2e == 'true'
+        uses: lewagon/wait-on-check-action@v1.8.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: Dashboard E2E
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 20
+          allowed-conclusions: success
+
+      - name: Wait for Dashboard CI / Deploy
+        if: steps.changes.outputs.dashboard_deploy == 'true'
+        uses: lewagon/wait-on-check-action@v1.8.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: build_and_deploy
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 20
+          allowed-conclusions: success
+
+      - name: Wait for Extension E2E
+        if: steps.changes.outputs.extension == 'true'
+        uses: lewagon/wait-on-check-action@v1.8.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: Extension E2E
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 20
+          allowed-conclusions: success
+
+      - name: Gate summary
+        run: |
+          echo "Changed areas:"
+          echo "  backend=${{ steps.changes.outputs.backend }}"
+          echo "  agent=${{ steps.changes.outputs.agent }}"
+          echo "  dashboard_e2e=${{ steps.changes.outputs.dashboard_e2e }}"
+          echo "  dashboard_deploy=${{ steps.changes.outputs.dashboard_deploy }}"
+          echo "  extension=${{ steps.changes.outputs.extension }}"
+          echo "All triggered suites passed (or none were triggered)."
