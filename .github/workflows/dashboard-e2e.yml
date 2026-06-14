@@ -52,3 +52,15 @@ jobs:
             -d web-server \
             --browser-name=chrome \
             --headless
+
+      # Boots the real app and drives Home → History → open a past session,
+      # asserting the archive reads in the muted paper register (AD7, #172).
+      # A fresh `flutter drive` reuses the chromedriver started above.
+      - name: Run history-archive e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/history_archive_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
