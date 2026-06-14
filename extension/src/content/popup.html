@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Anchor</title>
+    <!-- AE2 (#178): the toolbar-action status popup. Like the block page, this
+         is a student-facing surface, so it wears the DS **ink** treatment
+         (ANCHOR_BRAND.md §3) — warm paper for teachers, confident ink for
+         students. It composes from the vendored plink.css (AF3, #164) the same
+         way the block page does: `.plink-ink` paints the panel, `.pl-*` classes
+         build the chrome, and the only Anchor-specific tokens are the one
+         per-product accent and a handful of popup-layout rules. -->
+    <link rel="stylesheet" href="vendor/plink-design-system/css/plink.css" />
+    <style>
+      /* Popup chrome — composed from DS tokens (custom properties from
+         plink.css). No brand colours are redefined here; the only token this
+         surface sets is its one per-product accent. */
+      .popup-root {
+        /* Anchor's reserved accent on ink (ANCHOR_BRAND.md §2). Reserved for the
+           identity rule only — magenta stays the spark. */
+        --product-accent: #7e80d2;
+        /* AF4 (#165): student surfaces are fixed ink, never system-following
+           (ANCHOR_BRAND.md §6). `.plink-ink` paints the surface; this pins the
+           UA so native scrollbars/controls render dark too — and is deliberately
+           NOT a prefers-color-scheme swap. Do not reintroduce one. */
+        color-scheme: dark;
+        /* A toolbar popup has no viewport of its own — it sizes to content.
+           Pin a comfortable reading width and let the allowlist scroll. */
+        width: 320px;
+        margin: 0;
+        box-sizing: border-box;
+        font-family: var(--font-body);
+        line-height: var(--body-lh);
+      }
+      .popup-body {
+        padding: var(--space-5) var(--space-5) var(--space-4);
+      }
+      .popup-body > * + * { margin-top: var(--space-3); }
+      /* AE1/AE2: scale the signature ping down to the eyebrow's optical size and
+         pull a touch of negative margin so its outer ring doesn't push the label
+         off the baseline — matched to the block page. */
+      .eyebrow { align-items: center; }
+      .eyebrow__ping { --pl-ping-size: 20px; margin: calc(var(--space-1) * -1) 0; }
+      h1 {
+        font-family: var(--font-display);
+        font-weight: var(--body-weight-strong);
+        font-size: var(--display-4, var(--display-3));
+        line-height: var(--display-3-lh);
+        letter-spacing: var(--display-tracking);
+        margin: var(--space-3) 0 0;
+      }
+      p { margin: 0; }
+      p.muted { color: var(--text-muted); }
+      .joincode {
+        display: inline-flex;
+        align-items: baseline;
+        gap: var(--space-2);
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        letter-spacing: var(--label-tracking-tight);
+      }
+      .joincode__value {
+        font-size: var(--text-base);
+        letter-spacing: 0.12em;
+        color: var(--on-ink);
+        background: var(--surface-inset);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius);
+        padding: var(--space-1) var(--space-2);
+      }
+      .allowlist__label {
+        font-family: var(--font-mono);
+        font-size: var(--label-sm);
+        letter-spacing: var(--label-tracking-tight);
+        text-transform: uppercase;
+        color: var(--text-caption);
+        margin-top: var(--space-4);
+      }
+      /* The allowed-sites list — hairlines, not shadows; scrolls past a handful
+         so the popup never grows unbounded. */
+      ul.allowlist {
+        list-style: none;
+        margin: var(--space-2) 0 0;
+        padding: 0;
+        max-height: 168px;
+        overflow-y: auto;
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius);
+      }
+      ul.allowlist li {
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        color: var(--on-ink);
+        padding: var(--space-2) var(--space-3);
+        word-break: break-all;
+      }
+      ul.allowlist li + li { border-top: var(--border-width) solid var(--border); }
+      .allowlist__empty {
+        font-family: var(--font-body);
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        margin-top: var(--space-2);
+      }
+      .footnote {
+        margin-top: var(--space-4);
+        font-family: var(--font-mono);
+        font-size: var(--label-sm);
+        letter-spacing: var(--label-tracking-tight);
+        text-transform: uppercase;
+        color: var(--text-caption);
+      }
+      /* Idle state hides the session-only blocks; active state hides the idle
+         copy. Toggled by a single class on the root, set once from popup.ts. */
+      .popup-root:not(.is-active) [data-when="active"] { display: none; }
+      .popup-root.is-active [data-when="idle"] { display: none; }
+    </style>
+  </head>
+  <body class="plink-ink popup-root" data-popup-root>
+    <!-- The one per-product identity element, in Anchor's accent. -->
+    <div class="pl-identity-rule" aria-hidden="true"></div>
+    <main class="popup-body">
+      <p class="pl-eyebrow pl-eyebrow--on-ink eyebrow">
+        <!-- The signature concentric-ring ping is the calm, living mark that a
+             focus session is in progress (matches the block page, AE1 #177). In
+             the idle state we swap it for the static ring so the popup doesn't
+             imply an active session. -->
+        <span class="pl-ping pl-ping--pulse pl-ping--on-ink eyebrow__ping" data-ping aria-hidden="true">
+          <span class="pl-ping__ring"></span>
+          <span class="pl-ping__ring b"></span>
+          <span class="pl-ping__core"></span>
+        </span>
+        <span data-eyebrow-label>Focus session</span>
+      </p>
+
+      <!-- Active session -->
+      <div data-when="active">
+        <h1>You're in focus</h1>
+        <p class="muted">Anchor is keeping you on the sites your teacher allowed. Everything else is paused until the session ends.</p>
+        <p class="joincode" data-joincode hidden>
+          <span>Class code</span>
+          <span class="joincode__value" data-joincode-value>—</span>
+        </p>
+        <p class="allowlist__label">Allowed sites</p>
+        <ul class="allowlist" data-allowlist hidden></ul>
+        <p class="allowlist__empty" data-allowlist-empty hidden>Only your school's baseline sites are allowed right now.</p>
+      </div>
+
+      <!-- Idle (no active session) -->
+      <div data-when="idle">
+        <h1>No active session</h1>
+        <p class="muted">You're free to browse. Anchor only steps in once your teacher starts a focus session for your class.</p>
+      </div>
+
+      <p class="footnote">Anchor focus enforcement</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

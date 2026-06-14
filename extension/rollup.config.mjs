@@ -19,6 +19,9 @@ export default [
         targets: [
           { src: 'src/manifest.json', dest: 'dist' },
           { src: 'src/content/block-page.html', dest: 'dist' },
+          // AE2 (#178): the toolbar-action status popup, served from dist root
+          // (manifest action.default_popup) — same wiring as the block page.
+          { src: 'src/content/popup.html', dest: 'dist' },
           { src: 'src/icons', dest: 'dist' },
           // Design-system vanilla binding (AF3, #164): the block page links
           // plink.css from here. Copied with assets/fonts kept as a sibling of
@@ -35,6 +38,15 @@ export default [
     input: 'src/content/block-page.ts',
     output: {
       file: 'dist/block-page.js',
+      format: 'iife',
+      sourcemap: true,
+    },
+    plugins: [nodeResolve(), tsPlugin()],
+  },
+  {
+    input: 'src/content/popup.ts',
+    output: {
+      file: 'dist/popup.js',
       format: 'iife',
       sourcemap: true,
     },
