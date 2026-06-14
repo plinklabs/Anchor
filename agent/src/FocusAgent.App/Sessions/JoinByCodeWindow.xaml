@@ -2,11 +2,52 @@
 <Window
     x:Class="FocusAgent.App.Sessions.JoinByCodeWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Padding="24"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:pds="using:PlinkDesignSystem.Controls">
+
+    <!-- AA3 (#175): the join-by-code dialog wears the DS ink treatment
+         (ANCHOR_BRAND.md §3). Calm, unhurried tone — a student typing a code
+         off the board isn't in trouble. The code field is Space Mono (the
+         "Labs" signature, and the right family for a fixed-width code), the
+         Fraunces headline frames it, and JOIN is the single magenta spark —
+         the one primary action. Cancel is a quiet on-ink secondary.
+
+         On-ink notes: the DS default TextBox and Button are tuned for the paper
+         surface — ink text on paper/transparent — so both render the wrong way
+         on this ink window (the trap #173/#174 hit). The code box and Cancel are
+         re-skinned here for on-ink: paper-coloured text, an on-ink hairline
+         border, the magenta caret/focus left to the DS primary on JOIN. -->
+    <Grid Padding="28,24"
           RowSpacing="14"
           Background="{StaticResource PlinkSurfaceInkBrush}">
+        <Grid.Resources>
+            <Style x:Key="PlinkOnInkSecondaryButtonStyle"
+                   TargetType="Button"
+                   BasedOn="{StaticResource PlinkSecondaryButtonStyle}">
+                <Setter Property="Foreground" Value="{StaticResource PlinkOnInkBrush}" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="{StaticResource PlinkHairlineOnInkBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+            </Style>
+            <!-- The code entry: Space Mono, big and centred, on-ink. The DS
+                 TextBox styles assume the paper surface (ink text on a light
+                 fill), so we set the on-ink fill/foreground/hairline explicitly
+                 here rather than inherit them. -->
+            <Style x:Key="PlinkInkCodeBoxStyle" TargetType="TextBox">
+                <Setter Property="FontFamily" Value="{StaticResource PlinkMonoFontFamily}" />
+                <Setter Property="FontSize" Value="34" />
+                <Setter Property="CharacterSpacing" Value="120" />
+                <Setter Property="Foreground" Value="{StaticResource PlinkOnInkBrush}" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="{StaticResource PlinkHairlineOnInkBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="TextAlignment" Value="Center" />
+                <Setter Property="Padding" Value="12,10" />
+                <Setter Property="MinHeight" Value="0" />
+            </Style>
+        </Grid.Resources>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -14,45 +55,62 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0"
-                   Text="Join session by code"
-                   FontSize="20"
-                   FontWeight="SemiBold" />
+        <!-- eyebrow: the product mark + a calm, static ping. -->
+        <StackPanel Grid.Row="0"
+                    Orientation="Horizontal"
+                    Spacing="10"
+                    VerticalAlignment="Center">
+            <pds:Ping x:Name="JoinPing"
+                      Diameter="12"
+                      Mode="Static"
+                      OnInk="True"
+                      VerticalAlignment="Center" />
+            <TextBlock Style="{StaticResource PlinkEyebrowTextStyle}"
+                       Foreground="{StaticResource PlinkOnInkBrush}"
+                       Text="ANCHOR" />
+        </StackPanel>
 
+        <!-- headline: in Fraunces display. -->
         <TextBlock Grid.Row="1"
-                   Opacity="0.85"
-                   TextWrapping="Wrap"
+                   Style="{StaticResource PlinkDisplaySmallTextStyle}"
+                   Foreground="{StaticResource PlinkOnInkBrush}"
+                   Text="Join by code" />
+
+        <!-- supporting line: plain Hanken on ink. -->
+        <TextBlock Grid.Row="2"
+                   Style="{StaticResource PlinkBodyLargeTextStyle}"
+                   Foreground="{StaticResource PlinkOnInkMutedBrush}"
                    Text="Enter the 6-digit code shown on your teacher's dashboard." />
 
         <TextBox x:Name="CodeBox"
-                 Grid.Row="2"
+                 Grid.Row="3"
+                 Style="{StaticResource PlinkInkCodeBoxStyle}"
                  MaxLength="6"
-                 FontSize="28"
-                 FontFamily="Consolas"
                  PlaceholderText="000000"
-                 TextAlignment="Center"
                  BeforeTextChanging="OnCodeBeforeTextChanging"
                  TextChanged="OnCodeTextChanged"
                  KeyDown="OnCodeKeyDown" />
 
+        <!-- inline error: quiet mono microcopy, never an alarm bar. -->
         <TextBlock x:Name="MessageText"
-                   Grid.Row="3"
+                   Grid.Row="4"
+                   Style="{StaticResource PlinkLabelTextStyle}"
+                   Foreground="{StaticResource PlinkOnInkMutedBrush}"
                    TextWrapping="Wrap"
-                   Visibility="Collapsed"
-                   Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
+                   Visibility="Collapsed" />
 
-        <StackPanel Grid.Row="4"
+        <StackPanel Grid.Row="5"
                     Orientation="Horizontal"
                     HorizontalAlignment="Right"
-                    Spacing="8">
+                    Spacing="10">
             <Button x:Name="CancelButton"
-                    Content="Cancel"
-                    MinWidth="88"
+                    Style="{StaticResource PlinkOnInkSecondaryButtonStyle}"
+                    Content="CANCEL"
                     Click="OnCancelClicked" />
+            <!-- JOIN: the single magenta spark — the one primary action. -->
             <Button x:Name="JoinButton"
-                    Content="Join"
-                    Style="{ThemeResource AccentButtonStyle}"
-                    MinWidth="88"
+                    Style="{StaticResource PlinkPrimaryButtonStyle}"
+                    Content="JOIN"
                     IsEnabled="False"
                     Click="OnJoinClicked" />
         </StackPanel>

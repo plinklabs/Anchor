@@ -73,6 +73,12 @@ public partial class App : Application
             return;
         }
 
+        if (Program.ShowTestJoinByCode)
+        {
+            RunJoinByCodeSelfTest();
+            return;
+        }
+
         if (Program.VerifyDsTheme)
         {
             RunDsThemeVerification();
@@ -417,6 +423,44 @@ public partial class App : Application
 
         _mainWindow = MainWindow.CreateSelfTest();
         _mainWindow.Activate();
+    }
+
+    // Held by the --show-test-joinbycode path so the window outlives OnLaunched.
+    private JoinByCodeWindow? _joinByCodeSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#175): show the real <see cref="JoinByCodeWindow"/> against a
+    /// no-op join client with no host / WAM / hub bootstrap, then keep the process
+    /// alive so the visual e2e (JoinByCodeVisualTests) and scripts/dev can
+    /// screenshot the real ink surface (Space Mono code field, the magenta JOIN
+    /// spark). The window's rendering path is production code — only its join
+    /// client is a synthetic no-op. See Program.cs.
+    /// </summary>
+    private void RunJoinByCodeSelfTest()
+    {
+        // Like the other window self-tests: switch to explicit shutdown so the
+        // process stays up after the window is shown (it isn't torn down here),
+        // and the observer kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        _joinByCodeSelfTestWindow = new JoinByCodeWindow(new SelfTestJoinByCodeClient());
+        Sessions.DialogWindowPositioner.ConfigureAndShow(_joinByCodeSelfTestWindow);
+        // Render the "ready to join" state (a filled code, JOIN at full magenta)
+        // so the visual e2e captures the spark, not the dimmed disabled button.
+        // After ConfigureAndShow so the XAML island is realised and the
+        // TextChanged → JOIN-enable path runs against a live control tree.
+        _joinByCodeSelfTestWindow.PrefillForSelfTest();
+    }
+
+    /// <summary>
+    /// A join client that never returns — the self-test renders the dialog's
+    /// resting state (the redesigned ink surface) and is never driven through an
+    /// actual join, so the call can simply hang until the process is killed.
+    /// </summary>
+    private sealed class SelfTestJoinByCodeClient : IJoinByCodeClient
+    {
+        public Task<JoinByCodeOutcome> JoinAsync(string code, CancellationToken ct = default) =>
+            new TaskCompletionSource<JoinByCodeOutcome>().Task;
     }
 
     /// <summary>
