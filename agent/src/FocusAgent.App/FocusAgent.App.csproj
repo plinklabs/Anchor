@@ -52,6 +52,13 @@
     <PackageReference Include="Microsoft.Identity.Client.Broker" Version="4.66.2" />
     <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.66.2" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0" />
+    <!-- Velopack runtime (#209): the agent ships unpackaged via Velopack, whose
+         install/update/uninstall lifecycle hooks are dispatched by
+         VelopackApp.Build().Run() at the very top of Program.Main. `vpk pack`
+         also refuses to package a build that doesn't reference + call it. The
+         auto-update *check* (UpdateManager against the GitHub Releases feed) is a
+         tracked follow-up; this reference establishes the required bootstrap. -->
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <ItemGroup>

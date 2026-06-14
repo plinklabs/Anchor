@@ -1,0 +1,116 @@
+name: Agent Release
+
+# Build the agent unpackaged, package it with Velopack, and publish the release
+# + delta-update feed to GitHub Releases — triggered by an `agent-v*` tag
+# (workstream C of the v1 release roadmap; #209).
+#
+# Trigger: a version tag, NOT a branch push. The release convention is "bump
+# <VersionPrefix> in agent/Directory.Build.props (#208), commit, then push a
+# matching `agent-v<version>` tag" (see agent/README.md). The tag is the single
+# thing that ships a client build, mirroring how the cloud tier ships on a push
+# to main (docs/RELEASE.md). pack-release.ps1 cross-checks the committed version
+# against the tag and fails loudly on a mismatch.
+#
+# Gate interaction: like backend-deploy.yml this workflow has NO `pull_request`
+# trigger, so it never produces a check on a PR and must NOT be added to
+# ci-gate.yml — a required/awaited check that never runs on a PR would hang the
+# gate forever. A PR that only edits this file is validated by `actionlint`
+# (ci-gate's agent filter still runs the agent e2e suite because the file lives
+# under agent-adjacent paths via the release tag only — this workflow itself is
+# not awaited).
+#
+# Per-deployment config: the agent's appsettings.Production.json is a template
+# whose Backend:BaseUrl + Auth values are #{...}# placeholders (#203). They are
+# substituted at pack time from the env vars below, sourced from repo Actions
+# `vars.*` (non-secret SPA/backend config) — the agent-side mirror of the
+# dashboard's `--dart-define` substitution (dashboard-deploy.yml, #202). A fork
+# sets its own values and ships an agent targeting its own backend with no
+# source edit.
+#
+# Signing: none. The agent ships unsigned, so first install shows one SmartScreen
+# "More info -> Run anyway" prompt (#209 scope decision). Code-signing is a later
+# upgrade.
+
+on:
+  push:
+    tags:
+      - 'agent-v*'
+
+permissions:
+  # vpk uploads the release assets to a GitHub Release, which needs write.
+  contents: write
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Agent Velopack Release
+    # Windows runner: the agent is WinUI 3 / Windows-only and the publish builds
+    # the real win-x64 self-contained app, same as agent-e2e.yml.
+    runs-on: windows-latest
+    steps:
+      # submodules: the agent references the design-system WinUI binding from a
+      # git submodule (agent/external/plink-design-system); without it the build
+      # fails with "project file ... was not found" (same as agent-e2e.yml).
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Derive the package version from the tag (agent-v1.2.3 -> 1.2.3) and hand
+      # it to the pack script, which cross-checks it against the committed
+      # <VersionPrefix> and fails on drift.
+      - name: Resolve version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = '${{ github.ref_name }}'
+          if ($tag -notmatch '^agent-v(?<v>\d+\.\d+\.\d+.*)$') {
+            throw "Tag '$tag' is not of the form agent-v<version>."
+          }
+          $v = $Matches['v']
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Release version: $v"
+
+      - name: Install Velopack tool (vpk)
+        run: dotnet tool install -g vpk
+
+      - name: Build + pack agent with Velopack
+        shell: pwsh
+        # Per-deployment config substituted into the published
+        # appsettings.Production.json by substitute-config.ps1 (#203). Each var
+        # is non-secret per-deployment config (a fork's own backend/Entra),
+        # hence vars.* — see the workflow header.
+        env:
+          BACKEND_BASE_URL: ${{ vars.AGENT_BACKEND_BASE_URL }}
+          AUTH_TENANT_ID: ${{ vars.AGENT_AUTH_TENANT_ID }}
+          AUTH_CLIENT_ID: ${{ vars.AGENT_AUTH_CLIENT_ID }}
+          AUTH_SCOPE: ${{ vars.AGENT_AUTH_SCOPE }}
+        run: ./agent/scripts/pack-release.ps1 -Version '${{ steps.ver.outputs.version }}'
+
+      # Upload the Velopack output (Setup.exe + full/delta nupkg + RELEASES feed)
+      # to the GitHub Release for this tag. Installed agents read this feed to
+      # auto-update (delta) on the next tag.
+      - name: Publish to GitHub Releases
+        run: >-
+          vpk upload github
+          --repoUrl https://github.com/${{ github.repository }}
+          --token ${{ secrets.GITHUB_TOKEN }}
+          --tag ${{ github.ref_name }}
+          --releaseName ${{ github.ref_name }}
+          --outputDir agent/artifacts/velopack
+          --publish
+
+      - name: Upload Velopack artifacts (diagnostics)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-velopack-${{ steps.ver.outputs.version }}
+          path: agent/artifacts/velopack/
+          retention-days: 7
