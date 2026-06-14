@@ -51,7 +51,7 @@ void main() {
 
       // Editor is hidden until you select or create.
       expect(
-        find.text('Select a bundle or press + to create a new one.'),
+        find.text('Select a bundle, or start a new one.'),
         findsOneWidget,
       );
 
