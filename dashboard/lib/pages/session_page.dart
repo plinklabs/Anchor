@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/auth_token_store.dart';
 import '../api/bundles_api.dart';
@@ -334,115 +335,420 @@ class _SessionPageState extends State<SessionPage> {
 
   @override
   Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final String className = _detail?.className ?? '';
+    final String headline = className.isEmpty ? 'Live session' : className;
+
+    // The instrument panels above the feed — only what applies to the session's
+    // current state. The feed itself is the hero and fills the rest below.
+    final List<Widget> panels = <Widget>[
+      if (!_ended && (_detail?.joinCode.isNotEmpty ?? false))
+        _JoinCodePanel(
+          code: _detail!.joinCode,
+          onCopy: () => _copyJoinCode(_detail!.joinCode),
+        ),
+      if (!_ended && _pendingRequests.isNotEmpty)
+        _PendingRequestsPanel(
+          requests: _pendingRequests,
+          approving: _approving,
+          error: _unblockError,
+          onApprove: _approveHost,
+          onApproveClass: _approveHostForClass,
+        ),
+      if (!_ended && (_detail?.participants.isNotEmpty ?? false))
+        _RosterPanel(participants: _detail!.participants),
+      if (!_ended && _availableBundles != null)
+        _LiveBundlePanel(
+          available: _availableBundles!,
+          selectedIds: _selectedBundleIds,
+          busy: _updatingBundles,
+          error: _bundleError,
+          onToggle: (id, selected) {
+            final next = {..._selectedBundleIds};
+            if (selected) {
+              next.add(id);
+            } else {
+              next.remove(id);
+            }
+            _updateBundles(next);
+          },
+        ),
+      if (_ended) const _EndedBanner(),
+      if (_ended && (_detail?.summaries.isNotEmpty ?? false))
+        _SessionSummaryPanel(summaries: _detail!.summaries),
+    ];
+
     return Scaffold(
+      backgroundColor: PlinkColors.paper,
       body: Column(
-        children: [
-          // The shared app-bar (AD1, #166) now owns the top of the window, so
-          // the live-session controls a teacher operates — leave (with the
-          // end-vs-keep prompt, #126), the session title, and End session —
-          // live in a slim header row inside the body. The deeper live-session
-          // redesign is AD4.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  tooltip: 'Leave session',
-                  onPressed: _confirmExit,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _SessionHeader(
+            headline: headline,
+            spec: _titleText(),
+            ended: _ended,
+            ending: _ending,
+            onLeave: _confirmExit,
+            onEnd: _endSession,
+            headlineStyle: text.displaySmall,
+          ),
+          const _Hairline(),
+          if (_connecting) const _StatusLine('Connecting to the live feed…'),
+          if (_error != null) _ErrorBanner(_error!),
+          for (final Widget panel in panels) ...<Widget>[
+            panel,
+            const _Hairline(),
+          ],
+          // The live feed — the instrument's read-out, filling the rest.
+          const _PanelLabel('Activity'),
+          Expanded(child: _Feed(events: _events)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Horizontal page gutter — keeps the live-session content on the same
+/// flush-left margin as the shell's eyebrow and app-bar (the editorial column).
+const double _gutter = PlinkSpacing.s6; // 32
+
+/// A full-width 1px instrument rule — the system separates with hairlines,
+/// never shadows.
+class _Hairline extends StatelessWidget {
+  const _Hairline();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: PlinkBorders.width,
+      child: ColoredBox(color: PlinkColors.hairline),
+    );
+  }
+}
+
+/// A sentence-case mono section label (Space Mono) — the quiet panel headers
+/// that read like specs on an instrument, never shouting.
+class _PanelLabel extends StatelessWidget {
+  const _PanelLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s2,
+      ),
+      child: Text(text, style: _monoLabel(PlinkColors.ink60)),
+    );
+  }
+}
+
+/// Space Mono label style — labels, specs, counts.
+TextStyle _monoLabel(Color color) => const TextStyle(
+      fontFamily: PlinkType.monoFamily,
+      package: PlinkType.fontPackage,
+      fontFamilyFallback: PlinkType.monoFallback,
+      fontSize: PlinkType.label,
+    ).copyWith(
+      letterSpacing: PlinkType.tracking(
+        PlinkType.labelTrackingTight,
+        PlinkType.label,
+      ),
+      color: color,
+      height: 1.3,
+    );
+
+/// A tabular-figure mono style for timestamps and codes — columns line up.
+TextStyle _monoSpec(Color color, double size) => TextStyle(
+      fontFamily: PlinkType.monoFamily,
+      package: PlinkType.fontPackage,
+      fontFamilyFallback: PlinkType.monoFallback,
+      fontSize: size,
+      color: color,
+      height: 1.3,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
+
+/// The header: leave-affordance, the session identity (class name + the
+/// date/time spec), the liveness mark, and End session. The shell already
+/// carries the "Live session" eyebrow above this, so the page leads with the
+/// class it belongs to.
+class _SessionHeader extends StatelessWidget {
+  const _SessionHeader({
+    required this.headline,
+    required this.spec,
+    required this.ended,
+    required this.ending,
+    required this.onLeave,
+    required this.onEnd,
+    required this.headlineStyle,
+  });
+
+  final String headline;
+  final String spec;
+  final bool ended;
+  final bool ending;
+  final VoidCallback onLeave;
+  final VoidCallback onEnd;
+  final TextStyle? headlineStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        PlinkSpacing.s3,
+        PlinkSpacing.s2,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          IconButton(
+            icon: const Icon(Icons.arrow_back),
+            color: PlinkColors.ink,
+            tooltip: 'Leave session',
+            onPressed: onLeave,
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                // The liveness spec line: the ping motif + a LIVE/ENDED badge,
+                // then the date/time spec in mono.
+                Row(
+                  children: <Widget>[
+                    if (!ended) ...<Widget>[
+                      // Static ping — the ping motif marks liveness without an
+                      // ambient loop, so the page stays calm (and tests settle);
+                      // the magenta badge carries the live signal (matches AD3).
+                      const Ping(size: 16, mode: PingMode.static),
+                      const SizedBox(width: PlinkSpacing.s2),
+                      const PlinkBadge('Live', variant: BadgeVariant.spark),
+                    ] else
+                      const PlinkBadge('Ended', variant: BadgeVariant.outline),
+                    const SizedBox(width: PlinkSpacing.s3),
+                    Flexible(
+                      child: Text(
+                        spec,
+                        style: _monoLabel(PlinkColors.ink60),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    _titleText(),
-                    style: Theme.of(context).textTheme.titleLarge,
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                const SizedBox(height: PlinkSpacing.s2),
+                Text(
+                  headline,
+                  style: headlineStyle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                if (!_ended)
-                  TextButton.icon(
-                    onPressed: _ending ? null : _endSession,
-                    icon: _ending
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.stop),
-                    label: const Text('End session'),
-                  ),
               ],
             ),
           ),
-          if (_connecting) const LinearProgressIndicator(),
-          if (_error != null)
-            Container(
-              width: double.infinity,
-              color: Theme.of(context).colorScheme.errorContainer,
-              padding: const EdgeInsets.all(12),
-              child: Text(_error!),
+          if (!ended) ...<Widget>[
+            const SizedBox(width: PlinkSpacing.s4),
+            // End is a calm ink action, never the magenta spark — ending a
+            // class's session should read as deliberate, not alarming.
+            OutlinedButton(
+              onPressed: ending ? null : onEnd,
+              child: ending
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('End session'),
             ),
-          if (_detail != null && _detail!.joinCode.isNotEmpty && !_ended)
-            _JoinCodePanel(
-              code: _detail!.joinCode,
-              onCopy: () => _copyJoinCode(_detail!.joinCode),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// A quiet single-line status (e.g. connecting) — mono, muted, no spinner bar
+/// competing for the eye.
+class _StatusLine extends StatelessWidget {
+  const _StatusLine(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s3,
+        _gutter,
+        PlinkSpacing.s3,
+      ),
+      child: Text(text, style: _monoLabel(PlinkColors.muted)),
+    );
+  }
+}
+
+/// An error strip — a hairline-bounded panel in the error colour, not a loud
+/// filled banner.
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner(this.message);
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color error = Theme.of(context).colorScheme.error;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s3,
+        _gutter,
+        PlinkSpacing.s3,
+      ),
+      padding: const EdgeInsets.all(PlinkSpacing.s3),
+      decoration: BoxDecoration(
+        border: Border.all(color: error, width: PlinkBorders.width),
+        borderRadius: BorderRadius.circular(PlinkRadius.base),
+      ),
+      child: Text(
+        message,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: error),
+      ),
+    );
+  }
+}
+
+/// The session-ended notice — a calm hairline panel, not a loud fill.
+class _EndedBanner extends StatelessWidget {
+  const _EndedBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
+      child: Text(
+        'Session ended — event stream stopped.',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: PlinkColors.ink60,
             ),
-          if (!_ended && _availableBundles != null)
-            _LiveBundlePanel(
-              available: _availableBundles!,
-              selectedIds: _selectedBundleIds,
-              busy: _updatingBundles,
-              error: _bundleError,
-              onToggle: (id, selected) {
-                final next = {..._selectedBundleIds};
-                if (selected) {
-                  next.add(id);
-                } else {
-                  next.remove(id);
-                }
-                _updateBundles(next);
-              },
+      ),
+    );
+  }
+}
+
+/// The live event feed — the instrument's read-out. Each event is a hairline
+/// row: a mono tabular timestamp, a calm status dot, the raw event kind as a
+/// mono technical label, and a condensed payload. Scannable, not alarming.
+class _Feed extends StatelessWidget {
+  const _Feed({required this.events});
+
+  final List<SessionEvent> events;
+
+  @override
+  Widget build(BuildContext context) {
+    if (events.isEmpty) {
+      return Center(
+        child: Text(
+          'Waiting for events…',
+          style: _monoLabel(PlinkColors.muted),
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s1,
+        _gutter,
+        PlinkSpacing.s6,
+      ),
+      itemCount: events.length,
+      separatorBuilder: (_, _) => const _Hairline(),
+      itemBuilder: (context, i) => _EventRow(event: events[i]),
+    );
+  }
+}
+
+/// The event kinds that warrant a stronger (but small, never alarming) marker —
+/// the ones a teacher might act on.
+const Set<String> _attentionKinds = <String>{
+  'HeartbeatLost',
+  'TamperDetected',
+};
+
+class _EventRow extends StatelessWidget {
+  const _EventRow({required this.event});
+
+  final SessionEvent event;
+
+  static String _time(DateTime at) {
+    final DateTime t = at.toLocal();
+    return '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}:'
+        '${t.second.toString().padLeft(2, '0')}';
+  }
+
+  String _payloadSummary() {
+    if (event.payload.isEmpty) return '';
+    return event.payload.entries
+        .map((e) => '${e.key}=${e.value}')
+        .join('  ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool attention = _attentionKinds.contains(event.kind);
+    final Color dot =
+        attention ? Theme.of(context).colorScheme.error : PlinkColors.muted;
+    final String payload = _payloadSummary();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          // Mono tabular timestamp — the columns line up like a log.
+          SizedBox(
+            width: 76,
+            child: Text(_time(event.at), style: _monoSpec(PlinkColors.ink60, 12)),
+          ),
+          // A small status dot — paired with the label, never colour alone.
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
             ),
-          if (!_ended && (_detail?.participants.isNotEmpty ?? false))
-            _RosterPanel(participants: _detail!.participants),
-          if (_ended)
-            Container(
-              width: double.infinity,
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              padding: const EdgeInsets.all(12),
-              child: const Text('Session ended — event stream stopped.'),
-            ),
-          if (_ended && (_detail?.summaries.isNotEmpty ?? false))
-            _SessionSummaryPanel(summaries: _detail!.summaries),
-          if (!_ended && _pendingRequests.isNotEmpty)
-            _PendingRequestsPanel(
-              requests: _pendingRequests,
-              approving: _approving,
-              error: _unblockError,
-              onApprove: _approveHost,
-              onApproveClass: _approveHostForClass,
-            ),
+          ),
+          const SizedBox(width: PlinkSpacing.s3),
           Expanded(
-            child: _events.isEmpty
-                ? const Center(child: Text('Waiting for events…'))
-                : ListView.separated(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: _events.length,
-                    separatorBuilder: (_, _) => const Divider(height: 8),
-                    itemBuilder: (context, i) {
-                      final evt = _events[i];
-                      return ListTile(
-                        dense: true,
-                        title: Text(evt.kind),
-                        subtitle: Text(evt.payload.toString()),
-                        trailing: Text(
-                          '${evt.at.hour.toString().padLeft(2, '0')}:'
-                          '${evt.at.minute.toString().padLeft(2, '0')}:'
-                          '${evt.at.second.toString().padLeft(2, '0')}',
-                        ),
-                      );
-                    },
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(event.kind, style: _monoLabel(PlinkColors.ink)),
+                if (payload.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 2),
+                  Text(
+                    payload,
+                    style: _monoSpec(PlinkColors.muted, PlinkType.labelSm),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
+                ],
+              ],
+            ),
           ),
         ],
       ),
@@ -479,16 +785,17 @@ class _RosterStateStyle {
     }
   }
 
+  /// Brand-token colours only — no off-palette green/orange. Stale is the one
+  /// state painted in the error colour (the signal to act on); everyone else is
+  /// calm ink / muted, leaning on the label, never colour alone.
   Color color(ColorScheme scheme) {
     switch (icon) {
       case Icons.sensors_off:
         return scheme.error;
       case Icons.check_circle:
-        return Colors.green;
-      case Icons.cancel_outlined:
-        return Colors.orange.shade800;
+        return PlinkColors.ink60;
       default:
-        return scheme.onSurfaceVariant;
+        return PlinkColors.muted;
     }
   }
 }
@@ -500,8 +807,6 @@ class _RosterPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     // Sort by state (attention-first) then name — the acceptance criterion.
     final sorted = [...participants]..sort((a, b) {
         final byState = _RosterStateStyle.of(a.state).sortRank
@@ -514,34 +819,29 @@ class _RosterPanel extends StatelessWidget {
         .where((p) => p.state == ParticipantLiveState.joined)
         .length;
 
-    return Container(
-      width: double.infinity,
-      color: theme.colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.groups, size: 18, color: theme.colorScheme.onSurfaceVariant),
-              const SizedBox(width: 8),
-              Text(
-                'Students ($joinedCount/${participants.length} in session)',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
+        children: <Widget>[
+          Text(
+            'Students ($joinedCount/${participants.length} in session)',
+            style: _monoLabel(PlinkColors.ink60),
           ),
-          const SizedBox(height: 8),
-          // Bounded so a 30-student class doesn't push the event log off-screen.
+          const SizedBox(height: PlinkSpacing.s3),
+          // Bounded so a 30-student class doesn't push the event feed off-screen
+          // (a11y: it scrolls inside the panel, never clips).
           ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 240),
             child: ListView.builder(
               shrinkWrap: true,
               itemCount: sorted.length,
-              itemBuilder: (context, i) =>
-                  _RosterRow(participant: sorted[i]),
+              itemBuilder: (context, i) => _RosterRow(participant: sorted[i]),
             ),
           ),
         ],
@@ -561,11 +861,11 @@ class _RosterRow extends StatelessWidget {
     final style = _RosterStateStyle.of(participant.state);
     final color = style.color(theme.colorScheme);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s2),
       child: Row(
         children: [
           Icon(style.icon, size: 18, color: color),
-          const SizedBox(width: 10),
+          const SizedBox(width: PlinkSpacing.s3),
           Expanded(
             child: Text(
               participant.displayName,
@@ -585,11 +885,11 @@ class _RosterRow extends StatelessWidget {
                 color: theme.colorScheme.error,
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: PlinkSpacing.s2),
           ],
           Text(
             style.label,
-            style: theme.textTheme.bodySmall?.copyWith(color: color),
+            style: _monoLabel(color),
           ),
         ],
       ),
@@ -615,44 +915,40 @@ class _PendingRequestsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      color: theme.colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.pending_actions,
-                size: 18,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Pending requests',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
+        children: <Widget>[
+          Text('Pending requests', style: _monoLabel(PlinkColors.ink60)),
           if (error != null) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: PlinkSpacing.s2),
             Text(error!, style: TextStyle(color: theme.colorScheme.error)),
           ],
-          const SizedBox(height: 8),
-          for (final r in requests)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: _PendingRequestRow(
-                summary: r,
-                isApproving: approving.contains(r.host),
-                onApprove: () => onApprove(r),
-                onApproveClass: () => onApproveClass(r),
+          const SizedBox(height: PlinkSpacing.s3),
+          // Bounded with a scroll so a flurry of requests can't push the feed
+          // off-screen (a11y: reflow inside the panel, never clip).
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 240),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: requests.length,
+              itemBuilder: (context, i) => Padding(
+                padding: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+                child: _PendingRequestRow(
+                  summary: requests[i],
+                  isApproving: approving.contains(requests[i].host),
+                  onApprove: () => onApprove(requests[i]),
+                  onApproveClass: () => onApproveClass(requests[i]),
+                ),
               ),
             ),
+          ),
         ],
       ),
     );
@@ -682,34 +978,31 @@ class _PendingRequestRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                summary.host,
-                style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
-              ),
+              // The host is technical — set it in mono, like a spec.
+              Text(summary.host, style: _monoSpec(PlinkColors.ink, PlinkType.textSm)),
+              const SizedBox(height: 2),
               Text(
                 summary.count == 1
                     ? '1 student — $names'
                     : '${summary.count} students — $names',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
+                style: theme.textTheme.bodySmall,
               ),
             ],
           ),
         ),
-        // Primary action is per-student — the design's safer default (#101).
-        // The broader "whole class" scope is tucked behind the kebab so it
-        // takes a deliberate extra tap.
-        FilledButton.tonalIcon(
+        const SizedBox(width: PlinkSpacing.s3),
+        // Primary action is per-student — the design's safer default (#101) —
+        // and a calm ink button, not the magenta spark. The broader "whole
+        // class" scope is tucked behind the kebab so it takes a deliberate tap.
+        OutlinedButton(
           onPressed: isApproving ? null : onApprove,
-          icon: isApproving
+          child: isApproving
               ? const SizedBox(
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.check),
-          label: const Text('Approve'),
+              : const Text('Approve'),
         ),
         PopupMenuButton<String>(
           tooltip: 'More approval options',
@@ -744,24 +1037,19 @@ class _SessionSummaryPanel extends StatelessWidget {
     final lines = byKind.entries
         .map((e) => '${e.value} ${e.key}')
         .toList(growable: false);
-    return Container(
-      width: double.infinity,
-      color: theme.colorScheme.surfaceContainerHigh,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Session summary',
-            style: theme.textTheme.titleSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            lines.join(' · '),
-            style: theme.textTheme.bodyMedium,
-          ),
+        children: <Widget>[
+          Text('Session summary', style: _monoLabel(PlinkColors.ink60)),
+          const SizedBox(height: PlinkSpacing.s2),
+          Text(lines.join('  ·  '), style: theme.textTheme.bodyMedium),
         ],
       ),
     );
@@ -786,29 +1074,21 @@ class _LiveBundlePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      color: theme.colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        children: <Widget>[
           Row(
-            children: [
-              Icon(
-                Icons.collections_bookmark,
-                size: 18,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Allowed bundles',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              if (busy) ...[
-                const SizedBox(width: 12),
+            children: <Widget>[
+              Text('Allowed bundles', style: _monoLabel(PlinkColors.ink60)),
+              if (busy) ...<Widget>[
+                const SizedBox(width: PlinkSpacing.s3),
                 const SizedBox(
                   width: 14,
                   height: 14,
@@ -818,21 +1098,40 @@ class _LiveBundlePanel extends StatelessWidget {
             ],
           ),
           if (error != null) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: PlinkSpacing.s2),
             Text(error!, style: TextStyle(color: theme.colorScheme.error)),
           ],
-          const SizedBox(height: 8),
+          const SizedBox(height: PlinkSpacing.s3),
           if (available.isEmpty)
-            Text('No bundles available yet.', style: theme.textTheme.bodySmall)
+            Text(
+              'No bundles available yet.',
+              style: theme.textTheme.bodySmall,
+            )
           else
             Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
+              spacing: PlinkSpacing.s2,
+              runSpacing: PlinkSpacing.s2,
+              children: <Widget>[
                 for (final b in available)
                   FilterChip(
                     label: Text(b.name),
                     selected: selectedIds.contains(b.id),
+                    // Calm, square-crisp chips: hairline border, paper fills, an
+                    // ink check — never a magenta pill (the spark is reserved).
+                    showCheckmark: true,
+                    checkmarkColor: PlinkColors.ink,
+                    backgroundColor: PlinkColors.paper,
+                    selectedColor: PlinkColors.paper2,
+                    side: const BorderSide(
+                      color: PlinkColors.hairlineStrong,
+                      width: PlinkBorders.width,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(PlinkRadius.base),
+                    ),
+                    labelStyle: theme.textTheme.bodySmall?.copyWith(
+                      color: PlinkColors.ink,
+                    ),
                     onSelected:
                         busy ? null : (selected) => onToggle(b.id, selected),
                   ),
@@ -852,32 +1151,29 @@ class _JoinCodePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      color: theme.colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
       child: Row(
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Text('Join code', style: _monoLabel(PlinkColors.ink60)),
+                const SizedBox(height: PlinkSpacing.s2),
                 Text(
-                  'Join code',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  // Big enough to be legible across a classroom — fallback
-                  // path for any student who didn't get the roster-based
-                  // push (substitute, transferred class, etc).
+                  // Big enough to be legible across a classroom — the fallback
+                  // path for any student who didn't get the roster-based push
+                  // (substitute, transferred class, etc). Mono tabular so the
+                  // glyphs sit on an even grid.
                   code,
-                  style: theme.textTheme.displaySmall?.copyWith(
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                    fontWeight: FontWeight.w600,
+                  style: _monoSpec(PlinkColors.ink, PlinkType.display3).copyWith(
+                    fontWeight: FontWeight.w700,
                     letterSpacing: 8,
                   ),
                 ),
@@ -886,6 +1182,7 @@ class _JoinCodePanel extends StatelessWidget {
           ),
           IconButton(
             tooltip: 'Copy code',
+            color: PlinkColors.ink,
             icon: const Icon(Icons.copy),
             onPressed: onCopy,
           ),

@@ -103,7 +103,9 @@ void main() {
     await _pumpPage(tester, sessions);
 
     expect(find.text('chat.example.com'), findsOneWidget);
-    final approve = find.widgetWithText(FilledButton, 'Approve');
+    // The primary Approve is a calm ink OutlinedButton now (AD4, #169) — the
+    // magenta spark stays reserved for liveness, not approvals.
+    final approve = find.widgetWithText(OutlinedButton, 'Approve');
     expect(approve, findsOneWidget);
 
     await tester.tap(approve);

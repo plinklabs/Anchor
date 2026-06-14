@@ -11,6 +11,7 @@ import 'package:anchor_dashboard/realtime/session_hub_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 // Real-app e2e for the teacher dashboard's live-session view (#132).
 //
@@ -396,5 +397,38 @@ void main() {
 
     expect(find.text('Waiting for events…'), findsNothing);
     expect(find.text('SessionStarted'), findsOneWidget);
+  });
+
+  testWidgets('the live view renders as the paper instrument panel (AD4, #169)', (
+    tester,
+  ) async {
+    // A real-app run at a realistic window size: this is the test that would
+    // have caught a real-font overflow or a broken composition under the shell
+    // chrome that the isolated widget tests structurally miss.
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final h = await _bootToLiveSession(tester);
+
+    // Liveness reads as the ping motif + the magenta LIVE spark badge
+    // (uppercased by PlinkBadge) — calm, not a pulsing alarm.
+    expect(find.byType(Ping), findsWidgets);
+    expect(find.text('LIVE'), findsOneWidget);
+
+    // The join code is a mono spec a class can read from across the room.
+    expect(find.text('Join code'), findsOneWidget);
+    expect(find.text('ABC123'), findsOneWidget);
+
+    // A pushed event lands as a hairline feed row carrying its raw kind label —
+    // the instrument read-out (HeartbeatLost is one of the issue's examples).
+    h.hub.emit('HeartbeatLost', {'userId': 'Ada'});
+    await tester.pumpAndSettle();
+    expect(find.text('HeartbeatLost'), findsOneWidget);
+
+    // The composition holds under the real shell + real Fraunces / Space Mono
+    // at this window size — no RenderFlex overflow or other exception.
+    expect(tester.takeException(), isNull);
   });
 }
