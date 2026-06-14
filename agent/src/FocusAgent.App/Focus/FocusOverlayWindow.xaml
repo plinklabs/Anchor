@@ -2,37 +2,85 @@
 <Window
     x:Class="FocusAgent.App.Focus.FocusOverlayWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <!-- The overlay is shown fullscreen to cover its entire monitor (issue
-         #103), so the opaque background fills the whole display and the message
-         card is centred within it rather than pinned to a fixed-size window. -->
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:pds="using:PlinkDesignSystem.Controls">
+
+    <!-- AA2 (#174): the focus overlay wears the DS ink treatment (ANCHOR_BRAND.md
+         §3, §6) — the calm, full-bleed ink field a working student gets when an
+         off-list app comes forward. It is REASSURING, not a punishment screen
+         (§5): a generous Fraunces headline, a plain Hanken line of why, and the
+         allowed apps offered as hairline rows to step back into. The Ping carries
+         the one ambient signal (the live session); magenta stays the single
+         spark. Shown fullscreen to cover the whole monitor (#103), so the ink
+         fills the display and the message column is centred within it.
+
+         On-ink note: the allowed-app rows are built in code (UpdateContent) and
+         styled there for on-ink contrast — the DS default Button is tuned for
+         paper, so its ink text is invisible on this ink surface (the same trap
+         #173 hit on the MainWindow). -->
     <Grid Background="{StaticResource PlinkSurfaceInkBrush}">
-        <StackPanel MaxWidth="560"
-                    Padding="32"
-                    Spacing="16"
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- DS-5: the one per-product identity element — a thin top rule in
+             Anchor's indigo accent (PlinkProductAccentBrush, set in App.xaml). It
+             never competes with the magenta spark. -->
+        <Border Grid.Row="0"
+                Height="2"
+                Background="{StaticResource PlinkProductAccentBrush}" />
+
+        <StackPanel Grid.Row="1"
+                    MaxWidth="560"
+                    Padding="40,32"
+                    Spacing="20"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center">
 
-            <TextBlock Text="Focus session active"
-                       FontSize="22"
-                       FontWeight="SemiBold" />
+            <!-- eyebrow: the product mark + a calm, static ping. The overlay
+                 itself isn't the live signal — the session is — so the ping holds
+                 quiet here rather than pulsing for attention (§8). -->
+            <StackPanel Orientation="Horizontal"
+                        Spacing="10"
+                        VerticalAlignment="Center">
+                <pds:Ping x:Name="OverlayPing"
+                          Diameter="14"
+                          Mode="Static"
+                          OnInk="True"
+                          VerticalAlignment="Center" />
+                <TextBlock Style="{StaticResource PlinkEyebrowTextStyle}"
+                           Foreground="{StaticResource PlinkOnInkBrush}"
+                           Text="ANCHOR" />
+            </StackPanel>
 
+            <!-- headline: calm, in Fraunces display. States the situation without
+                 scolding — the student isn't in trouble, the session just has a
+                 shape. -->
+            <TextBlock Style="{StaticResource PlinkDisplaySmallTextStyle}"
+                       Foreground="{StaticResource PlinkOnInkBrush}"
+                       Text="Let's stay with the session" />
+
+            <!-- supporting line: plain Hanken on ink — what's happening and why,
+                 in one breath, then out of the way (§5). -->
             <TextBlock x:Name="MessageText"
-                       Opacity="0.85"
-                       TextWrapping="Wrap"
-                       Text="This app isn't part of the current focus session. Switch to one of these instead." />
+                       Style="{StaticResource PlinkBodyLargeTextStyle}"
+                       Foreground="{StaticResource PlinkOnInkMutedBrush}"
+                       Text="Your teacher started a focus session, so this app is set aside for now. Pick one of these to carry on." />
 
+            <!-- the just-blocked line: quiet mono microcopy, never an alarm. -->
             <TextBlock x:Name="BlockedText"
-                       FontSize="12"
-                       Opacity="0.65"
-                       TextWrapping="Wrap"
+                       Style="{StaticResource PlinkLabelTextStyle}"
+                       Foreground="{StaticResource PlinkOnInkMutedBrush}"
                        Visibility="Collapsed" />
 
+            <!-- allowed apps: hairline rows on ink the student steps back into.
+                 Built in UpdateContent so each rule gets the on-ink row styling. -->
             <ScrollViewer MaxHeight="360"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
                 <StackPanel x:Name="AllowedAppsPanel"
-                            Spacing="6" />
+                            Spacing="8" />
             </ScrollViewer>
         </StackPanel>
     </Grid>
