@@ -71,6 +71,78 @@ only one number to bump. The committed `src/manifest.json` keeps a mirror that
 To release, bump `version` in `package.json` and rebuild. The agent versions
 independently from its own single source (`agent/Directory.Build.props`).
 
+## Package & release (Edge Add-ons)
+
+```powershell
+npm run package        # build dist/ → artifacts/anchor-extension-<version>.zip
+```
+
+`npm run package` ([`scripts/pack-extension.mjs`](scripts/pack-extension.mjs))
+builds `dist/` and zips it into `artifacts/anchor-extension-<version>.zip` — the
+ZIP the Edge Add-ons store consumes. It is dependency-free (a small built-in ZIP
+writer, [`scripts/zip.mjs`](scripts/zip.mjs)) so it runs identically on any OS,
+and it refuses to package a build whose manifest version drifts from
+`package.json` or that is missing the pinned stable-ID `key`.
+[`scripts/pack-extension.test.ts`](scripts/pack-extension.test.ts) drives the
+real build + package and reads the produced ZIP back to lock all three
+invariants.
+
+**Release convention** (mirrors the agent's, #209): bump `version` in
+`package.json`, commit, then push a matching `extension-v<version>` tag. The tag
+triggers [`.github/workflows/extension-release.yml`](../.github/workflows/extension-release.yml),
+which builds, packages, uploads the ZIP as a workflow artifact, and — when the
+submission secrets are configured — publishes/updates the **single canonical**
+Edge Add-ons listing. `pack-extension.mjs` cross-checks the tag's version against
+the committed `package.json` and fails loudly on a mismatch, so a tag can't ship a
+surprising number.
+
+### One canonical listing
+
+There is **one** Anchor listing on the Edge Add-ons store, owned by Plink Labs,
+with the pinned stable ID `akkfdaclmpfcnjalcifkcbhgjnnopman` (see **Stable
+extension ID** below). Because the extension is backend-agnostic — it gets its
+backend URL from the on-box agent at runtime (#204) — every fork reuses that one
+listing instead of publishing near-identical copies. So **forks normally don't
+run this workflow**; it ships the canonical listing. The committed manifest `key`
+keeps the stable ID across every build, so the packaged ZIP installs as the same
+ID a managed-Edge policy can pin.
+
+### Publishing to the Edge Add-ons store
+
+One-time developer setup (free; this is the **Edge Add-ons** program, distinct
+from the dropped Microsoft Store / Partner Center *app* account):
+
+1. Register for free at the [Microsoft Edge Add-ons developer dashboard](https://partner.microsoft.com/dashboard/microsoftedge/)
+   (a Microsoft account; no paid registration, unlike the Store app program).
+2. Create the **Anchor** product once, uploading a first package built with
+   `npm run package`. Note its **Product ID** — every later submission updates
+   this same product, preserving the listing and stable ID.
+3. Enable the Add-ons **API** (dashboard → *Publish API*) and create API
+   credentials: a **Client ID** and an **API key**. These authenticate the
+   automated submission.
+4. Configure them as repository Actions config so the release workflow can
+   submit automatically:
+
+   - variable `EDGE_ADDONS_PRODUCT_ID` — the product ID from step 2 (not a
+     secret).
+   - secret `EDGE_ADDONS_CLIENT_ID` — the API client ID.
+   - secret `EDGE_ADDONS_API_KEY` — the API key.
+
+   ```powershell
+   gh variable set EDGE_ADDONS_PRODUCT_ID --body "<product-id>"
+   gh secret   set EDGE_ADDONS_CLIENT_ID --body "<client-id>"
+   gh secret   set EDGE_ADDONS_API_KEY   --body "<api-key>"
+   ```
+
+If those three are **not** set, the release workflow still builds, packages, and
+uploads the ZIP as a workflow artifact, and prints manual-submit instructions —
+download the `anchor-extension-<version>` artifact and upload it by hand on the
+dashboard. So the listing can be brought up before the API is wired, and the
+workflow needs no edit when it is.
+
+No code-signing step is needed here: the Edge store re-signs the package on
+publish (the committed `key` only fixes the *ID*, not the store signature).
+
 For a dev iteration loop:
 
 ```powershell

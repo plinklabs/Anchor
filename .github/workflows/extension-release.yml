@@ -1,0 +1,125 @@
+name: Extension Release
+
+# Build the Edge MV3 extension, package dist/ into a ZIP, and publish/update the
+# single canonical Anchor listing on the Edge Add-ons store — triggered by an
+# `extension-v*` tag (workstream C of the v1 release roadmap; #210).
+#
+# Trigger: a version tag, NOT a branch push. The release convention mirrors the
+# agent's (agent-release.yml, #209): "bump `version` in extension/package.json
+# (#208, the single source of truth), commit, then push a matching
+# `extension-v<version>` tag" (see extension/README.md). The tag is the single
+# thing that ships an extension build. pack-extension.mjs cross-checks the
+# committed version against the tag and fails loudly on a mismatch.
+#
+# Backend-agnostic, one canonical listing: the extension gets its backend URL from
+# the agent at runtime (#204), so every fork reuses the ONE published listing
+# (stable ID akkfdaclmpfcnjalcifkcbhgjnnopman) instead of publishing near-identical
+# copies. Forks therefore normally do NOT run this workflow; it ships the canonical
+# Plink Labs listing. The pinned `key` in the manifest (committed) preserves the
+# stable ID across every build (#123) — packaged dist/ keeps it, locked by a test.
+#
+# Gate interaction: like agent-release.yml / backend-deploy.yml this workflow has
+# NO `pull_request` trigger, so it never produces a check on a PR and must NOT be
+# added to ci-gate.yml — a required/awaited check that never runs on a PR would
+# hang the gate forever. A PR that only edits this file is validated by
+# `actionlint` (and the pack-extension unit test asserts the same).
+#
+# Edge Add-ons submission: the publish step uses the Edge Add-ons (Partner Center)
+# REST API. It runs ONLY when the submission secrets are configured (see
+# extension/README.md "Publishing to the Edge Add-ons store"); otherwise the job
+# still builds + packages + uploads the ZIP as a workflow artifact and prints the
+# manual-submit instructions, so the API can be wired later without changing this
+# file. No code-signing here — the Edge store re-signs on publish.
+
+on:
+  push:
+    tags:
+      - 'extension-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never run two submissions of the same tag concurrently against the store.
+  group: extension-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Extension Edge Add-ons Release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Derive the version from the tag (extension-v1.2.3 -> 1.2.3) and hand it to
+      # the pack script, which cross-checks it against package.json and fails on
+      # drift.
+      - name: Resolve version from tag
+        id: ver
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            extension-v*) version="${tag#extension-v}" ;;
+            *) echo "::error::Tag '$tag' is not of the form extension-v<version>."; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Release version: $version"
+
+      # Build + zip dist/ into artifacts/anchor-extension-<version>.zip. The script
+      # stamps the version into the packaged manifest and refuses to package a
+      # build missing the pinned stable-ID `key`.
+      - name: Build + package extension
+        id: pack
+        run: node scripts/pack-extension.mjs --version '${{ steps.ver.outputs.version }}'
+
+      # Always keep the packaged ZIP as a workflow artifact — the exact bytes a
+      # human can hand-upload to Partner Center if the API submission is skipped or
+      # needs review before going live.
+      - name: Upload extension package
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-extension-${{ steps.ver.outputs.version }}
+          path: ${{ steps.pack.outputs.zip }}
+          retention-days: 30
+
+      # Submit to the Edge Add-ons store via the Partner Center API — only when the
+      # submission secrets are present. A fork (or a not-yet-wired setup) skips this
+      # cleanly and relies on the uploaded artifact + manual submit.
+      - name: Check Edge Add-ons submission config
+        id: cfg
+        shell: bash
+        env:
+          PRODUCT_ID: ${{ vars.EDGE_ADDONS_PRODUCT_ID }}
+          CLIENT_ID: ${{ secrets.EDGE_ADDONS_CLIENT_ID }}
+          API_KEY: ${{ secrets.EDGE_ADDONS_API_KEY }}
+        run: |
+          if [ -n "$PRODUCT_ID" ] && [ -n "$CLIENT_ID" ] && [ -n "$API_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Edge Add-ons submission secrets not set — skipping API submit. Download the 'anchor-extension-${{ steps.ver.outputs.version }}' artifact and upload it manually at https://partner.microsoft.com/dashboard/microsoftedge (see extension/README.md)."
+          fi
+
+      - name: Publish to Edge Add-ons store
+        if: ${{ steps.cfg.outputs.configured == 'true' }}
+        uses: wdzeng/edge-addon@v2
+        with:
+          product-id: ${{ vars.EDGE_ADDONS_PRODUCT_ID }}
+          zip-path: ${{ steps.pack.outputs.zip }}
+          client-id: ${{ secrets.EDGE_ADDONS_CLIENT_ID }}
+          api-key: ${{ secrets.EDGE_ADDONS_API_KEY }}

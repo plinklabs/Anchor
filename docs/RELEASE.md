@@ -8,7 +8,13 @@ required-secrets surface — when a deploy workflow gains or drops a `secrets.*`
 `vars.*` reference, update the inventory here in the same PR.
 
 Client release (the agent via Velopack, the extension via the Edge store) is a
-separate workstream and is not covered here yet.
+separate workstream. It is tag-triggered, not push-to-`main`, and documented with
+each client: the agent in [`agent/README.md`](../agent/README.md) (`agent-v*`
+tags → `agent-release.yml`, #209) and the extension in
+[`extension/README.md`](../extension/README.md) (`extension-v*` tags →
+`extension-release.yml`, #210, incl. the one-time Edge Add-ons developer setup and
+its `EDGE_ADDONS_*` config). The cloud secrets/variables inventory below covers
+the cloud tier only.
 
 ## Pipeline overview
 
