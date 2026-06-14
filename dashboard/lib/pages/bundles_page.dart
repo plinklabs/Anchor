@@ -1,15 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
 
-/// Admin-only catalogue editor for bundles (#75).
+/// Admin-only catalogue editor for bundles (#75), redesigned to the paper
+/// treatment (AD5, #170).
 ///
-/// Left pane: bundles + archived ones (toggleable).
-/// Right pane: editor for the selected (or new) bundle with separate Apps
-/// and Domains tables. A "Test" field checks the current draft against a
-/// URL or process name without saving. Edits take effect at the next
-/// session start (footer); live updates to active sessions are out of scope.
+/// Two panes on the same flush-left margin as the shell: a hairline list of
+/// bundles (each row a quiet instrument line, version + archived shown as mono
+/// spec chips) and, beside it, the editor for the selected (or new) bundle —
+/// the name field, separate Domains and Apps sections, and a Test field that
+/// checks the current draft against a URL or process name without saving.
+///
+/// Magenta is the single spark, reserved for the one constructive commit on the
+/// page: the Save / Create button. Every other affordance (New bundle, Add
+/// entry, Check, Delete / Archive) stays calm ink so the editor reads like an
+/// instrument, not a console of buttons. Edits take effect at the next session
+/// start (footer); live updates to active sessions are out of scope.
 class BundlesPage extends StatefulWidget {
   const BundlesPage({super.key, required this.bundles, required this.sessions});
 
@@ -314,6 +322,7 @@ class _BundlesPageState extends State<BundlesPage> {
   Widget build(BuildContext context) {
     if (_denied) {
       return const Scaffold(
+        backgroundColor: PlinkColors.paper,
         body: Center(
           child: Text('Admin access required.'),
         ),
@@ -321,11 +330,17 @@ class _BundlesPageState extends State<BundlesPage> {
     }
 
     return Scaffold(
+      backgroundColor: PlinkColors.paper,
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(width: 320, child: _buildList()),
-          const VerticalDivider(width: 1),
+          SizedBox(width: 300, child: _buildList()),
+          // A vertical hairline between the panes — the system separates with
+          // rules, never shadows.
+          const SizedBox(
+            width: PlinkBorders.width,
+            child: ColoredBox(color: PlinkColors.hairline),
+          ),
           Expanded(child: _buildEditor()),
         ],
       ),
@@ -335,63 +350,79 @@ class _BundlesPageState extends State<BundlesPage> {
   Widget _buildList() {
     final list = _list;
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.fromLTRB(
+            PlinkSpacing.s4,
+            PlinkSpacing.s4,
+            PlinkSpacing.s4,
+            PlinkSpacing.s3,
+          ),
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  'Catalogue',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+                child: Text('Catalogue', style: _monoLabel(PlinkColors.ink60)),
               ),
+              Text('Archived', style: _monoLabel(PlinkColors.muted)),
+              const SizedBox(width: PlinkSpacing.s2),
+              // Compact so the toggle sits on the label baseline rather than
+              // eating the row height.
               Tooltip(
-                message: 'Show archived',
-                child: Switch(
-                  value: _includeArchived,
-                  onChanged: (v) {
-                    setState(() => _includeArchived = v);
-                    _refreshList();
-                  },
+                message: 'Show archived bundles',
+                child: Transform.scale(
+                  scale: 0.8,
+                  child: Switch(
+                    value: _includeArchived,
+                    onChanged: (v) {
+                      setState(() => _includeArchived = v);
+                      _refreshList();
+                    },
+                  ),
                 ),
               ),
             ],
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          padding: const EdgeInsets.fromLTRB(
+            PlinkSpacing.s4,
+            0,
+            PlinkSpacing.s4,
+            PlinkSpacing.s4,
+          ),
           child: SizedBox(
             width: double.infinity,
-            child: FilledButton.icon(
+            // Calm ink action — creating a draft is navigation, not the
+            // constructive commit. The magenta spark is reserved for Save.
+            child: OutlinedButton.icon(
               key: const Key('bundles-new-button'),
-              icon: const Icon(Icons.add),
+              icon: const Icon(Icons.add, size: 18),
               label: const Text('New bundle'),
               onPressed: _startNew,
             ),
           ),
         ),
-        const Divider(height: 1),
+        const _Hairline(),
         Expanded(
           child: _loading && list == null
               ? const Center(child: CircularProgressIndicator())
               : list == null || list.isEmpty
-                  ? const Center(child: Text('No bundles.'))
-                  : ListView.builder(
+                  ? Center(
+                      child: Text(
+                        'No bundles.',
+                        style: _monoLabel(PlinkColors.muted),
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: EdgeInsets.zero,
                       itemCount: list.length,
+                      separatorBuilder: (_, _) => const _Hairline(),
                       itemBuilder: (context, i) {
                         final b = list[i];
-                        final selected = _selected?.id == b.id;
-                        return ListTile(
-                          selected: selected,
-                          title: Text(b.name),
-                          subtitle: Text('v${b.version}'),
-                          trailing: b.isArchived
-                              ? const Chip(
-                                  label: Text('archived'),
-                                  visualDensity: VisualDensity.compact,
-                                )
-                              : null,
+                        return _BundleRow(
+                          summary: b,
+                          selected: _selected?.id == b.id,
                           onTap: () => _openBundle(b),
                         );
                       },
@@ -403,86 +434,122 @@ class _BundlesPageState extends State<BundlesPage> {
 
   Widget _buildEditor() {
     if (_selected == null && !_isNewDraft) {
-      return const Center(
-        child: Text('Select a bundle or press + to create a new one.'),
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(PlinkSpacing.s6),
+          child: Text(
+            'Select a bundle, or start a new one.',
+            style: _monoLabel(PlinkColors.muted),
+            textAlign: TextAlign.center,
+          ),
+        ),
       );
     }
-    final theme = Theme.of(context);
+    final selected = _selected;
     final domains = _entries.where((e) => e.kind == BundleEntryKind.domain).toList();
     final apps = _entries.where((e) => e.kind == BundleEntryKind.app).toList();
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+      padding: const EdgeInsets.fromLTRB(
+        PlinkSpacing.s6,
+        PlinkSpacing.s5,
+        PlinkSpacing.s6,
+        PlinkSpacing.s8,
+      ),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          // The editor column: a readable measure that keeps the entry rows
+          // from stretching uncomfortably wide on a maximised window.
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Name',
-                    border: OutlineInputBorder(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _nameController,
+                      style: Theme.of(context).textTheme.titleMedium,
+                      decoration: const InputDecoration(
+                        labelText: 'Name',
+                        isDense: true,
+                      ),
+                    ),
                   ),
-                ),
+                  // Version + archived as mono spec chips — the bundle's specs,
+                  // read like an instrument label, never shouting.
+                  if (selected != null) ...[
+                    const SizedBox(width: PlinkSpacing.s3),
+                    PlinkBadge('v${selected.version}'),
+                    if (selected.isArchived) ...[
+                      const SizedBox(width: PlinkSpacing.s2),
+                      const PlinkBadge('Archived'),
+                    ],
+                  ],
+                ],
               ),
-              const SizedBox(width: 12),
-              if (_selected != null)
+              const SizedBox(height: PlinkSpacing.s6),
+              _EntrySection(
+                title: 'Domains',
+                rows: domains,
+                kind: BundleEntryKind.domain,
+                onAdd: () => _addEntry(BundleEntryKind.domain),
+                onRemove: _removeEntry,
+                onChanged: () => setState(() {}),
+              ),
+              const SizedBox(height: PlinkSpacing.s6),
+              _EntrySection(
+                title: 'Apps',
+                rows: apps,
+                kind: BundleEntryKind.app,
+                onAdd: () => _addEntry(BundleEntryKind.app),
+                onRemove: _removeEntry,
+                onChanged: () => setState(() {}),
+              ),
+              const SizedBox(height: PlinkSpacing.s6),
+              _buildTester(),
+              const SizedBox(height: PlinkSpacing.s6),
+              if (_error != null) ...[
                 Text(
-                  'v${_selected!.version}${_selected!.isArchived ? " (archived)" : ""}',
-                  style: theme.textTheme.bodyMedium,
+                  _error!,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          _EntrySection(
-            title: 'Domains',
-            rows: domains,
-            kind: BundleEntryKind.domain,
-            onAdd: () => _addEntry(BundleEntryKind.domain),
-            onRemove: _removeEntry,
-            onChanged: () => setState(() {}),
-          ),
-          const SizedBox(height: 24),
-          _EntrySection(
-            title: 'Apps',
-            rows: apps,
-            kind: BundleEntryKind.app,
-            onAdd: () => _addEntry(BundleEntryKind.app),
-            onRemove: _removeEntry,
-            onChanged: () => setState(() {}),
-          ),
-          const SizedBox(height: 24),
-          _buildTester(),
-          const SizedBox(height: 24),
-          if (_error != null) ...[
-            Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
-            const SizedBox(height: 12),
-          ],
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildDestructiveAction(),
-              FilledButton.icon(
-                icon: _saving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save),
-                label: Text(_isNewDraft ? 'Create' : 'Save'),
-                onPressed: _saving ? null : _save,
+                const SizedBox(height: PlinkSpacing.s4),
+              ],
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildDestructiveAction(),
+                  // The one magenta spark on the page: the constructive commit.
+                  // The DS theme paints ElevatedButton in the spark.
+                  ElevatedButton(
+                    key: const Key('bundles-save-button'),
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: PlinkColors.onInk,
+                            ),
+                          )
+                        : Text(_isNewDraft ? 'Create' : 'Save'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: PlinkSpacing.s3),
+              Text(
+                'Edits take effect at the next session start.',
+                style: _monoLabel(PlinkColors.muted),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            'Edits take effect at the next session start.',
-            style: theme.textTheme.bodySmall?.copyWith(fontStyle: FontStyle.italic),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -499,7 +566,7 @@ class _BundlesPageState extends State<BundlesPage> {
       return Tooltip(
         message: 'Permanently delete — this bundle has never been used in a session.',
         child: OutlinedButton.icon(
-          icon: const Icon(Icons.delete_outline),
+          icon: const Icon(Icons.delete_outline, size: 18),
           label: const Text('Delete'),
           onPressed: _saving ? null : _delete,
         ),
@@ -510,7 +577,7 @@ class _BundlesPageState extends State<BundlesPage> {
       return Tooltip(
         message: 'Hide from the picker. Hard delete is not possible because this bundle has been used in past sessions.',
         child: OutlinedButton.icon(
-          icon: const Icon(Icons.archive_outlined),
+          icon: const Icon(Icons.archive_outlined, size: 18),
           label: const Text('Archive'),
           onPressed: _saving ? null : _archive,
         ),
@@ -521,42 +588,53 @@ class _BundlesPageState extends State<BundlesPage> {
   }
 
   Widget _buildTester() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Test', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 4),
-            Text(
-              'Paste a URL or process name to see whether the current draft matches.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _testController,
-                    decoration: const InputDecoration(
-                      hintText: 'e.g. https://www.geogebra.org/calc',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    onSubmitted: (_) => _runTest(),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton(onPressed: _runTest, child: const Text('Check')),
-              ],
-            ),
-            if (_testResult != null) ...[
-              const SizedBox(height: 8),
-              Text(_testResult!),
-            ],
-          ],
+    // A hairline-bounded panel, not a raised card — the system uses borders,
+    // never shadows.
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: PlinkColors.hairline,
+          width: PlinkBorders.width,
         ),
+        borderRadius: BorderRadius.circular(PlinkRadius.base),
+      ),
+      padding: const EdgeInsets.all(PlinkSpacing.s4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Test', style: _monoLabel(PlinkColors.ink60)),
+          const SizedBox(height: PlinkSpacing.s2),
+          Text(
+            'Paste a URL or process name to see whether the current draft matches.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: PlinkColors.ink60,
+                ),
+          ),
+          const SizedBox(height: PlinkSpacing.s3),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _testController,
+                  decoration: const InputDecoration(
+                    hintText: 'e.g. https://www.geogebra.org/calc',
+                    isDense: true,
+                  ),
+                  onSubmitted: (_) => _runTest(),
+                ),
+              ),
+              const SizedBox(width: PlinkSpacing.s3),
+              OutlinedButton(onPressed: _runTest, child: const Text('Check')),
+            ],
+          ),
+          if (_testResult != null) ...[
+            const SizedBox(height: PlinkSpacing.s3),
+            Text(
+              _testResult!,
+              style: _monoSpec(PlinkColors.ink, PlinkType.textSm),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -641,6 +719,115 @@ class _BundlesPageState extends State<BundlesPage> {
   };
 }
 
+/// A full-width 1px instrument rule — the system separates with hairlines,
+/// never shadows.
+class _Hairline extends StatelessWidget {
+  const _Hairline();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: PlinkBorders.width,
+      child: ColoredBox(color: PlinkColors.hairline),
+    );
+  }
+}
+
+/// A space-mono label style (sentence-case microcopy / specs) — the quiet
+/// headers and counts that read like an instrument, never shouting. Mirrors the
+/// live-session page treatment.
+TextStyle _monoLabel(Color color) => const TextStyle(
+      fontFamily: PlinkType.monoFamily,
+      package: PlinkType.fontPackage,
+      fontFamilyFallback: PlinkType.monoFallback,
+      fontSize: PlinkType.label,
+    ).copyWith(
+      letterSpacing: PlinkType.tracking(
+        PlinkType.labelTrackingTight,
+        PlinkType.label,
+      ),
+      color: color,
+      height: 1.3,
+    );
+
+/// Tabular-figure mono for values that read as a spec (the match result).
+TextStyle _monoSpec(Color color, double size) => TextStyle(
+      fontFamily: PlinkType.monoFamily,
+      package: PlinkType.fontPackage,
+      fontFamilyFallback: PlinkType.monoFallback,
+      fontSize: size,
+      color: color,
+      height: 1.4,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
+
+/// One catalogue row — a hairline instrument line. The bundle name reads first;
+/// its version is a mono spec chip and an archived bundle wears a muted badge.
+/// The selected row is marked by a paper-tint fill and a magenta edge tick (the
+/// same spark the nav uses as its active indicator), never a heavy highlight.
+class _BundleRow extends StatelessWidget {
+  const _BundleRow({
+    required this.summary,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final BundleSummary summary;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: ColoredBox(
+        color: selected ? PlinkColors.paper2 : PlinkColors.paper,
+        child: Row(
+          children: [
+            // The magenta active tick — mirrors the app-bar's nav indicator.
+            SizedBox(
+              width: 3,
+              height: 52,
+              child: selected
+                  ? const ColoredBox(color: PlinkColors.magenta)
+                  : null,
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  PlinkSpacing.s4 - 3,
+                  PlinkSpacing.s3,
+                  PlinkSpacing.s3,
+                  PlinkSpacing.s3,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        summary.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                              color: PlinkColors.ink,
+                            ),
+                      ),
+                    ),
+                    if (summary.isArchived) ...[
+                      const PlinkBadge('Archived'),
+                      const SizedBox(width: PlinkSpacing.s2),
+                    ],
+                    PlinkBadge('v${summary.version}'),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _EntrySection extends StatelessWidget {
   const _EntrySection({
     required this.title,
@@ -660,7 +847,6 @@ class _EntrySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final allowedMatchTypes = kind == BundleEntryKind.domain
         ? const [
             BundleEntryMatchType.exact,
@@ -677,24 +863,27 @@ class _EntrySection extends StatelessWidget {
       children: [
         Row(
           children: [
-            Expanded(child: Text(title, style: theme.textTheme.titleMedium)),
+            Expanded(
+              child: Text(title, style: _monoLabel(PlinkColors.ink60)),
+            ),
+            // Calm ink affordance — only the Save commit wears the spark.
             TextButton.icon(
-              icon: const Icon(Icons.add),
+              icon: const Icon(Icons.add, size: 18),
               label: const Text('Add'),
               onPressed: onAdd,
             ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: PlinkSpacing.s2),
         if (rows.isEmpty)
           Text(
             'No ${title.toLowerCase()} entries.',
-            style: theme.textTheme.bodySmall,
+            style: _monoLabel(PlinkColors.muted),
           )
         else
-          for (final row in rows) ...[
+          for (final row in rows)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
+              padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s1),
               child: Row(
                 children: [
                   SizedBox(
@@ -710,10 +899,7 @@ class _EntrySection extends StatelessWidget {
                       // long label can never trip a RenderFlex error even if
                       // metrics differ (font/locale) from the 200px budget.
                       isExpanded: true,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
+                      decoration: const InputDecoration(isDense: true),
                       items: [
                         for (final t in allowedMatchTypes)
                           DropdownMenuItem(
@@ -728,7 +914,7 @@ class _EntrySection extends StatelessWidget {
                       },
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: PlinkSpacing.s2),
                   Expanded(
                     child: TextField(
                       controller: row.controller,
@@ -736,19 +922,19 @@ class _EntrySection extends StatelessWidget {
                         hintText: kind == BundleEntryKind.domain
                             ? 'e.g. *.geogebra.org'
                             : 'e.g. msedge',
-                        border: const OutlineInputBorder(),
                         isDense: true,
                       ),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.remove_circle_outline),
+                    color: PlinkColors.ink60,
+                    tooltip: 'Remove entry',
                     onPressed: () => onRemove(row),
                   ),
                 ],
               ),
             ),
-          ],
       ],
     );
   }
