@@ -164,7 +164,7 @@ start / amend / end a session and print the agent's live `/status`.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `Backend:BaseUrl` | `http://localhost:5000` | Dev backend URL. Override per deploy. |
+| `Backend:BaseUrl` | `http://localhost:5276` | Dev backend URL. Substituted per deploy via `appsettings.Production.json` — see [Per-deployment config](#per-deployment-config-release-builds). |
 | `Backend:HubPath` | `/hubs/session` | Path of the backend SignalR hub. |
 | `Auth:TenantId` | _empty_ | Entra tenant ID the agent signs in against. |
 | `Auth:ClientId` | _empty_ | App registration (public client) ID. |
@@ -174,6 +174,28 @@ start / amend / end a session and print the agent's live `/status`.
 
 `Auth:TenantId`, `Auth:ClientId` and `Auth:Scope` are required. The agent fails
 fast at startup with a clear error message if any are empty.
+
+### Per-deployment config (release builds)
+
+`Backend:BaseUrl` and `Auth` are **substitutable per deployment** so a fork's
+published agent targets its own backend + Entra without editing the committed
+dev defaults (#203). The agent loads `appsettings.{Environment}.json` *after*
+`appsettings.json`, where the environment comes from `DOTNET_ENVIRONMENT` /
+`ASPNETCORE_ENVIRONMENT`, defaulting to the build configuration: **Debug ⇒
+Development**, **Release ⇒ Production** (an explicit env var always wins). So:
+
+- `dotnet run` and the headless e2e (Debug, no env var) stay on **Development**
+  and load the local `appsettings.Development.json` against the dev backend —
+  unchanged.
+- A **release build** runs in **Production** and loads
+  `appsettings.Production.json`. That file is committed as a *template* whose
+  `Backend:BaseUrl` + `Auth` values are `#{…}#` placeholders; the release /
+  Velopack pack step substitutes them so the published agent points at the
+  fork's backend. Any key it omits falls back to `appsettings.json`.
+
+To smoke-test the Production layer locally, fill the placeholders in a copy of
+`appsettings.Production.json` next to the built exe and launch with
+`DOTNET_ENVIRONMENT=Production`.
 
 ### Single-machine dev verification
 

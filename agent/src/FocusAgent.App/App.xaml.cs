@@ -646,14 +646,62 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// The hosting environment name that selects the per-deployment config layer
+    /// (#203). An explicit <c>DOTNET_ENVIRONMENT</c> / <c>ASPNETCORE_ENVIRONMENT</c>
+    /// always wins (the release pipeline can force either, and a dev can opt into
+    /// Production locally to smoke-test the substituted file). Absent that, the
+    /// default follows the build configuration: a Debug build — <c>dotnet run</c>
+    /// and the headless e2e, which set no environment — defaults to
+    /// <c>Development</c> so it keeps loading the dev overrides + dev backend; a
+    /// Release build defaults to <c>Production</c> so the published agent picks up
+    /// the substituted appsettings.Production.json. This is the inverse of the
+    /// generic host's own default (always Production), which would silently skip the
+    /// dev overrides for every local run.
+    /// </summary>
+    internal static string ResolveEnvironmentName()
+    {
+        var explicitName =
+            Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+        if (!string.IsNullOrWhiteSpace(explicitName))
+            return explicitName;
+
+#if DEBUG
+        return "Development";
+#else
+        return "Production";
+#endif
+    }
+
     private static IHost BuildHost(DispatcherQueue dispatcher, Func<IntPtr> windowHandleProvider)
     {
-        var builder = Host.CreateApplicationBuilder();
+        var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            // Select the per-deployment config layer (#203): a Debug build (dotnet
+            // run / the headless e2e) defaults to Development and keeps loading
+            // appsettings.Development.json; a Release build defaults to Production and
+            // loads the substituted appsettings.Production.json. An explicit
+            // DOTNET_ENVIRONMENT always wins. See ResolveEnvironmentName — set here
+            // because the generic host's own default (always Production) would
+            // silently skip the dev overrides for every local run.
+            EnvironmentName = ResolveEnvironmentName(),
+        });
 
+        // Layer config: committed dev defaults (appsettings.json) first, then the
+        // per-environment file. In Development that's the gitignored local override
+        // (appsettings.Development.json); in a release build it's the committed
+        // appsettings.Production.json *template*, whose Backend:BaseUrl + Auth
+        // placeholders the release pipeline substitutes at pack time so a fork's
+        // published agent targets its own backend + Entra without editing the
+        // committed dev source (#203).
         builder.Configuration
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-            .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true);
+            .AddJsonFile(
+                $"appsettings.{builder.Environment.EnvironmentName}.json",
+                optional: true,
+                reloadOnChange: true);
 
         // --inject-token is the dev/headless gate (production never passes it).
         // Under it, layer environment variables LAST so they win over the JSON
