@@ -28,3 +28,30 @@ describe('block page — fixed ink treatment (AF4 / #165)', () => {
     expect(html).not.toMatch(/@media[^{]*prefers-color-scheme/);
   });
 });
+
+describe('block page — calm student-facing redesign (AE1 / #177)', () => {
+  it('wears the signature concentric-ring ping as the focus-session mark', () => {
+    // AE1 swaps the old static `pl-eyebrow__dot` for the living `pl-ping`.
+    // It must be the pulsing, on-ink variant and carry all three layers
+    // (two rings + core) the DS animation needs.
+    expect(html).toMatch(/class="[^"]*\bpl-ping\b[^"]*\bpl-ping--pulse\b/);
+    expect(html).toMatch(/class="[^"]*\bpl-ping--on-ink\b/);
+    expect(html).toMatch(/pl-ping__ring[^"]*"[^>]*><\/span>\s*<span class="pl-ping__ring b/);
+    expect(html).toMatch(/pl-ping__core/);
+  });
+
+  it('drops the old static eyebrow dot', () => {
+    // The dot and the ping are mutually exclusive marks; leaving the dot in
+    // would render two bullets before the label.
+    expect(html).not.toMatch(/pl-eyebrow__dot/);
+  });
+
+  it('keeps the FOCUS SESSION eyebrow label', () => {
+    // The eyebrow text the DS uppercases to "FOCUS SESSION".
+    expect(html).toMatch(/pl-eyebrow[^>]*>[\s\S]*Focus session/i);
+  });
+
+  it('uses a calm, reassuring headline rather than a punitive one', () => {
+    expect(html).toMatch(/<h1>Let's stay on track<\/h1>/);
+  });
+});
