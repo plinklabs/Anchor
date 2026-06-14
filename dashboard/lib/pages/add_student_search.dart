@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/classes_api.dart';
 
@@ -153,10 +154,15 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
   Widget _buildResults(BuildContext context) {
     if (_error != null) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        padding: const EdgeInsets.symmetric(
+          vertical: PlinkSpacing.s2,
+          horizontal: PlinkSpacing.s1,
+        ),
         child: Text(
           _error!,
-          style: TextStyle(color: Theme.of(context).colorScheme.error),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.error,
+              ),
         ),
       );
     }
@@ -164,25 +170,69 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
       return const SizedBox.shrink();
     }
     if (_results.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        child: Text('No matches.'),
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+          vertical: PlinkSpacing.s2,
+          horizontal: PlinkSpacing.s1,
+        ),
+        child: Text('No matches.', style: _monoLabel(PlinkColors.muted)),
       );
     }
-    return Card(
-      margin: EdgeInsets.zero,
+    // A hairline-bounded dropdown panel, not a raised card — the system uses
+    // borders, never shadows. Each match is a quiet instrument line.
+    return Container(
+      decoration: BoxDecoration(
+        color: PlinkColors.paper,
+        border: Border.all(
+          color: PlinkColors.hairline,
+          width: PlinkBorders.width,
+        ),
+        borderRadius: BorderRadius.circular(PlinkRadius.base),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 280),
-        child: ListView.builder(
+        child: ListView.separated(
+          padding: EdgeInsets.zero,
           shrinkWrap: true,
           itemCount: _results.length,
+          separatorBuilder: (_, _) => const SizedBox(
+            height: PlinkBorders.width,
+            child: ColoredBox(color: PlinkColors.hairline),
+          ),
           itemBuilder: (_, i) {
             final u = _results[i];
-            return ListTile(
-              dense: true,
-              title: Text(u.displayName),
-              subtitle: (u.upn == null || u.upn!.isEmpty) ? null : Text(u.upn!),
+            final hasUpn = u.upn != null && u.upn!.isNotEmpty;
+            return InkWell(
               onTap: _adding ? null : () => _select(u),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: PlinkSpacing.s3,
+                  vertical: PlinkSpacing.s2,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      u.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: PlinkColors.ink,
+                          ),
+                    ),
+                    if (hasUpn) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        u.upn!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: _monoLabel(PlinkColors.ink60),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             );
           },
         ),
@@ -190,3 +240,19 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
     );
   }
 }
+
+/// A space-mono label style (sentence-case microcopy / specs) — mirrors the
+/// classes page treatment so the typeahead reads in the same instrument voice.
+TextStyle _monoLabel(Color color) => const TextStyle(
+      fontFamily: PlinkType.monoFamily,
+      package: PlinkType.fontPackage,
+      fontFamilyFallback: PlinkType.monoFallback,
+      fontSize: PlinkType.label,
+    ).copyWith(
+      letterSpacing: PlinkType.tracking(
+        PlinkType.labelTrackingTight,
+        PlinkType.label,
+      ),
+      color: color,
+      height: 1.3,
+    );
