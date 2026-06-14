@@ -4,7 +4,7 @@ import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { selectTabsToRestore } from './shared/tab-restore';
-import { loadSettings } from './shared/settings';
+import { loadSettings, persistBackendUrl } from './shared/settings';
 import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
 import { WitnessClient, WITNESS_HOST_NAME } from './shared/witness';
 import {
@@ -387,8 +387,36 @@ function ensureWitness(): void {
   witness = new WitnessClient({
     connect: () => chrome.runtime.connectNative(WITNESS_HOST_NAME),
     onAgentUnavailable: () => void reportTamperIfInSession('agent_unavailable'),
+    onBackendUrl: (url) => void handleBackendUrlFromAgent(url),
   });
   witness.start();
+}
+
+// The agent is the source of truth for which backend a deployment targets
+// (#204). It hands the URL down over the witness link; we persist it and, if it
+// changed (or the hub never came up because nothing told us a backend yet),
+// (re)establish the hub against it. Only the registered native host can reach
+// this path, so an arbitrary web page can't repoint the extension.
+async function handleBackendUrlFromAgent(url: string): Promise<void> {
+  let changed: boolean;
+  try {
+    changed = await persistBackendUrl(url);
+  } catch (err) {
+    log.error('failed to persist agent-provided backend url', err);
+    return;
+  }
+  if (changed && hubClient) {
+    // Tear the existing hub down so the next ensureHub() rebuilds it against
+    // the new backend; loadSettings() re-reads the URL we just stored.
+    log.info('backend url changed — restarting hub onto the new backend');
+    try {
+      await hubClient.stop();
+    } catch (err) {
+      log.debug('stopping hub before backend switch threw', err);
+    }
+    hubClient = null;
+  }
+  await ensureHub();
 }
 
 async function reportTamperIfInSession(kind: TamperKind): Promise<void> {

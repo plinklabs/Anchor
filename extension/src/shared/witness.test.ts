@@ -18,6 +18,19 @@ describe('classifyHostMessage', () => {
     expect(classifyHostMessage(null)).toBe('ignore');
     expect(classifyHostMessage(undefined)).toBe('ignore');
   });
+
+  it('maps a backend_url message carrying a usable url to its signal (#204)', () => {
+    expect(classifyHostMessage({ type: 'backend_url', url: 'https://anchor.example' }))
+      .toBe('backend_url');
+  });
+
+  it('ignores a backend_url message with no usable url', () => {
+    // A blank or missing url must not register as a signal — otherwise it could
+    // wipe a working backend URL.
+    expect(classifyHostMessage({ type: 'backend_url' })).toBe('ignore');
+    expect(classifyHostMessage({ type: 'backend_url', url: '' })).toBe('ignore');
+    expect(classifyHostMessage({ type: 'backend_url', url: '   ' })).toBe('ignore');
+  });
 });
 
 describe('nextReconnectDelayMs', () => {
@@ -126,6 +139,28 @@ describe('WitnessClient', () => {
     // An unrelated message is not a signal.
     port.emit({ type: 'whatever' });
     expect(onAgentUnavailable).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a backend_url the host relays to onBackendUrl (#204)', () => {
+    const h = makeHarness();
+    const port = new h.FakePort();
+    const onBackendUrl = vi.fn();
+    const client = new WitnessClient({
+      connect: () => port,
+      onAgentUnavailable: vi.fn(),
+      onBackendUrl,
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    port.emit({ type: 'backend_url', url: 'https://anchor.example' });
+    expect(onBackendUrl).toHaveBeenCalledTimes(1);
+    expect(onBackendUrl).toHaveBeenCalledWith('https://anchor.example');
+
+    // A blank url is not delivered — it can't wipe a good configuration.
+    port.emit({ type: 'backend_url', url: '   ' });
+    expect(onBackendUrl).toHaveBeenCalledTimes(1);
   });
 
   it('reconnects with backoff after the port drops', () => {

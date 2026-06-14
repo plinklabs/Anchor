@@ -55,7 +55,57 @@ public class WitnessHostIntegrationTests
         }
     }
 
-    private static Process StartHostProcess(string pipeName)
+    [Fact]
+    public async Task Host_sends_the_configured_backend_url_to_the_extension_on_startup()
+    {
+        // #204: the host hands the extension its backend URL over the native
+        // messaging channel as soon as it starts, so a single published extension
+        // learns its backend from the on-box agent at runtime. The env var is the
+        // per-deployment source (what the agent installer / e2e harness sets).
+        var pipeName = "anchor-witness-test-" + Guid.NewGuid().ToString("N");
+        const string backendUrl = "https://backend.test.example";
+
+        var transport = new NamedPipeWitnessTransport(pipeName: pipeName);
+        await transport.StartAsync();
+
+        var host = StartHostProcess(pipeName, backendUrl);
+        try
+        {
+            // Read the first framed native message off the host's stdout — the
+            // backend_url message it emits the moment the bridge starts.
+            var stdout = host.StandardOutput.BaseStream;
+            var json = await ReadFramedMessageAsync(stdout, Timeout);
+
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            Assert.Equal("backend_url", doc.RootElement.GetProperty("type").GetString());
+            Assert.Equal(backendUrl, doc.RootElement.GetProperty("url").GetString());
+        }
+        finally
+        {
+            await transport.StopAsync();
+            host.StandardInput.Close();
+            if (!host.WaitForExit(5000))
+            {
+                host.Kill(entireProcessTree: true);
+                host.WaitForExit(2000);
+            }
+            host.Dispose();
+        }
+    }
+
+    /// <summary>Reads one 4-byte-length-prefixed UTF-8 native message, bounded by a timeout.</summary>
+    private static async Task<string> ReadFramedMessageAsync(Stream stream, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        var header = new byte[4];
+        await stream.ReadExactlyAsync(header, cts.Token);
+        var length = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header);
+        var payload = new byte[length];
+        await stream.ReadExactlyAsync(payload.AsMemory(0, (int)length), cts.Token);
+        return System.Text.Encoding.UTF8.GetString(payload);
+    }
+
+    private static Process StartHostProcess(string pipeName, string? backendUrl = null)
     {
         var hostExe = ResolveHostExe();
         var psi = new ProcessStartInfo(hostExe)
@@ -66,6 +116,11 @@ public class WitnessHostIntegrationTests
             CreateNoWindow = true,
         };
         psi.Environment["ANCHOR_WITNESS_PIPE"] = pipeName;
+        // Pin a deterministic backend URL for the #204 hand-off test; leaving it
+        // unset lets the disconnect test run against the dev fallback, which it
+        // never reads.
+        if (backendUrl is not null)
+            psi.Environment[FocusAgent.WitnessHost.BackendUrlConfig.EnvVarName] = backendUrl;
         var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the witness host process.");
         return process;

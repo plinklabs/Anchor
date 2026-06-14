@@ -23,9 +23,14 @@ const STABLE_EXTENSION_ID = 'akkfdaclmpfcnjalcifkcbhgjnnopman';
 
 const manifest = JSON.parse(readFileSync(fileURLToPath(manifestUrl), 'utf8')) as {
   key?: string;
+  version?: string;
   icons?: Record<string, string>;
   action?: { default_icon?: Record<string, string>; default_popup?: string };
 };
+
+const pkg = JSON.parse(
+  readFileSync(resolveFromManifest('../package.json'), 'utf8'),
+) as { version?: string };
 
 /** Derive the Edge/Chrome extension id from a base64 SPKI public key, exactly as
  *  the browser does: sha256 of the DER bytes, first 16 bytes, hex, each hex
@@ -54,6 +59,15 @@ describe('manifest key (stable extension id)', () => {
 
   it('produces a well-formed 32-char extension id', () => {
     expect(STABLE_EXTENSION_ID).toMatch(/^[a-p]{32}$/);
+  });
+});
+
+// Issue #204: manifest.json and package.json versions used to drift (0.2.0 vs
+// 0.1.0). Lock them together so a bump to one without the other fails CI.
+describe('version sync (#204)', () => {
+  it('manifest and package.json declare the same version', () => {
+    expect(manifest.version).toBeTypeOf('string');
+    expect(pkg.version).toBe(manifest.version);
   });
 });
 

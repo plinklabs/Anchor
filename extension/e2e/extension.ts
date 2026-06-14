@@ -23,6 +23,18 @@ import {
   MAPPED_HOSTS,
   STUDENT_OID,
 } from './config.ts';
+import { registerWitnessHost, type RegisteredWitnessHost } from './witness-host.ts';
+
+export interface LoadExtensionOptions {
+  /**
+   * When set (Windows only), register the REAL witness native-messaging host
+   * and launch Edge with this URL in ANCHOR_WITNESS_BACKEND_URL, so the host
+   * hands it to the extension over native messaging at runtime (#204). Lets a
+   * spec prove the extension learns its backend from the on-box agent rather
+   * than a seeded chrome.storage value.
+   */
+  witnessBackendUrl?: string;
+}
 
 export interface ExtensionSettings {
   backendUrl?: string;
@@ -46,12 +58,22 @@ export interface LoadedExtension {
   close(): Promise<void>;
 }
 
-export async function loadExtension(): Promise<LoadedExtension> {
+export async function loadExtension(options: LoadExtensionOptions = {}): Promise<LoadedExtension> {
   if (!fs.existsSync(path.join(DIST_PATH, 'manifest.json'))) {
     throw new Error(`No built extension at ${DIST_PATH}. Run \`npm run build\` first.`);
   }
 
+  // #204: optionally register the real witness host and inject the backend URL
+  // it should hand the extension. connectNative inherits the browser's env, so
+  // setting it here is what the launched host reads.
+  let witnessHost: RegisteredWitnessHost | null = null;
+  if (options.witnessBackendUrl) {
+    witnessHost = registerWitnessHost();
+    process.env.ANCHOR_WITNESS_BACKEND_URL = options.witnessBackendUrl;
+  }
+
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-ext-e2e-'));
+  const hostRule = MAPPED_HOSTS.map((h) => `MAP ${h} 127.0.0.1`).join(',');
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: BROWSER_CHANNEL,
     headless: HEADLESS,
@@ -60,7 +82,7 @@ export async function loadExtension(): Promise<LoadedExtension> {
       `--load-extension=${DIST_PATH}`,
       // Resolve the synthetic test hosts to the local static server so specs
       // never hit the public internet (config.MAPPED_HOSTS).
-      `--host-resolver-rules=${MAPPED_HOSTS.map((h) => `MAP ${h} 127.0.0.1`).join(',')}`,
+      `--host-resolver-rules=${hostRule}`,
     ],
   });
 
@@ -104,6 +126,10 @@ export async function loadExtension(): Promise<LoadedExtension> {
     configure,
     async close() {
       await context.close();
+      if (witnessHost) {
+        witnessHost.unregister();
+        delete process.env.ANCHOR_WITNESS_BACKEND_URL;
+      }
       fs.rmSync(userDataDir, { recursive: true, force: true });
     },
   };

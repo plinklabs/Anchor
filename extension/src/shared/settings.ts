@@ -1,7 +1,14 @@
 // Configuration the extension reads on startup. Stored in chrome.storage.local
-// so it survives service-worker restarts but stays per-profile (a managed
-// rollout will populate this via enterprise policy / managed storage; for
-// dev, set the values manually from the background SW devtools console):
+// so it survives service-worker restarts but stays per-profile.
+//
+// The backend URL is *config, not identity* (#204): a single published
+// extension serves every fork, so the URL is NOT baked in as a prod default.
+// The on-box agent hands it down at runtime over the native-messaging witness
+// link (see witness.ts → persistBackendUrl), which is the canonical source for
+// any real deployment. We keep only a dev default (the local backend port) so
+// local loops and the headless e2e have something to talk to before the agent
+// pushes a URL; for dev you can also set it manually from the background SW
+// devtools console:
 //
 //   chrome.storage.local.set({
 //     backendUrl: 'http://localhost:5276',
@@ -29,11 +36,21 @@ export interface ExtensionSettings {
   devImpersonateOid: string | null;
 }
 
+/**
+ * Dev-only fallback backend URL for local loops before the agent pushes one
+ * (#204). NOT a production default — a published fork's extension learns its
+ * real backend from the agent at runtime. This is just the local dev port
+ * (memory: reference_agent_dashboard_backend_ports).
+ */
+export const DEV_FALLBACK_BACKEND_URL = 'http://localhost:5276';
+
 const DEFAULTS: ExtensionSettings = {
-  // Default agent/dashboard/backend port (memory: reference_agent_dashboard_backend_ports).
-  backendUrl: 'http://localhost:5276',
+  backendUrl: DEV_FALLBACK_BACKEND_URL,
   devImpersonateOid: null,
 };
+
+/** chrome.storage.local key the agent-pushed backend URL is persisted under. */
+export const BACKEND_URL_KEY = 'backendUrl';
 
 const STORAGE_KEYS: (keyof ExtensionSettings)[] = ['backendUrl', 'devImpersonateOid'];
 
@@ -45,6 +62,29 @@ export async function loadSettings(): Promise<ExtensionSettings> {
   };
   log.debug('settings loaded', { backendUrl: merged.backendUrl, hasImpersonateOid: merged.devImpersonateOid !== null });
   return merged;
+}
+
+/**
+ * Persist a backend URL the agent handed down over the witness link (#204).
+ * Returns true if the stored value changed (the caller may need to reconnect
+ * the hub onto the new backend). A blank/whitespace URL is rejected so a
+ * malformed host message can't wipe a working configuration.
+ */
+export async function persistBackendUrl(url: string): Promise<boolean> {
+  const next = trimTrailingSlash(url.trim());
+  if (next.length === 0) {
+    log.warn('ignoring empty backend url from agent');
+    return false;
+  }
+  const stored = await chrome.storage.local.get(BACKEND_URL_KEY);
+  const current = typeof stored.backendUrl === 'string' ? trimTrailingSlash(stored.backendUrl) : null;
+  if (current === next) {
+    log.debug('agent backend url unchanged', { url: next });
+    return false;
+  }
+  await chrome.storage.local.set({ [BACKEND_URL_KEY]: next });
+  log.info('stored agent-provided backend url', { url: next });
+  return true;
 }
 
 function stringOr(value: unknown, fallback: string): string {
