@@ -104,9 +104,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // The banner names the class (resolved from the loaded class list) and
-      // offers a Resume affordance.
-      expect(find.text('Active session'), findsOneWidget);
+      // The running-now card names the class (resolved from the loaded class
+      // list) and offers a Resume affordance.
+      expect(find.text('STILL RUNNING'), findsOneWidget);
       expect(find.text('Math 101'), findsOneWidget);
       expect(find.text('Resume'), findsOneWidget);
 
@@ -152,10 +152,10 @@ void main() {
       await tester.tap(find.text('End'));
       await tester.pumpAndSettle();
 
-      // The session was ended via the API, and the banner cleared itself once no
-      // running sessions remained — all without navigating into the session.
+      // The session was ended via the API, and the running-now panel cleared
+      // itself once no running sessions remained — without navigating into it.
       expect(sessions.endedSessionIds, contains('sess-1'));
-      expect(find.text('Active session'), findsNothing);
+      expect(find.text('STILL RUNNING'), findsNothing);
       expect(find.text('End'), findsNothing);
       expect(find.text('Resume'), findsNothing);
     },
@@ -210,7 +210,7 @@ void main() {
       // Resume→/session/:id navigation itself is covered by the focused test
       // above; we don't tap here because the real SessionPage's ink ripple would
       // hit the same undecodable shader (and its hub would never settle).
-      expect(find.text('Active session'), findsOneWidget);
+      expect(find.text('STILL RUNNING'), findsOneWidget);
       expect(find.text('Math 101'), findsOneWidget);
       expect(find.text('Resume'), findsOneWidget);
     },
