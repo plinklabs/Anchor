@@ -20,6 +20,7 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     /// <summary>Dev-only self-test flags (mirror <c>Program</c> in the agent).</summary>
     public const string ShowTestOverlayArg = "--show-test-overlay";
     public const string ShowTestToastArg = "--show-test-toast";
+    public const string ShowTestMainWindowArg = "--show-test-mainwindow";
 
     private readonly Process _process;
 
