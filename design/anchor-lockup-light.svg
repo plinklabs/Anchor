@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 212 56" width="212" height="56" role="img" aria-label="Anchor">
+  <!-- Anchor lockup — light (on paper #FAF7F2).
+       Mark in indigo accent #34357A; wordmark in ink #1B1B23, set in Fraunces.
+       Wordmark is lowercase, matching the "plink labs" lockup convention. -->
+  <g fill="none" stroke="#34357A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="28" cy="13" r="7"/>
+    <circle cx="28" cy="13" r="1.6" fill="#34357A" stroke="none"/>
+    <line x1="17" y1="24" x2="39" y2="24"/>
+    <line x1="28" y1="20" x2="28" y2="46"/>
+    <path d="M12 38 Q28 54 44 38"/>
+    <path d="M12 38 L9.5 33"/>
+    <path d="M44 38 L46.5 33"/>
+  </g>
+  <text x="70" y="38" fill="#1B1B23"
+        font-family="Fraunces, Georgia, 'Times New Roman', serif"
+        font-size="34" font-weight="560" letter-spacing="-0.6">anchor</text>
+</svg>
