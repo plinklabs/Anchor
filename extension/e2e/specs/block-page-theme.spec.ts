@@ -56,6 +56,25 @@ test('the block page renders on the DS ink theme with the bundled fonts', async 
     'background-color',
     'rgb(126, 128, 210)',
   );
+
+  // AE1 (#177): the calm focus-session mark is the signature concentric-ring
+  // ping (not the old static dot). It renders, in the on-ink magenta, and is
+  // actually animating — the real-browser proof the living mark is wired, not
+  // a frozen ring. We check the core (a filled disc) for the on-ink magenta…
+  const ping = page.locator('.pl-ping');
+  await expect(ping).toHaveCount(1);
+  await expect(page.locator('.pl-eyebrow__dot')).toHaveCount(0);
+  await expect(ping.locator('.pl-ping__core')).toHaveCSS(
+    'background-color',
+    'rgb(236, 72, 153)',
+  );
+  // …and confirm a ring is mid-animation: sample its transform twice and
+  // assert it moved (the pulse scales the ring over time).
+  const ring = ping.locator('.pl-ping__ring').first();
+  const t1 = await ring.evaluate((el) => getComputedStyle(el).transform);
+  await page.waitForTimeout(250);
+  const t2 = await ring.evaluate((el) => getComputedStyle(el).transform);
+  expect(t1).not.toBe(t2);
 });
 
 // AF4 (#165): the block page is student-facing, so its ink treatment is FIXED —
