@@ -162,7 +162,101 @@ Anchor-specific notes, because Anchor talks to a **student, mid-session**:
 
 ---
 
-## 6. Assets in this folder
+## 6. Surfaces — ink (student) vs paper (teacher)
+
+Anchor inherits the system's paper + ink, but it does **not** let either surface
+follow the operating system. Each surface wears **one fixed treatment, for its whole
+life, on every machine** — chosen for *who* sits in front of it, not for an OS setting:
+
+| Surface | Audience | Treatment | Base |
+|---|---|---|---|
+| Agent — every window (MainWindow, FocusOverlay, JoinByCode, JoinConfirmation) | student, mid-session | **ink** | ink `#1B1B23`, on-ink `#FAF7F2` |
+| Extension — block page (and any future branded popup) | student, mid-session | **ink** | ink `#1B1B23`, on-ink `#FAF7F2` |
+| Dashboard — every screen | teacher | **paper** | paper `#FAF7F2`, ink `#1B1B23` |
+
+**Why fixed, and why this split.** The two student surfaces are **ink because ink
+distracts a working student less** — a dark, quiet field recedes while they get back
+to the task. The teacher dashboard is **paper because teachers skew older and broadly
+dislike dark UI**; a calm, legible light instrument reads as trustworthy to them. These
+are product decisions about the audience, so a student on a light-themed laptop still
+gets ink and a teacher on a dark-themed one still gets paper. There is **no theme
+toggle and no system-following** anywhere in Anchor.
+
+**This is a hard rule, enforced in code — do not reintroduce a system swap:**
+
+- **Extension / CSS** — the block page hard-wears `class="plink-ink"` on `<body>` and
+  pins `color-scheme: dark` so native controls/scrollbars match. **Never** add a
+  `@media (prefers-color-scheme: …)` swap or a `.plink-ink` ↔ paper toggle; the
+  treatment is a class on the element, not a media query.
+- **Agent / WinUI** — `App.xaml` sets `RequestedTheme="Dark"` so the app never follows
+  the OS, and window backgrounds use the DS ink brush (`{StaticResource
+  PlinkSurfaceInkBrush}`), not the system `{ThemeResource SolidBackgroundFillColorBaseBrush}`
+  (which flips with the OS). **Never** drop `RequestedTheme` or reintroduce an
+  OS-following `{ThemeResource}` for a surface colour.
+- **Dashboard / Flutter** — build on the DS `PlinkTheme.paper`; do **not** wire
+  `ThemeMode.system` or a dark `ThemeData`.
+
+The magenta spark and the Anchor indigo are unchanged by the split — they keep their
+**on-ink** values (`#EC4899` / `#7E80D2`) on the two ink surfaces and their **on-paper**
+values (`#DB2777` / `#34357A`) on the dashboard, per §2.
+
+---
+
+## 7. Accessibility — contrast, focus, targets
+
+Anchor follows the Plink Labs accessibility floor; the per-surface split (§6) just means
+each surface is checked against **one** background, never both.
+
+**Contrast.** Text and meaningful graphics clear **WCAG AA** (4.5:1 body, 3:1 large
+text / graphical objects) on their fixed surface:
+
+- On **paper `#FAF7F2`**: ink body `#1B1B23` ≈ 16:1; muted `#6E6A62` ≈ 4.6:1 (body-legal
+  — don't go lighter for body); magenta `#DB2777` ≈ 4.5:1; indigo `#34357A` ≈ 10.2:1.
+- On **ink `#1B1B23`**: on-ink `#FAF7F2` ≈ 15:1; on-ink-muted `#8E8A82` ≈ 4.6:1; magenta
+  **`#EC4899` (the on-ink value, ≈ 5.1:1)** — this is *why* the spark brightens on ink,
+  so never use `#DB2777` on ink (≈ 3.4:1, fails body); indigo `#7E80D2` ≈ 4.8:1.
+- **Don't** put body text on the magenta spark, set indigo as a text colour on ink
+  (use `#7E80D2`), or rely on colour alone to carry state — pair it with text or shape.
+
+**Focus rings.** Every keyboard-focusable control shows a **visible magenta ring** — the
+spark doubles as the focus signal. It is the **on-surface magenta**: `#DB2777` on paper,
+**`#EC4899` on ink** (the DS `.plink-ink` block already remaps `--focus-ring` to the
+on-ink magenta, so on-ink controls get the brighter ring for free). The ring is a **2px
+outline at 2px offset** (`:focus-visible`), never removed without an equal-or-better
+replacement. Focus must never be suppressed (`outline: none` with nothing in its place)
+and must be visible on both the default and hover/pressed states.
+
+**Targets & text.** Interactive targets are **≥ 44×44px** effective hit area (pad small
+controls rather than shrinking the target). Respect the user's font scale; layouts wrap
+and reflow rather than clip (the redesign's integration tests assert no overflow at the
+real font). Provide text alternatives for the mark/ping (`aria-hidden` on purely
+decorative ones, e.g. the identity rule and a static ping).
+
+---
+
+## 8. Motion
+
+Motion in Anchor is **calm and meaningful** — it confirms a state change or carries the
+one live signal (the ping), and it is **never decorative loops competing with the work**.
+Anchor talks to a student mid-task: movement should settle attention, not pull it.
+
+- **The ping is the one ambient motion.** The signature concentric-ring pulse
+  (`.pl-ping--pulse`) marks the live session; everything else is static or a brief
+  transition. On ink it uses the on-ink magenta. A non-live context uses the **static**
+  ping (`.pl-ping--static`) — no animation.
+- **Transitions are short and quiet** — state changes (a panel appearing, a countdown)
+  use brief, eased transitions, not springy or attention-grabbing ones. No parallax, no
+  auto-playing flourish, no motion purely to decorate.
+- **Honour `prefers-reduced-motion`.** When the user asks for reduced motion, **stop the
+  loop** — the ping holds as a static ring and transitions reduce to instant/opacity.
+  The DS already gates the pulse behind `@media (prefers-reduced-motion: no-preference)`
+  (so reduced-motion users get the static ring automatically); any Anchor-added motion
+  must gate itself the same way. The agent (WinUI) honours the OS *animations-enabled*
+  setting for the same reason — never animate when the platform says don't.
+
+---
+
+## 9. Assets in this folder
 
 | File | What |
 |---|---|
@@ -172,14 +266,20 @@ Anchor-specific notes, because Anchor talks to a **student, mid-session**:
 
 ---
 
-## 7. Provenance & decisions
+## 10. Provenance & decisions
 
-- **Issue:** plinklabs/Anchor#162 (AF1) — "Define the Anchor accent & mark".
+- **Issue:** plinklabs/Anchor#162 (AF1) — "Define the Anchor accent & mark". The cross-cutting
+  rules (§6 Surfaces, §7 Accessibility, §8 Motion) were added by plinklabs/Anchor#165 (AF4).
 - **Epic:** plinklabs/Anchor#180 — Anchor visual identity & UX redesign. Foundations AF1–AF4 =
   #162–#165; AF2 (#163) produces the icon/tray/splash/favicon assets from this mark; AF3 (#164)
-  wires the DS bindings (and the accent slot above) across all surfaces.
+  wires the DS bindings (and the accent slot above) across all surfaces; AF4 (#165) fixes the
+  per-surface ink/paper treatment and the a11y + motion rules below.
 - **Convention:** plink-design-system#5 (DS-5) — the per-product accent extension point this is the
   first use of.
 - **Decisions taken here:** accent = **deep indigo** (`#34357A` / `#7E80D2` on ink), chosen to recede
   and stay clear of the magenta spark; mark = **anchor-from-the-ping**; one user-facing name =
   **Anchor** (with `FocusAgent` internal-only).
+- **Decisions taken in AF4 (#165):** the ink/paper split is **fixed per surface, never
+  system-following** (students get ink to distract less; teachers get paper); the magenta spark
+  doubles as the **focus ring** (on-surface value, 2px/2px); motion is calm, the **ping** is the one
+  ambient loop, and `prefers-reduced-motion` (and the OS animations setting) is honoured.
