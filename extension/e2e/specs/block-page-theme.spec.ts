@@ -57,3 +57,28 @@ test('the block page renders on the DS ink theme with the bundled fonts', async 
     'rgb(126, 128, 210)',
   );
 });
+
+// AF4 (#165): the block page is student-facing, so its ink treatment is FIXED —
+// it must not follow the OS light/dark setting (ANCHOR_BRAND.md §6). This is the
+// real-browser proof of the rule: emulate a student on a light-themed machine
+// and assert the page is still ink, and that `color-scheme: dark` pins the UA so
+// native controls/scrollbars stay dark too. Fails if a `prefers-color-scheme`
+// swap is ever reintroduced.
+test('the block page stays ink even when the OS prefers a light theme', async ({
+  ext,
+  staticServer,
+}) => {
+  const offlistUrl = staticServer.url(OFFLIST_HOST, '/themed-light-os');
+  const page = await ext.context.newPage();
+  // Emulate a light OS theme before navigating — a system-following page would
+  // flip to paper here.
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto(offlistUrl).catch(() => {});
+
+  await expectRedirectedToBlockPage(page, ext, OFFLIST_HOST);
+
+  // Still the full-bleed ink panel (#1B1B23), not paper.
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(27, 27, 35)');
+  // The UA colour-scheme is pinned dark, so native controls/scrollbars match.
+  await expect(page.locator('body')).toHaveCSS('color-scheme', 'dark');
+});
