@@ -6,6 +6,7 @@ import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/auth/msal_config.dart';
 import 'package:anchor_dashboard/main.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -39,6 +40,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Anchor — Sign in'), findsOneWidget);
+    // The redesigned login page (AD2, #167) is what an unauthenticated boot
+    // lands on — its headline and the single primary sign-in action.
+    expect(find.byKey(const Key('login-headline')), findsOneWidget);
+    expect(find.byKey(const Key('sign-in')), findsOneWidget);
   });
 }
