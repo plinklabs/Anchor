@@ -41,3 +41,16 @@ The Entra app registration must include `http://localhost:5173` as an SPA redire
 ## Deployment
 
 `.github/workflows/dashboard-deploy.yml` builds the web bundle on every PR and pushes to Azure Static Web Apps on merges to `main`. The workflow needs the repo secret `AZURE_STATIC_WEB_APPS_API_TOKEN` — grab it from the Azure portal under the `anchor-dashboard` SWA → *Manage deployment token*.
+
+### Release-build configuration (Actions variables)
+
+The release build sources the Entra app + backend target from **GitHub Actions repository variables**, passed to `flutter build web` as `--dart-define`. Each variable is optional: when unset, the build falls back to the dev default baked into `lib/main.dart` / `lib/auth/msal_config.dart`, so contributors building locally and PR builds are unaffected. A fork sets these under *Settings → Secrets and variables → Actions → Variables* to retarget its dashboard with no source edits.
+
+| Variable | Maps to dart-define | Purpose |
+| --- | --- | --- |
+| `API_BASE_URL` | `API_BASE_URL` | Backend base URL the released dashboard calls. |
+| `ENTRA_TENANT_ID` | `ENTRA_TENANT_ID` | Entra tenant the dashboard signs into. |
+| `ENTRA_CLIENT_ID` | `ENTRA_CLIENT_ID` | Entra SPA app-registration client id used by MSAL.js. |
+| `API_SCOPE` | `API_SCOPE` | Scope requested for the backend access token (bare GUID `/.default` when SPA and API share one registration). |
+
+These are **public SPA client config, not secrets** — hence Actions *variables* (`vars.*`) rather than secrets. The backend must also allow the deployed dashboard origin in its CORS policy (release-automation workstream A).
