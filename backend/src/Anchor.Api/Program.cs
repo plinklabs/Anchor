@@ -3,12 +3,11 @@ using Anchor.Api.Auth;
 using Anchor.Api.Events;
 using Anchor.Api.Realtime;
 using Anchor.Api.Sessions;
+using Anchor.Api.Persistence;
 using Anchor.Infrastructure;
-using Anchor.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.EntityFrameworkCore;
 using Anchor.Api.Users;
 using Microsoft.Identity.Web;
 
@@ -158,14 +157,12 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-
-    using var scope = app.Services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
-    // SQLite dev DB doesn't share migrations with the SqlServer prod schema,
-    // so build the schema from the current model instead of running migrations.
-    await db.Database.EnsureCreatedAsync();
-    await DevDataSeeder.SeedAsync(db);
 }
+
+// Bring the database schema up to date: EnsureCreated + dev seed in Development
+// (SQLite), apply EF Core migrations in non-Development (Azure SQL, issue #205),
+// and no-op under Test (the test host owns its in-memory schema).
+await StartupDatabaseInitializer.InitializeAsync(app);
 
 if (!app.Environment.IsDevelopment())
 {
