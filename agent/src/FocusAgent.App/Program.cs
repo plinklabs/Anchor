@@ -37,6 +37,17 @@ public static class Program
     public const string ShowTestMainWindowArg = "--show-test-mainwindow";
 
     /// <summary>
+    /// Dev-only flag (#175): show the real <see cref="Sessions.JoinByCodeWindow"/>
+    /// against a no-op join client, with no WAM / hub / coordinator bootstrap, and
+    /// keep it up so its redesigned ink surface (Space Mono code field, the magenta
+    /// JOIN spark) can be screenshotted. Lets the AA3 join-by-code redesign be
+    /// verified end-to-end (build → launch → capture) without a backend or
+    /// interactive sign-in. Used by the visual e2e (JoinByCodeVisualTests) and
+    /// scripts/dev verify scripts.
+    /// </summary>
+    public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";
+
+    /// <summary>
     /// Dev-only flag (#164): verify the design-system WinUI binding actually
     /// merged into the agent's <c>App.xaml</c> at runtime — a brush from the
     /// merged dictionary resolves, the bundled font resource resolves, and the
@@ -93,6 +104,7 @@ public static class Program
     public static bool ShowTestToast { get; private set; }
     public static bool ShowTestOverlay { get; private set; }
     public static bool ShowTestMainWindow { get; private set; }
+    public static bool ShowTestJoinByCode { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
@@ -105,6 +117,7 @@ public static class Program
         ShowTestToast = args.Any(a => string.Equals(a, ShowTestToastArg, StringComparison.OrdinalIgnoreCase));
         ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
@@ -115,7 +128,7 @@ public static class Program
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !VerifyDsTheme)
+        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !VerifyDsTheme)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)

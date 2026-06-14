@@ -41,6 +41,23 @@ public sealed partial class JoinByCodeWindow : Window
         CodeBox.Focus(FocusState.Programmatic);
     }
 
+    /// <summary>
+    /// Dev-only (#175 / <c>--show-test-joinbycode</c>): pre-fill a valid 6-digit
+    /// code so the dialog renders its "ready to join" state — the JOIN button
+    /// enabled at full magenta — for the visual e2e to capture. Setting the text
+    /// drives the same <see cref="OnCodeTextChanged"/> path a real keystroke would,
+    /// so JOIN enables exactly as in production. See App.RunJoinByCodeSelfTest.
+    /// </summary>
+    internal void PrefillForSelfTest()
+    {
+        CodeBox.Text = "123456";
+        // Drive JOIN to its enabled (full-magenta) state directly: a programmatic
+        // Text set before the control tree is fully loaded doesn't reliably leave
+        // the button in its Normal visual state, and the self-test wants the spark
+        // rendered, not the dimmed disabled fill.
+        JoinButton.IsEnabled = true;
+    }
+
     private void OnCodeBeforeTextChanging(TextBox sender, TextBoxBeforeTextChangingEventArgs args)
     {
         // The TextBox already enforces MaxLength; we additionally reject any
@@ -120,7 +137,7 @@ public sealed partial class JoinByCodeWindow : Window
         CodeBox.IsEnabled = !busy;
         CancelButton.IsEnabled = !busy;
         JoinButton.IsEnabled = !busy && CodeBox.Text.Length == 6;
-        JoinButton.Content = busy ? "Joining…" : "Join";
+        JoinButton.Content = busy ? "JOINING…" : "JOIN";
     }
 
     private void ShowMessage(string text)

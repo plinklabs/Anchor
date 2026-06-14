@@ -57,7 +57,7 @@ public sealed class JoinByCodeFlow
                 _current = window;
             }
 
-            window.Activate();
+            DialogWindowPositioner.ConfigureAndShow(window);
 
             // Detach when the user dismisses it (cancel / close / success).
             _ = window.Completion.ContinueWith(t =>
