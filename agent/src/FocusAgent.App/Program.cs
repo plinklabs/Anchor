@@ -1,6 +1,7 @@
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
+using Velopack;
 
 namespace FocusAgent.App;
 
@@ -127,6 +128,15 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Velopack lifecycle hook (#209): MUST run before any UI. On an
+        // install/update/uninstall launch Velopack injects hidden hook args; this
+        // call handles them (e.g. (re)creating the Start-menu/Run-key shortcuts on
+        // first run) and then exits the process, so the WinUI bootstrap below only
+        // runs for a normal launch. `vpk pack` also refuses to package a build
+        // whose entrypoint doesn't call this. The auto-update *check*
+        // (UpdateManager against the GitHub Releases feed) is a tracked follow-up.
+        VelopackApp.Build().Run();
+
         ShowTestToast = args.Any(a => string.Equals(a, ShowTestToastArg, StringComparison.OrdinalIgnoreCase));
         ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
