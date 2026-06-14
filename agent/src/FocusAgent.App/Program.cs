@@ -27,6 +27,19 @@ public static class Program
     public const string ShowTestOverlayArg = "--show-test-overlay";
 
     /// <summary>
+    /// Dev-only flag (#164): verify the design-system WinUI binding actually
+    /// merged into the agent's <c>App.xaml</c> at runtime — a brush from the
+    /// merged dictionary resolves, the bundled font resource resolves, and the
+    /// Anchor per-product accent override won over the binding's neutral default.
+    /// No WAM / hub / coordinator bootstrap. Writes <c>ds-theme-result.txt</c>
+    /// next to the exe, sets the process exit code (0 ok / 1 fail), and exits.
+    /// Used by <c>scripts/dev/verify-ds-theme.ps1</c>. The binding's own
+    /// <c>--smoke</c> already proves the fonts physically load; this asserts the
+    /// agent-side wiring on top of it.
+    /// </summary>
+    public const string VerifyDsThemeArg = "--verify-ds-theme";
+
+    /// <summary>
     /// Dev-only flag (#44): swap <c>WamTokenProvider</c> for
     /// <c>InjectedTokenProvider</c> so the agent skips interactive sign-in
     /// entirely and authenticates to the backend via the
@@ -69,6 +82,7 @@ public static class Program
 
     public static bool ShowTestToast { get; private set; }
     public static bool ShowTestOverlay { get; private set; }
+    public static bool VerifyDsTheme { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
     public static bool AutoJoin { get; private set; }
@@ -79,6 +93,7 @@ public static class Program
     {
         ShowTestToast = args.Any(a => string.Equals(a, ShowTestToastArg, StringComparison.OrdinalIgnoreCase));
         ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
+        VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
         AutoJoin = args.Any(a => string.Equals(a, AutoJoinArg, StringComparison.OrdinalIgnoreCase));
@@ -88,7 +103,7 @@ public static class Program
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay)
+        if (!ShowTestToast && !ShowTestOverlay && !VerifyDsTheme)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)

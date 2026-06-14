@@ -30,8 +30,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <!-- Bumped 1.7 → 2.2 for the design-system WinUI binding (AF3, #164): the
+         binding (agent/external/plink-design-system) pins Windows App SDK 2.2,
+         the first stable line whose XAML compiler understands the net10
+         reference assemblies. The agent must match it to avoid a version
+         conflict between the app and the referenced library. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+    <!-- Floor raised to match Windows App SDK 2.2's transitive requirement
+         (WindowsAppSDK.Base 2.0.4 → SDK.BuildTools >= 10.0.26100.4654). -->
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.2.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
@@ -50,6 +57,11 @@
   <ItemGroup>
     <ProjectReference Include="..\FocusAgent.Core\FocusAgent.Core.csproj" />
     <ProjectReference Include="..\FocusAgent.Native\FocusAgent.Native.csproj" />
+    <!-- Design-system WinUI binding (AF3, #164): brushes, type & control styles
+         (PlinkResources.xaml) + the bundled brand fonts, consumed as the shared
+         project per the design system's CONSUMPTION.md. Lives in a git submodule
+         pinned to the upstream develop commit where the binding lives. -->
+    <ProjectReference Include="..\..\external\plink-design-system\bindings\winui\src\PlinkDesignSystem\PlinkDesignSystem.csproj" />
   </ItemGroup>
 
   <ItemGroup>

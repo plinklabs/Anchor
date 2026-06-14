@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 import 'api/api_client.dart';
 import 'api/auth_token_store.dart';
@@ -89,9 +90,14 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
   Widget build(BuildContext context) {
     return MaterialApp.router(
       title: 'Anchor',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
+      // Teacher-facing surface: paper (light) only — never the ink theme
+      // (ANCHOR_BRAND.md §3). The one Anchor identity layered on the Plink
+      // foundations is the deep-indigo product accent (#34357A on paper),
+      // reserved for the mark/identity rule; magenta stays the spark.
+      theme: PlinkTheme.paper.copyWith(
+        extensions: const <ThemeExtension<dynamic>>[
+          PlinkProductAccent(Color(0xFF34357A)),
+        ],
       ),
       routerConfig: _router,
     );

@@ -22,7 +22,9 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using Serilog;
+using Windows.UI;
 using WinRT.Interop;
 
 namespace FocusAgent.App;
@@ -62,6 +64,12 @@ public partial class App : Application
         if (Program.ShowTestOverlay)
         {
             RunOverlaySelfTest();
+            return;
+        }
+
+        if (Program.VerifyDsTheme)
+        {
+            RunDsThemeVerification();
             return;
         }
 
@@ -385,6 +393,88 @@ public partial class App : Application
     // they've captured/observed what they need, so this full linger only elapses as
     // a safety net against a leaked process. See RunOverlaySelfTest (#160).
     private static readonly TimeSpan OverlayLingerAfterClose = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Dev-only path (#164): assert the design-system WinUI binding actually
+    /// resolved in the agent's own runtime — the merged dictionary's brushes are
+    /// present (incl. the ink/on-ink family the agent leans on), a bundled font
+    /// resource resolves, and Anchor's per-product accent override won over the
+    /// binding's neutral default. This proves the *agent-side wiring* (App.xaml
+    /// merge + accent override); the binding's own <c>--smoke</c> already proves
+    /// the fonts physically load. Writes ds-theme-result.txt, sets the exit code,
+    /// and exits. See Program.cs and scripts/dev/verify-ds-theme.ps1.
+    /// </summary>
+    private void RunDsThemeVerification()
+    {
+        var report = new System.Text.StringBuilder();
+        var failures = new List<string>();
+
+        report.AppendLine("Anchor agent — design-system binding wiring check (#164)");
+        report.AppendLine();
+
+        var res = Resources;
+        object? Lookup(string key) => res.TryGetValue(key, out var v) ? v : null;
+        static string Hex(Color c) => $"#{c.A:X2}{c.R:X2}{c.G:X2}{c.B:X2}";
+
+        void Brush(string key, Color expected, string why)
+        {
+            if (Lookup(key) is SolidColorBrush b && b.Color == expected)
+            {
+                report.AppendLine($"  ok   {key} = {Hex(b.Color)}  ({why})");
+            }
+            else
+            {
+                var actual = Lookup(key) is SolidColorBrush bad ? Hex(bad.Color) : "<missing/!brush>";
+                var msg = $"{key} expected {Hex(expected)} but was {actual}  ({why})";
+                report.AppendLine($"  FAIL {msg}");
+                failures.Add(msg);
+            }
+        }
+
+        // The merged PlinkResources.xaml is present: a foundation brush and the
+        // ink family the student-facing agent composes on both resolve.
+        Brush("PlinkMagentaBrush", Color.FromArgb(0xFF, 0xDB, 0x27, 0x77),
+            "the magenta spark — proves the DS dictionary merged");
+        Brush("PlinkOnInkBrush", Color.FromArgb(0xFF, 0xFA, 0xF7, 0xF2),
+            "on-ink text — the ink treatment the agent uses");
+
+        // The Anchor per-product accent override won over the binding default
+        // (#FF1B1B23). This is the agent-specific wiring App.xaml adds.
+        Brush("PlinkProductAccentBrush", Color.FromArgb(0xFF, 0x7E, 0x80, 0xD2),
+            "Anchor's indigo on ink — the override beat the binding's neutral default");
+
+        if (Lookup("PlinkMonoFontFamily") is FontFamily mono &&
+            mono.Source.Contains("space-mono", StringComparison.OrdinalIgnoreCase))
+        {
+            report.AppendLine($"  ok   PlinkMonoFontFamily -> {mono.Source}  (bundled font resource resolved)");
+        }
+        else
+        {
+            var actual = Lookup("PlinkMonoFontFamily") is FontFamily f ? f.Source : "<missing/!fontfamily>";
+            var msg = $"PlinkMonoFontFamily did not resolve to the bundled font (was '{actual}')";
+            report.AppendLine($"  FAIL {msg}");
+            failures.Add(msg);
+        }
+
+        var ok = failures.Count == 0;
+        report.AppendLine();
+        report.AppendLine(ok ? "RESULT: PASS" : $"RESULT: FAIL ({failures.Count} failure(s))");
+
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(AppContext.BaseDirectory, "ds-theme-result.txt"),
+                report.ToString());
+        }
+        catch
+        {
+            // The exit code below is the authoritative signal; a write failure
+            // (e.g. read-only dir) must not mask the real pass/fail.
+        }
+
+        Environment.ExitCode = ok ? 0 : 1;
+        Exit();
+    }
 
     private static void WriteStartupFailure(Exception ex)
     {

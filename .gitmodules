@@ -1,0 +1,3 @@
+[submodule "agent/external/plink-design-system"]
+	path = agent/external/plink-design-system
+	url = https://github.com/plinklabs/plink-design-system.git
