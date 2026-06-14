@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Text.Json;
 using FocusAgent.App.Connectivity;
 using FocusAgent.Core.Focus;
@@ -21,6 +22,7 @@ namespace FocusAgent.App.Connectivity;
 ///
 /// Endpoint:
 ///   GET /status -> {
+///       agentVersion,      // the agent's own version, from the single version source (#208)
 ///       connectionStatus, displayName, lastError,
 ///       activeSessionId,   // non-null while the toast is up or the user has joined
 ///       joinedSessionId,   // non-null after user confirmed
@@ -44,6 +46,28 @@ namespace FocusAgent.App.Connectivity;
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
+    /// <summary>
+    /// The agent's own version, as baked into the assembly from the single
+    /// version source (agent/Directory.Build.props, #208). Read from the
+    /// InformationalVersion that MSBuild derives from &lt;Version&gt;; the
+    /// "+&lt;commit&gt;" SourceLink suffix (if any) is trimmed so the reported
+    /// value is the clean SemVer the build was stamped with. This is the runtime
+    /// proof that the single version source actually flows into the produced exe.
+    /// </summary>
+    public static string AgentVersion { get; } = ResolveAgentVersion();
+
+    private static string ResolveAgentVersion()
+    {
+        var informational = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        if (string.IsNullOrEmpty(informational))
+            return "0.0.0";
+        // Strip the SourceLink "+<sha>" build metadata if present.
+        var plus = informational.IndexOf('+');
+        return plus >= 0 ? informational[..plus] : informational;
+    }
+
     private readonly ConnectionManager _connection;
     private readonly SessionCoordinator _coordinator;
     private readonly FocusSessionController _focus;
@@ -153,6 +177,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
             var sweep = _focus.GetLastStartupSweep();
             var payload = new
             {
+                // #208: the agent's own version, proving the single version
+                // source (agent/Directory.Build.props) flowed into this exe.
+                agentVersion = AgentVersion,
                 connectionStatus = snap.Status.ToString(),
                 displayName = snap.DisplayName,
                 lastError = snap.LastError,

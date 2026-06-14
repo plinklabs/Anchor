@@ -12,6 +12,7 @@ namespace FocusAgent.IntegrationTests;
 /// matcher state instead of guessing from screenshots or logs.
 /// </summary>
 internal sealed record StatusSnapshot(
+    [property: JsonPropertyName("agentVersion")] string? AgentVersion,
     [property: JsonPropertyName("connectionStatus")] string? ConnectionStatus,
     [property: JsonPropertyName("displayName")] string? DisplayName,
     [property: JsonPropertyName("lastError")] string? LastError,

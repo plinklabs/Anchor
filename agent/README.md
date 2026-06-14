@@ -41,6 +41,30 @@ dotnet restore
 dotnet build -c Debug -p:Platform=x64
 ```
 
+## Versioning
+
+The agent has a **single version source**: `<VersionPrefix>` in
+[`agent/Directory.Build.props`](Directory.Build.props) (#208). MSBuild
+auto-imports it into every agent project, so that one number drives:
+
+- the built `.dll`/`.exe` `AssemblyVersion` / `FileVersion`,
+- the `InformationalVersion` the running agent reports on its `/status`
+  endpoint (so the shipped binary self-reports its version), and
+- the Velopack package version at pack time (the pack step reads the same
+  property).
+
+The MSIX `Package.appxmanifest` `<Identity Version>` is the one version MSBuild
+can't derive automatically; it's kept in lockstep as `<VersionPrefix>.0` and a
+unit test (`VersionSourceTests`) fails CI if it drifts. The design-system
+submodule under `external/` has its own `Directory.Build.props` and versions
+independently — by design.
+
+**Release convention:** bump `<VersionPrefix>` in `Directory.Build.props`
+(matching the MSIX manifest), commit, then push a `agent-v<version>` tag — the
+tag is what triggers the Velopack publish workflow. The extension versions
+independently from its own single source (`extension/package.json`); see
+[`extension/README.md`](../extension/README.md).
+
 ## Run
 
 ```powershell

@@ -69,6 +69,26 @@ internal static class TestConfig
             RepoRoot, "agent", "src", "FocusAgent.App", "bin", "x64", "Debug",
             "net10.0-windows10.0.19041.0", "FocusAgent.App.exe");
 
+    /// <summary>
+    /// The single version source for the agent (#208): the &lt;VersionPrefix&gt;
+    /// declared in <c>agent/Directory.Build.props</c>. The e2e asserts the running
+    /// agent reports this exact value on /status, proving the one number in that
+    /// file flows all the way into the produced exe.
+    /// </summary>
+    public static string ExpectedAgentVersion { get; } = ResolveAgentVersionFromProps();
+
+    private static string ResolveAgentVersionFromProps()
+    {
+        var propsPath = Path.Combine(RepoRoot, "agent", "Directory.Build.props");
+        var doc = System.Xml.Linq.XDocument.Load(propsPath);
+        var value = doc.Descendants("VersionPrefix").FirstOrDefault()?.Value
+            ?? doc.Descendants("Version").FirstOrDefault()?.Value;
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException(
+                $"No <VersionPrefix>/<Version> found in {propsPath} — the single version source is missing.");
+        return value.Trim();
+    }
+
     private static string ResolveRepoRoot()
     {
         // Walk up from the test binary until we see the repo's top-level
