@@ -71,6 +71,15 @@
     <None Update="appsettings.Development.json" Condition="Exists('appsettings.Development.json')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Per-deployment release config template (#203): the Backend:BaseUrl + Auth
+         placeholders here are substituted by the release/Velopack build at pack
+         time so a fork's published agent targets its own backend. Loaded only in
+         the Production environment, so it's inert for `dotnet run` / the e2e (which
+         stay Development) but still copied alongside the exe for the release build
+         and the substitutable-config unit test to find. -->
+    <None Update="appsettings.Production.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <!-- Tray icon ships in both builds: copied next to the exe so ms-appx:///
          resolves it in the unpackaged dev run, and packaged as Content in the
          MSIX build. (The tile/splash PNGs below are MSIX-only — they're never
