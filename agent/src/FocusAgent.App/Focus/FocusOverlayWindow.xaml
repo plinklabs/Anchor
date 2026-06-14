@@ -6,7 +6,7 @@
     <!-- The overlay is shown fullscreen to cover its entire monitor (issue
          #103), so the opaque background fills the whole display and the message
          card is centred within it rather than pinned to a fixed-size window. -->
-    <Grid Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+    <Grid Background="{StaticResource PlinkSurfaceInkBrush}">
         <StackPanel MaxWidth="560"
                     Padding="32"
                     Spacing="16"

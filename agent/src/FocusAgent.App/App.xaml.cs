@@ -456,6 +456,23 @@ public partial class App : Application
             failures.Add(msg);
         }
 
+        // AF4 (#165): the agent is pinned to the DS ink treatment for every
+        // student-facing window, NEVER following the OS light/dark setting
+        // (ANCHOR_BRAND.md §6). RequestedTheme="Dark" in App.xaml is what stops
+        // the system {ThemeResource} brushes from flipping with the OS; assert
+        // it here so dropping the pin (and re-letting the agent follow the OS)
+        // fails this self-test rather than silently shipping a light agent.
+        if (RequestedTheme == ApplicationTheme.Dark)
+        {
+            report.AppendLine("  ok   RequestedTheme = Dark  (agent pinned to ink, never follows the OS)");
+        }
+        else
+        {
+            var msg = $"RequestedTheme expected Dark but was {RequestedTheme}  (agent must stay ink, not follow the OS — AF4)";
+            report.AppendLine($"  FAIL {msg}");
+            failures.Add(msg);
+        }
+
         var ok = failures.Count == 0;
         report.AppendLine();
         report.AppendLine(ok ? "RESULT: PASS" : $"RESULT: FAIL ({failures.Count} failure(s))");

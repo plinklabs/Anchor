@@ -3,7 +3,7 @@
     x:Class="FocusAgent.App.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+    <Grid Background="{StaticResource PlinkSurfaceInkBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />

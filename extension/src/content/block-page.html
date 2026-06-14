@@ -22,6 +22,11 @@
         /* Anchor's reserved accent on ink (ANCHOR_BRAND.md §2). Reserved for
            the identity rule only — magenta stays the spark. */
         --product-accent: #7e80d2;
+        /* AF4 (#165): student surfaces are fixed ink, never system-following
+           (ANCHOR_BRAND.md §6). `.plink-ink` paints the page; this pins the UA
+           so native scrollbars/controls render dark too — and is deliberately
+           NOT a prefers-color-scheme swap. Do not reintroduce one. */
+        color-scheme: dark;
         min-height: 100vh;
         margin: 0;
         font-family: var(--font-body);

@@ -2,7 +2,15 @@
 <Application
     x:Class="FocusAgent.App.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark">
+    <!-- AF4 (#165): the agent is a student-facing surface, so it wears the DS
+         **ink** treatment for its whole life on every machine — fixed, never
+         following the OS light/dark setting (ANCHOR_BRAND.md §6). Pinning
+         RequestedTheme="Dark" is what stops the system {ThemeResource} brushes
+         (and control styles) from flipping with the OS; the windows then back
+         themselves with the DS ink brush (PlinkSurfaceInkBrush), not the system
+         base brush. Do not remove this or reintroduce a system swap. -->
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
