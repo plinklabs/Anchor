@@ -59,6 +59,13 @@
     <None Update="appsettings.Development.json" Condition="Exists('appsettings.Development.json')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Tray icon ships in both builds: copied next to the exe so ms-appx:///
+         resolves it in the unpackaged dev run, and packaged as Content in the
+         MSIX build. (The tile/splash PNGs below are MSIX-only — they're never
+         loaded by the unpackaged dev build.) -->
+    <Content Include="Assets\TrayIcon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <!-- The AppxManifest and packaged-build assets are only honoured by the

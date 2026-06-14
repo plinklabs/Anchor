@@ -1,0 +1,14 @@
+{
+  "name": "anchor-icon-generator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Rasterises the Anchor mark into the shipped icon/tile/splash/favicon assets (AF2 / #163).",
+  "scripts": {
+    "generate": "node generate.mjs"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "png-to-ico": "^2.1.8"
+  }
+}

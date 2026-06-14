@@ -1,16 +1,14 @@
 using FocusAgent.Core.Realtime;
 using H.NotifyIcon;
-using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
-using Windows.UI;
 
 namespace FocusAgent.App.Tray;
 
 internal sealed class TrayIconHost : IDisposable
 {
     private readonly TaskbarIcon _icon;
+    private readonly System.Drawing.Icon _trayIcon;
     private readonly MenuFlyoutItem _statusItem;
     private readonly MenuFlyoutItem _joinByCodeItem;
     private readonly Func<bool> _canJoinByCode;
@@ -64,16 +62,22 @@ internal sealed class TrayIconHost : IDisposable
         // a one-shot read at exactly the moment the user is looking at it.
         menu.Opening += (_, _) => _joinByCodeItem.IsEnabled = _canJoinByCode();
 
+        // The Anchor mark (on-ink indigo, transparent) so it floats on the
+        // taskbar — replaces the old programmatic "F" tile. Generated from the
+        // brand mark; see design/icons/. Loaded as a System.Drawing.Icon and
+        // set via Icon (not IconSource): IconSource decodes the bitmap
+        // asynchronously, so ForceCreate() below would fire before the image
+        // resolved and the tray would show an empty slot. The .ico is copied
+        // next to the exe (see FocusAgent.App.csproj), so AppContext.BaseDirectory
+        // resolves it in both the unpackaged dev run and the packaged install.
+        _trayIcon = new System.Drawing.Icon(
+            Path.Combine(AppContext.BaseDirectory, "Assets", "TrayIcon.ico"));
+
         _icon = new TaskbarIcon
         {
-            ToolTipText = "FocusAgent",
+            ToolTipText = "Anchor",
             ContextFlyout = menu,
-            IconSource = new GeneratedIconSource
-            {
-                Text = "F",
-                Foreground = new SolidColorBrush(Colors.White),
-                Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x1E, 0x4F, 0x8C)),
-            },
+            Icon = _trayIcon,
         };
     }
 
@@ -93,9 +97,13 @@ internal sealed class TrayIconHost : IDisposable
         _dispatcher.TryEnqueue(() =>
         {
             _statusItem.Text = text;
-            _icon.ToolTipText = $"FocusAgent — {text}";
+            _icon.ToolTipText = $"Anchor — {text}";
         });
     }
 
-    public void Dispose() => _icon.Dispose();
+    public void Dispose()
+    {
+        _icon.Dispose();
+        _trayIcon.Dispose();
+    }
 }
