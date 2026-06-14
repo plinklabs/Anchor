@@ -24,7 +24,7 @@ const STABLE_EXTENSION_ID = 'akkfdaclmpfcnjalcifkcbhgjnnopman';
 const manifest = JSON.parse(readFileSync(fileURLToPath(manifestUrl), 'utf8')) as {
   key?: string;
   icons?: Record<string, string>;
-  action?: { default_icon?: Record<string, string> };
+  action?: { default_icon?: Record<string, string>; default_popup?: string };
 };
 
 /** Derive the Edge/Chrome extension id from a base64 SPKI public key, exactly as
@@ -67,6 +67,13 @@ describe('brand icons (AF2 / #163)', () => {
     expect(manifest.action?.default_icon).toBeTypeOf('object');
     // The 128px icon is what the store/management page uses — it must exist.
     expect(manifest.icons!['128']).toBeTypeOf('string');
+  });
+
+  // AE2 (#178): the toolbar action opens the branded status popup. Lock the
+  // wiring so the action never silently loses its popup (which would make the
+  // icon a no-op click again).
+  it('wires the toolbar action to the branded status popup', () => {
+    expect(manifest.action?.default_popup).toBe('popup.html');
   });
 
   const declared: Record<string, string> = {
