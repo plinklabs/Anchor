@@ -79,6 +79,12 @@ public partial class App : Application
             return;
         }
 
+        if (Program.ShowTestTrayMenu)
+        {
+            RunTrayMenuSelfTest();
+            return;
+        }
+
         if (Program.VerifyDsTheme)
         {
             RunDsThemeVerification();
@@ -461,6 +467,68 @@ public partial class App : Application
     {
         public Task<JoinByCodeOutcome> JoinAsync(string code, CancellationToken ct = default) =>
             new TaskCompletionSource<JoinByCodeOutcome>().Task;
+    }
+
+    // Held by the --show-test-traymenu path so the host window outlives OnLaunched.
+    private Window? _trayMenuSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#176): render the real tray context menu (the AA4 brand-styled
+    /// flyout the <see cref="Tray.TrayIconHost"/> ships) so the visual e2e
+    /// (TrayMenuVisualTests) and scripts/dev can screenshot its ink surface, Space
+    /// Mono status row, on-ink actions and the one magenta spark.
+    ///
+    /// A tray <c>MenuFlyout</c> is a popup, not a window, and a headless run can't
+    /// click the tray to open it — so this self-test builds the very same menu via
+    /// the shared <see cref="Tray.TrayMenu.Build"/> factory and shows it open over a
+    /// small ink host window. The menu's composition (DS brushes, fonts, the spark)
+    /// is the production path; only the trigger (ShowAt instead of a tray click) is
+    /// synthetic. The status row is driven to its "connected" state so the capture
+    /// shows the live menu, not the resting "signed out" line. See Program.cs.
+    /// </summary>
+    private void RunTrayMenuSelfTest()
+    {
+        // Like the other self-tests: explicit shutdown so the process stays up after
+        // the menu is shown; the observer kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        var menu = Tray.TrayMenu.Build(onOpen: () => { }, onJoinByCode: () => { }, onQuit: () => { });
+        // Show a representative live state so the status eyebrow renders real text.
+        menu.StatusItem.Text = "CONNECTED — SELF-TEST";
+
+        // A small ink host window the flyout anchors to; sized so the open menu sits
+        // wholly within (and over) it, which is the rect the e2e captures. The
+        // window backs itself with the DS ink brush so any sliver around the menu is
+        // still the brand surface, not the desktop.
+        var root = new Microsoft.UI.Xaml.Controls.Grid
+        {
+            Background = (Microsoft.UI.Xaml.Media.Brush)Resources["PlinkSurfaceInkBrush"],
+        };
+        var host = new Window { Title = "Anchor — Tray menu (self-test)" };
+        host.Content = root;
+        _trayMenuSelfTestWindow = host;
+
+        Sessions.DialogWindowPositioner.ConfigureAndShow(host);
+
+        // Open the flyout once the XAML island is realised, anchored to the host
+        // root so the popup overlays the captured rect. Re-show on a short cadence
+        // so a late capture (under CI load) still finds the menu open rather than a
+        // popup that auto-dismissed.
+        var dispatcher = DispatcherQueue.GetForCurrentThread();
+        void ShowMenu()
+        {
+            if (root.XamlRoot is null) return;
+            menu.Flyout.ShowAt(root, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
+            {
+                Position = new Windows.Foundation.Point(12, 12),
+                ShowMode = Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowMode.Standard,
+            });
+        }
+        var timer = dispatcher.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(400);
+        timer.Tick += (_, _) => ShowMenu();
+        timer.Start();
+        dispatcher.TryEnqueue(ShowMenu);
     }
 
     /// <summary>

@@ -9,6 +9,7 @@ internal sealed class TrayIconHost : IDisposable
 {
     private readonly TaskbarIcon _icon;
     private readonly System.Drawing.Icon _trayIcon;
+    private readonly MenuFlyout _menu;
     private readonly MenuFlyoutItem _statusItem;
     private readonly MenuFlyoutItem _joinByCodeItem;
     private readonly Func<bool> _canJoinByCode;
@@ -23,44 +24,21 @@ internal sealed class TrayIconHost : IDisposable
     {
         _dispatcher = dispatcher;
         _canJoinByCode = canJoinByCode;
-        var menu = new MenuFlyout();
 
-        _statusItem = new MenuFlyoutItem
-        {
-            Text = "Signed out",
-            IsEnabled = false,
-        };
-        menu.Items.Add(_statusItem);
-
-        menu.Items.Add(new MenuFlyoutSeparator());
-
-        menu.Items.Add(new MenuFlyoutItem
-        {
-            Text = "Open",
-            Command = new RelayCommand(onOpen),
-        });
-
-        _joinByCodeItem = new MenuFlyoutItem
-        {
-            Text = "Join session by code…",
-            Command = new RelayCommand(onJoinByCode),
-        };
-        menu.Items.Add(_joinByCodeItem);
-
-        menu.Items.Add(new MenuFlyoutSeparator());
-
-        // #102: true exit lives here now (the main window's button only closes
-        // to the tray). Labelled "Exit" to distinguish it from window "Close".
-        menu.Items.Add(new MenuFlyoutItem
-        {
-            Text = "Exit",
-            Command = new RelayCommand(onQuit),
-        });
+        // AA4 (#176): the tray menu wears the DS ink treatment so it reads as one
+        // piece with the rest of the agent — ink surface, Space Mono status,
+        // on-ink actions, hairline rules, the one magenta spark on "Open Anchor".
+        // Built by the shared TrayMenu factory so the real tray and the
+        // --show-test-traymenu self-test render byte-for-byte the same menu.
+        var menu = TrayMenu.Build(onOpen, onJoinByCode, onQuit);
+        _menu = menu.Flyout;
+        _statusItem = menu.StatusItem;
+        _joinByCodeItem = menu.JoinItem;
 
         // Recompute Join-by-code's enabled state every time the menu opens
         // rather than threading SessionCoordinator events through here — it's
         // a one-shot read at exactly the moment the user is looking at it.
-        menu.Opening += (_, _) => _joinByCodeItem.IsEnabled = _canJoinByCode();
+        _menu.Opening += (_, _) => _joinByCodeItem.IsEnabled = _canJoinByCode();
 
         // The Anchor mark (on-ink indigo, transparent) so it floats on the
         // taskbar — replaces the old programmatic "F" tile. Generated from the
@@ -76,7 +54,7 @@ internal sealed class TrayIconHost : IDisposable
         _icon = new TaskbarIcon
         {
             ToolTipText = "Anchor",
-            ContextFlyout = menu,
+            ContextFlyout = _menu,
             Icon = _trayIcon,
         };
     }
@@ -85,7 +63,19 @@ internal sealed class TrayIconHost : IDisposable
 
     public void UpdateStatus(AgentConnectionState state, string? displayName)
     {
+        // Space Mono eyebrow voice: UPPERCASE, plain, calm (ANCHOR_BRAND.md §5).
         var text = state switch
+        {
+            AgentConnectionState.Connected when !string.IsNullOrWhiteSpace(displayName) => $"CONNECTED — {displayName!.ToUpperInvariant()}",
+            AgentConnectionState.Connected => "CONNECTED",
+            AgentConnectionState.Connecting => "CONNECTING…",
+            AgentConnectionState.Reconnecting => "RECONNECTING…",
+            AgentConnectionState.Disconnected => "DISCONNECTED",
+            _ => TrayMenu.DefaultStatusText,
+        };
+        // The tooltip stays sentence-case prose ("Anchor — Connected"); only the
+        // in-menu status row carries the mono eyebrow treatment.
+        var tooltip = state switch
         {
             AgentConnectionState.Connected when !string.IsNullOrWhiteSpace(displayName) => $"Connected as {displayName}",
             AgentConnectionState.Connected => "Connected",
@@ -97,7 +87,7 @@ internal sealed class TrayIconHost : IDisposable
         _dispatcher.TryEnqueue(() =>
         {
             _statusItem.Text = text;
-            _icon.ToolTipText = $"Anchor — {text}";
+            _icon.ToolTipText = $"Anchor — {tooltip}";
         });
     }
 

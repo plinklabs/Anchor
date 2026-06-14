@@ -48,6 +48,18 @@ public static class Program
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";
 
     /// <summary>
+    /// Dev-only flag (#176): show the real tray context menu (the AA4 brand-styled
+    /// flyout — ink surface, Space Mono status, on-ink actions, the magenta spark)
+    /// from a tiny host window, with no WAM / hub / coordinator bootstrap, and keep
+    /// it open so its redesigned ink surface can be screenshotted. A tray
+    /// <c>MenuFlyout</c> is a popup, not a window, and can't be reached by clicking
+    /// the tray headlessly — so this self-test shows the very same menu the
+    /// TrayIconHost builds (via the shared TrayMenu factory) through a host window.
+    /// Used by the visual e2e (TrayMenuVisualTests) and scripts/dev/verify-traymenu.ps1.
+    /// </summary>
+    public const string ShowTestTrayMenuArg = "--show-test-traymenu";
+
+    /// <summary>
     /// Dev-only flag (#164): verify the design-system WinUI binding actually
     /// merged into the agent's <c>App.xaml</c> at runtime — a brush from the
     /// merged dictionary resolves, the bundled font resource resolves, and the
@@ -105,6 +117,7 @@ public static class Program
     public static bool ShowTestOverlay { get; private set; }
     public static bool ShowTestMainWindow { get; private set; }
     public static bool ShowTestJoinByCode { get; private set; }
+    public static bool ShowTestTrayMenu { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
@@ -118,6 +131,7 @@ public static class Program
         ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
         ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
@@ -128,7 +142,7 @@ public static class Program
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !VerifyDsTheme)
+        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !VerifyDsTheme)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)
