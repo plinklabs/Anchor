@@ -79,7 +79,6 @@ void main() {
 
       final home = HomePage(
         tokens: AuthTokenStore(),
-        auth: _stubAuth(),
         sessions: sessions,
       );
       final router = GoRouter(
@@ -141,7 +140,6 @@ void main() {
           theme: ThemeData(splashFactory: NoSplash.splashFactory),
           home: HomePage(
             tokens: AuthTokenStore(),
-            auth: _stubAuth(),
             sessions: sessions,
           ),
         ),

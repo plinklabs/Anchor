@@ -123,9 +123,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Real navigation: the home AppBar's "Manage classes" action routes to
+      // Real navigation: the shared app-bar's Classes nav (AD1, #166) routes to
       // /classes, which auto-selects the first class and renders the editor.
-      final classesNav = find.widgetWithText(TextButton, 'Manage classes');
+      final classesNav = find.byKey(const Key('nav-classes'));
       expect(classesNav, findsOneWidget);
       await tester.tap(classesNav);
       await tester.pumpAndSettle();

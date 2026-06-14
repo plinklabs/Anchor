@@ -128,10 +128,10 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Real navigation: admin-only "Bundles" action in the home AppBar routes
-      // to /bundles.
-      final bundlesNav = find.widgetWithText(TextButton, 'Bundles');
-      expect(bundlesNav, findsOneWidget, reason: 'admin home should link Bundles');
+      // Real navigation: the admin-only Bundles slot in the shared app-bar
+      // (AD1, #166) routes to /bundles.
+      final bundlesNav = find.byKey(const Key('nav-bundles'));
+      expect(bundlesNav, findsOneWidget, reason: 'admin should see the Bundles nav');
       await tester.tap(bundlesNav);
       await tester.pumpAndSettle();
 

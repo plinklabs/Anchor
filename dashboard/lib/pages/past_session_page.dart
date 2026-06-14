@@ -69,13 +69,6 @@ class _PastSessionPageState extends State<PastSessionPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Past session'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/history'),
-        ),
-      ),
       body: _buildBody(),
     );
   }

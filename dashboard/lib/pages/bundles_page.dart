@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 
 import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
@@ -314,28 +313,14 @@ class _BundlesPageState extends State<BundlesPage> {
   @override
   Widget build(BuildContext context) {
     if (_denied) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Bundles'),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => context.go('/'),
-          ),
-        ),
-        body: const Center(
+      return const Scaffold(
+        body: Center(
           child: Text('Admin access required.'),
         ),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Bundles'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/'),
-        ),
-      ),
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

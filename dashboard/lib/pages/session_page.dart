@@ -335,32 +335,45 @@ class _SessionPageState extends State<SessionPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_titleText()),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _confirmExit,
-        ),
-        actions: [
-          if (!_ended)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: TextButton.icon(
-                onPressed: _ending ? null : _endSession,
-                icon: _ending
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.stop),
-                label: const Text('End session'),
-              ),
-            ),
-        ],
-      ),
       body: Column(
         children: [
+          // The shared app-bar (AD1, #166) now owns the top of the window, so
+          // the live-session controls a teacher operates — leave (with the
+          // end-vs-keep prompt, #126), the session title, and End session —
+          // live in a slim header row inside the body. The deeper live-session
+          // redesign is AD4.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 16, 8),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Leave session',
+                  onPressed: _confirmExit,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    _titleText(),
+                    style: Theme.of(context).textTheme.titleLarge,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (!_ended)
+                  TextButton.icon(
+                    onPressed: _ending ? null : _endSession,
+                    icon: _ending
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.stop),
+                    label: const Text('End session'),
+                  ),
+              ],
+            ),
+          ),
           if (_connecting) const LinearProgressIndicator(),
           if (_error != null)
             Container(

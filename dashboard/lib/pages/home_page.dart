@@ -3,18 +3,15 @@ import 'package:go_router/go_router.dart';
 
 import '../api/auth_token_store.dart';
 import '../api/sessions_api.dart';
-import '../auth/msal_auth_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
     super.key,
     required this.tokens,
-    required this.auth,
     required this.sessions,
   });
 
   final AuthTokenStore tokens;
-  final MsalAuthService auth;
   final SessionsApi sessions;
 
   @override
@@ -26,7 +23,6 @@ class _HomePageState extends State<HomePage> {
   ClassSummary? _selected;
   bool _busy = false;
   String? _error;
-  bool _isAdmin = false;
   List<ActiveSession> _activeSessions = const [];
   final Set<String> _endingSessions = {};
 
@@ -43,8 +39,9 @@ class _HomePageState extends State<HomePage> {
     });
     try {
       // Provision the user in the backend before any role-gated call —
-      // /me upserts based on the Entra oid + role claim, idempotently.
-      final me = await widget.sessions.me();
+      // /me upserts based on the Entra oid + role claim, idempotently. The
+      // admin role now drives the shared nav (the shell), not this page.
+      await widget.sessions.me();
       final classes = await widget.sessions.classes();
       final department = widget.tokens.account?.department;
       ClassSummary? preferred;
@@ -62,7 +59,6 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _classes = classes;
         _selected = preferred;
-        _isAdmin = me.isAdmin;
       });
       await _loadActiveSessions();
     } catch (e) {
@@ -140,51 +136,11 @@ class _HomePageState extends State<HomePage> {
     return 'Active session';
   }
 
-  Future<void> _signOut() async {
-    try {
-      await widget.auth.signOut();
-    } finally {
-      widget.tokens.clear();
-      if (mounted) context.go('/login');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final account = widget.tokens.account;
     final classes = _classes;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Anchor'),
-        actions: [
-          TextButton.icon(
-            icon: const Icon(Icons.group),
-            label: const Text('Manage classes'),
-            onPressed: () => context.go('/classes'),
-          ),
-          TextButton.icon(
-            icon: const Icon(Icons.history),
-            label: const Text('Past sessions'),
-            onPressed: () => context.go('/history'),
-          ),
-          if (_isAdmin)
-            TextButton.icon(
-              icon: const Icon(Icons.collections_bookmark),
-              label: const Text('Bundles'),
-              onPressed: () => context.go('/bundles'),
-            ),
-          if (account != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Center(child: Text(account.displayName)),
-            ),
-          IconButton(
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout),
-            onPressed: _signOut,
-          ),
-        ],
-      ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 480),
