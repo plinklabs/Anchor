@@ -22,6 +22,7 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     public const string ShowTestToastArg = "--show-test-toast";
     public const string ShowTestMainWindowArg = "--show-test-mainwindow";
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";
+    public const string ShowTestTrayMenuArg = "--show-test-traymenu";
 
     private readonly Process _process;
 

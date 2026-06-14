@@ -103,16 +103,29 @@ SQLite DB under the temp dir, so it never touches a running dev backend or
 
 ### Visual enforcement (Phase 2, #133)
 
-The overlay and the join toast are pure WinUI surfaces — there's no `/status`
+The agent's WinUI surfaces are pure DirectComposition — there's no `/status`
 field to poll — so they're asserted by **screenshot capture** instead: the spec
-drives the agent's `--show-test-overlay` / `--show-test-toast` self-tests
-(synthetic payloads, no backend), finds the surface's HWND, and BitBlts its rect
-with `CAPTUREBLT` while the process is per-monitor DPI-aware (see
-`WindowCapture.cs`; same path as `scripts/dev/verify-overlay.ps1` /
-`verify-toast.ps1`). The overlay spec asserts the real window renders (not blank)
-and that its close path tears the window down; the toast spec asserts it renders.
-Captured PNGs are written under `TestResults/visual-artifacts/` for eyeball
-triage.
+drives the agent's self-test flags (synthetic payloads, no backend), finds the
+surface's HWND, and BitBlts its rect with `CAPTUREBLT` while the process is
+per-monitor DPI-aware (see `WindowCapture.cs`; same path as the matching
+`scripts/dev/verify-*.ps1`). The self-tests are:
+
+| Flag | Surface | Spec / verify script |
+|---|---|---|
+| `--show-test-overlay` | focus-enforcement overlay (#33) | `OverlayVisualTests` / `verify-overlay.ps1` |
+| `--show-test-toast` | join-confirmation toast (#41) | `ToastVisualTests` / `verify-toast.ps1` |
+| `--show-test-mainwindow` | redesigned MainWindow (#173) | `MainWindowVisualTests` |
+| `--show-test-joinbycode` | redesigned join-by-code dialog (#175) | `JoinByCodeVisualTests` |
+| `--show-test-traymenu` | redesigned tray context menu (#176) | `TrayMenuVisualTests` / `verify-traymenu.ps1` |
+
+The redesign specs assert the real ink surface paints (not blank), is
+dark-dominated (the DS ink treatment, not the desktop or an OS grey popup), and
+carries the one magenta spark. The tray menu is a `MenuFlyout` (a popup, not a
+window) that a headless run can't open by clicking the tray — so its self-test
+builds the very same menu via the shared `TrayMenu` factory and shows it open
+over a small ink host window, the rect the spec captures. The overlay spec also
+asserts its close path tears the window down. Captured PNGs are written under
+`TestResults/visual-artifacts/` for eyeball triage.
 
 These specs carry the `Category=Visual` trait and are **not** in the state
 collection (they need no backend). Run them on their own:
