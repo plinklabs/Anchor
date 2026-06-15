@@ -66,6 +66,11 @@
     Bicep `uniqueSuffix` parameter. Pick something fork-specific (e.g. your
     school) so you do not collide with the original `arcadia` names.
 
+.PARAMETER SqlAdminLogin
+    SQL administrator login. When omitted, an existing SQL server's current
+    login is reused (Azure does not allow changing it on an existing server),
+    and a brand-new server falls back to the Bicep default (anchoradmin).
+
 .PARAMETER SqlAdminPassword
     SQL admin password (SecureString). Required for a real deploy. Prompted
     securely if omitted and not a dry run.
@@ -141,6 +146,7 @@ param(
     [string]$StaticWebAppLocation,
     [Parameter(Mandatory)]
     [string]$UniqueSuffix,
+    [string]$SqlAdminLogin,
     [securestring]$SqlAdminPassword,
     [string]$Repo,
     [string]$ApiAppName,
@@ -419,6 +425,19 @@ $resolvedAppLocation     = Resolve-ResourceLocation $AppServiceLocation   $appSe
 $resolvedSignalrLocation = Resolve-ResourceLocation $SignalRLocation      $signalrNameGuess      'Microsoft.SignalRService/SignalR'
 $resolvedSwaLocation     = Resolve-ResourceLocation $StaticWebAppLocation $staticWebAppNameGuess 'Microsoft.Web/staticSites'
 
+# SQL admin login: explicit override > existing server's login > Bicep default.
+# Azure does not allow changing an existing server's administrator login, so a
+# redeploy MUST pass the current one (adopt-in-place, like the regions above).
+# $null means "don't pass it" → the Bicep default applies (fresh environments).
+$resolvedSqlLogin = $SqlAdminLogin
+if (-not $resolvedSqlLogin) {
+    $existingSqlLogin = Invoke-AzRead @('sql', 'server', 'show', '--name', $sqlServerNameGuess, '--resource-group', $ResourceGroup, '--query', 'administratorLogin', '-o', 'tsv')
+    if ($existingSqlLogin) {
+        $resolvedSqlLogin = $existingSqlLogin
+        Write-Host "    SQL server $sqlServerNameGuess admin login is '$resolvedSqlLogin' — reusing (login is immutable)."
+    }
+}
+
 # Adopt the live Entra wiring from the App Service if present.
 $existingClientId = $null
 $existingTenantId = $null
@@ -560,7 +579,13 @@ else {
         $apiSecret = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'credential', 'reset', '--id', $apiClientId, '--display-name', 'anchor-obo', '--query', 'password', '-o', 'tsv') -Capture `
             -Target $apiClientId -Action 'create API client secret'
         if ($apiSecret) {
-            Write-Manual "API client secret created. Add it to the App Service as AzureAd__ClientCredentials__0__SourceType=ClientSecret and AzureAd__ClientCredentials__0__ClientSecret=<value> (needed for the user-directory search OBO call). Value is printed once below."
+            Write-Manual "API client secret created. It is ONLY needed if you use the user-directory search (the on-behalf-of Graph call); skip this otherwise."
+            Write-Host "    Add it to the App Service '$appServiceNameGuess' as two application settings:" -ForegroundColor Yellow
+            Write-Host "        AzureAd__ClientCredentials__0__SourceType  = ClientSecret" -ForegroundColor Yellow
+            Write-Host "        AzureAd__ClientCredentials__0__ClientSecret = <the secret printed below>" -ForegroundColor Yellow
+            Write-Host "    Portal: App Service '$appServiceNameGuess' -> Settings -> Environment variables -> App settings." -ForegroundColor Yellow
+            Write-Host "    Or run (replace <secret>):" -ForegroundColor Yellow
+            Write-Host "        az webapp config appsettings set --name $appServiceNameGuess --resource-group $ResourceGroup --settings AzureAd__ClientCredentials__0__SourceType=ClientSecret AzureAd__ClientCredentials__0__ClientSecret=<secret>" -ForegroundColor Yellow
             Write-Host "    AzureAd__ClientCredentials secret: $apiSecret" -ForegroundColor DarkYellow
         }
     }
@@ -624,6 +649,7 @@ else {
         "staticWebAppLocation=$resolvedSwaLocation"
     )
     if ($apiClientId) { $deployArgs += "entraClientId=$apiClientId" }
+    if ($resolvedSqlLogin) { $deployArgs += "sqlAdminLogin=$resolvedSqlLogin" }
     if ($sqlPwPlain) { $deployArgs += "sqlAdminPassword=$sqlPwPlain" }
     $deployArgs += @('--query', 'properties.outputs', '-o', 'json')
 
