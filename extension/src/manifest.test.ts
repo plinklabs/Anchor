@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
@@ -23,9 +23,14 @@ const STABLE_EXTENSION_ID = 'akkfdaclmpfcnjalcifkcbhgjnnopman';
 
 const manifest = JSON.parse(readFileSync(fileURLToPath(manifestUrl), 'utf8')) as {
   key?: string;
+  version?: string;
   icons?: Record<string, string>;
-  action?: { default_icon?: Record<string, string> };
+  action?: { default_icon?: Record<string, string>; default_popup?: string };
 };
+
+const pkg = JSON.parse(
+  readFileSync(resolveFromManifest('../package.json'), 'utf8'),
+) as { version?: string };
 
 /** Derive the Edge/Chrome extension id from a base64 SPKI public key, exactly as
  *  the browser does: sha256 of the DER bytes, first 16 bytes, hex, each hex
@@ -57,6 +62,30 @@ describe('manifest key (stable extension id)', () => {
   });
 });
 
+// Issue #204: manifest.json and package.json versions used to drift (0.2.0 vs
+// 0.1.0). Lock them together so a bump to one without the other fails CI.
+//
+// Issue #208: package.json is now the single source of truth — the rollup build
+// stamps its version into the manifest copied to dist/ (see rollup.config.mjs).
+// The committed src/manifest.json keeps a mirror locked here so an editor reading
+// the unbuilt source isn't misled; if a built dist manifest is present, also lock
+// it to package.json so the *shipped* artifact can't drift from the source.
+describe('version sync (#204, #208)', () => {
+  it('committed src manifest mirrors the package.json version', () => {
+    expect(manifest.version).toBeTypeOf('string');
+    expect(pkg.version).toBe(manifest.version);
+  });
+
+  it('built dist manifest is stamped from package.json (when built)', () => {
+    const distUrl = new URL('../dist/manifest.json', import.meta.url);
+    if (!existsSync(fileURLToPath(distUrl))) return; // dist not built in this run
+    const dist = JSON.parse(readFileSync(fileURLToPath(distUrl), 'utf8')) as {
+      version?: string;
+    };
+    expect(dist.version).toBe(pkg.version);
+  });
+});
+
 // Issue #163 (AF2): the extension ships the Anchor brand icons for the toolbar
 // action and the store/management listing. Each declared icon must exist and be
 // a square PNG of the size its manifest key promises, so the build never copies
@@ -67,6 +96,13 @@ describe('brand icons (AF2 / #163)', () => {
     expect(manifest.action?.default_icon).toBeTypeOf('object');
     // The 128px icon is what the store/management page uses — it must exist.
     expect(manifest.icons!['128']).toBeTypeOf('string');
+  });
+
+  // AE2 (#178): the toolbar action opens the branded status popup. Lock the
+  // wiring so the action never silently loses its popup (which would make the
+  // icon a no-op click again).
+  it('wires the toolbar action to the branded status popup', () => {
+    expect(manifest.action?.default_popup).toBe('popup.html');
   });
 
   const declared: Record<string, string> = {

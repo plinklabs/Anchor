@@ -1,6 +1,9 @@
+using FocusAgent.App.Extension;
+using FocusAgent.App.Startup;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
+using Velopack;
 
 namespace FocusAgent.App;
 
@@ -25,6 +28,51 @@ public static class Program
     /// running backend or a real off-list app to trigger enforcement.
     /// </summary>
     public const string ShowTestOverlayArg = "--show-test-overlay";
+
+    /// <summary>
+    /// Dev-only flag (#173): show the real <see cref="MainWindow"/> against a
+    /// synthetic "connected, in a focus session" state, with no WAM / hub /
+    /// coordinator bootstrap, and keep it up so its redesigned ink surface can be
+    /// screenshotted. Lets the AA1 MainWindow redesign be verified end-to-end
+    /// (build → launch → capture) without a backend or interactive sign-in. Used
+    /// by the visual e2e (MainWindowVisualTests) and scripts/dev verify scripts.
+    /// </summary>
+    public const string ShowTestMainWindowArg = "--show-test-mainwindow";
+
+    /// <summary>
+    /// Dev-only flag (#175): show the real <see cref="Sessions.JoinByCodeWindow"/>
+    /// against a no-op join client, with no WAM / hub / coordinator bootstrap, and
+    /// keep it up so its redesigned ink surface (Space Mono code field, the magenta
+    /// JOIN spark) can be screenshotted. Lets the AA3 join-by-code redesign be
+    /// verified end-to-end (build → launch → capture) without a backend or
+    /// interactive sign-in. Used by the visual e2e (JoinByCodeVisualTests) and
+    /// scripts/dev verify scripts.
+    /// </summary>
+    public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";
+
+    /// <summary>
+    /// Dev-only flag (#176): show the real tray context menu (the AA4 brand-styled
+    /// flyout — ink surface, Space Mono status, on-ink actions, the magenta spark)
+    /// from a tiny host window, with no WAM / hub / coordinator bootstrap, and keep
+    /// it open so its redesigned ink surface can be screenshotted. A tray
+    /// <c>MenuFlyout</c> is a popup, not a window, and can't be reached by clicking
+    /// the tray headlessly — so this self-test shows the very same menu the
+    /// TrayIconHost builds (via the shared TrayMenu factory) through a host window.
+    /// Used by the visual e2e (TrayMenuVisualTests) and scripts/dev/verify-traymenu.ps1.
+    /// </summary>
+    public const string ShowTestTrayMenuArg = "--show-test-traymenu";
+
+    /// <summary>
+    /// Dev-only flag (#211): show the real <see cref="Extension.GuidedInstallWindow"/>
+    /// — the guided-install fallback shown when the per-user force-install policy
+    /// doesn't take — with no WAM / hub / coordinator bootstrap, and keep it up so
+    /// its ink surface can be screenshotted. The guided fallback is the primary path
+    /// on a policy-locked box (where the HKCU <c>Software\Policies</c> subtree is
+    /// ACL-restricted and the force-install write is denied), so it's a load-bearing
+    /// user-visible surface worth observing directly. Used by the visual e2e
+    /// (GuidedInstallVisualTests) and scripts/dev.
+    /// </summary>
+    public const string ShowTestGuidedInstallArg = "--show-test-guided-install";
 
     /// <summary>
     /// Dev-only flag (#164): verify the design-system WinUI binding actually
@@ -80,8 +128,110 @@ public static class Program
     /// </summary>
     public const string SimulateInPrivateArg = "--simulate-inprivate";
 
+    /// <summary>
+    /// Dev-only flag (#211): write the per-user Edge force-install policy
+    /// (<c>ExtensionInstallForcelist</c>) for Anchor's extension, print the
+    /// resulting registry state, and exit — no WAM / hub / UI bootstrap. Drives the
+    /// <em>real</em> registry-write path so the integration test can assert the
+    /// HKCU value is actually written on a clean box (the one real-world
+    /// uncertainty the issue flags). Pair with <see cref="ExtensionPolicyKeyEnvVar"/>
+    /// to point the write at a throwaway HKCU subtree instead of the live Edge key.
+    /// </summary>
+    public const string RegisterExtensionArg = "--register-extension";
+
+    /// <summary>
+    /// Dev-only flag (#211): the inverse of <see cref="RegisterExtensionArg"/> —
+    /// remove Anchor's force-install policy entry (the uninstall path) and exit.
+    /// Lets the integration test prove the entry is cleaned up on uninstall.
+    /// </summary>
+    public const string UnregisterExtensionArg = "--unregister-extension";
+
+    /// <summary>
+    /// Dev-only env var (#211): an HKCU-relative key path that overrides the
+    /// production forcelist key for <see cref="RegisterExtensionArg"/> /
+    /// <see cref="UnregisterExtensionArg"/>, so the integration test writes to a
+    /// throwaway subtree and never disturbs a dev's real Edge policy.
+    /// </summary>
+    public const string ExtensionPolicyKeyEnvVar = "ANCHOR_EXTENSION_POLICY_KEY";
+
+    /// <summary>
+    /// Dev-only flag (#225): write the per-user "start at login" entry under
+    /// <c>HKCU\...\Run</c> pointing at the agent exe, print the resulting registry
+    /// state, and exit — no WAM / hub / UI bootstrap. Drives the <em>real</em>
+    /// registry-write path (the same one the Velopack install/update hook runs) so
+    /// the integration test can assert the Run value is actually written on a clean
+    /// box. Pair with <see cref="StartupRunKeyEnvVar"/> to point the write at a
+    /// throwaway HKCU subtree instead of the live Run key.
+    /// </summary>
+    public const string RegisterStartupArg = "--register-startup";
+
+    /// <summary>
+    /// Dev-only flag (#225): the inverse of <see cref="RegisterStartupArg"/> —
+    /// remove Anchor's Run entry (the uninstall path) and exit. Lets the integration
+    /// test prove the entry is cleaned up on uninstall.
+    /// </summary>
+    public const string UnregisterStartupArg = "--unregister-startup";
+
+    /// <summary>
+    /// Dev-only env var (#225): an HKCU-relative key path that overrides the
+    /// production <c>Run</c> key for <see cref="RegisterStartupArg"/> /
+    /// <see cref="UnregisterStartupArg"/>, so the integration test writes to a
+    /// throwaway subtree and never disturbs a dev's real auto-start entries.
+    /// </summary>
+    public const string StartupRunKeyEnvVar = "ANCHOR_STARTUP_RUN_KEY";
+
+    /// <summary>
+    /// Dev-only env var (#225): an absolute exe path the
+    /// <see cref="RegisterStartupArg"/> mode registers instead of the running test
+    /// exe's own path, so the integration test can assert the Run command points at
+    /// a known, stable path of its choosing (rather than the agent's debug-bin path).
+    /// </summary>
+    public const string StartupExePathEnvVar = "ANCHOR_STARTUP_EXE_PATH";
+
+    /// <summary>
+    /// Dev-only flag (#224): run the real Velopack update <em>check</em> against a
+    /// locally-served feed directory (a <c>vpk pack</c> output: RELEASES + the
+    /// full/delta nupkg) instead of the live GitHub Releases feed, print the result,
+    /// and exit — no WAM / hub / UI bootstrap, no actual download or apply. Drives
+    /// the real <c>UpdateManager</c> + <c>SimpleFileSource</c> check path so the
+    /// integration test can assert an installed agent discovers a newer release from
+    /// a fake feed, without GitHub, admin, or a real install. The flag is followed
+    /// by the feed directory path:
+    /// <c>--check-update C:\path\to\feed</c>.
+    /// </summary>
+    public const string CheckUpdateArg = "--check-update";
+
+    /// <summary>
+    /// Dev-only env var (#224): the pretend "currently installed" version the
+    /// <see cref="CheckUpdateArg"/> mode reports to Velopack, so the test can pin a
+    /// version older than the one it packed into the feed and prove the check finds
+    /// the newer release. Defaults to <c>0.0.1</c> if unset.
+    /// </summary>
+    public const string CheckUpdateCurrentVersionEnvVar = "ANCHOR_UPDATE_CURRENT_VERSION";
+
+    /// <summary>
+    /// Dev-only env var (#224): absolute path the <see cref="CheckUpdateArg"/> mode
+    /// writes its one-line result to. The agent is a WinExe with no console
+    /// attached, so the integration test reads the outcome from this file rather
+    /// than stdout (the same shape as the --verify-ds-theme result file). Contents
+    /// are <c>update-available: &lt;version&gt;</c>, <c>up-to-date</c>, or
+    /// <c>error: &lt;message&gt;</c>.
+    /// </summary>
+    public const string CheckUpdateResultPathEnvVar = "ANCHOR_UPDATE_RESULT_PATH";
+
+    /// <summary>
+    /// The Velopack package id the agent ships under (mirrors
+    /// <c>--packId</c> in agent/scripts/pack-release.ps1). The
+    /// <see cref="CheckUpdateArg"/> mode reads the test feed as this app id.
+    /// </summary>
+    public const string VelopackAppId = "Anchor.Agent";
+
     public static bool ShowTestToast { get; private set; }
     public static bool ShowTestOverlay { get; private set; }
+    public static bool ShowTestMainWindow { get; private set; }
+    public static bool ShowTestJoinByCode { get; private set; }
+    public static bool ShowTestTrayMenu { get; private set; }
+    public static bool ShowTestGuidedInstall { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
@@ -91,8 +241,63 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // Velopack lifecycle hook (#209): MUST run before any UI. On an
+        // install/update/uninstall launch Velopack injects hidden hook args; this
+        // call handles them (e.g. (re)creating the Start-menu/Run-key shortcuts on
+        // first run) and then exits the process, so the WinUI bootstrap below only
+        // runs for a normal launch. `vpk pack` also refuses to package a build
+        // whose entrypoint doesn't call this. The auto-update *check* (the agent's
+        // UpdateManager against the GitHub Releases feed) is wired in App startup
+        // via AgentUpdateService (#224).
+        VelopackApp.Build()
+            // #225: re-home "start the agent at login" from the MSIX-only
+            // windows.startupTask extension to a per-user HKCU\...\Run entry (no
+            // admin, no MDM). Velopack fires OnAfterInstall on first install and
+            // OnAfterUpdate after each update (a new versioned install dir), so the
+            // agent (re-)points the Run value at the freshly-installed exe on both.
+            // Idempotent — a re-run never leaks a duplicate or a stale path.
+            .OnAfterInstallFastCallback(_ => StartupRegistration.RegisterForInstall())
+            .OnAfterUpdateFastCallback(_ => StartupRegistration.RegisterForInstall())
+            // #211 + #225: when the agent is uninstalled, un-pin the force-installed
+            // extension and remove the Run entry it wrote — leaving the box as it
+            // found it. Velopack fires this hook on the uninstall launch (before the
+            // files go away). Best-effort: a failure here must not block uninstall.
+            .OnBeforeUninstallFastCallback(_ =>
+            {
+                ExtensionRegistration.RemovePolicyForUninstall();
+                StartupRegistration.RemoveForUninstall();
+            })
+            .Run();
+
+        // #211: dev-only register/unregister modes. These drive the real registry
+        // write/remove and exit, so the integration test can assert the HKCU policy
+        // value end-to-end. Handled before any WinUI bootstrap (and before single-
+        // instance gating) since they neither show UI nor need a running agent.
+        if (TryRunExtensionPolicyMode(args, out var exitCode))
+            return exitCode;
+
+        // #225: dev-only register/unregister startup modes. These drive the real
+        // HKCU\...\Run write/remove (the same path the Velopack install/uninstall
+        // hooks run) and exit, so the integration test can assert the Run entry
+        // end-to-end. Handled before any WinUI bootstrap / single-instance gating
+        // since they neither show UI nor need a running agent.
+        if (TryRunStartupRegistrationMode(args, out exitCode))
+            return exitCode;
+
+        // #224: dev-only update-check mode. Drives the real Velopack check path
+        // against a locally-served feed and exits, so the integration test can
+        // assert an installed agent discovers a newer release from a fake feed.
+        // Handled before any WinUI bootstrap / single-instance gating since it
+        // shows no UI and needs no running agent.
+        if (TryRunUpdateCheckMode(args, out exitCode))
+            return exitCode;
+
         ShowTestToast = args.Any(a => string.Equals(a, ShowTestToastArg, StringComparison.OrdinalIgnoreCase));
         ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestGuidedInstall = args.Any(a => string.Equals(a, ShowTestGuidedInstallArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
@@ -103,7 +308,7 @@ public static class Program
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay && !VerifyDsTheme)
+        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)
@@ -121,6 +326,147 @@ public static class Program
         });
 
         return 0;
+    }
+
+    /// <summary>
+    /// Handle the dev-only <c>--register-extension</c> / <c>--unregister-extension</c>
+    /// modes (#211): perform the real HKCU forcelist write/remove (against an
+    /// optional throwaway key from <see cref="ExtensionPolicyKeyEnvVar"/>), print the
+    /// resulting state for the harness to read, and signal the caller to exit.
+    /// Returns false (and leaves <paramref name="exitCode"/> unset) for a normal
+    /// launch so <see cref="Main"/> proceeds to the WinUI bootstrap.
+    /// </summary>
+    private static bool TryRunExtensionPolicyMode(string[] args, out int exitCode)
+    {
+        exitCode = 0;
+        var register = args.Any(a => string.Equals(a, RegisterExtensionArg, StringComparison.OrdinalIgnoreCase));
+        var unregister = args.Any(a => string.Equals(a, UnregisterExtensionArg, StringComparison.OrdinalIgnoreCase));
+        if (!register && !unregister) return false;
+
+        var keyOverride = Environment.GetEnvironmentVariable(ExtensionPolicyKeyEnvVar);
+        try
+        {
+            if (register)
+                ExtensionRegistration.WriteForcelistPolicy(keyOverride);
+            else
+                ExtensionRegistration.RemoveForcelistPolicy(keyOverride);
+
+            // Echo the resulting entries so the harness can assert on stdout too.
+            foreach (var entry in ExtensionRegistration.ReadForcelistEntries(keyOverride))
+                Console.WriteLine($"forcelist: {entry}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"extension-policy mode failed: {ex.Message}");
+            exitCode = 1;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Handle the dev-only <c>--register-startup</c> / <c>--unregister-startup</c>
+    /// modes (#225): perform the real HKCU\...\Run write/remove (against an optional
+    /// throwaway key from <see cref="StartupRunKeyEnvVar"/>, and an optional exe path
+    /// from <see cref="StartupExePathEnvVar"/>), print the resulting state for the
+    /// harness to read, and signal the caller to exit. Returns false for a normal
+    /// launch so <see cref="Main"/> proceeds to the WinUI bootstrap.
+    /// </summary>
+    private static bool TryRunStartupRegistrationMode(string[] args, out int exitCode)
+    {
+        exitCode = 0;
+        var register = args.Any(a => string.Equals(a, RegisterStartupArg, StringComparison.OrdinalIgnoreCase));
+        var unregister = args.Any(a => string.Equals(a, UnregisterStartupArg, StringComparison.OrdinalIgnoreCase));
+        if (!register && !unregister) return false;
+
+        var keyOverride = Environment.GetEnvironmentVariable(StartupRunKeyEnvVar);
+        var exePathOverride = Environment.GetEnvironmentVariable(StartupExePathEnvVar);
+        try
+        {
+            if (register)
+                StartupRegistration.EnsureRegistered(keyOverride, exePathOverride);
+            else
+                StartupRegistration.RemoveRegistration(keyOverride);
+
+            // Echo the resulting command so the harness can assert on stdout too.
+            var command = StartupRegistration.ReadRegisteredCommand(keyOverride);
+            if (command is not null)
+                Console.WriteLine($"run-at-login: {command}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"startup-registration mode failed: {ex.Message}");
+            exitCode = 1;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Handle the dev-only <c>--check-update &lt;feedDir&gt;</c> mode (#224): run the
+    /// real Velopack check against a locally-served feed (no GitHub, no real
+    /// install), print the outcome for the harness to read, and signal the caller to
+    /// exit. Prints one of:
+    ///   <c>update-available: &lt;version&gt;</c> when the feed has a newer release, or
+    ///   <c>up-to-date</c> when it doesn't.
+    /// Returns false for a normal launch so <see cref="Main"/> proceeds.
+    /// </summary>
+    private static bool TryRunUpdateCheckMode(string[] args, out int exitCode)
+    {
+        exitCode = 0;
+        var feedDir = ArgValueAfter(args, CheckUpdateArg);
+        if (feedDir is null) return false;
+
+        var resultPath = Environment.GetEnvironmentVariable(CheckUpdateResultPathEnvVar);
+
+        void WriteResult(string line)
+        {
+            if (string.IsNullOrEmpty(resultPath)) return;
+            try { File.WriteAllText(resultPath, line); } catch { /* exit code is the fallback signal */ }
+        }
+
+        try
+        {
+            if (!Directory.Exists(feedDir))
+            {
+                WriteResult($"error: feed directory not found: {feedDir}");
+                exitCode = 1;
+                return true;
+            }
+
+            var currentVersion =
+                Environment.GetEnvironmentVariable(CheckUpdateCurrentVersionEnvVar) is { Length: > 0 } v
+                    ? v
+                    : "0.0.1";
+
+            var manager = Updates.VelopackUpdateManager.ForLocalFeed(
+                feedDir,
+                VelopackAppId,
+                currentVersion,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<Updates.VelopackUpdateManager>.Instance);
+
+            // IsInstalled is forced true by the TestVelopackLocator in ForLocalFeed,
+            // so the check actually runs (the production gate is in AgentUpdateService).
+            var result = manager.CheckForUpdateAsync().GetAwaiter().GetResult();
+            WriteResult(result.IsUpdateAvailable
+                ? $"update-available: {result.TargetVersion}"
+                : "up-to-date");
+        }
+        catch (Exception ex)
+        {
+            WriteResult($"error: {ex.Message}");
+            exitCode = 1;
+        }
+        return true;
+    }
+
+    /// <summary>Return the argument value immediately following <paramref name="flag"/>, or null.</summary>
+    private static string? ArgValueAfter(string[] args, string flag)
+    {
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase))
+                return args[i + 1];
+        }
+        return null;
     }
 
     private static int? ParsePortAfter(string[] args, string flag)

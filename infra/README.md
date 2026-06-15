@@ -1,8 +1,101 @@
 # Anchor — Azure Infrastructure
 
-All resources live in a single resource group in **West Europe**. Everything starts on free tiers; upgrade SignalR to Standard when you test with a real class (20+ students).
+All resources live in a single resource group. Everything starts on free tiers; upgrade SignalR to Standard when you test with a real class (20+ students). Region defaults to the resource group's region and can be set per resource — see [Regions](#regions).
 
-## Option A: Deploy with Bicep (recommended)
+## Recommended: one-command bootstrap (`scripts/setup.ps1`)
+
+[`scripts/setup.ps1`](../scripts/setup.ps1) stands up a fork's whole cloud
+environment end to end: resource group → Entra app registrations (incl. their
+service principals) → the Bicep deploy → apply the OBO client secret → fetch the
+deployment credentials → write the GitHub Actions secrets/variables the deploy
+workflows consume → grant Entra admin consent. This is the **only path you need
+for an automated install** — the alternatives further down are not extra steps
+to run on top of it.
+
+```powershell
+./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf   # dry-run: prints the full plan, changes nothing
+./scripts/setup.ps1 -UniqueSuffix lincolnhigh           # provision + wire GitHub
+```
+
+It is **idempotent and resumable** (see [Re-running / resuming](#re-running--resuming))
+and can **adopt an environment that already exists** (see [Adopting an existing
+environment](#adopting-an-existing-environment)).
+
+The two **manual alternatives** below are substitutes for this script, not
+follow-up steps — reach for them only if you can't run it (e.g. you're not on
+Windows / PowerShell) or want to drive the pieces by hand. The Bicep section is
+also where every template parameter is documented.
+
+> Requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
+> and the [GitHub CLI](https://cli.github.com/), both logged in (`az login`,
+> `gh auth login`).
+
+### Regions
+
+`-Location` sets the default region for the resource group and every resource.
+Override individual resources with `-SqlLocation`, `-AppServiceLocation`,
+`-SignalRLocation`, `-StaticWebAppLocation` (each falls back to `-Location`).
+These map straight to the matching Bicep parameters.
+
+- **Why per-resource:** a single region rarely fits. **Static Web Apps** and
+  **SignalR** are offered only in a limited set of regions, so they may need to
+  live apart from your SQL/App Service region. The live `anchor-rg` (`arcadia`)
+  deployment is itself split — App Service / plan / SQL in **Belgium Central**,
+  SignalR / Static Web App in **West Europe**.
+- **Adopt-in-place:** when a resource already exists, the script reads its
+  current region and pins it (region is immutable in Azure — a redeploy that
+  tried to move it would fail), so you never have to specify regions just to
+  re-run against an existing environment.
+
+### Re-running / resuming
+
+Re-running **is** the resume mechanism: every step reads live Azure/Entra state
+and only changes what's missing, so a run interrupted by a timeout converges on
+the next run rather than duplicating work. Specifically:
+
+- Entra apps are looked up before creating; the `access_as_user` scope id and
+  the `anchor-obo` client secret are reused if already present (the scope id
+  stays stable so prior admin consent isn't invalidated).
+- The Bicep deploy is declarative (ARM converges to the template).
+- GitHub secrets/variables are upserts.
+- A not-yet-created Static Web App / App Service is tolerated: the affected
+  GitHub secret is skipped (with a warning) instead of failing the run.
+
+**One caveat:** an Entra client secret can only be read at creation, so a run
+interrupted *after* minting the secret but *before* you copied it cannot
+re-display it — reset it manually (`az ad app credential reset`) if needed.
+
+Use `-SkipInfra` to skip the Bicep deploy entirely and only (re-)wire GitHub
+against an environment that already exists.
+
+### Adopting an existing environment
+
+To point the script at a hand-built environment (like the original `arcadia`
+one) without disturbing it, pass the real app-registration ids:
+
+```powershell
+./scripts/setup.ps1 -UniqueSuffix arcadia `
+  -EntraClientId <api-app-guid> -SpaClientId <spa-app-guid> -WhatIf
+```
+
+With an id supplied (or discoverable from the App Service's existing
+`AzureAd__ClientId`), the script **adopts** that registration: it reuses it and
+skips the create/scope/secret mutations, so a working API is never repointed at
+a freshly-created app. It also pins each existing resource's region. Supply the
+**current** SQL admin password — the deploy always passes it, so a different
+value would reset it.
+
+> The live `arcadia` resources currently sit on a **disabled subscription**;
+> `az` write/action calls (including `az webapp config appsettings list`) are
+> blocked until it is re-enabled, so pass `-EntraClientId` explicitly there
+> rather than relying on app-setting discovery.
+
+## Alternative: deploy with Bicep directly (no script)
+
+> Equivalent to the deploy step inside `scripts/setup.ps1`, minus the Entra,
+> credential-fetch and GitHub-wiring steps — use it only if you're driving those
+> by hand or can't run the script. Doubles as the reference for every template
+> parameter (see [Parameters](#parameters) below).
 
 Requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli).
 
@@ -17,16 +110,75 @@ az group create --name anchor-rg --location westeurope
 az deployment group create \
   --resource-group anchor-rg \
   --template-file infra/main.bicep \
-  --parameters sqlAdminPassword='<pick-a-strong-password>'
+  --parameters sqlAdminPassword='<pick-a-strong-password>' \
+               entraTenantId='<your-tenant-guid>' \
+               entraClientId='<your-api-app-client-guid>'
 ```
 
-The deployment takes ~3 minutes and outputs the URLs for the App Service, SignalR, SQL Server, and Static Web App.
+The deployment takes ~3 minutes and outputs the resource names + URLs for the
+App Service, SignalR, SQL Server, and Static Web App, plus the Entra/CORS values
+it applied — everything the fork bootstrap (`scripts/setup.ps1`) consumes.
+
+### Parameters
+
+Every name and identifier is a parameter, so a fork stands up its own
+environment from parameters alone (no `arcadia` assumptions). The **name**
+defaults reproduce the live `anchor-rg` deployment, so the original environment
+still deploys with the same names. **Regions are not hardcoded**: `location`
+defaults to the resource group's region and each resource can override it (the
+live `arcadia` env is itself split across two regions — see
+[Regions](#regions)), so a no-arg redeploy will not try to move an existing
+resource only when you pass the matching per-resource locations (the
+`scripts/setup.ps1` bootstrap reads and pins them for you).
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `uniqueSuffix` | `arcadia` | Suffix for globally-unique names; drives the resource-name defaults below. |
+| `location` | resource group region | Default region for all resources. |
+| `sqlServerLocation` / `appServiceLocation` / `signalrLocation` / `staticWebAppLocation` | `location` | Per-resource region overrides (App Service plan follows `appServiceLocation`). |
+| `sqlServerName` / `sqlDatabaseName` | `anchor-sql-<suffix>` / `anchordb` | SQL logical server + database name. |
+| `appServiceName` / `appServicePlanName` | `anchor-api-<suffix>` / `ASP-anchorrg-b49b` | Backend App Service + plan name. |
+| `signalrName` / `staticWebAppName` | `anchor-signalr` / `anchor-dashboard` | SignalR + dashboard SWA name. |
+| `entraTenantId` / `entraClientId` | empty | Entra tenant + API app-registration client ID. Required for a working deploy; applied as App Service settings (`AzureAd__TenantId` / `AzureAd__ClientId`). |
+| `entraAudience` | `api://<entraClientId>` | JWT audience the API validates. |
+| `entraInstance` | current cloud login endpoint | Entra authority. |
+| `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin for the dashboard SPA (`Cors__AllowedOrigins__0`). |
+| `sqlAdminLogin` / `sqlAdminPassword` | `anchoradmin` / *(required, secure)* | SQL admin credentials. |
+
+Bicep applies the Entra IDs and CORS origin as **App Service application
+settings** (double-underscore form), so the deployed API gets its
+environment-specific config from the infra rather than from committed
+`appsettings.json` (pairs with the config-externalization work, issue #201).
 
 To tear it all down:
 
 ```bash
 az group delete --name anchor-rg --yes
 ```
+
+#### After teardown — what survives, and recreating
+
+Deleting the resource group removes the Azure resources but **not** everything
+the environment depends on. All resources are free-tier, so deleting and
+recreating costs nothing — but mind these:
+
+- **Entra app registrations and their admin consent live in Entra ID, not in
+  the resource group**, so `az group delete` leaves them untouched (you won't
+  see them in Resource Manager — they're under Entra ID → App registrations).
+  **Don't delete them.** On the next run `scripts/setup.ps1` reuses them (looked
+  up by display name, or pass `-EntraClientId` / `-SpaClientId`), and the admin
+  consent you granted still holds — so you skip that manual step. You only need
+  to re-consent if you delete/recreate the apps or a new permission is added.
+- **GitHub secrets/variables are not touched** (they live in the repo), but the
+  `AZURE_WEBAPP_PUBLISH_PROFILE` secret and `AZURE_STATIC_WEB_APPS_API_TOKEN`
+  are **bound to the deleted resources** — they go stale. Re-run
+  `scripts/setup.ps1` to refetch and overwrite them; deploys will fail to
+  authenticate in the gap. A recreated Static Web App may also get a **new
+  default hostname**, which invalidates the SPA redirect URI — the script
+  rewrites it from the new SWA URL on each run.
+- **The SQL admin password cannot be read back from Azure.** If you didn't save
+  it, you can't recover it — set a fresh one on the recreate (the script prompts
+  for it and the deploy applies it).
 
 ### Upgrading SignalR for pilot
 
@@ -43,9 +195,11 @@ Then redeploy with the same command.
 
 ---
 
-## Option B: Manual setup via Azure Portal
+## Alternative: manual setup via the Azure Portal
 
-If the CLI gives you trouble (TPM errors, etc.), create each resource manually in the portal. Everything goes into one resource group.
+> Also a substitute for the script, not a follow-up. Use it if the CLI gives you
+> trouble (TPM errors, etc.) — create each resource manually in the portal.
+> Everything goes into one resource group.
 
 ### 1. Resource group
 
@@ -135,8 +289,20 @@ Default names below assume `uniqueSuffix=arcadia` (the live `anchor-rg` deployme
 
 ---
 
+## Outputs
+
+The deployment emits everything the fork bootstrap (`scripts/setup.ps1`) needs
+to populate GitHub secrets/variables, without re-querying Azure:
+
+`resourceGroup`, `location`, `appServiceName`, `appServiceUrl`,
+`staticWebAppName`, `swaUrl`, `sqlServerName`, `sqlServerFqdn`,
+`sqlDatabaseName`, `signalrName`, `signalrHostName`, the resolved per-resource
+regions (`sqlServerLocation` / `appServiceLocation` / `signalrLocation` /
+`staticWebAppLocation`), and the applied `entraTenantId` / `entraClientId` /
+`entraAudience` / `dashboardCorsOrigin`.
+
 ## What's NOT provisioned here
 
-- **Entra ID app registrations** — needed for auth. These are created in the Azure AD / Entra portal, not via resource deployment. Set up when you start implementing auth.
+- **Entra ID app registrations** — the app registrations themselves are created in the Azure AD / Entra portal (or by `scripts/setup.ps1`), not via resource deployment. Their IDs are *passed into* this template (`entraTenantId` / `entraClientId`) and applied as App Service settings.
 - **Custom domains** — add later if you want `anchor.yourschool.be` instead of the auto-generated Azure URLs.
 - **GitHub Actions deployment** — configure after the backend and dashboard projects exist.

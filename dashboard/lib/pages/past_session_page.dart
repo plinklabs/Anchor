@@ -1,12 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/sessions_api.dart';
+import 'past_session_shared.dart';
 
-/// Read-only review of an ended session. Distinct from the live SessionPage:
-/// no hub connection, no Approve/End buttons, no live event stream — just an
-/// audit-trail layout (header → bundles → participants → activity summary →
+/// Read-only review of an ended session (AD7, #172), redesigned to the paper
+/// treatment. It mirrors the live session's instrument-panel layout (AD4, #169)
+/// — a header, hairline-separated panels each headed by a quiet mono label, and
+/// an event log read-out — but in a muted/archived register: no liveness ping,
+/// no magenta spark, no Approve/End actions. Where the live page leads with the
+/// magenta LIVE badge, the archive leads with a calm "Ended" outline badge; the
+/// page is paper throughout and paints no spark, because nothing here is live
+/// or constructive.
+///
+/// Distinct from the live SessionPage: no hub connection, no live event stream —
+/// just an audit trail (header → bundles → participants → activity summary →
 /// approved exceptions → unapproved requests → event log).
+///
+/// Purely presentational: the load/redirect logic (bounce to the live view if
+/// the session hasn't actually ended) is untouched.
 class PastSessionPage extends StatefulWidget {
   const PastSessionPage({
     super.key,
@@ -69,6 +82,7 @@ class _PastSessionPageState extends State<PastSessionPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: PlinkColors.paper,
       body: _buildBody(),
     );
   }
@@ -80,54 +94,60 @@ class _PastSessionPageState extends State<PastSessionPage> {
     if (_detail == null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(PlinkSpacing.s6),
           child: Text(
             _error ?? 'Session not available.',
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.error,
+                ),
             textAlign: TextAlign.center,
           ),
         ),
       );
     }
     final detail = _detail!;
-    return Center(
+    return Align(
+      alignment: Alignment.topCenter,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 880),
+        constraints: const BoxConstraints(maxWidth: 920),
         child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
+          padding: EdgeInsets.zero,
+          children: <Widget>[
             _Header(detail: detail),
-            const SizedBox(height: 16),
-            if (detail.bundles.isNotEmpty) ...[
-              _SectionTitle('Bundles used'),
+            const PastHairline(),
+            if (detail.bundles.isNotEmpty) ...<Widget>[
+              const _PanelLabel('Bundles used'),
               _BundlesChips(bundles: detail.bundles),
-              const SizedBox(height: 16),
+              const PastHairline(),
             ],
-            if (detail.participants.isNotEmpty) ...[
-              _SectionTitle('Participants'),
-              _ParticipantsTable(participants: detail.participants),
-              const SizedBox(height: 16),
+            if (detail.participants.isNotEmpty) ...<Widget>[
+              const _PanelLabel('Participants'),
+              _ParticipantsList(participants: detail.participants),
+              const PastHairline(),
             ],
-            if (detail.summaries.isNotEmpty) ...[
-              _SectionTitle('Activity summary'),
-              _SummaryTable(
+            if (detail.summaries.isNotEmpty) ...<Widget>[
+              const _PanelLabel('Activity summary'),
+              _SummaryList(
                 summaries: detail.summaries,
                 participants: detail.participants,
               ),
-              const SizedBox(height: 16),
+              const PastHairline(),
             ],
-            if (detail.grants.isNotEmpty) ...[
-              _SectionTitle('Approved exceptions'),
+            if (detail.grants.isNotEmpty) ...<Widget>[
+              const _PanelLabel('Approved exceptions'),
               _GrantsList(grants: detail.grants),
-              const SizedBox(height: 16),
+              const PastHairline(),
             ],
-            if (_unapprovedRequests.isNotEmpty) ...[
-              _SectionTitle('Unapproved requests'),
+            if (_unapprovedRequests.isNotEmpty) ...<Widget>[
+              const _PanelLabel('Unapproved requests'),
               _UnapprovedList(requests: _unapprovedRequests),
-              const SizedBox(height: 16),
+              const PastHairline(),
             ],
-            _SectionTitle('Event log'),
-            _EventLog(events: detail.recentEvents, participants: detail.participants),
+            const _PanelLabel('Event log'),
+            _EventLog(
+              events: detail.recentEvents,
+              participants: detail.participants,
+            ),
           ],
         ),
       ),
@@ -135,6 +155,15 @@ class _PastSessionPageState extends State<PastSessionPage> {
   }
 }
 
+/// Horizontal page gutter — keeps the archive content on the same flush-left
+/// margin as the shell's eyebrow and the live-session page (the editorial
+/// column).
+const double _gutter = PlinkSpacing.s6; // 32
+
+/// The header: the session identity (class name + a date/time/duration spec in
+/// mono) and a calm "Ended" outline badge — the archived counterpart of the
+/// live page's magenta LIVE spark. The shell already carries the "Past session"
+/// eyebrow above this, so the page leads with the class it belongs to.
 class _Header extends StatelessWidget {
   const _Header({required this.detail});
   final SessionDetail detail;
@@ -145,37 +174,54 @@ class _Header extends StatelessWidget {
     final started = detail.startedAt.toLocal();
     final ended = detail.endedAt!.toLocal();
     final duration = ended.difference(started);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          detail.className.isEmpty ? 'Session' : detail.className,
-          style: theme.textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          '${_formatDate(started)}  ·  '
-          '${_formatTime(started)} – ${_formatTime(ended)}  ·  '
-          '${_formatDuration(duration)}',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          // The archived marker — an outline badge, never the magenta spark.
+          const PlinkBadge('Ended', variant: BadgeVariant.outline),
+          const SizedBox(height: PlinkSpacing.s3),
+          Text(
+            detail.className.isEmpty ? 'Session' : detail.className,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              color: PlinkColors.ink,
+            ),
           ),
-        ),
-      ],
+          const SizedBox(height: PlinkSpacing.s2),
+          Text(
+            '${pastFormatDate(started)}  ·  '
+            '${pastFormatTime(started)} – ${pastFormatTime(ended)}  ·  '
+            '${pastFormatDuration(duration)}',
+            style: pastMonoSpec(PlinkColors.ink60, PlinkType.textSm),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.title);
-  final String title;
+/// A quiet mono section label — the archive's panel header, matching the live
+/// feed's "Activity" label but in the muted register.
+class _PanelLabel extends StatelessWidget {
+  const _PanelLabel(this.text);
+  final String text;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 8),
-      child: Text(title, style: theme.textTheme.titleMedium),
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s4,
+        _gutter,
+        PlinkSpacing.s2,
+      ),
+      child: Text(text, style: pastMonoLabel(PlinkColors.ink60)),
     );
   }
 }
@@ -186,79 +232,110 @@ class _BundlesChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 6,
-      children: [
-        for (final b in bundles)
-          Chip(label: Text(b.name), visualDensity: VisualDensity.compact),
-      ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s1,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
+      child: Wrap(
+        spacing: PlinkSpacing.s2,
+        runSpacing: PlinkSpacing.s2,
+        children: <Widget>[
+          // Bundles read as calm outline spec chips — no fill, never the spark.
+          for (final b in bundles)
+            PlinkBadge(b.name, variant: BadgeVariant.outline),
+        ],
+      ),
     );
   }
 }
 
-class _ParticipantsTable extends StatelessWidget {
-  const _ParticipantsTable({required this.participants});
+/// A vertically-padded panel body that lays its [rows] out as hairline
+/// instrument lines — the shared shape for participants / summary / grants /
+/// unapproved / event-log, so they all read consistently.
+class _PanelRows extends StatelessWidget {
+  const _PanelRows({required this.rows});
+  final List<Widget> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s1,
+        _gutter,
+        PlinkSpacing.s4,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (var i = 0; i < rows.length; i++) ...<Widget>[
+            if (i > 0) const PastHairline(),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
+              child: rows[i],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ParticipantsList extends StatelessWidget {
+  const _ParticipantsList({required this.participants});
   final List<SessionParticipantInfo> participants;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
-          children: [
-            for (var i = 0; i < participants.length; i++) ...[
-              if (i > 0) const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: Text(
-                        participants[i].displayName,
-                        style: theme.textTheme.bodyMedium,
-                      ),
-                    ),
-                    Expanded(
-                      flex: 5,
-                      child: Text(
-                        _participantStatus(participants[i]),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
+    return _PanelRows(
+      rows: <Widget>[
+        for (final p in participants)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                flex: 3,
+                child: Text(
+                  p.displayName,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: PlinkColors.ink,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 5,
+                child: Text(
+                  _participantStatus(p),
+                  style: pastMonoSpec(PlinkColors.ink60, PlinkType.labelSm),
                 ),
               ),
             ],
-          ],
-        ),
-      ),
+          ),
+      ],
     );
   }
 
   String _participantStatus(SessionParticipantInfo p) {
     if (p.declinedAt != null) {
-      return 'declined at ${_formatTime(p.declinedAt!.toLocal())}';
+      return 'declined at ${pastFormatTime(p.declinedAt!.toLocal())}';
     }
     if (p.joinedAt == null) {
       return 'never joined';
     }
-    final joined = 'joined ${_formatTime(p.joinedAt!.toLocal())}';
+    final joined = 'joined ${pastFormatTime(p.joinedAt!.toLocal())}';
     if (p.leftAt != null) {
-      return '$joined  ·  left ${_formatTime(p.leftAt!.toLocal())}';
+      return '$joined  ·  left ${pastFormatTime(p.leftAt!.toLocal())}';
     }
     return joined;
   }
 }
 
-class _SummaryTable extends StatelessWidget {
-  const _SummaryTable({required this.summaries, required this.participants});
+class _SummaryList extends StatelessWidget {
+  const _SummaryList({required this.summaries, required this.participants});
   final List<SessionEventSummary> summaries;
   final List<SessionParticipantInfo> participants;
 
@@ -274,45 +351,31 @@ class _SummaryTable extends StatelessWidget {
     for (final s in summaries) {
       byUser.putIfAbsent(s.userId, () => []).add(s);
     }
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
-          children: [
-            for (var i = 0; i < byUser.entries.length; i++) ...[
-              if (i > 0) const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: Text(
-                        nameById[byUser.entries.elementAt(i).key] ??
-                            byUser.entries.elementAt(i).key,
-                        style: theme.textTheme.bodyMedium,
-                      ),
-                    ),
-                    Expanded(
-                      flex: 5,
-                      child: Text(
-                        byUser.entries.elementAt(i).value
-                            .map((s) => '${s.count} ${s.kind}')
-                            .join(', '),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
+    return _PanelRows(
+      rows: <Widget>[
+        for (final entry in byUser.entries)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                flex: 3,
+                child: Text(
+                  nameById[entry.key] ?? entry.key,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: PlinkColors.ink,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 5,
+                child: Text(
+                  entry.value.map((s) => '${s.count} ${s.kind}').join(', '),
+                  style: pastMonoSpec(PlinkColors.ink60, PlinkType.labelSm),
                 ),
               ),
             ],
-          ],
-        ),
-      ),
+          ),
+      ],
     );
   }
 }
@@ -324,44 +387,34 @@ class _GrantsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
-          children: [
-            for (var i = 0; i < grants.length; i++) ...[
-              if (i > 0) const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: Text(grants[i].host, style: theme.textTheme.bodyMedium),
-                    ),
-                    Expanded(
-                      flex: 3,
-                      child: Text(
-                        grants[i].displayName,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      _formatTime(grants[i].grantedAt.toLocal()),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+    return _PanelRows(
+      rows: <Widget>[
+        for (final g in grants)
+          Row(
+            children: <Widget>[
+              Expanded(
+                flex: 3,
+                child: Text(
+                  g.host,
+                  style: pastMonoSpec(PlinkColors.ink, PlinkType.textSm),
                 ),
               ),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  g.displayName,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: PlinkColors.ink60,
+                  ),
+                ),
+              ),
+              Text(
+                pastFormatTime(g.grantedAt.toLocal()),
+                style: pastMonoSpec(PlinkColors.ink60, PlinkType.labelSm),
+              ),
             ],
-          ],
-        ),
-      ),
+          ),
+      ],
     );
   }
 }
@@ -373,53 +426,43 @@ class _UnapprovedList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
-          children: [
-            for (var i = 0; i < requests.length; i++) ...[
-              if (i > 0) const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            requests[i].host,
-                            style: theme.textTheme.bodyMedium,
-                          ),
-                        ),
-                        Text(
-                          _formatTime(requests[i].latestRequestedAt.toLocal()),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
+    return _PanelRows(
+      rows: <Widget>[
+        for (final r in requests)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: Text(
+                      r.host,
+                      style: pastMonoSpec(PlinkColors.ink, PlinkType.textSm),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      requests[i].requesters.map((r) => r.displayName).join(', '),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+                  ),
+                  Text(
+                    pastFormatTime(r.latestRequestedAt.toLocal()),
+                    style: pastMonoSpec(PlinkColors.ink60, PlinkType.labelSm),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                r.requesters.map((req) => req.displayName).join(', '),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: PlinkColors.ink60,
                 ),
               ),
             ],
-          ],
-        ),
-      ),
+          ),
+      ],
     );
   }
 }
 
+/// The event log — the archive's read-out, the muted counterpart of the live
+/// feed. Each event is a hairline row: a mono tabular timestamp, the student
+/// name, the raw event kind as a mono technical label, and a condensed payload.
 class _EventLog extends StatelessWidget {
   const _EventLog({required this.events, required this.participants});
   final List<SessionRecentEvent> events;
@@ -427,93 +470,102 @@ class _EventLog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     if (events.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.fromLTRB(
+          _gutter,
+          PlinkSpacing.s1,
+          _gutter,
+          PlinkSpacing.s6,
+        ),
         child: Text(
           'No event detail retained for this session.',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
+          style: pastMonoLabel(PlinkColors.muted),
         ),
       );
     }
     final nameById = {
       for (final p in participants) p.userId: p.displayName,
     };
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Column(
-          children: [
-            for (var i = 0; i < events.length; i++) ...[
-              if (i > 0) const Divider(height: 1),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 84,
-                      child: Text(
-                        _formatTimeWithSeconds(events[i].occurredAt.toLocal()),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 140,
-                      child: Text(
-                        nameById[events[i].userId] ?? '—',
-                        style: theme.textTheme.bodySmall,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    SizedBox(
-                      width: 160,
-                      child: Text(events[i].kind, style: theme.textTheme.bodyMedium),
-                    ),
-                    Expanded(
-                      child: SelectableText(
-                        events[i].payloadJson,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontFamily: 'monospace',
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        _gutter,
+        PlinkSpacing.s1,
+        _gutter,
+        PlinkSpacing.s6,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (var i = 0; i < events.length; i++) ...<Widget>[
+            if (i > 0) const PastHairline(),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
+              child: _EventRow(
+                event: events[i],
+                name: nameById[events[i].userId],
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
 }
 
-String _formatDate(DateTime dt) =>
-    '${dt.year.toString().padLeft(4, '0')}-'
-    '${dt.month.toString().padLeft(2, '0')}-'
-    '${dt.day.toString().padLeft(2, '0')}';
+class _EventRow extends StatelessWidget {
+  const _EventRow({required this.event, required this.name});
+  final SessionRecentEvent event;
+  final String? name;
 
-String _formatTime(DateTime dt) =>
-    '${dt.hour.toString().padLeft(2, '0')}:'
-    '${dt.minute.toString().padLeft(2, '0')}';
-
-String _formatTimeWithSeconds(DateTime dt) =>
-    '${dt.hour.toString().padLeft(2, '0')}:'
-    '${dt.minute.toString().padLeft(2, '0')}:'
-    '${dt.second.toString().padLeft(2, '0')}';
-
-String _formatDuration(Duration d) {
-  final h = d.inHours;
-  final m = d.inMinutes.remainder(60);
-  if (h > 0) return '${h}h ${m}m';
-  return '${d.inMinutes}m';
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        // Mono tabular timestamp — the columns line up like a log.
+        SizedBox(
+          width: 84,
+          child: Text(
+            pastFormatTimeWithSeconds(event.occurredAt.toLocal()),
+            style: pastMonoSpec(PlinkColors.ink60, 12),
+          ),
+        ),
+        const SizedBox(width: PlinkSpacing.s3),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  SizedBox(
+                    width: 140,
+                    child: Text(
+                      name ?? '—',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: PlinkColors.ink60,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: PlinkSpacing.s2),
+                  Expanded(
+                    child: Text(event.kind, style: pastMonoLabel(PlinkColors.ink)),
+                  ),
+                ],
+              ),
+              if (event.payloadJson.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 2),
+                SelectableText(
+                  event.payloadJson,
+                  style: pastMonoSpec(PlinkColors.muted, PlinkType.labelSm),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }

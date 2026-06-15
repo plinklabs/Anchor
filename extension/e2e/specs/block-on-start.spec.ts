@@ -32,6 +32,7 @@ test('a tab already on an off-list site is redirected when the session starts', 
   await backend.startSession(classId, [bundleId]);
 
   await expectRedirectedToBlockPage(page, ext, OFFLIST_HOST);
-  // The friendly block page shows its "this site isn't allowed" heading.
-  await expect(page.locator('h1')).toContainText("isn't allowed");
+  // The calm, student-facing block page shows its reassuring headline
+  // (AE1 / #177) — not a punitive one.
+  await expect(page.locator('h1')).toContainText("Let's stay on track");
 });

@@ -42,17 +42,31 @@ export const WITNESS_PING_INTERVAL_MS = 15_000;
 /** A message relayed by the native host to the extension. */
 export interface WitnessHostMessage {
   type?: string;
+  /** Present on a `backend_url` message: the agent's backend base URL. */
+  url?: string;
 }
 
-/** What a host message means for the agent-side witness link. */
-export type WitnessHostSignal = 'agent_unavailable' | 'agent_available' | 'ignore';
+/**
+ * What a host message means. The liveness signals drive tamper reporting; the
+ * `backend_url` signal carries the agent's runtime config (#204) — the agent is
+ * the source of truth for which backend a deployment targets, handed to the
+ * extension over this same native-messaging link so one published extension
+ * serves every fork.
+ */
+export type WitnessHostSignal =
+  | 'agent_unavailable'
+  | 'agent_available'
+  | 'backend_url'
+  | 'ignore';
 
 /**
  * Classify a message the native host relays. The host emits `agent_unavailable`
  * when its pipe to the running FocusAgent drops (the agent died or hasn't
- * started) and `agent_available` when it (re)connects. Everything else —
- * including a malformed or typeless message — is ignored rather than treated as
- * a signal, so a noisy host can't spam tamper reports.
+ * started), `agent_available` when it (re)connects, and `backend_url` (carrying
+ * a non-empty `url`) to tell the extension which backend to target (#204).
+ * Everything else — including a malformed/typeless message, or a `backend_url`
+ * with no usable url — is ignored rather than treated as a signal, so a noisy
+ * host can't spam tamper reports or wipe a good backend URL.
  */
 export function classifyHostMessage(msg: WitnessHostMessage | null | undefined): WitnessHostSignal {
   switch (msg?.type) {
@@ -60,6 +74,8 @@ export function classifyHostMessage(msg: WitnessHostMessage | null | undefined):
       return 'agent_unavailable';
     case 'agent_available':
       return 'agent_available';
+    case 'backend_url':
+      return typeof msg.url === 'string' && msg.url.trim().length > 0 ? 'backend_url' : 'ignore';
     default:
       return 'ignore';
   }
@@ -93,6 +109,12 @@ export interface WitnessClientDeps {
   onAgentUnavailable: () => void;
   /** Invoked when the host reports the agent came back. */
   onAgentAvailable?: () => void;
+  /**
+   * Invoked when the host hands down the agent's backend URL (#204). The caller
+   * persists it and (re)connects the hub. Only the registered native host can
+   * reach this path, so the URL can't be set by an arbitrary web page.
+   */
+  onBackendUrl?: (url: string) => void;
   /** Injected for tests; defaults to the globals. */
   setTimeoutFn?: (callback: () => void, ms: number) => number;
   clearTimeoutFn?: (handle: number) => void;
@@ -109,6 +131,7 @@ export class WitnessClient {
   private readonly connect: () => RuntimePort;
   private readonly onAgentUnavailable: () => void;
   private readonly onAgentAvailable?: () => void;
+  private readonly onBackendUrl?: (url: string) => void;
   private readonly setTimeoutFn: (callback: () => void, ms: number) => number;
   private readonly clearTimeoutFn: (handle: number) => void;
   private readonly pingIntervalMs: number;
@@ -123,6 +146,7 @@ export class WitnessClient {
     this.connect = deps.connect;
     this.onAgentUnavailable = deps.onAgentUnavailable;
     this.onAgentAvailable = deps.onAgentAvailable;
+    this.onBackendUrl = deps.onBackendUrl;
     this.setTimeoutFn = deps.setTimeoutFn ?? ((cb, ms) => setTimeout(cb, ms) as unknown as number);
     this.clearTimeoutFn = deps.clearTimeoutFn ?? ((h) => clearTimeout(h));
     this.pingIntervalMs = deps.pingIntervalMs ?? WITNESS_PING_INTERVAL_MS;
@@ -169,13 +193,19 @@ export class WitnessClient {
   }
 
   private handleMessage(message: unknown): void {
-    const signal = classifyHostMessage(message as WitnessHostMessage);
+    const msg = message as WitnessHostMessage;
+    const signal = classifyHostMessage(msg);
     if (signal === 'agent_unavailable') {
       log.warn('agent witness reported unavailable');
       this.onAgentUnavailable();
     } else if (signal === 'agent_available') {
       log.info('agent witness reported available');
       this.onAgentAvailable?.();
+    } else if (signal === 'backend_url') {
+      // classifyHostMessage already validated url is a non-empty string.
+      const url = msg.url!.trim();
+      log.info('agent handed down backend url', { url });
+      this.onBackendUrl?.(url);
     }
   }
 

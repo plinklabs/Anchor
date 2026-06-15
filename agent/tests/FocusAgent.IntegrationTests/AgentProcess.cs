@@ -12,6 +12,7 @@ namespace FocusAgent.IntegrationTests;
 /// matcher state instead of guessing from screenshots or logs.
 /// </summary>
 internal sealed record StatusSnapshot(
+    [property: JsonPropertyName("agentVersion")] string? AgentVersion,
     [property: JsonPropertyName("connectionStatus")] string? ConnectionStatus,
     [property: JsonPropertyName("displayName")] string? DisplayName,
     [property: JsonPropertyName("lastError")] string? LastError,
@@ -75,7 +76,9 @@ internal sealed class AgentProcess : IAsyncDisposable
         string impersonateOid,
         bool autoJoin = false,
         int? heartbeatIntervalSeconds = null,
-        bool simulateInPrivate = false)
+        bool simulateInPrivate = false,
+        string? environmentName = null,
+        bool pointBackendViaEnv = true)
     {
         if (!OperatingSystem.IsWindows())
             throw new InvalidOperationException("The agent exe is Windows-only.");
@@ -96,9 +99,20 @@ internal sealed class AgentProcess : IAsyncDisposable
         // real InPrivate browser window in the headless run.
         if (simulateInPrivate) psi.ArgumentList.Add("--simulate-inprivate");
 
+        // #203: let a spec pin the hosting environment so it can exercise the
+        // Production config layer (appsettings.Production.json) rather than the
+        // Debug-build default of Development. App.ResolveEnvironmentName honours
+        // DOTNET_ENVIRONMENT first.
+        if (environmentName is not null)
+            psi.Environment["DOTNET_ENVIRONMENT"] = environmentName;
+
         // Honoured only under --inject-token (App.BuildHost layers env vars last
-        // in that mode). __ is the config-section delimiter.
-        psi.Environment["Backend__BaseUrl"] = backendUrl;
+        // in that mode). __ is the config-section delimiter. The config-substitution
+        // spec (#203) leaves this OFF so the *only* thing repointing the agent at the
+        // e2e backend is the substituted appsettings.Production.json — proving the
+        // per-deployment file alone controls the backend URL.
+        if (pointBackendViaEnv)
+            psi.Environment["Backend__BaseUrl"] = backendUrl;
         psi.Environment["Dev__ImpersonateOid"] = impersonateOid;
         if (heartbeatIntervalSeconds is { } hb)
             psi.Environment["Session__HeartbeatIntervalSeconds"] = hb.ToString();

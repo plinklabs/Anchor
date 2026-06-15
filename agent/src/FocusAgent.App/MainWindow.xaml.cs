@@ -8,23 +8,19 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
+using PlinkDesignSystem.Controls;
 using WinRT.Interop;
 
 namespace FocusAgent.App;
 
 public sealed partial class MainWindow : Window
 {
-    private static readonly SolidColorBrush FreshBrush = new(Colors.LimeGreen);
-    private static readonly SolidColorBrush StaleBrush = new(Colors.OrangeRed);
-    private static readonly SolidColorBrush IdleBrush = new(Colors.Gray);
-
-    private readonly ConnectionManager _connection;
-    private readonly SessionCoordinator _coordinator;
-    private readonly SessionHeartbeatService _heartbeat;
+    private readonly ConnectionManager? _connection;
+    private readonly SessionCoordinator? _coordinator;
+    private readonly SessionHeartbeatService? _heartbeat;
     private readonly TimeSpan _heartbeatInterval;
     private readonly DispatcherQueue _dispatcher;
-    private readonly DispatcherQueueTimer _freshnessTimer;
+    private readonly DispatcherQueueTimer? _freshnessTimer;
     private readonly AppWindow _appWindow;
 
     private ConnectionStatusSnapshot _connectionSnapshot;
@@ -40,14 +36,41 @@ public sealed partial class MainWindow : Window
         SessionCoordinator coordinator,
         SessionHeartbeatService heartbeat,
         IOptions<SessionSettings> sessionSettings)
+        : this(TimeSpan.FromSeconds(Math.Max(1, sessionSettings.Value.HeartbeatIntervalSeconds)))
     {
-        InitializeComponent();
         _connection = connection;
         _coordinator = coordinator;
         _heartbeat = heartbeat;
-        _heartbeatInterval = TimeSpan.FromSeconds(Math.Max(1, sessionSettings.Value.HeartbeatIntervalSeconds));
+
+        // Repaints the "last ping HH:MM:SS (stale)" label without waiting for
+        // another Pinged event — needed so the freshness indicator can flip to
+        // stale on its own after >2× interval of silence.
+        _freshnessTimer = _dispatcher.CreateTimer();
+        _freshnessTimer.Interval = TimeSpan.FromSeconds(1);
+        _freshnessTimer.Tick += (_, _) => UpdateFreshnessLabel();
+
+        _connectionSnapshot = _connection.Snapshot;
+        RenderAll();
+
+        _connection.StatusChanged += OnConnectionStatusChanged;
+        _coordinator.SessionJoined += OnSessionJoined;
+        _coordinator.SessionLeft += OnSessionLeft;
+        _heartbeat.Pinged += OnHeartbeatPinged;
+    }
+
+    /// <summary>
+    /// Shared construction: window chrome, close-to-tray interception, and the
+    /// fields both the production and the self-test (<c>--show-test-mainwindow</c>,
+    /// #173) constructors need. The service-backed events are wired only by the
+    /// production constructor above; the self-test renders a static synthetic
+    /// state instead.
+    /// </summary>
+    private MainWindow(TimeSpan heartbeatInterval)
+    {
+        InitializeComponent();
+        _heartbeatInterval = heartbeatInterval;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
-        Title = "FocusAgent";
+        Title = "Anchor";
 
         // #102: closing the window only hides it to the tray — the agent keeps
         // running and the heartbeat continues. Intercept the title-bar X here
@@ -56,21 +79,6 @@ public sealed partial class MainWindow : Window
         _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
         _appWindow.Closing += OnAppWindowClosing;
 
-        _connectionSnapshot = _connection.Snapshot;
-
-        // Repaints the "last ping HH:MM:SS (stale)" label without waiting for
-        // another Pinged event — needed so the freshness indicator can flip to
-        // red on its own after >2× interval of silence.
-        _freshnessTimer = _dispatcher.CreateTimer();
-        _freshnessTimer.Interval = TimeSpan.FromSeconds(1);
-        _freshnessTimer.Tick += (_, _) => UpdateFreshnessLabel();
-
-        RenderAll();
-
-        _connection.StatusChanged += OnConnectionStatusChanged;
-        _coordinator.SessionJoined += OnSessionJoined;
-        _coordinator.SessionLeft += OnSessionLeft;
-        _heartbeat.Pinged += OnHeartbeatPinged;
         Closed += OnClosed;
     }
 
@@ -87,7 +95,7 @@ public sealed partial class MainWindow : Window
             _joinedSessionId = payload.SessionId;
             _sessionStartedAt = payload.StartedAt;
             _lastPingAt = null;
-            _freshnessTimer.Start();
+            _freshnessTimer?.Start();
             RenderAll();
         });
 
@@ -98,7 +106,7 @@ public sealed partial class MainWindow : Window
             _joinedSessionId = null;
             _sessionStartedAt = null;
             _lastPingAt = null;
-            _freshnessTimer.Stop();
+            _freshnessTimer?.Stop();
             RenderAll();
         });
 
@@ -127,25 +135,25 @@ public sealed partial class MainWindow : Window
             case ConnectionStatus.Idle:
                 StatusText.Text = "Starting…";
                 DetailText.Text = "";
-                PrimaryButton.Content = "Sign in";
+                PrimaryButton.Content = "SIGN IN";
                 PrimaryButton.IsEnabled = false;
                 break;
             case ConnectionStatus.SigningIn:
                 StatusText.Text = "Signing in…";
                 DetailText.Text = "If a Windows account picker appears, choose your school account.";
-                PrimaryButton.Content = "Sign in";
+                PrimaryButton.Content = "SIGN IN";
                 PrimaryButton.IsEnabled = false;
                 break;
             case ConnectionStatus.Connecting:
                 StatusText.Text = "Connecting…";
                 DetailText.Text = "";
-                PrimaryButton.Content = "Reconnect";
+                PrimaryButton.Content = "RECONNECT";
                 PrimaryButton.IsEnabled = false;
                 break;
             case ConnectionStatus.Reconnecting:
                 StatusText.Text = "Reconnecting…";
                 DetailText.Text = s.LastError ?? "";
-                PrimaryButton.Content = "Reconnect";
+                PrimaryButton.Content = "RECONNECT";
                 PrimaryButton.IsEnabled = false;
                 break;
             case ConnectionStatus.Connected:
@@ -157,22 +165,29 @@ public sealed partial class MainWindow : Window
                 DetailText.Text = _joinedSessionId is null
                     ? "Waiting for a focus session from your teacher."
                     : "";
-                PrimaryButton.Content = "Reconnect";
+                PrimaryButton.Content = "RECONNECT";
                 PrimaryButton.IsEnabled = true;
                 break;
             case ConnectionStatus.Disconnected:
                 StatusText.Text = "Disconnected";
                 DetailText.Text = s.LastError ?? "Retrying automatically.";
-                PrimaryButton.Content = "Reconnect now";
+                PrimaryButton.Content = "RECONNECT NOW";
                 PrimaryButton.IsEnabled = true;
                 break;
             case ConnectionStatus.SignInFailed:
                 StatusText.Text = "Not signed in";
                 DetailText.Text = s.LastError ?? "Click Sign in to try again.";
-                PrimaryButton.Content = "Sign in";
+                PrimaryButton.Content = "SIGN IN";
                 PrimaryButton.IsEnabled = true;
                 break;
         }
+
+        // The connection ping carries liveness in the eyebrow: it pulses only
+        // while we're actually Connected, and falls still otherwise (idle /
+        // connecting / down) — the signature motif standing in for a status dot.
+        ConnectionPing.Mode = s.Status == ConnectionStatus.Connected
+            ? PingMode.Pulse
+            : PingMode.Static;
     }
 
     private void ApplySessionState()
@@ -197,20 +212,23 @@ public sealed partial class MainWindow : Window
         if (_joinedSessionId is null) return;
         if (_lastPingAt is not DateTimeOffset last)
         {
-            HeartbeatDot.Fill = IdleBrush;
+            // No ping yet: a quiet, still ring while we wait for the first one.
+            HeartbeatPing.Mode = PingMode.Static;
             HeartbeatText.Text = "Waiting for first heartbeat…";
             return;
         }
         // Backend's HeartbeatMonitor calls the agent stale at 2× the interval;
-        // mirror that here so the UI signal matches the server's view.
+        // mirror that here so the UI signal matches the server's view. A fresh
+        // heartbeat pulses the ping (a live pulse); a stale one falls still.
         var stale = (DateTimeOffset.UtcNow - last) > TimeSpan.FromTicks(_heartbeatInterval.Ticks * 2);
-        HeartbeatDot.Fill = stale ? StaleBrush : FreshBrush;
+        HeartbeatPing.Mode = stale ? PingMode.Static : PingMode.Pulse;
         var label = $"Last ping {last.ToLocalTime():HH:mm:ss}";
         HeartbeatText.Text = stale ? $"{label} (stale)" : label;
     }
 
     private async void OnPrimaryClicked(object sender, RoutedEventArgs e)
     {
+        if (_connection is null) return;
         PrimaryButton.IsEnabled = false;
         try
         {
@@ -238,6 +256,7 @@ public sealed partial class MainWindow : Window
 
         if (await dialog.ShowAsync() != ContentDialogResult.Primary)
             return;
+        if (_coordinator is null) return;
 
         LeaveButton.IsEnabled = false;
         try
@@ -285,10 +304,30 @@ public sealed partial class MainWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         _appWindow.Closing -= OnAppWindowClosing;
-        _connection.StatusChanged -= OnConnectionStatusChanged;
-        _coordinator.SessionJoined -= OnSessionJoined;
-        _coordinator.SessionLeft -= OnSessionLeft;
-        _heartbeat.Pinged -= OnHeartbeatPinged;
-        _freshnessTimer.Stop();
+        if (_connection is not null) _connection.StatusChanged -= OnConnectionStatusChanged;
+        if (_coordinator is not null) _coordinator.SessionJoined -= OnSessionJoined;
+        if (_coordinator is not null) _coordinator.SessionLeft -= OnSessionLeft;
+        if (_heartbeat is not null) _heartbeat.Pinged -= OnHeartbeatPinged;
+        _freshnessTimer?.Stop();
+    }
+
+    /// <summary>
+    /// Dev-only self-test entry (#173 / <c>--show-test-mainwindow</c>): build the
+    /// real MainWindow with no host / WAM / hub / coordinator and render a
+    /// representative "connected, in a focus session, heartbeat fresh" state, so
+    /// the visual e2e can assert the redesigned ink surface actually paints. The
+    /// rendering path is identical to production — only the *source* of the state
+    /// is synthetic. See App.RunMainWindowSelfTest / scripts/dev/verify scripts.
+    /// </summary>
+    public static MainWindow CreateSelfTest()
+    {
+        var window = new MainWindow(TimeSpan.FromSeconds(10));
+        window._connectionSnapshot = new ConnectionStatusSnapshot(
+            ConnectionStatus.Connected, "Ada Lovelace", LastError: null);
+        window._joinedSessionId = Guid.NewGuid();
+        window._sessionStartedAt = DateTimeOffset.Now.AddMinutes(-12);
+        window._lastPingAt = DateTimeOffset.UtcNow;
+        window.RenderAll();
+        return window;
     }
 }

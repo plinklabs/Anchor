@@ -41,6 +41,30 @@ dotnet restore
 dotnet build -c Debug -p:Platform=x64
 ```
 
+## Versioning
+
+The agent has a **single version source**: `<VersionPrefix>` in
+[`agent/Directory.Build.props`](Directory.Build.props) (#208). MSBuild
+auto-imports it into every agent project, so that one number drives:
+
+- the built `.dll`/`.exe` `AssemblyVersion` / `FileVersion`,
+- the `InformationalVersion` the running agent reports on its `/status`
+  endpoint (so the shipped binary self-reports its version), and
+- the Velopack package version at pack time (the pack step reads the same
+  property).
+
+The MSIX `Package.appxmanifest` `<Identity Version>` is the one version MSBuild
+can't derive automatically; it's kept in lockstep as `<VersionPrefix>.0` and a
+unit test (`VersionSourceTests`) fails CI if it drifts. The design-system
+submodule under `external/` has its own `Directory.Build.props` and versions
+independently — by design.
+
+**Release convention:** bump `<VersionPrefix>` in `Directory.Build.props`
+(matching the MSIX manifest), commit, then push a `agent-v<version>` tag — the
+tag is what triggers the Velopack publish workflow. The extension versions
+independently from its own single source (`extension/package.json`); see
+[`extension/README.md`](../extension/README.md).
+
 ## Run
 
 ```powershell
@@ -103,16 +127,30 @@ SQLite DB under the temp dir, so it never touches a running dev backend or
 
 ### Visual enforcement (Phase 2, #133)
 
-The overlay and the join toast are pure WinUI surfaces — there's no `/status`
+The agent's WinUI surfaces are pure DirectComposition — there's no `/status`
 field to poll — so they're asserted by **screenshot capture** instead: the spec
-drives the agent's `--show-test-overlay` / `--show-test-toast` self-tests
-(synthetic payloads, no backend), finds the surface's HWND, and BitBlts its rect
-with `CAPTUREBLT` while the process is per-monitor DPI-aware (see
-`WindowCapture.cs`; same path as `scripts/dev/verify-overlay.ps1` /
-`verify-toast.ps1`). The overlay spec asserts the real window renders (not blank)
-and that its close path tears the window down; the toast spec asserts it renders.
-Captured PNGs are written under `TestResults/visual-artifacts/` for eyeball
-triage.
+drives the agent's self-test flags (synthetic payloads, no backend), finds the
+surface's HWND, and BitBlts its rect with `CAPTUREBLT` while the process is
+per-monitor DPI-aware (see `WindowCapture.cs`; same path as the matching
+`scripts/dev/verify-*.ps1`). The self-tests are:
+
+| Flag | Surface | Spec / verify script |
+|---|---|---|
+| `--show-test-overlay` | focus-enforcement overlay (#33) | `OverlayVisualTests` / `verify-overlay.ps1` |
+| `--show-test-toast` | join-confirmation toast (#41) | `ToastVisualTests` / `verify-toast.ps1` |
+| `--show-test-mainwindow` | redesigned MainWindow (#173) | `MainWindowVisualTests` |
+| `--show-test-joinbycode` | redesigned join-by-code dialog (#175) | `JoinByCodeVisualTests` |
+| `--show-test-traymenu` | redesigned tray context menu (#176) | `TrayMenuVisualTests` / `verify-traymenu.ps1` |
+| `--show-test-guided-install` | guided-install fallback window (#211) | `GuidedInstallVisualTests` / `verify-guided-install.ps1` |
+
+The redesign specs assert the real ink surface paints (not blank), is
+dark-dominated (the DS ink treatment, not the desktop or an OS grey popup), and
+carries the one magenta spark. The tray menu is a `MenuFlyout` (a popup, not a
+window) that a headless run can't open by clicking the tray — so its self-test
+builds the very same menu via the shared `TrayMenu` factory and shows it open
+over a small ink host window, the rect the spec captures. The overlay spec also
+asserts its close path tears the window down. Captured PNGs are written under
+`TestResults/visual-artifacts/` for eyeball triage.
 
 These specs carry the `Category=Visual` trait and are **not** in the state
 collection (they need no backend). Run them on their own:
@@ -151,7 +189,7 @@ start / amend / end a session and print the agent's live `/status`.
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `Backend:BaseUrl` | `http://localhost:5000` | Dev backend URL. Override per deploy. |
+| `Backend:BaseUrl` | `http://localhost:5276` | Dev backend URL. Substituted per deploy via `appsettings.Production.json` — see [Per-deployment config](#per-deployment-config-release-builds). |
 | `Backend:HubPath` | `/hubs/session` | Path of the backend SignalR hub. |
 | `Auth:TenantId` | _empty_ | Entra tenant ID the agent signs in against. |
 | `Auth:ClientId` | _empty_ | App registration (public client) ID. |
@@ -161,6 +199,49 @@ start / amend / end a session and print the agent's live `/status`.
 
 `Auth:TenantId`, `Auth:ClientId` and `Auth:Scope` are required. The agent fails
 fast at startup with a clear error message if any are empty.
+
+### Per-deployment config (release builds)
+
+`Backend:BaseUrl` and `Auth` are **substitutable per deployment** so a fork's
+published agent targets its own backend + Entra without editing the committed
+dev defaults (#203). The agent loads `appsettings.{Environment}.json` *after*
+`appsettings.json`, where the environment comes from `DOTNET_ENVIRONMENT` /
+`ASPNETCORE_ENVIRONMENT`, defaulting to the build configuration: **Debug ⇒
+Development**, **Release ⇒ Production** (an explicit env var always wins). So:
+
+- `dotnet run` and the headless e2e (Debug, no env var) stay on **Development**
+  and load the local `appsettings.Development.json` against the dev backend —
+  unchanged.
+- A **release build** runs in **Production** and loads
+  `appsettings.Production.json`. That file is committed as a *template* whose
+  `Backend:BaseUrl` + `Auth` values are `#{…}#` placeholders; the release /
+  Velopack pack step substitutes them so the published agent points at the
+  fork's backend. Any key it omits falls back to `appsettings.json`.
+
+To smoke-test the Production layer locally, fill the placeholders in a copy of
+`appsettings.Production.json` next to the built exe and launch with
+`DOTNET_ENVIRONMENT=Production`.
+
+#### Backend URL handed to the extension (#204)
+
+The browser extension is **backend-agnostic**: one published Edge listing serves
+every fork, so it learns which backend to target from the on-box agent at
+runtime rather than baking the URL in. The agent's native-messaging witness host
+(`anchor-witness-host.exe`) hands the URL to the extension over the existing
+witness channel as soon as the link opens — and only the registered host can
+reach the extension's port, so an arbitrary web page can't repoint it.
+
+The host resolves which URL to send, in order:
+
+1. `ANCHOR_WITNESS_BACKEND_URL` env var — the per-deployment source the agent
+   installer sets (and the extension e2e harness sets to point at its throwaway
+   backend).
+2. a `backend-url.json` file (`{"backendUrl":"https://…"}`) next to the host exe.
+3. the dev fallback `http://localhost:5276` so a plain dev loop works before any
+   deployment config exists.
+
+A production installer should set `ANCHOR_WITNESS_BACKEND_URL` (or drop the file)
+to the same backend the agent's `Backend:BaseUrl` targets.
 
 ### Single-machine dev verification
 

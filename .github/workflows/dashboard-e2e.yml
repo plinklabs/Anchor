@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   e2e:
+    name: Dashboard E2E
     # Linux runner: the dashboard is Flutter Web, and the GitHub-hosted ubuntu
     # image ships Google Chrome + a matching chromedriver (under $CHROMEWEBDRIVER),
     # which is all `flutter drive` needs for a real-browser run. No backend: the
@@ -48,6 +49,18 @@ jobs:
           flutter drive \
             --driver=test_driver/integration_test.dart \
             --target=integration_test/live_session_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
+
+      # Boots the real app and drives Home → History → open a past session,
+      # asserting the archive reads in the muted paper register (AD7, #172).
+      # A fresh `flutter drive` reuses the chromedriver started above.
+      - name: Run history-archive e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/history_archive_test.dart \
             -d web-server \
             --browser-name=chrome \
             --headless

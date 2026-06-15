@@ -1,9 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/classes_api.dart';
 import '../api/sessions_api.dart';
 import 'add_student_search.dart';
 
+/// Classes / roster manager (#152), redesigned to the paper treatment (AD6,
+/// #171) so it reads like the rest of the dashboard (home #168, live session
+/// #169, bundles #170).
+///
+/// Two panes on a shared hairline: a list of classes (each row a quiet
+/// instrument line, the school year shown as a mono spec) and, beside it, the
+/// roster pane for the selected class — its scope row (school + class code), the
+/// add-student / import affordances, and a hairline-bounded roster of members
+/// whose role reads as a mono spec chip.
+///
+/// Magenta is the single spark, reserved for the constructive commits a teacher
+/// makes here: Save (the scope binding), Create (a new class), and the Add
+/// confirmation inside the student search. Every other affordance — New class,
+/// Import CSV, Populate from Graph, Delete / Remove — stays calm ink so the page
+/// reads like an instrument, not a console of buttons.
+///
+/// Purely presentational: the roster/scope/import logic (validation, scope
+/// gating per #96, CSV parse, bulk import) is untouched.
 class ClassesPage extends StatefulWidget {
   const ClassesPage({super.key, required this.sessions, required this.classes});
 
@@ -163,6 +182,9 @@ class _ClassesPageState extends State<ClassesPage> {
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Delete'),
           ),
@@ -257,6 +279,9 @@ class _ClassesPageState extends State<ClassesPage> {
             child: const Text('Cancel'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Remove'),
           ),
@@ -336,6 +361,7 @@ class _ClassesPageState extends State<ClassesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: PlinkColors.paper,
       body: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -349,10 +375,20 @@ class _ClassesPageState extends State<ClassesPage> {
               onCreate: _createClass,
             ),
           ),
-          const VerticalDivider(width: 1),
+          // A vertical hairline between the panes — the system separates with
+          // rules, never shadows.
+          const SizedBox(
+            width: PlinkBorders.width,
+            child: ColoredBox(color: PlinkColors.hairline),
+          ),
           Expanded(
             child: _selected == null
-                ? const Center(child: Text('Pick a class on the left.'))
+                ? Center(
+                    child: Text(
+                      'Pick a class on the left.',
+                      style: monoLabel(PlinkColors.muted),
+                    ),
+                  )
                 : _RosterPane(
                     klass: _selected!,
                     onDeleteClass: _deleteClass,
@@ -406,39 +442,53 @@ class _ClassList extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Classes',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              FilledButton.icon(
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('New'),
-                onPressed: () => onCreate(),
-              ),
-            ],
+          padding: const EdgeInsets.fromLTRB(
+            PlinkSpacing.s4,
+            PlinkSpacing.s4,
+            PlinkSpacing.s4,
+            PlinkSpacing.s3,
+          ),
+          child: Text('Classes', style: monoLabel(PlinkColors.ink60)),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            PlinkSpacing.s4,
+            0,
+            PlinkSpacing.s4,
+            PlinkSpacing.s4,
+          ),
+          child: SizedBox(
+            width: double.infinity,
+            // Calm ink action — creating a class is navigation into a dialog,
+            // not the constructive commit. The magenta spark stays on Create.
+            child: OutlinedButton.icon(
+              key: const Key('classes-new-button'),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('New class'),
+              onPressed: () => onCreate(),
+            ),
           ),
         ),
-        const Divider(height: 1),
+        const _Hairline(),
         Expanded(
           child: loading && classes == null
               ? const Center(child: CircularProgressIndicator())
               : list.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('No classes you teach. Create one with "New".'),
+              ? Padding(
+                  padding: const EdgeInsets.all(PlinkSpacing.s4),
+                  child: Text(
+                    'No classes you teach. Create one with "New class".',
+                    style: monoLabel(PlinkColors.muted),
+                  ),
                 )
-              : ListView.builder(
+              : ListView.separated(
+                  padding: EdgeInsets.zero,
                   itemCount: list.length,
+                  separatorBuilder: (_, _) => const _Hairline(),
                   itemBuilder: (_, i) {
                     final c = list[i];
-                    return ListTile(
-                      title: Text(c.name),
-                      subtitle: Text(c.schoolYear),
+                    return _ClassRow(
+                      summary: c,
                       selected: selected?.id == c.id,
                       onTap: () => onSelect(c),
                     );
@@ -446,6 +496,70 @@ class _ClassList extends StatelessWidget {
                 ),
         ),
       ],
+    );
+  }
+}
+
+/// One class row — a hairline instrument line. The class name reads first; the
+/// school year sits beneath as a mono spec. The selected row is marked by a
+/// paper-tint fill and a magenta edge tick (the same spark the nav uses as its
+/// active indicator), never a heavy highlight.
+class _ClassRow extends StatelessWidget {
+  const _ClassRow({
+    required this.summary,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final ClassSummary summary;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: ColoredBox(
+        color: selected ? PlinkColors.paper2 : PlinkColors.paper,
+        child: Row(
+          children: [
+            // The magenta active tick — mirrors the app-bar's nav indicator.
+            SizedBox(
+              width: 3,
+              height: 52,
+              child: selected
+                  ? const ColoredBox(color: PlinkColors.magenta)
+                  : null,
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  PlinkSpacing.s4 - 3,
+                  PlinkSpacing.s3,
+                  PlinkSpacing.s4,
+                  PlinkSpacing.s3,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      summary.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: PlinkColors.ink,
+                          ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(summary.schoolYear, style: monoSpec(PlinkColors.ink60)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -502,7 +616,12 @@ class _RosterPane extends StatelessWidget {
     final scopeReady =
         klass.schoolTag != null && (klass.classCode ?? '').isNotEmpty;
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(
+        PlinkSpacing.s6,
+        PlinkSpacing.s5,
+        PlinkSpacing.s6,
+        PlinkSpacing.s5,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -511,20 +630,20 @@ class _RosterPane extends StatelessWidget {
               Expanded(
                 child: Text(
                   '${klass.name} (${klass.schoolYear})',
-                  style: Theme.of(context).textTheme.titleLarge,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: PlinkColors.ink,
+                      ),
                 ),
               ),
+              // Calm ink — the destructive action never wears the spark.
               OutlinedButton.icon(
                 icon: const Icon(Icons.delete_outline, size: 18),
                 label: const Text('Delete class'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.error,
-                ),
                 onPressed: () => onDeleteClass(),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: PlinkSpacing.s4),
           _ScopeRow(
             schools: schools,
             loadingSchools: loadingSchools,
@@ -536,10 +655,10 @@ class _RosterPane extends StatelessWidget {
             onClassCodeChanged: onClassCodeChanged,
             onSave: onSaveCodes,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: PlinkSpacing.s5),
           Wrap(
-            spacing: 12,
-            runSpacing: 12,
+            spacing: PlinkSpacing.s3,
+            runSpacing: PlinkSpacing.s3,
             crossAxisAlignment: WrapCrossAlignment.start,
             children: [
               AddStudentSearch(
@@ -549,23 +668,25 @@ class _RosterPane extends StatelessWidget {
                 disabledReason: 'Set school + code first',
               ),
               Padding(
-                padding: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.only(top: PlinkSpacing.s2),
                 child: OutlinedButton.icon(
-                  icon: const Icon(Icons.upload_file),
+                  icon: const Icon(Icons.upload_file, size: 18),
                   label: const Text('Import CSV'),
                   onPressed: scopeReady ? onImport : null,
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: FilledButton.icon(
+                padding: const EdgeInsets.only(top: PlinkSpacing.s2),
+                // Calm ink — populating from the directory is a fetch, not the
+                // page's constructive spark.
+                child: OutlinedButton.icon(
                   icon: bulkImporting
                       ? const SizedBox(
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.cloud_download),
+                      : const Icon(Icons.cloud_download, size: 18),
                   label: const Text('Populate from Graph'),
                   onPressed: (scopeReady && !bulkImporting) ? onBulkImport : null,
                 ),
@@ -573,17 +694,19 @@ class _RosterPane extends StatelessWidget {
             ],
           ),
           if (error != null) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: PlinkSpacing.s3),
             Text(
               error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
             ),
           ],
           if (lastImportResults != null) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: PlinkSpacing.s3),
             _ImportResultsBar(results: lastImportResults!),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: PlinkSpacing.s4),
           Expanded(
             child: loadingRoster && roster == null
                 ? const Center(child: CircularProgressIndicator())
@@ -630,16 +753,18 @@ class _ScopeRow extends StatelessWidget {
       if (editSchoolTag != null && editSchoolTag!.isNotEmpty) editSchoolTag!,
     }.toList();
     return Wrap(
-      spacing: 12,
-      runSpacing: 12,
+      spacing: PlinkSpacing.s3,
+      runSpacing: PlinkSpacing.s3,
       crossAxisAlignment: WrapCrossAlignment.end,
       children: [
         SizedBox(
           width: 220,
           child: DropdownButtonFormField<String?>(
             initialValue: editSchoolTag,
+            isDense: true,
             decoration: InputDecoration(
               labelText: 'School',
+              isDense: true,
               helperText: loadingSchools ? 'Loading…' : null,
             ),
             items: [
@@ -662,23 +787,30 @@ class _ScopeRow extends StatelessWidget {
             decoration: const InputDecoration(
               labelText: 'Class code',
               hintText: 'e.g. 3A',
+              isDense: true,
             ),
           ),
         ),
         // Bottom-pad the Save button so it lines up with the field baselines
         // when the controls sit on one row; harmless once they wrap.
         Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: FilledButton.icon(
-            icon: saving
+          padding: const EdgeInsets.only(bottom: PlinkSpacing.s1),
+          // The one constructive commit in the scope row: persisting the
+          // school + code binding. The DS theme paints ElevatedButton in the
+          // magenta spark.
+          child: ElevatedButton(
+            key: const Key('classes-save-codes-button'),
+            onPressed: (!saving && dirty) ? onSave : null,
+            child: saving
                 ? const SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: PlinkColors.onInk,
+                    ),
                   )
-                : const Icon(Icons.save),
-            label: const Text('Save'),
-            onPressed: (!saving && dirty) ? onSave : null,
+                : const Text('Save'),
           ),
         ),
       ],
@@ -695,35 +827,99 @@ class _RosterTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (members.isEmpty) {
-      return const Center(child: Text('No members yet.'));
+      return Align(
+        alignment: Alignment.topLeft,
+        child: Text('No members yet.', style: monoLabel(PlinkColors.muted)),
+      );
     }
-    return SingleChildScrollView(
-      scrollDirection: Axis.vertical,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          columns: const [
-            DataColumn(label: Text('Display name')),
-            DataColumn(label: Text('Role')),
-            DataColumn(label: Text('')),
-          ],
-          rows: [
-            for (final m in members)
-              DataRow(
-                cells: [
-                  DataCell(Text(m.displayName)),
-                  DataCell(Text(m.userRole)),
-                  DataCell(
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      tooltip: 'Remove',
-                      onPressed: () => onRemove(m),
-                    ),
-                  ),
-                ],
-              ),
-          ],
+    // A hairline-bounded panel, not a raised card — the system uses borders,
+    // never shadows. Members read as quiet instrument lines.
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: PlinkColors.hairline,
+          width: PlinkBorders.width,
         ),
+        borderRadius: BorderRadius.circular(PlinkRadius.base),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              PlinkSpacing.s4,
+              PlinkSpacing.s3,
+              PlinkSpacing.s4,
+              PlinkSpacing.s3,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Display name',
+                    style: monoLabel(PlinkColors.ink60),
+                  ),
+                ),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 96),
+                  child: Text('Role', style: monoLabel(PlinkColors.ink60)),
+                ),
+                const SizedBox(width: 40),
+              ],
+            ),
+          ),
+          const _Hairline(),
+          Expanded(
+            child: ListView.separated(
+              padding: EdgeInsets.zero,
+              itemCount: members.length,
+              separatorBuilder: (_, _) => const _Hairline(),
+              itemBuilder: (_, i) {
+                final m = members[i];
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    PlinkSpacing.s4,
+                    PlinkSpacing.s2,
+                    PlinkSpacing.s2,
+                    PlinkSpacing.s2,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          m.displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: PlinkColors.ink),
+                        ),
+                      ),
+                      ConstrainedBox(
+                        // A min-width slot keeps the role column roughly aligned
+                        // with the header without capping the badge — so a wide
+                        // test font can't clip "TEACHER" into an overflow.
+                        constraints: const BoxConstraints(minWidth: 96),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          widthFactor: 1,
+                          // Role reads as a mono spec chip.
+                          child: PlinkBadge(m.userRole),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        color: PlinkColors.ink60,
+                        tooltip: 'Remove',
+                        onPressed: () => onRemove(m),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -749,36 +945,27 @@ class _ImportResultsBar extends StatelessWidget {
         .where((r) => r.status == ClassMembershipImportStatus.wrongSchool)
         .toList();
     return Wrap(
-      spacing: 12,
+      spacing: PlinkSpacing.s2,
+      runSpacing: PlinkSpacing.s2,
       children: [
-        _chip(context, '$added added', Colors.green),
-        _chip(context, '$already already member', Colors.amber),
+        // The constructive result is the one spark; the rest are calm specs.
+        PlinkBadge('$added added', variant: BadgeVariant.accent),
+        PlinkBadge('$already already member'),
         if (unresolved.isNotEmpty)
           Tooltip(
             message: unresolved
                 .map((r) => r.upn ?? r.entraOid ?? '(blank)')
                 .join('\n'),
-            child: _chip(context, '${unresolved.length} unresolved', Colors.red),
+            child: PlinkBadge('${unresolved.length} unresolved'),
           ),
         if (wrongSchool.isNotEmpty)
           Tooltip(
             message: wrongSchool
                 .map((r) => '${r.upn ?? r.entraOid ?? '(blank)'} — ${r.detail ?? ''}')
                 .join('\n'),
-            child: _chip(
-              context,
-              '${wrongSchool.length} wrong school',
-              Colors.deepOrange,
-            ),
+            child: PlinkBadge('${wrongSchool.length} wrong school'),
           ),
       ],
-    );
-  }
-
-  Widget _chip(BuildContext context, String text, MaterialColor color) {
-    return Chip(
-      backgroundColor: color.shade100,
-      label: Text(text, style: TextStyle(color: color.shade900)),
     );
   }
 }
@@ -884,7 +1071,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
                 hintText: 'e.g. 3A',
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: PlinkSpacing.s3),
             TextField(
               controller: _schoolYear,
               enabled: !_saving,
@@ -894,7 +1081,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
                 hintText: 'e.g. 2025-2026',
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: PlinkSpacing.s3),
             DropdownButtonFormField<String?>(
               initialValue: _schoolTag,
               decoration: const InputDecoration(
@@ -912,7 +1099,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
                   ? null
                   : (v) => setState(() => _schoolTag = v),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: PlinkSpacing.s3),
             TextField(
               controller: _classCode,
               enabled: !_saving,
@@ -922,10 +1109,12 @@ class _NewClassDialogState extends State<_NewClassDialog> {
               ),
             ),
             if (_error != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: PlinkSpacing.s3),
               Text(
                 _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
               ),
             ],
           ],
@@ -936,13 +1125,18 @@ class _NewClassDialogState extends State<_NewClassDialog> {
           onPressed: _saving ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(
+        // The constructive commit wears the magenta spark.
+        ElevatedButton(
+          key: const Key('classes-create-button'),
           onPressed: (_valid && !_saving) ? _submit : null,
           child: _saving
               ? const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: PlinkColors.onInk,
+                  ),
                 )
               : const Text('Create'),
         ),
@@ -982,7 +1176,7 @@ class _CsvPasteDialogState extends State<_CsvPasteDialog> {
               '(the user principal name, e.g. student@school.be). '
               'Names are looked up in the directory automatically.',
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: PlinkSpacing.s3),
             TextField(
               controller: _controller,
               maxLines: 12,
@@ -999,7 +1193,8 @@ class _CsvPasteDialogState extends State<_CsvPasteDialog> {
           onPressed: () => Navigator.of(context).pop(null),
           child: const Text('Cancel'),
         ),
-        FilledButton(
+        // Committing the paste into an import is the constructive action.
+        ElevatedButton(
           onPressed: () => Navigator.of(context).pop(_controller.text),
           child: const Text('Import'),
         ),
@@ -1007,6 +1202,48 @@ class _CsvPasteDialogState extends State<_CsvPasteDialog> {
     );
   }
 }
+
+/// A full-width 1px instrument rule — the system separates with hairlines,
+/// never shadows.
+class _Hairline extends StatelessWidget {
+  const _Hairline();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: PlinkBorders.width,
+      child: ColoredBox(color: PlinkColors.hairline),
+    );
+  }
+}
+
+/// A space-mono label style (sentence-case microcopy / specs) — the quiet
+/// headers and counts that read like an instrument, never shouting. Mirrors the
+/// live-session and bundles treatment.
+TextStyle monoLabel(Color color) => const TextStyle(
+      fontFamily: PlinkType.monoFamily,
+      package: PlinkType.fontPackage,
+      fontFamilyFallback: PlinkType.monoFallback,
+      fontSize: PlinkType.label,
+    ).copyWith(
+      letterSpacing: PlinkType.tracking(
+        PlinkType.labelTrackingTight,
+        PlinkType.label,
+      ),
+      color: color,
+      height: 1.3,
+    );
+
+/// Tabular-figure mono for values that read as a spec (the school year).
+TextStyle monoSpec(Color color) => TextStyle(
+      fontFamily: PlinkType.monoFamily,
+      package: PlinkType.fontPackage,
+      fontFamilyFallback: PlinkType.monoFallback,
+      fontSize: PlinkType.textSm,
+      color: color,
+      height: 1.4,
+      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+    );
 
 class CsvParseResult {
   CsvParseResult({required this.rows, this.error});

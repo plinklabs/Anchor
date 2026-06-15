@@ -1,0 +1,30 @@
+<Project>
+
+  <!--
+    Single version source for the agent (#208, workstream C of the v1 release
+    automation roadmap). MSBuild auto-imports the nearest Directory.Build.props
+    walking up from each project, so every agent project (FocusAgent.App, .Core,
+    .Native, .WitnessHost and their test projects) inherits this <Version>.
+
+    From <Version> MSBuild derives:
+      * AssemblyVersion / FileVersion  -> the produced .dll/.exe file metadata,
+      * InformationalVersion           -> what the running agent reports on its
+                                          /status endpoint (StatusEndpoint.cs),
+    so bumping the one number here flows through to the built artifacts and the
+    Velopack package (the pack step reads this same property, see docs/RELEASE.md).
+
+    Release convention: bump <VersionPrefix> here, commit, then push a matching
+    `agent-v<version>` tag — the tag is what triggers the Velopack publish.
+
+    The design-system submodule under external/ has its OWN Directory.Build.props
+    and does not import this one, so its version is intentionally independent.
+
+    The MSIX Package.appxmanifest (FocusAgent.App) carries its own four-part
+    <Identity Version="…">; it is MSIX-build-only (the agent ships unpackaged via
+    Velopack) and is kept in lockstep with this value by AppxManifestVersionTests.
+  -->
+  <PropertyGroup>
+    <VersionPrefix>0.1.0</VersionPrefix>
+  </PropertyGroup>
+
+</Project>

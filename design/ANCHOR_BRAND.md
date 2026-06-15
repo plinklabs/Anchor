@@ -263,6 +263,7 @@ Anchor talks to a student mid-task: movement should settle attention, not pull i
 | `ANCHOR_BRAND.md` | This document — the source of truth. |
 | `anchor-mark.svg` / `anchor-mark-dark.svg` | The Anchor mark, light / dark. |
 | `anchor-lockup-light.svg` / `anchor-lockup-dark.svg` | The horizontal lockup, light / dark. |
+| `AUDIT_AQ1.md` | The cross-surface consistency & accessibility audit (AQ1, #179). |
 
 ---
 
@@ -283,3 +284,6 @@ Anchor talks to a student mid-task: movement should settle attention, not pull i
   system-following** (students get ink to distract less; teachers get paper); the magenta spark
   doubles as the **focus ring** (on-surface value, 2px/2px); motion is calm, the **ping** is the one
   ambient loop, and `prefers-reduced-motion` (and the OS animations setting) is honoured.
+- **Audit (AQ1, #179):** the cross-surface consistency & accessibility audit verified all 13 surfaces
+  against this document and the DS tokens — result **PASS**, no behavioural defects. See
+  [`AUDIT_AQ1.md`](AUDIT_AQ1.md).

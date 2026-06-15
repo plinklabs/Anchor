@@ -4,6 +4,7 @@ import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/pages/classes_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 ApiClient _dummyClient() =>
     ApiClient(baseUrl: Uri.parse('http://localhost'), tokenProvider: () async => null);
@@ -124,6 +125,7 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        theme: PlinkTheme.paper,
         home: ClassesPage(
           sessions: _FakeSessions([klass]),
           classes: _FakeClasses(roster),
@@ -137,9 +139,10 @@ void main() {
     expect(find.text('Role'), findsOneWidget);
     expect(find.text('Joined'), findsNothing);
 
-    // Role cells render the UserRole string, not the numeric membershipRole.
-    expect(find.text('Student'), findsOneWidget);
-    expect(find.text('Teacher'), findsOneWidget);
+    // Role cells render the UserRole string as a mono spec chip (PlinkBadge
+    // upper-cases its text), not the numeric membershipRole.
+    expect(find.widgetWithText(PlinkBadge, 'STUDENT'), findsOneWidget);
+    expect(find.widgetWithText(PlinkBadge, 'TEACHER'), findsOneWidget);
     expect(find.text('0'), findsNothing);
     expect(find.text('1'), findsNothing);
 
@@ -393,14 +396,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // Open the New class dialog from the list header.
-    await tester.tap(find.widgetWithText(FilledButton, 'New'));
+    // Open the New class dialog from the list header (calm ink action).
+    await tester.tap(find.widgetWithText(OutlinedButton, 'New class'));
     await tester.pumpAndSettle();
 
-    // Name the class and submit.
+    // Name the class and submit (Create is the magenta spark — an
+    // ElevatedButton under the DS theme).
     await tester.enterText(find.widgetWithText(TextField, 'Name'), '4B');
     await tester.pump();
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Create'));
     await tester.pumpAndSettle();
 
     expect(fakeClasses.createCalls, 1);

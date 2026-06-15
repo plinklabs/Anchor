@@ -24,7 +24,13 @@ var output = Console.OpenStandardOutput();
 var pipeName = Environment.GetEnvironmentVariable("ANCHOR_WITNESS_PIPE");
 if (string.IsNullOrWhiteSpace(pipeName)) pipeName = WitnessLink.PipeName;
 
+// Resolve the backend URL this deployment targets (#204) and hand it to the
+// extension over the native-messaging link, so a single published extension
+// learns its backend from the on-box agent at runtime instead of baking it in.
+var backendUrl = BackendUrlConfig.ResolveFromEnvironment();
+var backendUrlMessage = BackendUrlConfig.BuildMessage(backendUrl);
+
 await using var agent = new NamedPipeAgentLink(pipeName);
-var bridge = new WitnessBridge(input, output, agent);
+var bridge = new WitnessBridge(input, output, agent, backendUrlMessage);
 await bridge.RunAsync(cts.Token);
 return 0;

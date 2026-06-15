@@ -148,13 +148,14 @@ void main() {
       await tester.tap(classesNav);
       await tester.pumpAndSettle();
 
-      // Create a new class via the list-header "New" button + dialog.
-      await tester.tap(find.widgetWithText(FilledButton, 'New'));
+      // Create a new class via the list-header "New class" button + dialog
+      // (calm ink action; Create is the magenta-spark ElevatedButton).
+      await tester.tap(find.widgetWithText(OutlinedButton, 'New class'));
       await tester.pumpAndSettle();
       expect(find.widgetWithText(AlertDialog, 'New class'), findsOneWidget);
       await tester.enterText(find.widgetWithText(TextField, 'Name'), '4B');
       await tester.pump();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Create'));
       await tester.pumpAndSettle();
 
       // The new class is selected and its roster header is showing.

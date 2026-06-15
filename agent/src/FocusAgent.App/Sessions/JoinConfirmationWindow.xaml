@@ -2,35 +2,89 @@
 <Window
     x:Class="FocusAgent.App.Sessions.JoinConfirmationWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <Grid Padding="24"
-          RowSpacing="16"
-          Background="{StaticResource PlinkSurfaceInkBrush}">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:pds="using:PlinkDesignSystem.Controls">
+
+    <!-- AA3 (#175): the join-confirmation toast wears the DS ink treatment
+         (ANCHOR_BRAND.md §3). A focus session is starting and the agent is
+         joining automatically — so the tone is calm and reassuring, NOT an
+         alarm (§5): a quiet eyebrow with the Anchor mark + a static Ping (the
+         toast isn't the live signal, the session is), a Fraunces headline, a
+         plain Hanken line of who/what, and the countdown in Fraunces display.
+         The only action is to step out (Cancel) — there is no magenta spark
+         here because nothing needs urging; the join happens on its own.
+
+         On-ink note: the DS default Button is tuned for the paper surface, so
+         its ink text is invisible on this ink window. Cancel is re-skinned for
+         on-ink (paper text + an on-ink hairline border) — the same trap #173
+         hit on the MainWindow. -->
+    <Grid Background="{StaticResource PlinkSurfaceInkBrush}">
+        <Grid.Resources>
+            <Style x:Key="PlinkOnInkSecondaryButtonStyle"
+                   TargetType="Button"
+                   BasedOn="{StaticResource PlinkSecondaryButtonStyle}">
+                <Setter Property="Foreground" Value="{StaticResource PlinkOnInkBrush}" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="{StaticResource PlinkHairlineOnInkBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+            </Style>
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Spacing="8">
-            <TextBlock x:Name="TitleText"
-                       Text="Focus session starting"
-                       FontSize="20"
-                       FontWeight="SemiBold" />
-            <TextBlock x:Name="TeacherText"
-                       Opacity="0.85"
-                       TextWrapping="Wrap" />
-            <TextBlock x:Name="CountdownText"
-                       FontSize="32"
-                       FontWeight="SemiBold" />
-        </StackPanel>
+        <!-- DS-5: the one per-product identity element — a thin top rule in
+             Anchor's indigo accent. It never competes with a spark. -->
+        <Border Grid.Row="0"
+                Height="2"
+                Background="{StaticResource PlinkProductAccentBrush}" />
 
         <StackPanel Grid.Row="1"
+                    Padding="28,24"
+                    Spacing="14">
+
+            <!-- eyebrow: the product mark + a calm, static ping. -->
+            <StackPanel Orientation="Horizontal"
+                        Spacing="10"
+                        VerticalAlignment="Center">
+                <pds:Ping x:Name="TogglePing"
+                          Diameter="12"
+                          Mode="Static"
+                          OnInk="True"
+                          VerticalAlignment="Center" />
+                <TextBlock Style="{StaticResource PlinkEyebrowTextStyle}"
+                           Foreground="{StaticResource PlinkOnInkBrush}"
+                           Text="ANCHOR" />
+            </StackPanel>
+
+            <!-- headline: the situation, in Fraunces display. Calm, not alarming. -->
+            <TextBlock x:Name="TitleText"
+                       Style="{StaticResource PlinkDisplaySmallTextStyle}"
+                       Foreground="{StaticResource PlinkOnInkBrush}"
+                       Text="Focus session starting" />
+
+            <!-- supporting line: who started it / that we're joining, in Hanken. -->
+            <TextBlock x:Name="TeacherText"
+                       Style="{StaticResource PlinkBodyLargeTextStyle}"
+                       Foreground="{StaticResource PlinkOnInkMutedBrush}" />
+
+            <!-- the countdown: Fraunces display — the one large, calm number. -->
+            <TextBlock x:Name="CountdownText"
+                       Style="{StaticResource PlinkDisplaySmallTextStyle}"
+                       Foreground="{StaticResource PlinkOnInkBrush}" />
+        </StackPanel>
+
+        <!-- footer: the one quiet way out. Joining is automatic, so this stays a
+             secondary action — no magenta urging. -->
+        <StackPanel Grid.Row="2"
+                    Padding="28,0,28,24"
                     Orientation="Horizontal"
-                    HorizontalAlignment="Right"
-                    Spacing="8">
+                    HorizontalAlignment="Right">
             <Button x:Name="CancelButton"
-                    Content="Cancel"
-                    MinWidth="88"
+                    Style="{StaticResource PlinkOnInkSecondaryButtonStyle}"
+                    Content="NOT NOW"
                     Click="OnCancelClicked" />
         </StackPanel>
     </Grid>

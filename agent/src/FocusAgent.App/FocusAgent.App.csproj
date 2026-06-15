@@ -52,6 +52,13 @@
     <PackageReference Include="Microsoft.Identity.Client.Broker" Version="4.66.2" />
     <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.66.2" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0" />
+    <!-- Velopack runtime (#209): the agent ships unpackaged via Velopack, whose
+         install/update/uninstall lifecycle hooks are dispatched by
+         VelopackApp.Build().Run() at the very top of Program.Main. `vpk pack`
+         also refuses to package a build that doesn't reference + call it. #224
+         builds on this: the agent's UpdateManager (VelopackUpdateManager +
+         AgentUpdateService) checks the GitHub Releases feed and stages deltas. -->
+    <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -69,6 +76,15 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="appsettings.Development.json" Condition="Exists('appsettings.Development.json')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Per-deployment release config template (#203): the Backend:BaseUrl + Auth
+         placeholders here are substituted by the release/Velopack build at pack
+         time so a fork's published agent targets its own backend. Loaded only in
+         the Production environment, so it's inert for `dotnet run` / the e2e (which
+         stay Development) but still copied alongside the exe for the release build
+         and the substitutable-config unit test to find. -->
+    <None Update="appsettings.Production.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <!-- Tray icon ships in both builds: copied next to the exe so ms-appx:///

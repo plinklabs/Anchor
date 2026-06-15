@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   e2e:
+    name: Agent E2E
     # Windows runner: the agent is WinUI 3 / Windows-only, and the e2e suite
     # launches the real agent exe + drives a real backend over loopback. The
     # runner has a desktop session, which the agent's WinUI bootstrap needs.
@@ -41,6 +42,12 @@ jobs:
       # the suite isn't launching a stale or missing binary.
       - name: Build agent (x64)
         run: dotnet build agent/src/FocusAgent.App/FocusAgent.App.csproj -p:Platform=x64 -c Debug
+
+      # The #224 update-check e2e (UpdateCheckTests) packs a real Velopack feed with
+      # `vpk` and drives the agent's --check-update mode against it. Install the tool
+      # so the test can produce the throwaway feed (resolved from ~/.dotnet/tools).
+      - name: Install Velopack tool (vpk)
+        run: dotnet tool install -g vpk
 
       # The agent had no CI at all before #131 — run its unit/native suites here
       # too, on the same Windows runner that already has to build the agent.

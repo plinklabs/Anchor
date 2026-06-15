@@ -1,5 +1,6 @@
 using FocusAgent.App.Auth;
 using FocusAgent.App.Connectivity;
+using FocusAgent.App.Extension;
 using FocusAgent.App.Focus;
 using FocusAgent.App.Realtime;
 using FocusAgent.App.Sessions;
@@ -7,12 +8,15 @@ using FocusAgent.App.Tamper;
 using FocusAgent.App.Tray;
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Logging;
 using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
 using FocusAgent.Core.Tamper;
+using FocusAgent.Core.Updates;
+using FocusAgent.App.Updates;
 using FocusAgent.Native;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,6 +41,7 @@ public partial class App : Application
     private SessionCoordinator? _coordinator;
     private SessionHeartbeatService? _heartbeat;
     private ExtensionWitnessMonitor? _witnessMonitor;
+    private ExtensionSelfRegistrar? _extensionRegistrar;
     private InPrivateWitnessMonitor? _inPrivateMonitor;
     private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
@@ -44,6 +49,7 @@ public partial class App : Application
     private ConnectionManager? _connection;
     private StatusEndpoint? _statusEndpoint;
     private JoinByCodeFlow? _joinByCodeFlow;
+    private AgentUpdateService? _updateService;
     // Held only by the --show-test-toast path so the logger outlives the
     // async show/decide chain rather than getting disposed at OnLaunched return.
     private ILoggerFactory? _testLoggerFactory;
@@ -64,6 +70,30 @@ public partial class App : Application
         if (Program.ShowTestOverlay)
         {
             RunOverlaySelfTest();
+            return;
+        }
+
+        if (Program.ShowTestMainWindow)
+        {
+            RunMainWindowSelfTest();
+            return;
+        }
+
+        if (Program.ShowTestJoinByCode)
+        {
+            RunJoinByCodeSelfTest();
+            return;
+        }
+
+        if (Program.ShowTestTrayMenu)
+        {
+            RunTrayMenuSelfTest();
+            return;
+        }
+
+        if (Program.ShowTestGuidedInstall)
+        {
+            RunGuidedInstallSelfTest();
             return;
         }
 
@@ -99,6 +129,14 @@ public partial class App : Application
             // session. Reports only fire on a drop during a joined session.
             _witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
             _ = _witnessMonitor.StartAsync();
+            // #211: self-register the Edge extension. Write the per-user force-
+            // install policy, then (after the witness pipe is listening above so the
+            // check-in can be observed) wait the grace period and, if the extension
+            // never checks in, open the guided install. Fire-and-forget: the grace
+            // wait must never block startup, and a failure can only fall back to the
+            // guided window, never crash the agent.
+            _extensionRegistrar = _host.Services.GetRequiredService<ExtensionSelfRegistrar>();
+            _ = _extensionRegistrar.RegisterAndVerifyAsync();
             // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
             // SessionLeft subscriptions are wired before the first session — the
             // poll loop starts on join and reports any open Edge InPrivate window.
@@ -153,6 +191,15 @@ public partial class App : Application
                     onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly));
                 _statusEndpoint.Start(port);
             }
+
+            // #224: start the Velopack auto-update cadence — a check shortly after
+            // startup, then every Update:CheckInterval. It no-ops unless this is a
+            // real Velopack install (so dev runs / the e2e are untouched), downloads
+            // deltas in the background, and stages them for the NEXT restart so a
+            // student is never interrupted mid-session. Resolved + started last so a
+            // slow first check can't delay the agent coming up.
+            _updateService = _host.Services.GetRequiredService<AgentUpdateService>();
+            _updateService.Start();
         }
         catch (Exception ex)
         {
@@ -395,6 +442,155 @@ public partial class App : Application
     private static readonly TimeSpan OverlayLingerAfterClose = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// Dev-only path (#173): show the redesigned <see cref="MainWindow"/> against
+    /// a synthetic "connected, in a focus session" state with no host / WAM / hub
+    /// / coordinator bootstrap, then keep the process alive so the visual e2e
+    /// (MainWindowVisualTests) and scripts/dev can screenshot the real ink surface.
+    /// The window's rendering path is production code — only the source of its
+    /// state is synthetic (see MainWindow.CreateSelfTest). See Program.cs.
+    /// </summary>
+    private void RunMainWindowSelfTest()
+    {
+        // Like the overlay self-test: switch to explicit shutdown so the process
+        // stays up after the window is shown (it isn't torn down here), and the
+        // observer — the e2e or a verify script — kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        _mainWindow = MainWindow.CreateSelfTest();
+        _mainWindow.Activate();
+    }
+
+    // Held by the --show-test-joinbycode path so the window outlives OnLaunched.
+    private JoinByCodeWindow? _joinByCodeSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#175): show the real <see cref="JoinByCodeWindow"/> against a
+    /// no-op join client with no host / WAM / hub bootstrap, then keep the process
+    /// alive so the visual e2e (JoinByCodeVisualTests) and scripts/dev can
+    /// screenshot the real ink surface (Space Mono code field, the magenta JOIN
+    /// spark). The window's rendering path is production code — only its join
+    /// client is a synthetic no-op. See Program.cs.
+    /// </summary>
+    private void RunJoinByCodeSelfTest()
+    {
+        // Like the other window self-tests: switch to explicit shutdown so the
+        // process stays up after the window is shown (it isn't torn down here),
+        // and the observer kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        _joinByCodeSelfTestWindow = new JoinByCodeWindow(new SelfTestJoinByCodeClient());
+        Sessions.DialogWindowPositioner.ConfigureAndShow(_joinByCodeSelfTestWindow);
+        // Render the "ready to join" state (a filled code, JOIN at full magenta)
+        // so the visual e2e captures the spark, not the dimmed disabled button.
+        // After ConfigureAndShow so the XAML island is realised and the
+        // TextChanged → JOIN-enable path runs against a live control tree.
+        _joinByCodeSelfTestWindow.PrefillForSelfTest();
+    }
+
+    /// <summary>
+    /// A join client that never returns — the self-test renders the dialog's
+    /// resting state (the redesigned ink surface) and is never driven through an
+    /// actual join, so the call can simply hang until the process is killed.
+    /// </summary>
+    private sealed class SelfTestJoinByCodeClient : IJoinByCodeClient
+    {
+        public Task<JoinByCodeOutcome> JoinAsync(string code, CancellationToken ct = default) =>
+            new TaskCompletionSource<JoinByCodeOutcome>().Task;
+    }
+
+    // Held by the --show-test-traymenu path so the host window outlives OnLaunched.
+    private Window? _trayMenuSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#176): render the real tray context menu (the AA4 brand-styled
+    /// flyout the <see cref="Tray.TrayIconHost"/> ships) so the visual e2e
+    /// (TrayMenuVisualTests) and scripts/dev can screenshot its ink surface, Space
+    /// Mono status row, on-ink actions and the one magenta spark.
+    ///
+    /// A tray <c>MenuFlyout</c> is a popup, not a window, and a headless run can't
+    /// click the tray to open it — so this self-test builds the very same menu via
+    /// the shared <see cref="Tray.TrayMenu.Build"/> factory and shows it open over a
+    /// small ink host window. The menu's composition (DS brushes, fonts, the spark)
+    /// is the production path; only the trigger (ShowAt instead of a tray click) is
+    /// synthetic. The status row is driven to its "connected" state so the capture
+    /// shows the live menu, not the resting "signed out" line. See Program.cs.
+    /// </summary>
+    private void RunTrayMenuSelfTest()
+    {
+        // Like the other self-tests: explicit shutdown so the process stays up after
+        // the menu is shown; the observer kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        var menu = Tray.TrayMenu.Build(onOpen: () => { }, onJoinByCode: () => { }, onQuit: () => { });
+        // Show a representative live state so the status eyebrow renders real text.
+        menu.StatusItem.Text = "CONNECTED — SELF-TEST";
+
+        // A small ink host window the flyout anchors to; sized so the open menu sits
+        // wholly within (and over) it, which is the rect the e2e captures. The
+        // window backs itself with the DS ink brush so any sliver around the menu is
+        // still the brand surface, not the desktop.
+        var root = new Microsoft.UI.Xaml.Controls.Grid
+        {
+            Background = (Microsoft.UI.Xaml.Media.Brush)Resources["PlinkSurfaceInkBrush"],
+        };
+        var host = new Window { Title = "Anchor — Tray menu (self-test)" };
+        host.Content = root;
+        _trayMenuSelfTestWindow = host;
+
+        Sessions.DialogWindowPositioner.ConfigureAndShow(host);
+
+        // Open the flyout once the XAML island is realised, anchored to the host
+        // root so the popup overlays the captured rect. Re-show on a short cadence
+        // so a late capture (under CI load) still finds the menu open rather than a
+        // popup that auto-dismissed.
+        var dispatcher = DispatcherQueue.GetForCurrentThread();
+        void ShowMenu()
+        {
+            if (root.XamlRoot is null) return;
+            menu.Flyout.ShowAt(root, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
+            {
+                Position = new Windows.Foundation.Point(12, 12),
+                ShowMode = Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowMode.Standard,
+            });
+        }
+        var timer = dispatcher.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(400);
+        timer.Tick += (_, _) => ShowMenu();
+        timer.Start();
+        dispatcher.TryEnqueue(ShowMenu);
+    }
+
+    // Held by the --show-test-guided-install path so the window outlives OnLaunched.
+    private Extension.GuidedInstallWindow? _guidedInstallSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#211): show the real <see cref="Extension.GuidedInstallWindow"/>
+    /// — the guided-install fallback — against a no-op store launcher, with no WAM /
+    /// hub / coordinator bootstrap, and keep the process alive so the visual e2e
+    /// (GuidedInstallVisualTests) and scripts/dev can screenshot its ink surface.
+    /// The window's rendering path is production code; only the store-launch side
+    /// effect is a synthetic no-op (so the self-test never spawns Edge). This
+    /// fallback is the primary path on a policy-locked box where the HKCU force-
+    /// install write is denied, so it's a load-bearing surface worth observing.
+    /// </summary>
+    private void RunGuidedInstallSelfTest()
+    {
+        // Like the other window self-tests: explicit shutdown so the process stays
+        // up after the window is shown; the observer kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        _guidedInstallSelfTestWindow = new Extension.GuidedInstallWindow(new NoOpStoreLauncher());
+        Sessions.DialogWindowPositioner.ConfigureAndShow(_guidedInstallSelfTestWindow);
+    }
+
+    /// <summary>A store launcher that does nothing — the self-test renders the
+    /// guided window's resting ink surface and never actually opens Edge.</summary>
+    private sealed class NoOpStoreLauncher : IStoreLauncher
+    {
+        public void OpenStoreListing(string storeUrl) { }
+    }
+
+    /// <summary>
     /// Dev-only path (#164): assert the design-system WinUI binding actually
     /// resolved in the agent's own runtime — the merged dictionary's brushes are
     /// present (incl. the ink/on-ink family the agent leans on), a bundled font
@@ -509,14 +705,62 @@ public partial class App : Application
         }
     }
 
+    /// <summary>
+    /// The hosting environment name that selects the per-deployment config layer
+    /// (#203). An explicit <c>DOTNET_ENVIRONMENT</c> / <c>ASPNETCORE_ENVIRONMENT</c>
+    /// always wins (the release pipeline can force either, and a dev can opt into
+    /// Production locally to smoke-test the substituted file). Absent that, the
+    /// default follows the build configuration: a Debug build — <c>dotnet run</c>
+    /// and the headless e2e, which set no environment — defaults to
+    /// <c>Development</c> so it keeps loading the dev overrides + dev backend; a
+    /// Release build defaults to <c>Production</c> so the published agent picks up
+    /// the substituted appsettings.Production.json. This is the inverse of the
+    /// generic host's own default (always Production), which would silently skip the
+    /// dev overrides for every local run.
+    /// </summary>
+    internal static string ResolveEnvironmentName()
+    {
+        var explicitName =
+            Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+        if (!string.IsNullOrWhiteSpace(explicitName))
+            return explicitName;
+
+#if DEBUG
+        return "Development";
+#else
+        return "Production";
+#endif
+    }
+
     private static IHost BuildHost(DispatcherQueue dispatcher, Func<IntPtr> windowHandleProvider)
     {
-        var builder = Host.CreateApplicationBuilder();
+        var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            // Select the per-deployment config layer (#203): a Debug build (dotnet
+            // run / the headless e2e) defaults to Development and keeps loading
+            // appsettings.Development.json; a Release build defaults to Production and
+            // loads the substituted appsettings.Production.json. An explicit
+            // DOTNET_ENVIRONMENT always wins. See ResolveEnvironmentName — set here
+            // because the generic host's own default (always Production) would
+            // silently skip the dev overrides for every local run.
+            EnvironmentName = ResolveEnvironmentName(),
+        });
 
+        // Layer config: committed dev defaults (appsettings.json) first, then the
+        // per-environment file. In Development that's the gitignored local override
+        // (appsettings.Development.json); in a release build it's the committed
+        // appsettings.Production.json *template*, whose Backend:BaseUrl + Auth
+        // placeholders the release pipeline substitutes at pack time so a fork's
+        // published agent targets its own backend + Entra without editing the
+        // committed dev source (#203).
         builder.Configuration
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-            .AddJsonFile("appsettings.Development.json", optional: true, reloadOnChange: true);
+            .AddJsonFile(
+                $"appsettings.{builder.Environment.EnvironmentName}.json",
+                optional: true,
+                reloadOnChange: true);
 
         // --inject-token is the dev/headless gate (production never passes it).
         // Under it, layer environment variables LAST so they win over the JSON
@@ -543,6 +787,8 @@ public partial class App : Application
             .Bind(builder.Configuration.GetSection(SessionSettings.SectionName));
         builder.Services.AddOptions<DevSettings>()
             .Bind(builder.Configuration.GetSection(DevSettings.SectionName));
+        builder.Services.AddOptions<UpdateSettings>()
+            .Bind(builder.Configuration.GetSection(UpdateSettings.SectionName));
 
         builder.Services.AddSingleton(dispatcher);
         builder.Services.AddSingleton(TimeProvider.System);
@@ -616,6 +862,40 @@ public partial class App : Application
         else
             builder.Services.AddSingleton<IBrowserWindowScanner, BrowserWindowScanner>();
         builder.Services.AddSingleton<InPrivateWitnessMonitor>();
+
+        // #211 -- self-register the Edge extension. On first run the agent writes
+        // the per-user ExtensionInstallForcelist policy so Edge force-installs +
+        // pins the canonical listing (#210); the witness monitor's connected state
+        // is the success signal, and if the extension hasn't checked in within the
+        // grace period the guided-install window opens the store. The store launch
+        // and registry write are the real platform implementations; the registrar
+        // itself is pure (unit-tested).
+        builder.Services.AddSingleton<IExtensionPolicyStore>(
+            sp => new RegistryExtensionPolicyStore(
+                keyPathOverride: null,
+                sp.GetRequiredService<ILogger<RegistryExtensionPolicyStore>>()));
+        builder.Services.AddSingleton<IStoreLauncher>(
+            sp => new EdgeStoreLauncher(sp.GetRequiredService<ILogger<EdgeStoreLauncher>>()));
+        builder.Services.AddSingleton(sp => new ExtensionSelfRegistrar(
+            sp.GetRequiredService<IExtensionPolicyStore>(),
+            // Success signal: the extension has connected over the witness link.
+            extensionCheckedIn: () => sp.GetRequiredService<ExtensionWitnessMonitor>().IsConnected,
+            // Fallback: open the guided one-click install on the UI thread.
+            showGuidedInstall: ct => sp.GetRequiredService<GuidedInstallLauncher>().ShowAsync(ct),
+            log: sp.GetRequiredService<ILogger<ExtensionSelfRegistrar>>()));
+        builder.Services.AddSingleton(sp => new GuidedInstallLauncher(
+            sp.GetRequiredService<DispatcherQueue>(),
+            sp.GetRequiredService<IStoreLauncher>()));
+
+        // #224: Velopack auto-update. The manager wraps a real UpdateManager over
+        // the configured GitHub Releases feed; the service owns the cadence (startup
+        // + interval) and the install/enabled gating, and downloads + stages deltas
+        // for the next restart. Both are no-ops on a non-install (dev run / e2e).
+        builder.Services.AddSingleton<IAgentUpdateManager>(sp =>
+            VelopackUpdateManager.ForGithub(
+                sp.GetRequiredService<IOptions<UpdateSettings>>().Value,
+                sp.GetRequiredService<ILogger<VelopackUpdateManager>>()));
+        builder.Services.AddSingleton<AgentUpdateService>();
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();
         Directory.CreateDirectory(logDir);

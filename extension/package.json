@@ -1,12 +1,13 @@
 {
   "name": "anchor-extension",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Anchor Edge MV3 extension — URL filter and friendly block page.",
   "scripts": {
     "build": "rollup -c",
     "watch": "rollup -c -w",
+    "package": "node scripts/pack-extension.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "npm run build && playwright test",

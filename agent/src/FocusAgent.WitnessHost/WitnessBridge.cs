@@ -26,14 +26,22 @@ public sealed class WitnessBridge
     private readonly Stream _input;
     private readonly Stream _output;
     private readonly IAgentLink _agent;
+    private readonly string? _backendUrlMessage;
     private readonly Channel<string> _outbound =
         Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
 
-    public WitnessBridge(Stream input, Stream output, IAgentLink agent)
+    /// <param name="backendUrlMessage">
+    /// Optional pre-built <c>backend_url</c> native message (#204) the host hands
+    /// the extension as soon as the link opens, so the extension learns its
+    /// backend from the agent at runtime. Null leaves the channel
+    /// liveness-only (its previous behaviour).
+    /// </param>
+    public WitnessBridge(Stream input, Stream output, IAgentLink agent, string? backendUrlMessage = null)
     {
         _input = input;
         _output = output;
         _agent = agent;
+        _backendUrlMessage = backendUrlMessage;
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -41,6 +49,12 @@ public sealed class WitnessBridge
         _agent.Connected += OnAgentConnected;
         _agent.Disconnected += OnAgentDisconnected;
         await _agent.StartAsync(ct).ConfigureAwait(false);
+
+        // Hand the extension its backend URL up front (#204). Queued before the
+        // read loop and drained by the single writer task, so it lands ahead of
+        // any agent up/down message and never races stdout.
+        if (_backendUrlMessage is not null)
+            _outbound.Writer.TryWrite(_backendUrlMessage);
 
         var writer = Task.Run(() => DrainOutboundAsync(ct), CancellationToken.None);
         try

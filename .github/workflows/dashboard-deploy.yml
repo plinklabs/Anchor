@@ -35,8 +35,19 @@ jobs:
       - name: Test
         run: flutter test
 
+      # dart-defines source the release tenant/backend from repo Actions
+      # variables so a fork targets its own Entra app + API with no source
+      # edits (#202). Each falls back to the dev default baked into
+      # lib/main.dart / lib/auth/msal_config.dart when the variable is unset,
+      # so contributors building locally are unaffected. These are public
+      # SPA client config (not secrets), hence vars.* rather than secrets.*.
       - name: Build web
-        run: flutter build web --release
+        run: |
+          flutter build web --release \
+            ${{ vars.API_BASE_URL && format('--dart-define=API_BASE_URL={0}', vars.API_BASE_URL) || '' }} \
+            ${{ vars.ENTRA_TENANT_ID && format('--dart-define=ENTRA_TENANT_ID={0}', vars.ENTRA_TENANT_ID) || '' }} \
+            ${{ vars.ENTRA_CLIENT_ID && format('--dart-define=ENTRA_CLIENT_ID={0}', vars.ENTRA_CLIENT_ID) || '' }} \
+            ${{ vars.API_SCOPE && format('--dart-define=API_SCOPE={0}', vars.API_SCOPE) || '' }}
 
       - name: Deploy to Azure Static Web Apps
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
