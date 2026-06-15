@@ -144,9 +144,15 @@ present — publishes/updates the **single canonical** Edge listing via the Part
 Center API.
 
 - The extension is **backend-agnostic** (it gets its backend URL from the on-box
-  agent at runtime, #204), so there is **one** canonical listing (stable ID
-  `akkfdaclmpfcnjalcifkcbhgjnnopman`) that every fork reuses. **Forks normally do
-  not run this workflow** — it ships the Plink Labs listing.
+  agent at runtime, #204), so there is **one** canonical listing that every fork
+  reuses. **Forks normally do not run this workflow** — it ships the Plink Labs
+  listing.
+- The Edge store **assigns** the published extension ID and rejects a manifest
+  carrying a `key`, so `pack-extension.mjs` strips it from the upload ZIP. The
+  committed `key` only pins the ID for unpacked dev / self-hosted installs — once
+  the store product exists, re-pin the agent-side references to the store-assigned
+  ID (see [`extension/README.md`](../extension/README.md) "Post-publish: re-pin the
+  store ID").
 - If the `EDGE_ADDONS_*` config (see the inventory) is unset, the job still builds
   + packages + uploads the ZIP and prints manual-submit instructions, so the
   listing can be brought up before the API is wired.

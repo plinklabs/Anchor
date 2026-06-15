@@ -99,13 +99,22 @@ surprising number.
 ### One canonical listing
 
 There is **one** Anchor listing on the Edge Add-ons store, owned by Plink Labs,
-with the pinned stable ID `akkfdaclmpfcnjalcifkcbhgjnnopman` (see **Stable
-extension ID** below). Because the extension is backend-agnostic — it gets its
+with a single store-assigned extension ID (see the caveat below and **Stable
+extension ID**). Because the extension is backend-agnostic — it gets its
 backend URL from the on-box agent at runtime (#204) — every fork reuses that one
 listing instead of publishing near-identical copies. So **forks normally don't
-run this workflow**; it ships the canonical listing. The committed manifest `key`
-keeps the stable ID across every build, so the packaged ZIP installs as the same
-ID a managed-Edge policy can pin.
+run this workflow**; it ships the canonical listing.
+
+> **The store assigns the published ID — the committed `key` does not survive a
+> store upload.** The Edge Add-ons store rejects any manifest carrying a `key`
+> ("The manifest shouldn't contain the key field"), so `pack-extension.mjs`
+> strips it from the upload ZIP. The committed `key` only pins the ID for
+> *unpacked / self-hosted* installs (see **Stable extension ID** below); it does
+> **not** make the store-published extension install as `akkfda…`. Once the
+> store product is created, take its store-assigned ID and re-pin the agent-side
+> references to it — `EdgeExtensionPolicy.ExtensionId`, the witness-host
+> `allowed_origins`, and the force-install policy — or native messaging breaks
+> for every store-installed user. See **Post-publish: re-pin the store ID** below.
 
 ### Publishing to the Edge Add-ons store
 
@@ -141,7 +150,28 @@ dashboard. So the listing can be brought up before the API is wired, and the
 workflow needs no edit when it is.
 
 No code-signing step is needed here: the Edge store re-signs the package on
-publish (the committed `key` only fixes the *ID*, not the store signature).
+publish and assigns the ID. The committed `key` is stripped from the upload (the
+store rejects it) and plays no part in the store-published ID — it only fixes the
+ID for unpacked / self-hosted installs.
+
+### Post-publish: re-pin the store ID
+
+The committed `key` derives the ID `akkfda…`, but that is the ID only for
+*unpacked dev* and *self-hosted `.crx`* installs. **A store-published extension
+gets a different, store-assigned ID.** After creating the store product, read its
+ID from the dashboard and update every agent-side reference that currently hard-codes
+`akkfdaclmpfcnjalcifkcbhgjnnopman`:
+
+- `EdgeExtensionPolicy.ExtensionId` (`agent/src/FocusAgent.Core/Extension/EdgeExtensionPolicy.cs`)
+- the witness-host `allowed_origins` (`agent/src/FocusAgent.WitnessHost/net.anchor.witness.template.json`)
+- the force-install policy in **Sideload** / **Agent self-registration** below
+- the matching agent + extension tests (`EdgeExtensionPolicyTests`, `e2e/config.ts`, `src/manifest.test.ts`)
+
+To keep *unpacked dev* installing as the same ID as the store build, replace the
+committed `key` with the store listing's public key (dashboard → package details)
+so `sha256(key)` re-derives the store ID — then the pinned-ID value above and the
+dev/self-host path agree again. Until that is done, the `akkfda…` force-install
+entry pointed at the store (below) will fetch the wrong/nonexistent ID.
 
 For a dev iteration loop:
 

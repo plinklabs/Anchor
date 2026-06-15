@@ -23,7 +23,6 @@
     "tabs",
     "webNavigation",
     "storage",
-    "identity",
     "nativeMessaging"
   ],
   "host_permissions": ["<all_urls>"],
