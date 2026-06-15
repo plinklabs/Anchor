@@ -8,13 +8,37 @@
 //                         entraClientId='<api-client-guid>'
 //
 // Every name and identifier is a parameter so a fork can stand up its own
-// environment from parameters alone (issue #212). The defaults reproduce the
-// live `anchor-rg` deployment (uniqueSuffix=arcadia) so the original
-// environment still deploys with no extra arguments.
+// environment from parameters alone (issue #212). Resource *names* default to
+// the live `anchor-rg` deployment (uniqueSuffix=arcadia) so the original
+// environment still deploys with no extra arguments. Regions, however, are NOT
+// hardcoded: `location` defaults to the resource group's region and each
+// resource can override it (the live arcadia env is itself split across two
+// regions — App Service / plan / SQL in Belgium Central, SignalR / Static Web
+// App in West Europe — which a single location cannot reproduce).
 // ──────────────────────────────────────────────
 
-@description('Azure region for all resources.')
-param location string = 'westeurope'
+@description('Default Azure region for all resources. Defaults to the resource group region; override per-resource with the *Location params below.')
+param location string = resourceGroup().location
+
+// ── Per-resource region overrides ───────────
+// Each defaults to `location`. Override individually to reproduce a split
+// layout (e.g. the live arcadia env) or to place a resource in a region where
+// the others are not offered (Static Web Apps / SignalR have a limited region
+// set). The setup script reads an existing resource's current region and pins
+// it here on re-run, so adopting an environment never tries to move a resource
+// (region is immutable in Azure).
+
+@description('Region for the SQL logical server + database.')
+param sqlServerLocation string = location
+
+@description('Region for the App Service and its plan.')
+param appServiceLocation string = location
+
+@description('Region for the SignalR Service.')
+param signalrLocation string = location
+
+@description('Region for the Static Web App.')
+param staticWebAppLocation string = location
 
 @description('Suffix appended to globally-unique resource names. Defaults to "arcadia" to match the existing anchor-rg deployment; override to stand up a second environment.')
 param uniqueSuffix string = 'arcadia'
@@ -88,7 +112,7 @@ var dashboardCorsOrigin = empty(dashboardCorsOriginOverride)
 
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   name: sqlServerName
-  location: location
+  location: sqlServerLocation
   properties: {
     administratorLogin: sqlAdminLogin
     administratorLoginPassword: sqlAdminPassword
@@ -111,7 +135,7 @@ resource sqlFirewallAllowAzure 'Microsoft.Sql/servers/firewallRules@2023-08-01-p
 resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   parent: sqlServer
   name: sqlDatabaseName
-  location: location
+  location: sqlServerLocation
   sku: {
     name: 'GP_S_Gen5'   // General Purpose, Serverless, Gen5
     tier: 'GeneralPurpose'
@@ -130,7 +154,7 @@ resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
 
 resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: appServicePlanName
-  location: location
+  location: appServiceLocation
   kind: 'linux'
   properties: {
     reserved: true       // required for Linux
@@ -145,7 +169,7 @@ resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
 
 resource appService 'Microsoft.Web/sites@2023-12-01' = {
   name: appServiceName
-  location: location
+  location: appServiceLocation
   properties: {
     serverFarmId: appPlan.id
     siteConfig: {
@@ -198,7 +222,7 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
 
 resource signalr 'Microsoft.SignalRService/signalR@2024-03-01' = {
   name: signalrName
-  location: location
+  location: signalrLocation
   sku: {
     name: 'Free_F1'
     capacity: 1
@@ -217,7 +241,7 @@ resource signalr 'Microsoft.SignalRService/signalR@2024-03-01' = {
 
 resource swa 'Microsoft.Web/staticSites@2023-12-01' = {
   name: staticWebAppName
-  location: location
+  location: staticWebAppLocation
   sku: {
     name: 'Free'
     tier: 'Free'
@@ -231,6 +255,13 @@ resource swa 'Microsoft.Web/staticSites@2023-12-01' = {
 
 output resourceGroup string = resourceGroup().name
 output location string = location
+
+// Resolved per-resource regions, so the setup script can record where each
+// resource actually landed (and pin them on a subsequent adopt/re-run).
+output sqlServerLocation string = sqlServerLocation
+output appServiceLocation string = appServiceLocation
+output signalrLocation string = signalrLocation
+output staticWebAppLocation string = staticWebAppLocation
 
 output appServiceName string = appService.name
 output appServiceUrl string = 'https://${appService.properties.defaultHostName}'
