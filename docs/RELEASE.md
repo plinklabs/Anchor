@@ -1,22 +1,41 @@
 # Release & deployment
 
-This is the operator reference for the **cloud release pipeline** (workstream B of
-the [v1 roadmap](../ROADMAP.md)): how a commit to `main` ships the backend API and
-the teacher dashboard to Azure, what gates that deploy, and every secret and
-variable the pipeline needs. It is the single source of truth for the
-required-secrets surface — when a deploy workflow gains or drops a `secrets.*` /
-`vars.*` reference, update the inventory here in the same PR.
+This is the operator reference for **how Anchor ships** (workstream B/C/D of the
+[v1 roadmap](../ROADMAP.md)): the two release tiers, how each is triggered, the
+versioning/tagging convention, every secret and variable the workflows consume,
+and the step-by-step procedure to cut a release. It is the single source of truth
+for the required-secrets surface — when any deploy or release workflow gains or
+drops a `secrets.*` / `vars.*` reference, update the inventory here in the same PR.
 
-Client release (the agent via Velopack, the extension via the Edge store) is a
-separate workstream. It is tag-triggered, not push-to-`main`, and documented with
-each client: the agent in [`agent/README.md`](../agent/README.md) (`agent-v*`
-tags → `agent-release.yml`, #209) and the extension in
-[`extension/README.md`](../extension/README.md) (`extension-v*` tags →
-`extension-release.yml`, #210, incl. the one-time Edge Add-ons developer setup and
-its `EDGE_ADDONS_*` config). The cloud secrets/variables inventory below covers
-the cloud tier only.
+## The hybrid release model
 
-## Pipeline overview
+Anchor has **two release tiers**, deliberately decoupled because they ship to
+different places at different cadences:
+
+| Tier | What ships | Trigger | Mechanism |
+| --- | --- | --- | --- |
+| **Cloud** (continuous) | Backend API → Azure App Service; teacher dashboard → Azure Static Web Apps | **push to `main`** (path-filtered) | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml), [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml) |
+| **Client** (tag-based) | Desktop agent → GitHub Releases via Velopack; Edge extension → Edge Add-ons store | **a version tag** (`agent-v*` / `extension-v*`) | [`agent-release.yml`](../.github/workflows/agent-release.yml) (#209), [`extension-release.yml`](../.github/workflows/extension-release.yml) (#210) |
+
+The split is intentional:
+
+- **Cloud is continuous.** Every commit that lands on `main` and touches the
+  backend or dashboard ships immediately — there is no cloud "version", the
+  deployed tip *is* the release. Server-side fixes reach all schools without anyone
+  cutting anything.
+- **Clients are tag-gated.** The agent and the extension are installed on user
+  machines / in browsers, so a release is a deliberate, versioned event: bump the
+  single version source, commit, push a matching tag. Pushing to `main` never
+  ships a client; only a tag does. This keeps the auto-update feed (agent) and the
+  store listing (extension) under explicit control.
+
+The rest of this doc covers both tiers: the [cloud pipeline](#cloud-pipeline-overview)
+and how it's gated, the [client release tiers](#client-release-tiers), the
+[versioning/tagging convention](#versioning-and-tagging), the complete
+[secrets/variables inventory](#required-secrets-and-variables) across both tiers,
+and [how to cut a release](#cutting-a-release) for each.
+
+## Cloud pipeline overview
 
 The cloud tier deploys **continuously on push to `main`**. Two independent legs,
 each path-filtered so an unrelated push never triggers it:
@@ -90,15 +109,86 @@ waits only for the suites those changes trigger.
   human gate before backend deploy is ever wanted — that is an environment
   protection rule, not a branch protection rule.
 
+## Client release tiers
+
+The agent and the extension each ship on their **own version tag**, not on a push
+to `main`. The deep operator detail for each lives with the client; this section
+is the cross-tier summary so a maintainer can cut either from here.
+
+### Desktop agent — Velopack → GitHub Releases (`agent-v*`)
+
+[`agent-release.yml`](../.github/workflows/agent-release.yml) (#209) triggers on a
+push of an `agent-v*` tag. It builds the WinUI 3 agent self-contained
+(`win-x64`), packages it with **Velopack** (`vpk`), and uploads the
+`Setup.exe` + full/delta `.nupkg` + `RELEASES` feed to the **GitHub Release** for
+that tag. Installed agents read that feed and auto-update (delta) on the next tag.
+
+- The packaged `appsettings.Production.json` ships as a template with `#{...}#`
+  placeholders (#203); pack time substitutes them from the **`AGENT_*` repo
+  variables** (see the inventory) so a fork ships an agent pointed at its own
+  backend with no source edit — the agent-side mirror of the dashboard's
+  `--dart-define` substitution.
+- `pack-release.ps1` cross-checks the tag version against the committed
+  `<VersionPrefix>` and fails on drift.
+- The agent ships **unsigned** (one SmartScreen "More info → Run anyway" on first
+  install); code-signing is a planned later upgrade.
+- Full detail: [`agent/README.md`](../agent/README.md#versioning).
+
+### Edge extension — Edge Add-ons store (`extension-v*`)
+
+[`extension-release.yml`](../.github/workflows/extension-release.yml) (#210)
+triggers on a push of an `extension-v*` tag. It builds the MV3 extension, zips
+`dist/` into `artifacts/anchor-extension-<version>.zip`, **always** uploads that
+ZIP as a workflow artifact, and — only when the Edge Add-ons submission config is
+present — publishes/updates the **single canonical** Edge listing via the Partner
+Center API.
+
+- The extension is **backend-agnostic** (it gets its backend URL from the on-box
+  agent at runtime, #204), so there is **one** canonical listing (stable ID
+  `akkfdaclmpfcnjalcifkcbhgjnnopman`) that every fork reuses. **Forks normally do
+  not run this workflow** — it ships the Plink Labs listing.
+- If the `EDGE_ADDONS_*` config (see the inventory) is unset, the job still builds
+  + packages + uploads the ZIP and prints manual-submit instructions, so the
+  listing can be brought up before the API is wired.
+- `pack-extension.mjs` cross-checks the tag version against `package.json` and
+  fails on drift; the Edge store re-signs on publish (no code-signing here).
+- Full detail incl. one-time developer setup:
+  [`extension/README.md`](../extension/README.md#publishing-to-the-edge-add-ons-store).
+
+## Versioning and tagging
+
+The cloud tier is **unversioned** — the deployed tip of `main` is the release.
+Each **client** has a single version source and a tag format; the two clients
+version **independently**.
+
+| Client | Single version source | Tag format | Triggers |
+| --- | --- | --- | --- |
+| Agent | `<VersionPrefix>` in [`agent/Directory.Build.props`](../agent/Directory.Build.props) (#208) | `agent-v<version>`, e.g. `agent-v1.2.3` | [`agent-release.yml`](../.github/workflows/agent-release.yml) |
+| Extension | `version` in [`extension/package.json`](../extension/package.json) (#208) | `extension-v<version>`, e.g. `extension-v1.2.3` | [`extension-release.yml`](../.github/workflows/extension-release.yml) |
+
+- **Agent.** MSBuild auto-imports `Directory.Build.props` into every agent
+  project, so the one `<VersionPrefix>` drives `AssemblyVersion`/`FileVersion`, the
+  `InformationalVersion` reported on the `/status` endpoint, and the Velopack
+  package version. The MSIX `Package.appxmanifest` `<Identity Version>` is kept in
+  lockstep (`<VersionPrefix>.0`) by a unit test. The design-system submodule under
+  `external/` versions independently by design.
+- **Extension.** `package.json` `version` is the single source; the packed
+  manifest version is stamped from it and a test locks them together.
+- **Tag = release.** Each release workflow derives the package version from the tag
+  (`agent-v1.2.3` → `1.2.3`) and the pack script fails the build if that doesn't
+  match the committed version source — a tag can never ship a surprising number.
+
 ## Required secrets and variables
 
-Everything the cloud pipeline consumes, in one place. Set repository **secrets**
+Everything the release/deploy workflows consume, in one place — **both tiers**.
+Set repository **secrets**
 under *Settings → Secrets and variables → Actions → Secrets*; set repository
-**variables** under the *Variables* tab. A fork must populate these to deploy to
-its own Azure; with them unset the deploy workflows fail (secrets) or fall back to
-dev defaults (the dashboard `vars.*`, see below).
+**variables** under the *Variables* tab. A fork must populate the cloud entries to
+deploy to its own Azure; with them unset the deploy workflows fail (secrets) or
+fall back to dev defaults (the dashboard `vars.*`, see below). The **client-tier**
+entries are optional per fork — see [the client section](#client-tier).
 
-### GitHub Actions — secrets
+### Cloud tier — GitHub Actions secrets
 
 | Name | Used by | What it is / where to get it |
 | --- | --- | --- |
@@ -114,7 +204,7 @@ dev defaults (the dashboard `vars.*`, see below).
 > repo variables plus a federated credential on the app registration. Tracked as a
 > follow-up; the workflow notes it in-file too.
 
-### GitHub Actions — variables
+### Cloud tier — GitHub Actions variables
 
 | Name | Used by | What it is | If unset |
 | --- | --- | --- | --- |
@@ -128,6 +218,41 @@ The four dashboard `vars.*` are **public SPA configuration, not secrets** — th
 ship inside the built web bundle and are safe to expose — hence `vars.*` rather
 than `secrets.*`. Each independently falls back to the dev default baked into the
 source, so a contributor building locally is unaffected.
+
+### Client tier
+
+These drive the **tag-based** agent and extension releases. They are optional per
+fork: a fork that only runs its own cloud can ignore them; a fork that ships its
+own agent build sets the `AGENT_*` variables; the `EDGE_ADDONS_*` config belongs to
+whoever owns the canonical Edge listing (normally Plink Labs only).
+
+#### Agent — variables (`agent-release.yml`)
+
+Non-secret per-deployment config, substituted into the packaged
+`appsettings.Production.json` at pack time (#203). Each is a `vars.*` (public
+SPA/backend config, not a secret).
+
+| Name | What it is | If unset |
+| --- | --- | --- |
+| `AGENT_BACKEND_BASE_URL` | Backend API base URL the shipped agent targets. | Substituted as empty → the packaged agent falls back to its template/source default. |
+| `AGENT_AUTH_TENANT_ID` | Entra tenant ID for the agent's sign-in. | As above. |
+| `AGENT_AUTH_CLIENT_ID` | Entra **agent** app client ID. | As above. |
+| `AGENT_AUTH_SCOPE` | API scope the agent requests. | As above. |
+
+#### Extension — Edge Add-ons submission (`extension-release.yml`)
+
+The release workflow submits to the store **only when all three are set**;
+otherwise it builds + uploads the ZIP artifact and prints manual-submit
+instructions. One-time setup: [`extension/README.md`](../extension/README.md#publishing-to-the-edge-add-ons-store).
+
+| Name | Kind | What it is | If unset |
+| --- | --- | --- | --- |
+| `EDGE_ADDONS_PRODUCT_ID` | variable | Edge Add-ons **product ID** of the canonical listing. | API submit skipped; ZIP uploaded as artifact for manual submit. |
+| `EDGE_ADDONS_CLIENT_ID` | secret | Edge Add-ons **API client ID**. | As above. |
+| `EDGE_ADDONS_API_KEY` | secret | Edge Add-ons **API key**. | As above. |
+
+> Both client release workflows use the auto-provided `GITHUB_TOKEN`
+> (`agent-release.yml` to upload the Velopack release assets) — no setup needed.
 
 ### Azure App Service — application settings
 
@@ -149,6 +274,59 @@ nested configuration keys (`AzureAd__TenantId` → `AzureAd:TenantId`).
 `Heartbeat`, `EventRetention`, and `Logging` have committed defaults in
 `appsettings.json` and only need App Service overrides to tune them — not for a
 baseline deploy.
+
+## Cutting a release
+
+Once the inventory above is configured, releasing is routine. Three procedures,
+one per shipping unit.
+
+### Cloud (backend / dashboard)
+
+There is no version to bump and no tag to push — **merging to `main` is the
+release**.
+
+1. Merge the change to `main` (through the normal PR + `CI Gate / gate` flow).
+2. The matching leg deploys automatically:
+   - **backend** — Backend CI runs on `backend/**`; on success
+     `backend-deploy.yml` publishes the CI-validated commit to the App Service.
+     EF Core migrations apply on app startup (non-Development), so there is no
+     separate migration step.
+   - **dashboard** — a push under `dashboard/**` builds with the `vars.*`
+     dart-defines and uploads to the Static Web App.
+3. Confirm the deploy succeeded in the Actions tab; the deployed tip is live.
+
+### Agent (`agent-v*`)
+
+1. Bump `<VersionPrefix>` in [`agent/Directory.Build.props`](../agent/Directory.Build.props)
+   (the single version source). Commit it on `main`.
+2. Push a matching tag:
+   ```bash
+   git tag agent-v<version>      # e.g. agent-v1.2.3 — must equal <VersionPrefix>
+   git push origin agent-v<version>
+   ```
+3. `agent-release.yml` builds, packs with Velopack (cross-checking the tag against
+   the committed version), and publishes `Setup.exe` + the delta-update feed to the
+   GitHub Release for the tag. Installed agents auto-update from that feed.
+
+A version/tag mismatch fails the pack step — fix `<VersionPrefix>` or the tag and
+re-push.
+
+### Extension (`extension-v*`)
+
+> Normally only the canonical Plink Labs listing is published; forks rely on it
+> (the extension is backend-agnostic, #204) and don't run this.
+
+1. Bump `version` in [`extension/package.json`](../extension/package.json) (the
+   single version source). Commit it on `main`.
+2. Push a matching tag:
+   ```bash
+   git tag extension-v<version>      # e.g. extension-v1.2.3 — must equal package.json
+   git push origin extension-v<version>
+   ```
+3. `extension-release.yml` builds + packages the ZIP (cross-checking the tag) and,
+   when the `EDGE_ADDONS_*` config is set, publishes/updates the canonical Edge
+   listing. If it isn't set, download the `anchor-extension-<version>` artifact and
+   upload it by hand at the Edge Add-ons dashboard.
 
 ## Operator checklist (fork bringing up its own cloud)
 
