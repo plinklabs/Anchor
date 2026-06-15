@@ -146,6 +146,30 @@ To tear it all down:
 az group delete --name anchor-rg --yes
 ```
 
+#### After teardown — what survives, and recreating
+
+Deleting the resource group removes the Azure resources but **not** everything
+the environment depends on. All resources are free-tier, so deleting and
+recreating costs nothing — but mind these:
+
+- **Entra app registrations and their admin consent live in Entra ID, not in
+  the resource group**, so `az group delete` leaves them untouched (you won't
+  see them in Resource Manager — they're under Entra ID → App registrations).
+  **Don't delete them.** On the next run `scripts/setup.ps1` reuses them (looked
+  up by display name, or pass `-EntraClientId` / `-SpaClientId`), and the admin
+  consent you granted still holds — so you skip that manual step. You only need
+  to re-consent if you delete/recreate the apps or a new permission is added.
+- **GitHub secrets/variables are not touched** (they live in the repo), but the
+  `AZURE_WEBAPP_PUBLISH_PROFILE` secret and `AZURE_STATIC_WEB_APPS_API_TOKEN`
+  are **bound to the deleted resources** — they go stale. Re-run
+  `scripts/setup.ps1` to refetch and overwrite them; deploys will fail to
+  authenticate in the gap. A recreated Static Web App may also get a **new
+  default hostname**, which invalidates the SPA redirect URI — the script
+  rewrites it from the new SWA URL on each run.
+- **The SQL admin password cannot be read back from Azure.** If you didn't save
+  it, you can't recover it — set a fresh one on the recreate (the script prompts
+  for it and the deploy applies it).
+
 ### Upgrading SignalR for pilot
 
 When you need more than 20 connections, change the SKU in `main.bicep`:
