@@ -42,6 +42,15 @@
           Wide310x150Logo="Assets\Wide310x150Logo.png" />
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
+      <!--
+        #225: "start the agent at login" has been re-homed to a per-user
+        HKCU\Software\Microsoft\Windows\CurrentVersion\Run entry, written/removed
+        by the Velopack install/uninstall lifecycle (see Startup\StartupRegistration
+        and Program.cs). The agent ships UNPACKAGED via Velopack, so this MSIX-only
+        windows.startupTask extension does NOT apply to the shipped build — it is
+        kept solely so the legacy MSIX package (where it is the only available
+        mechanism) still auto-starts. The Run key is the shipped path.
+      -->
       <Extensions>
         <uap5:Extension
           Category="windows.startupTask"

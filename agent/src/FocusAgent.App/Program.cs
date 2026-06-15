@@ -1,4 +1,5 @@
 using FocusAgent.App.Extension;
+using FocusAgent.App.Startup;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
@@ -154,6 +155,40 @@ public static class Program
     public const string ExtensionPolicyKeyEnvVar = "ANCHOR_EXTENSION_POLICY_KEY";
 
     /// <summary>
+    /// Dev-only flag (#225): write the per-user "start at login" entry under
+    /// <c>HKCU\...\Run</c> pointing at the agent exe, print the resulting registry
+    /// state, and exit — no WAM / hub / UI bootstrap. Drives the <em>real</em>
+    /// registry-write path (the same one the Velopack install/update hook runs) so
+    /// the integration test can assert the Run value is actually written on a clean
+    /// box. Pair with <see cref="StartupRunKeyEnvVar"/> to point the write at a
+    /// throwaway HKCU subtree instead of the live Run key.
+    /// </summary>
+    public const string RegisterStartupArg = "--register-startup";
+
+    /// <summary>
+    /// Dev-only flag (#225): the inverse of <see cref="RegisterStartupArg"/> —
+    /// remove Anchor's Run entry (the uninstall path) and exit. Lets the integration
+    /// test prove the entry is cleaned up on uninstall.
+    /// </summary>
+    public const string UnregisterStartupArg = "--unregister-startup";
+
+    /// <summary>
+    /// Dev-only env var (#225): an HKCU-relative key path that overrides the
+    /// production <c>Run</c> key for <see cref="RegisterStartupArg"/> /
+    /// <see cref="UnregisterStartupArg"/>, so the integration test writes to a
+    /// throwaway subtree and never disturbs a dev's real auto-start entries.
+    /// </summary>
+    public const string StartupRunKeyEnvVar = "ANCHOR_STARTUP_RUN_KEY";
+
+    /// <summary>
+    /// Dev-only env var (#225): an absolute exe path the
+    /// <see cref="RegisterStartupArg"/> mode registers instead of the running test
+    /// exe's own path, so the integration test can assert the Run command points at
+    /// a known, stable path of its choosing (rather than the agent's debug-bin path).
+    /// </summary>
+    public const string StartupExePathEnvVar = "ANCHOR_STARTUP_EXE_PATH";
+
+    /// <summary>
     /// Dev-only flag (#224): run the real Velopack update <em>check</em> against a
     /// locally-served feed directory (a <c>vpk pack</c> output: RELEASES + the
     /// full/delta nupkg) instead of the live GitHub Releases feed, print the result,
@@ -215,12 +250,23 @@ public static class Program
         // UpdateManager against the GitHub Releases feed) is wired in App startup
         // via AgentUpdateService (#224).
         VelopackApp.Build()
-            // #211: un-pin the force-installed extension when the agent is
-            // uninstalled. Velopack fires this hook on the uninstall launch
-            // (before the files go away), so the agent removes the HKCU forcelist
-            // entry it wrote — leaving the box as it found it. Best-effort: a
-            // failure here must not block the uninstall.
-            .OnBeforeUninstallFastCallback(_ => ExtensionRegistration.RemovePolicyForUninstall())
+            // #225: re-home "start the agent at login" from the MSIX-only
+            // windows.startupTask extension to a per-user HKCU\...\Run entry (no
+            // admin, no MDM). Velopack fires OnAfterInstall on first install and
+            // OnAfterUpdate after each update (a new versioned install dir), so the
+            // agent (re-)points the Run value at the freshly-installed exe on both.
+            // Idempotent — a re-run never leaks a duplicate or a stale path.
+            .OnAfterInstallFastCallback(_ => StartupRegistration.RegisterForInstall())
+            .OnAfterUpdateFastCallback(_ => StartupRegistration.RegisterForInstall())
+            // #211 + #225: when the agent is uninstalled, un-pin the force-installed
+            // extension and remove the Run entry it wrote — leaving the box as it
+            // found it. Velopack fires this hook on the uninstall launch (before the
+            // files go away). Best-effort: a failure here must not block uninstall.
+            .OnBeforeUninstallFastCallback(_ =>
+            {
+                ExtensionRegistration.RemovePolicyForUninstall();
+                StartupRegistration.RemoveForUninstall();
+            })
             .Run();
 
         // #211: dev-only register/unregister modes. These drive the real registry
@@ -228,6 +274,14 @@ public static class Program
         // value end-to-end. Handled before any WinUI bootstrap (and before single-
         // instance gating) since they neither show UI nor need a running agent.
         if (TryRunExtensionPolicyMode(args, out var exitCode))
+            return exitCode;
+
+        // #225: dev-only register/unregister startup modes. These drive the real
+        // HKCU\...\Run write/remove (the same path the Velopack install/uninstall
+        // hooks run) and exit, so the integration test can assert the Run entry
+        // end-to-end. Handled before any WinUI bootstrap / single-instance gating
+        // since they neither show UI nor need a running agent.
+        if (TryRunStartupRegistrationMode(args, out exitCode))
             return exitCode;
 
         // #224: dev-only update-check mode. Drives the real Velopack check path
@@ -304,6 +358,43 @@ public static class Program
         catch (Exception ex)
         {
             Console.Error.WriteLine($"extension-policy mode failed: {ex.Message}");
+            exitCode = 1;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Handle the dev-only <c>--register-startup</c> / <c>--unregister-startup</c>
+    /// modes (#225): perform the real HKCU\...\Run write/remove (against an optional
+    /// throwaway key from <see cref="StartupRunKeyEnvVar"/>, and an optional exe path
+    /// from <see cref="StartupExePathEnvVar"/>), print the resulting state for the
+    /// harness to read, and signal the caller to exit. Returns false for a normal
+    /// launch so <see cref="Main"/> proceeds to the WinUI bootstrap.
+    /// </summary>
+    private static bool TryRunStartupRegistrationMode(string[] args, out int exitCode)
+    {
+        exitCode = 0;
+        var register = args.Any(a => string.Equals(a, RegisterStartupArg, StringComparison.OrdinalIgnoreCase));
+        var unregister = args.Any(a => string.Equals(a, UnregisterStartupArg, StringComparison.OrdinalIgnoreCase));
+        if (!register && !unregister) return false;
+
+        var keyOverride = Environment.GetEnvironmentVariable(StartupRunKeyEnvVar);
+        var exePathOverride = Environment.GetEnvironmentVariable(StartupExePathEnvVar);
+        try
+        {
+            if (register)
+                StartupRegistration.EnsureRegistered(keyOverride, exePathOverride);
+            else
+                StartupRegistration.RemoveRegistration(keyOverride);
+
+            // Echo the resulting command so the harness can assert on stdout too.
+            var command = StartupRegistration.ReadRegisteredCommand(keyOverride);
+            if (command is not null)
+                Console.WriteLine($"run-at-login: {command}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"startup-registration mode failed: {ex.Message}");
             exitCode = 1;
         }
         return true;
