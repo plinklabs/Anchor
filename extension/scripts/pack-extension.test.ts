@@ -8,7 +8,7 @@ import { packExtension } from './pack-extension.mjs';
 
 // #210: the tag-triggered Edge Add-ons release packages dist/ into a ZIP. These
 // tests lock the packaging core (pack-extension.mjs) so the release path can't
-// silently ship a mis-versioned package, drop the pinned stable-ID `key`, or
+// silently ship a mis-versioned package, ship a `key` the Edge store rejects, or
 // produce a corrupt archive. They drive the *real* build (rollup) once, then the
 // real packaging — the same code the workflow runs — and read the produced ZIP
 // back with Node's own inflate, so a green test means the actual artifact is
@@ -18,7 +18,6 @@ const extensionDir = fileURLToPath(new URL('..', import.meta.url));
 const pkg = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { version: string };
-const STABLE_EXTENSION_ID_KEY_PRESENT = true; // dist manifest must keep `key`.
 
 /** Minimal single-file extractor for the ZIPs makeZip produces (DEFLATE entries,
  *  no data descriptors). Walks the central directory and inflates the named
@@ -81,13 +80,14 @@ describe('pack-extension (#210 Edge Add-ons packaging)', () => {
     expect(manifest.version).toBe(pkg.version);
   });
 
-  it('preserves the pinned `key` so the packed listing keeps the stable extension ID', () => {
-    expect(STABLE_EXTENSION_ID_KEY_PRESENT).toBe(true);
+  it('strips `key` from the packaged manifest so the Edge store accepts the upload', () => {
+    // The store assigns the extension ID and rejects a manifest carrying `key`
+    // ("The manifest shouldn't contain the key field"). dist/manifest.json keeps
+    // `key` for unpacked dev; the packaged copy must not.
     const manifest = JSON.parse(entries.get('manifest.json')!.toString('utf8')) as {
       key?: string;
     };
-    expect(manifest.key).toBeTypeOf('string');
-    expect(manifest.key!.length).toBeGreaterThan(0);
+    expect(manifest.key).toBeUndefined();
   });
 
   it('includes the runtime bundle and brand icons (a loadable extension, not just a manifest)', () => {

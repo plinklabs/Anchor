@@ -14,10 +14,17 @@
 //      against package.json and fail loudly on drift — the same guard the agent's
 //      pack script applies, so a tag can never ship a surprising number.
 //   3. `npm run build` (rollup) → dist/, which stamps the version into the copied
-//      manifest (rollup.config.mjs, #208) and bundles the pinned `key` so the
-//      packed listing keeps the stable extension ID.
+//      manifest (rollup.config.mjs, #208). dist/ keeps the committed `key` so an
+//      *unpacked* local-dev / e2e load installs as the stable ID the dev
+//      native-messaging host's allowed_origins pins.
 //   4. Zip dist/ into artifacts/anchor-extension-<version>.zip — the upload the
-//      Edge Add-ons submission consumes.
+//      Edge Add-ons submission consumes — but STRIP `key` from the packaged
+//      manifest. The Edge Add-ons store assigns the extension ID itself and
+//      rejects any manifest that ships a `key` ("The manifest shouldn't contain
+//      the key field"). The store-published ID is therefore store-assigned, not
+//      the committed key's `akkfda…`; the agent-side pins (EdgeExtensionPolicy,
+//      witness-host allowed_origins, force-install policy) must be updated to the
+//      store-assigned ID once the product exists.
 //
 // Usage:
 //   node scripts/pack-extension.mjs                      # version from package.json
@@ -110,19 +117,20 @@ export function packExtension({ version, build = true } = {}) {
         `the release version "${releaseVersion}". Rebuild (drop --no-build).`,
     );
   }
-  if (!distManifest.key) {
-    throw new Error(
-      'Built dist/manifest.json has no "key" — the packed listing would lose the ' +
-        'pinned stable extension ID. Refusing to package.',
-    );
-  }
-
   const files = listFiles(distDir).sort();
   if (files.length === 0) throw new Error('dist/ is empty — nothing to package.');
-  const entries = files.map((name) => ({
-    name,
-    data: readFileSync(join(distDir, name)),
-  }));
+  const entries = files.map((name) => {
+    if (name === 'manifest.json') {
+      // Strip `key` from the packaged manifest: the Edge Add-ons store assigns
+      // the ID and rejects a manifest that ships a `key`. dist/manifest.json
+      // keeps it for unpacked local dev (see header); only the store upload omits
+      // it.
+      const manifest = JSON.parse(readFileSync(join(distDir, name), 'utf8'));
+      delete manifest.key;
+      return { name, data: Buffer.from(JSON.stringify(manifest, null, 2) + '\n') };
+    }
+    return { name, data: readFileSync(join(distDir, name)) };
+  });
   const zip = makeZip(entries);
 
   rmSync(artifactsDir, { recursive: true, force: true });
