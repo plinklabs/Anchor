@@ -153,6 +153,44 @@ public static class Program
     /// </summary>
     public const string ExtensionPolicyKeyEnvVar = "ANCHOR_EXTENSION_POLICY_KEY";
 
+    /// <summary>
+    /// Dev-only flag (#224): run the real Velopack update <em>check</em> against a
+    /// locally-served feed directory (a <c>vpk pack</c> output: RELEASES + the
+    /// full/delta nupkg) instead of the live GitHub Releases feed, print the result,
+    /// and exit — no WAM / hub / UI bootstrap, no actual download or apply. Drives
+    /// the real <c>UpdateManager</c> + <c>SimpleFileSource</c> check path so the
+    /// integration test can assert an installed agent discovers a newer release from
+    /// a fake feed, without GitHub, admin, or a real install. The flag is followed
+    /// by the feed directory path:
+    /// <c>--check-update C:\path\to\feed</c>.
+    /// </summary>
+    public const string CheckUpdateArg = "--check-update";
+
+    /// <summary>
+    /// Dev-only env var (#224): the pretend "currently installed" version the
+    /// <see cref="CheckUpdateArg"/> mode reports to Velopack, so the test can pin a
+    /// version older than the one it packed into the feed and prove the check finds
+    /// the newer release. Defaults to <c>0.0.1</c> if unset.
+    /// </summary>
+    public const string CheckUpdateCurrentVersionEnvVar = "ANCHOR_UPDATE_CURRENT_VERSION";
+
+    /// <summary>
+    /// Dev-only env var (#224): absolute path the <see cref="CheckUpdateArg"/> mode
+    /// writes its one-line result to. The agent is a WinExe with no console
+    /// attached, so the integration test reads the outcome from this file rather
+    /// than stdout (the same shape as the --verify-ds-theme result file). Contents
+    /// are <c>update-available: &lt;version&gt;</c>, <c>up-to-date</c>, or
+    /// <c>error: &lt;message&gt;</c>.
+    /// </summary>
+    public const string CheckUpdateResultPathEnvVar = "ANCHOR_UPDATE_RESULT_PATH";
+
+    /// <summary>
+    /// The Velopack package id the agent ships under (mirrors
+    /// <c>--packId</c> in agent/scripts/pack-release.ps1). The
+    /// <see cref="CheckUpdateArg"/> mode reads the test feed as this app id.
+    /// </summary>
+    public const string VelopackAppId = "Anchor.Agent";
+
     public static bool ShowTestToast { get; private set; }
     public static bool ShowTestOverlay { get; private set; }
     public static bool ShowTestMainWindow { get; private set; }
@@ -173,8 +211,9 @@ public static class Program
         // call handles them (e.g. (re)creating the Start-menu/Run-key shortcuts on
         // first run) and then exits the process, so the WinUI bootstrap below only
         // runs for a normal launch. `vpk pack` also refuses to package a build
-        // whose entrypoint doesn't call this. The auto-update *check*
-        // (UpdateManager against the GitHub Releases feed) is a tracked follow-up.
+        // whose entrypoint doesn't call this. The auto-update *check* (the agent's
+        // UpdateManager against the GitHub Releases feed) is wired in App startup
+        // via AgentUpdateService (#224).
         VelopackApp.Build()
             // #211: un-pin the force-installed extension when the agent is
             // uninstalled. Velopack fires this hook on the uninstall launch
@@ -189,6 +228,14 @@ public static class Program
         // value end-to-end. Handled before any WinUI bootstrap (and before single-
         // instance gating) since they neither show UI nor need a running agent.
         if (TryRunExtensionPolicyMode(args, out var exitCode))
+            return exitCode;
+
+        // #224: dev-only update-check mode. Drives the real Velopack check path
+        // against a locally-served feed and exits, so the integration test can
+        // assert an installed agent discovers a newer release from a fake feed.
+        // Handled before any WinUI bootstrap / single-instance gating since it
+        // shows no UI and needs no running agent.
+        if (TryRunUpdateCheckMode(args, out exitCode))
             return exitCode;
 
         ShowTestToast = args.Any(a => string.Equals(a, ShowTestToastArg, StringComparison.OrdinalIgnoreCase));
@@ -260,6 +307,75 @@ public static class Program
             exitCode = 1;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Handle the dev-only <c>--check-update &lt;feedDir&gt;</c> mode (#224): run the
+    /// real Velopack check against a locally-served feed (no GitHub, no real
+    /// install), print the outcome for the harness to read, and signal the caller to
+    /// exit. Prints one of:
+    ///   <c>update-available: &lt;version&gt;</c> when the feed has a newer release, or
+    ///   <c>up-to-date</c> when it doesn't.
+    /// Returns false for a normal launch so <see cref="Main"/> proceeds.
+    /// </summary>
+    private static bool TryRunUpdateCheckMode(string[] args, out int exitCode)
+    {
+        exitCode = 0;
+        var feedDir = ArgValueAfter(args, CheckUpdateArg);
+        if (feedDir is null) return false;
+
+        var resultPath = Environment.GetEnvironmentVariable(CheckUpdateResultPathEnvVar);
+
+        void WriteResult(string line)
+        {
+            if (string.IsNullOrEmpty(resultPath)) return;
+            try { File.WriteAllText(resultPath, line); } catch { /* exit code is the fallback signal */ }
+        }
+
+        try
+        {
+            if (!Directory.Exists(feedDir))
+            {
+                WriteResult($"error: feed directory not found: {feedDir}");
+                exitCode = 1;
+                return true;
+            }
+
+            var currentVersion =
+                Environment.GetEnvironmentVariable(CheckUpdateCurrentVersionEnvVar) is { Length: > 0 } v
+                    ? v
+                    : "0.0.1";
+
+            var manager = Updates.VelopackUpdateManager.ForLocalFeed(
+                feedDir,
+                VelopackAppId,
+                currentVersion,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<Updates.VelopackUpdateManager>.Instance);
+
+            // IsInstalled is forced true by the TestVelopackLocator in ForLocalFeed,
+            // so the check actually runs (the production gate is in AgentUpdateService).
+            var result = manager.CheckForUpdateAsync().GetAwaiter().GetResult();
+            WriteResult(result.IsUpdateAvailable
+                ? $"update-available: {result.TargetVersion}"
+                : "up-to-date");
+        }
+        catch (Exception ex)
+        {
+            WriteResult($"error: {ex.Message}");
+            exitCode = 1;
+        }
+        return true;
+    }
+
+    /// <summary>Return the argument value immediately following <paramref name="flag"/>, or null.</summary>
+    private static string? ArgValueAfter(string[] args, string flag)
+    {
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (string.Equals(args[i], flag, StringComparison.OrdinalIgnoreCase))
+                return args[i + 1];
+        }
+        return null;
     }
 
     private static int? ParsePortAfter(string[] args, string flag)

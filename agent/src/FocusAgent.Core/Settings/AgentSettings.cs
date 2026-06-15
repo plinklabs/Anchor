@@ -26,6 +26,42 @@ public sealed record RealtimeSettings
     public TimeSpan JoinConfirmationDuration { get; init; } = TimeSpan.FromSeconds(5);
 }
 
+public sealed record UpdateSettings
+{
+    public const string SectionName = "Update";
+
+    /// <summary>
+    /// Master switch for the Velopack auto-update check (#224). On by default so a
+    /// shipped agent keeps itself current; a fork or a locked-down deployment can
+    /// turn it off in config. The check is additionally a no-op whenever the agent
+    /// isn't a Velopack install (a `dotnet run` / self-test build), regardless of
+    /// this flag — see <c>AgentUpdateService</c>.
+    /// </summary>
+    public bool Enabled { get; init; } = true;
+
+    /// <summary>
+    /// The GitHub repository whose Releases carry the Velopack feed (the
+    /// <c>RELEASES</c> / delta+full nupkg the release pipeline uploads, #209).
+    /// Defaults to this project's repo; a fork ships its own here so its installed
+    /// agents update from the fork's releases, not upstream.
+    /// </summary>
+    public string GithubRepoUrl { get; init; } = "https://github.com/plinklabs/Anchor";
+
+    /// <summary>
+    /// Whether to treat GitHub pre-releases as update candidates. Off by default:
+    /// students track the stable line only.
+    /// </summary>
+    public bool AllowPrerelease { get; init; } = false;
+
+    /// <summary>
+    /// How often, after the startup check, the agent re-checks the feed. Default
+    /// 6h — frequent enough that a new tag reaches students within a school day,
+    /// rare enough to be invisible. Values &lt; 1 minute are clamped up so a
+    /// mis-set config can't busy-loop the check.
+    /// </summary>
+    public TimeSpan CheckInterval { get; init; } = TimeSpan.FromHours(6);
+}
+
 public sealed record DevSettings
 {
     public const string SectionName = "Dev";
