@@ -5,11 +5,12 @@ All resources live in a single resource group. Everything starts on free tiers; 
 ## Recommended: one-command bootstrap (`scripts/setup.ps1`)
 
 [`scripts/setup.ps1`](../scripts/setup.ps1) stands up a fork's whole cloud
-environment end to end: resource group → Entra app registrations → the Bicep
-deploy below (Option A is exactly the step this automates) → fetch the
+environment end to end: resource group → Entra app registrations (incl. their
+service principals) → the Bicep deploy → apply the OBO client secret → fetch the
 deployment credentials → write the GitHub Actions secrets/variables the deploy
-workflows consume. It then prints the one manual follow-up it cannot do for you
-(tenant admin-consent).
+workflows consume → grant Entra admin consent. This is the **only path you need
+for an automated install** — the alternatives further down are not extra steps
+to run on top of it.
 
 ```powershell
 ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf   # dry-run: prints the full plan, changes nothing
@@ -18,8 +19,12 @@ workflows consume. It then prints the one manual follow-up it cannot do for you
 
 It is **idempotent and resumable** (see [Re-running / resuming](#re-running--resuming))
 and can **adopt an environment that already exists** (see [Adopting an existing
-environment](#adopting-an-existing-environment)). Use Option A / Option B below
-only when you prefer to drive the pieces by hand.
+environment](#adopting-an-existing-environment)).
+
+The two **manual alternatives** below are substitutes for this script, not
+follow-up steps — reach for them only if you can't run it (e.g. you're not on
+Windows / PowerShell) or want to drive the pieces by hand. The Bicep section is
+also where every template parameter is documented.
 
 > Requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
 > and the [GitHub CLI](https://cli.github.com/), both logged in (`az login`,
@@ -85,7 +90,12 @@ value would reset it.
 > blocked until it is re-enabled, so pass `-EntraClientId` explicitly there
 > rather than relying on app-setting discovery.
 
-## Option A: Deploy with Bicep directly
+## Alternative: deploy with Bicep directly (no script)
+
+> Equivalent to the deploy step inside `scripts/setup.ps1`, minus the Entra,
+> credential-fetch and GitHub-wiring steps — use it only if you're driving those
+> by hand or can't run the script. Doubles as the reference for every template
+> parameter (see [Parameters](#parameters) below).
 
 Requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli).
 
@@ -185,9 +195,11 @@ Then redeploy with the same command.
 
 ---
 
-## Option B: Manual setup via Azure Portal
+## Alternative: manual setup via the Azure Portal
 
-If the CLI gives you trouble (TPM errors, etc.), create each resource manually in the portal. Everything goes into one resource group.
+> Also a substitute for the script, not a follow-up. Use it if the CLI gives you
+> trouble (TPM errors, etc.) — create each resource manually in the portal.
+> Everything goes into one resource group.
 
 ### 1. Resource group
 
