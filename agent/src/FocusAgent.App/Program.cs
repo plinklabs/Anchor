@@ -1,3 +1,4 @@
+using FocusAgent.App.Extension;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
@@ -61,6 +62,18 @@ public static class Program
     public const string ShowTestTrayMenuArg = "--show-test-traymenu";
 
     /// <summary>
+    /// Dev-only flag (#211): show the real <see cref="Extension.GuidedInstallWindow"/>
+    /// — the guided-install fallback shown when the per-user force-install policy
+    /// doesn't take — with no WAM / hub / coordinator bootstrap, and keep it up so
+    /// its ink surface can be screenshotted. The guided fallback is the primary path
+    /// on a policy-locked box (where the HKCU <c>Software\Policies</c> subtree is
+    /// ACL-restricted and the force-install write is denied), so it's a load-bearing
+    /// user-visible surface worth observing directly. Used by the visual e2e
+    /// (GuidedInstallVisualTests) and scripts/dev.
+    /// </summary>
+    public const string ShowTestGuidedInstallArg = "--show-test-guided-install";
+
+    /// <summary>
     /// Dev-only flag (#164): verify the design-system WinUI binding actually
     /// merged into the agent's <c>App.xaml</c> at runtime — a brush from the
     /// merged dictionary resolves, the bundled font resource resolves, and the
@@ -114,11 +127,38 @@ public static class Program
     /// </summary>
     public const string SimulateInPrivateArg = "--simulate-inprivate";
 
+    /// <summary>
+    /// Dev-only flag (#211): write the per-user Edge force-install policy
+    /// (<c>ExtensionInstallForcelist</c>) for Anchor's extension, print the
+    /// resulting registry state, and exit — no WAM / hub / UI bootstrap. Drives the
+    /// <em>real</em> registry-write path so the integration test can assert the
+    /// HKCU value is actually written on a clean box (the one real-world
+    /// uncertainty the issue flags). Pair with <see cref="ExtensionPolicyKeyEnvVar"/>
+    /// to point the write at a throwaway HKCU subtree instead of the live Edge key.
+    /// </summary>
+    public const string RegisterExtensionArg = "--register-extension";
+
+    /// <summary>
+    /// Dev-only flag (#211): the inverse of <see cref="RegisterExtensionArg"/> —
+    /// remove Anchor's force-install policy entry (the uninstall path) and exit.
+    /// Lets the integration test prove the entry is cleaned up on uninstall.
+    /// </summary>
+    public const string UnregisterExtensionArg = "--unregister-extension";
+
+    /// <summary>
+    /// Dev-only env var (#211): an HKCU-relative key path that overrides the
+    /// production forcelist key for <see cref="RegisterExtensionArg"/> /
+    /// <see cref="UnregisterExtensionArg"/>, so the integration test writes to a
+    /// throwaway subtree and never disturbs a dev's real Edge policy.
+    /// </summary>
+    public const string ExtensionPolicyKeyEnvVar = "ANCHOR_EXTENSION_POLICY_KEY";
+
     public static bool ShowTestToast { get; private set; }
     public static bool ShowTestOverlay { get; private set; }
     public static bool ShowTestMainWindow { get; private set; }
     public static bool ShowTestJoinByCode { get; private set; }
     public static bool ShowTestTrayMenu { get; private set; }
+    public static bool ShowTestGuidedInstall { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
@@ -135,13 +175,28 @@ public static class Program
         // runs for a normal launch. `vpk pack` also refuses to package a build
         // whose entrypoint doesn't call this. The auto-update *check*
         // (UpdateManager against the GitHub Releases feed) is a tracked follow-up.
-        VelopackApp.Build().Run();
+        VelopackApp.Build()
+            // #211: un-pin the force-installed extension when the agent is
+            // uninstalled. Velopack fires this hook on the uninstall launch
+            // (before the files go away), so the agent removes the HKCU forcelist
+            // entry it wrote — leaving the box as it found it. Best-effort: a
+            // failure here must not block the uninstall.
+            .OnBeforeUninstallFastCallback(_ => ExtensionRegistration.RemovePolicyForUninstall())
+            .Run();
+
+        // #211: dev-only register/unregister modes. These drive the real registry
+        // write/remove and exit, so the integration test can assert the HKCU policy
+        // value end-to-end. Handled before any WinUI bootstrap (and before single-
+        // instance gating) since they neither show UI nor need a running agent.
+        if (TryRunExtensionPolicyMode(args, out var exitCode))
+            return exitCode;
 
         ShowTestToast = args.Any(a => string.Equals(a, ShowTestToastArg, StringComparison.OrdinalIgnoreCase));
         ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
         ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
         ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestGuidedInstall = args.Any(a => string.Equals(a, ShowTestGuidedInstallArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
@@ -152,7 +207,7 @@ public static class Program
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !VerifyDsTheme)
+        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)
@@ -170,6 +225,41 @@ public static class Program
         });
 
         return 0;
+    }
+
+    /// <summary>
+    /// Handle the dev-only <c>--register-extension</c> / <c>--unregister-extension</c>
+    /// modes (#211): perform the real HKCU forcelist write/remove (against an
+    /// optional throwaway key from <see cref="ExtensionPolicyKeyEnvVar"/>), print the
+    /// resulting state for the harness to read, and signal the caller to exit.
+    /// Returns false (and leaves <paramref name="exitCode"/> unset) for a normal
+    /// launch so <see cref="Main"/> proceeds to the WinUI bootstrap.
+    /// </summary>
+    private static bool TryRunExtensionPolicyMode(string[] args, out int exitCode)
+    {
+        exitCode = 0;
+        var register = args.Any(a => string.Equals(a, RegisterExtensionArg, StringComparison.OrdinalIgnoreCase));
+        var unregister = args.Any(a => string.Equals(a, UnregisterExtensionArg, StringComparison.OrdinalIgnoreCase));
+        if (!register && !unregister) return false;
+
+        var keyOverride = Environment.GetEnvironmentVariable(ExtensionPolicyKeyEnvVar);
+        try
+        {
+            if (register)
+                ExtensionRegistration.WriteForcelistPolicy(keyOverride);
+            else
+                ExtensionRegistration.RemoveForcelistPolicy(keyOverride);
+
+            // Echo the resulting entries so the harness can assert on stdout too.
+            foreach (var entry in ExtensionRegistration.ReadForcelistEntries(keyOverride))
+                Console.WriteLine($"forcelist: {entry}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"extension-policy mode failed: {ex.Message}");
+            exitCode = 1;
+        }
+        return true;
     }
 
     private static int? ParsePortAfter(string[] args, string flag)

@@ -1,5 +1,6 @@
 using FocusAgent.App.Auth;
 using FocusAgent.App.Connectivity;
+using FocusAgent.App.Extension;
 using FocusAgent.App.Focus;
 using FocusAgent.App.Realtime;
 using FocusAgent.App.Sessions;
@@ -7,6 +8,7 @@ using FocusAgent.App.Tamper;
 using FocusAgent.App.Tray;
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Logging;
 using FocusAgent.Core.Realtime;
@@ -37,6 +39,7 @@ public partial class App : Application
     private SessionCoordinator? _coordinator;
     private SessionHeartbeatService? _heartbeat;
     private ExtensionWitnessMonitor? _witnessMonitor;
+    private ExtensionSelfRegistrar? _extensionRegistrar;
     private InPrivateWitnessMonitor? _inPrivateMonitor;
     private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
@@ -85,6 +88,12 @@ public partial class App : Application
             return;
         }
 
+        if (Program.ShowTestGuidedInstall)
+        {
+            RunGuidedInstallSelfTest();
+            return;
+        }
+
         if (Program.VerifyDsTheme)
         {
             RunDsThemeVerification();
@@ -117,6 +126,14 @@ public partial class App : Application
             // session. Reports only fire on a drop during a joined session.
             _witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
             _ = _witnessMonitor.StartAsync();
+            // #211: self-register the Edge extension. Write the per-user force-
+            // install policy, then (after the witness pipe is listening above so the
+            // check-in can be observed) wait the grace period and, if the extension
+            // never checks in, open the guided install. Fire-and-forget: the grace
+            // wait must never block startup, and a failure can only fall back to the
+            // guided window, never crash the agent.
+            _extensionRegistrar = _host.Services.GetRequiredService<ExtensionSelfRegistrar>();
+            _ = _extensionRegistrar.RegisterAndVerifyAsync();
             // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
             // SessionLeft subscriptions are wired before the first session — the
             // poll loop starts on join and reports any open Edge InPrivate window.
@@ -531,6 +548,36 @@ public partial class App : Application
         dispatcher.TryEnqueue(ShowMenu);
     }
 
+    // Held by the --show-test-guided-install path so the window outlives OnLaunched.
+    private Extension.GuidedInstallWindow? _guidedInstallSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#211): show the real <see cref="Extension.GuidedInstallWindow"/>
+    /// — the guided-install fallback — against a no-op store launcher, with no WAM /
+    /// hub / coordinator bootstrap, and keep the process alive so the visual e2e
+    /// (GuidedInstallVisualTests) and scripts/dev can screenshot its ink surface.
+    /// The window's rendering path is production code; only the store-launch side
+    /// effect is a synthetic no-op (so the self-test never spawns Edge). This
+    /// fallback is the primary path on a policy-locked box where the HKCU force-
+    /// install write is denied, so it's a load-bearing surface worth observing.
+    /// </summary>
+    private void RunGuidedInstallSelfTest()
+    {
+        // Like the other window self-tests: explicit shutdown so the process stays
+        // up after the window is shown; the observer kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        _guidedInstallSelfTestWindow = new Extension.GuidedInstallWindow(new NoOpStoreLauncher());
+        Sessions.DialogWindowPositioner.ConfigureAndShow(_guidedInstallSelfTestWindow);
+    }
+
+    /// <summary>A store launcher that does nothing — the self-test renders the
+    /// guided window's resting ink surface and never actually opens Edge.</summary>
+    private sealed class NoOpStoreLauncher : IStoreLauncher
+    {
+        public void OpenStoreListing(string storeUrl) { }
+    }
+
     /// <summary>
     /// Dev-only path (#164): assert the design-system WinUI binding actually
     /// resolved in the agent's own runtime — the merged dictionary's brushes are
@@ -801,6 +848,30 @@ public partial class App : Application
         else
             builder.Services.AddSingleton<IBrowserWindowScanner, BrowserWindowScanner>();
         builder.Services.AddSingleton<InPrivateWitnessMonitor>();
+
+        // #211 -- self-register the Edge extension. On first run the agent writes
+        // the per-user ExtensionInstallForcelist policy so Edge force-installs +
+        // pins the canonical listing (#210); the witness monitor's connected state
+        // is the success signal, and if the extension hasn't checked in within the
+        // grace period the guided-install window opens the store. The store launch
+        // and registry write are the real platform implementations; the registrar
+        // itself is pure (unit-tested).
+        builder.Services.AddSingleton<IExtensionPolicyStore>(
+            sp => new RegistryExtensionPolicyStore(
+                keyPathOverride: null,
+                sp.GetRequiredService<ILogger<RegistryExtensionPolicyStore>>()));
+        builder.Services.AddSingleton<IStoreLauncher>(
+            sp => new EdgeStoreLauncher(sp.GetRequiredService<ILogger<EdgeStoreLauncher>>()));
+        builder.Services.AddSingleton(sp => new ExtensionSelfRegistrar(
+            sp.GetRequiredService<IExtensionPolicyStore>(),
+            // Success signal: the extension has connected over the witness link.
+            extensionCheckedIn: () => sp.GetRequiredService<ExtensionWitnessMonitor>().IsConnected,
+            // Fallback: open the guided one-click install on the UI thread.
+            showGuidedInstall: ct => sp.GetRequiredService<GuidedInstallLauncher>().ShowAsync(ct),
+            log: sp.GetRequiredService<ILogger<ExtensionSelfRegistrar>>()));
+        builder.Services.AddSingleton(sp => new GuidedInstallLauncher(
+            sp.GetRequiredService<DispatcherQueue>(),
+            sp.GetRequiredService<IStoreLauncher>()));
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();
         Directory.CreateDirectory(logDir);

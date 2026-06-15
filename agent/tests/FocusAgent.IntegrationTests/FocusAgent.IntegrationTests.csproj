@@ -33,4 +33,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- #211: assert the registry write against the canonical policy constants
+         (EdgeExtensionPolicy) the agent itself uses, so the spec can't drift from
+         the shipped extension id / update-url / forcelist value. -->
+    <ProjectReference Include="..\..\src\FocusAgent.Core\FocusAgent.Core.csproj" />
+  </ItemGroup>
+
 </Project>

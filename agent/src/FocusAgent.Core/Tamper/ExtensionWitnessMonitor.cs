@@ -49,6 +49,18 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
 
     public Task StartAsync(CancellationToken ct = default) => _transport.StartAsync(ct);
 
+    /// <summary>
+    /// True while the extension's witness host is connected — i.e. the extension
+    /// is installed and running. <see cref="FocusAgent.Core.Extension.ExtensionSelfRegistrar"/>
+    /// reads this as the success signal for the force-install policy (#211): if it
+    /// stays false past the grace period, the policy didn't take and the guided
+    /// install is shown.
+    /// </summary>
+    public bool IsConnected
+    {
+        get { lock (_gate) return _connected; }
+    }
+
     private void OnConnected(object? sender, EventArgs e)
     {
         lock (_gate) _connected = true;

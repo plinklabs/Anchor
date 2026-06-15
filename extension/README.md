@@ -406,6 +406,30 @@ HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallAllowlist
 
 paired with a developer-mode-loaded unpacked extension at a known path.
 
-Actual registry-script generation is a follow-up issue once the extension ID
-is pinned and we've decided whether to host the `.crx` ourselves or publish
-to the Edge Add-ons private listing (see [focus-system-design.md](../focus-system-design.md) §6).
+### Agent self-registration (BYOD, no admin) — #211
+
+Anchor is unmanaged BYOD, so there's no MDM to push the `HKLM` policy above. The
+agent instead writes the **per-user** force-install policy itself on first run
+(see `FocusAgent.Core.Extension.EdgeExtensionPolicy` /
+`ExtensionSelfRegistrar`), pointed at the canonical Edge Add-ons store:
+
+```
+HKCU\Software\Policies\Microsoft\Edge\ExtensionInstallForcelist
+  1 = REG_SZ  akkfdaclmpfcnjalcifkcbhgjnnopman;https://edge.microsoft.com/extensionwebstorebase/v1/crx
+```
+
+The agent removes its entry on uninstall (a Velopack `OnBeforeUninstall` hook).
+The existing mutual agent↔extension witness link is the success signal: after
+writing the policy and a grace period, if the extension hasn't checked in the
+agent opens a **guided-install** window that launches Edge at the store listing
+(`GET → Add`).
+
+> **Real-world caveat (verified while building #211):** the per-user
+> `HKCU\Software\Policies` subtree is often **ACL-locked** — on a standard
+> Windows profile, creating a key under it is denied (`UnauthorizedAccessException`)
+> even though it's HKCU. On such a box the force-install write fails and the
+> **guided install is the primary path** (which is exactly why it exists). The
+> agent catches the denial and falls back automatically; it never blocks startup.
+
+Where the policy subtree *is* writable (or pre-provisioned by IT), the force-
+install takes and the extension installs with no `Add` click.
