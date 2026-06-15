@@ -1,0 +1,84 @@
+name: Infra CI
+
+# Compile and lint the Azure Bicep template so a malformed or non-linting
+# infra change is caught in CI rather than at `az deployment` time. Path-filtered
+# to infra changes (and this workflow), mirroring the other CI legs, and wired
+# into the CI Gate so it is waited on only when infra actually changes.
+#
+# `az bicep build` performs a full compile and runs the Bicep linter. The repo's
+# bicepconfig.json promotes the linter rules we care about to errors, so a lint
+# violation fails the build (non-zero exit) and therefore the job.
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/infra-ci.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/infra-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep CLI
+        run: az bicep install
+
+      - name: Build + lint Bicep
+        run: az bicep build --file infra/main.bicep --outfile "${RUNNER_TEMP}/main.json"
+
+      - name: Assert required parameters and outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          json="${RUNNER_TEMP}/main.json"
+
+          require_param() {
+            if ! jq -e ".parameters | has(\"$1\")" "$json" >/dev/null; then
+              echo "::error::missing parameter $1"; exit 1
+            fi
+          }
+          require_output() {
+            if ! jq -e ".outputs | has(\"$1\")" "$json" >/dev/null; then
+              echo "::error::missing output $1"; exit 1
+            fi
+          }
+          # App Service application setting must be present in the compiled template.
+          require_appsetting() {
+            if ! jq -e \
+              "[.resources[] | select(.type==\"Microsoft.Web/sites\") | .properties.siteConfig.appSettings[].name] | index(\"$1\")" \
+              "$json" >/dev/null; then
+              echo "::error::missing App Service appSetting $1"; exit 1
+            fi
+          }
+
+          # Fork-parameterization contract (issue #212): no hardcoded names/IDs.
+          for p in sqlServerName sqlDatabaseName appServiceName appServicePlanName \
+                   signalrName staticWebAppName entraTenantId entraClientId \
+                   entraAudience entraInstance dashboardCorsOriginOverride; do
+            require_param "$p"
+          done
+
+          # Setup-script outputs the fork bootstrap consumes.
+          for o in resourceGroup appServiceName appServiceUrl staticWebAppName \
+                   swaUrl sqlServerName sqlServerFqdn sqlDatabaseName signalrName \
+                   signalrHostName entraTenantId entraClientId entraAudience \
+                   dashboardCorsOrigin; do
+            require_output "$o"
+          done
+
+          # Entra + CORS must be delivered as App Service settings, not committed config.
+          for s in AzureAd__Instance AzureAd__TenantId AzureAd__ClientId \
+                   AzureAd__Audience Cors__AllowedOrigins__0; do
+            require_appsetting "$s"
+          done
+
+          echo "Bicep parameter/output/appSetting contract verified."

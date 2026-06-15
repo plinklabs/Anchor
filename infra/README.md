@@ -17,10 +17,38 @@ az group create --name anchor-rg --location westeurope
 az deployment group create \
   --resource-group anchor-rg \
   --template-file infra/main.bicep \
-  --parameters sqlAdminPassword='<pick-a-strong-password>'
+  --parameters sqlAdminPassword='<pick-a-strong-password>' \
+               entraTenantId='<your-tenant-guid>' \
+               entraClientId='<your-api-app-client-guid>'
 ```
 
-The deployment takes ~3 minutes and outputs the URLs for the App Service, SignalR, SQL Server, and Static Web App.
+The deployment takes ~3 minutes and outputs the resource names + URLs for the
+App Service, SignalR, SQL Server, and Static Web App, plus the Entra/CORS values
+it applied — everything the fork bootstrap (`scripts/setup.ps1`) consumes.
+
+### Parameters
+
+Every name and identifier is a parameter, so a fork stands up its own
+environment from parameters alone (no `arcadia` assumptions). The defaults
+reproduce the live `anchor-rg` deployment, so the original environment still
+deploys with no extra arguments.
+
+| Parameter | Default | Purpose |
+|---|---|---|
+| `uniqueSuffix` | `arcadia` | Suffix for globally-unique names; drives the resource-name defaults below. |
+| `sqlServerName` / `sqlDatabaseName` | `anchor-sql-<suffix>` / `anchordb` | SQL logical server + database name. |
+| `appServiceName` / `appServicePlanName` | `anchor-api-<suffix>` / `ASP-anchorrg-b49b` | Backend App Service + plan name. |
+| `signalrName` / `staticWebAppName` | `anchor-signalr` / `anchor-dashboard` | SignalR + dashboard SWA name. |
+| `entraTenantId` / `entraClientId` | empty | Entra tenant + API app-registration client ID. Required for a working deploy; applied as App Service settings (`AzureAd__TenantId` / `AzureAd__ClientId`). |
+| `entraAudience` | `api://<entraClientId>` | JWT audience the API validates. |
+| `entraInstance` | current cloud login endpoint | Entra authority. |
+| `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin for the dashboard SPA (`Cors__AllowedOrigins__0`). |
+| `sqlAdminLogin` / `sqlAdminPassword` | `anchoradmin` / *(required, secure)* | SQL admin credentials. |
+
+Bicep applies the Entra IDs and CORS origin as **App Service application
+settings** (double-underscore form), so the deployed API gets its
+environment-specific config from the infra rather than from committed
+`appsettings.json` (pairs with the config-externalization work, issue #201).
 
 To tear it all down:
 
@@ -135,8 +163,18 @@ Default names below assume `uniqueSuffix=arcadia` (the live `anchor-rg` deployme
 
 ---
 
+## Outputs
+
+The deployment emits everything the fork bootstrap (`scripts/setup.ps1`) needs
+to populate GitHub secrets/variables, without re-querying Azure:
+
+`resourceGroup`, `location`, `appServiceName`, `appServiceUrl`,
+`staticWebAppName`, `swaUrl`, `sqlServerName`, `sqlServerFqdn`,
+`sqlDatabaseName`, `signalrName`, `signalrHostName`, and the applied
+`entraTenantId` / `entraClientId` / `entraAudience` / `dashboardCorsOrigin`.
+
 ## What's NOT provisioned here
 
-- **Entra ID app registrations** — needed for auth. These are created in the Azure AD / Entra portal, not via resource deployment. Set up when you start implementing auth.
+- **Entra ID app registrations** — the app registrations themselves are created in the Azure AD / Entra portal (or by `scripts/setup.ps1`), not via resource deployment. Their IDs are *passed into* this template (`entraTenantId` / `entraClientId`) and applied as App Service settings.
 - **Custom domains** — add later if you want `anchor.yourschool.be` instead of the auto-generated Azure URLs.
 - **GitHub Actions deployment** — configure after the backend and dashboard projects exist.
