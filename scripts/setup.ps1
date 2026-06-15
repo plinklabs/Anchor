@@ -281,8 +281,22 @@ function Get-AppServiceSetting {
     $json = Invoke-AzRead @('webapp', 'config', 'appsettings', 'list', '--name', $Name, '--resource-group', $ResourceGroup, '-o', 'json')
     if (-not $json) { return $null }
     $map = @{}
-    foreach ($s in ($json | ConvertFrom-Json)) { $map[$s.name] = $s.value }
+    foreach ($s in ($json | ConvertFrom-Json)) {
+        if ($s.PSObject.Properties.Name -contains 'name') { $map[$s.name] = $s.value }
+    }
     return $map
+}
+
+# StrictMode-safe property equality on a (possibly null / shapeless) object:
+# returns $false rather than throwing when the property is absent. `az` returns
+# an empty array `[]` for an app with no scopes / secrets / permissions, and
+# under Set-StrictMode -Version Latest piping that into `Where-Object { $_.prop }`
+# throws PropertyNotFoundStrict — so all the JSON filters below go through here.
+function Test-Prop {
+    param($Object, [string]$Name, $Value)
+    if ($null -eq $Object) { return $false }
+    if ($Object.PSObject.Properties.Name -notcontains $Name) { return $false }
+    return $Object.$Name -eq $Value
 }
 
 # Id of the existing access_as_user delegated scope on an app, or $null.
@@ -290,8 +304,9 @@ function Get-AccessAsUserScopeId {
     param([string]$AppId)
     $json = Invoke-AzRead @('ad', 'app', 'show', '--id', $AppId, '--query', 'api.oauth2PermissionScopes', '-o', 'json')
     if (-not $json) { return $null }
-    $match = @($json | ConvertFrom-Json | Where-Object { $_.value -eq 'access_as_user' })
-    if ($match.Count -gt 0) { return $match[0].id }
+    foreach ($scope in ($json | ConvertFrom-Json)) {
+        if (Test-Prop $scope 'value' 'access_as_user') { return $scope.id }
+    }
     return $null
 }
 
@@ -300,7 +315,10 @@ function Test-ClientSecret {
     param([string]$AppId, [string]$DisplayName)
     $json = Invoke-AzRead @('ad', 'app', 'credential', 'list', '--id', $AppId, '-o', 'json')
     if (-not $json) { return $false }
-    return [bool](@($json | ConvertFrom-Json | Where-Object { $_.displayName -eq $DisplayName }).Count)
+    foreach ($cred in ($json | ConvertFrom-Json)) {
+        if (Test-Prop $cred 'displayName' $DisplayName) { return $true }
+    }
+    return $false
 }
 
 # True if the app already requests $PermissionId on $ResourceAppId.
@@ -309,8 +327,9 @@ function Test-PermissionGranted {
     $json = Invoke-AzRead @('ad', 'app', 'show', '--id', $AppId, '--query', 'requiredResourceAccess', '-o', 'json')
     if (-not $json) { return $false }
     foreach ($r in ($json | ConvertFrom-Json)) {
-        if ($r.resourceAppId -eq $ResourceAppId -and (@($r.resourceAccess | Where-Object { $_.id -eq $PermissionId }).Count)) {
-            return $true
+        if (-not (Test-Prop $r 'resourceAppId' $ResourceAppId)) { continue }
+        foreach ($access in $r.resourceAccess) {
+            if (Test-Prop $access 'id' $PermissionId) { return $true }
         }
     }
     return $false
