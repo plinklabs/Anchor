@@ -521,18 +521,25 @@ else {
         # az ad app update --set api=... requires a JSON value; write to a temp file
         # to avoid shell-quoting issues with native arg parsing.
         if ($PSCmdlet.ShouldProcess($apiClientId, 'expose access_as_user scope')) {
+            # PATCH by directory object id, not the applications(appId='...')
+            # form: those parentheses are passed through the Windows az.cmd
+            # wrapper to cmd.exe, which treats ( ) as special and fails the call
+            # with "--headers was unexpected at this time". The object-id URL has
+            # no parens and parses cleanly.
+            $objectId = Invoke-AzRead @('ad', 'app', 'show', '--id', $apiClientId, '--query', 'id', '-o', 'tsv')
+            if (-not $objectId) { throw "Could not resolve the directory object id for app $apiClientId" }
             $tmp = New-TemporaryFile
             try {
                 Set-Content -LiteralPath $tmp -Value $apiBodyJson -Encoding UTF8
                 Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PATCH',
-                    '--url', "https://graph.microsoft.com/v1.0/applications(appId='$apiClientId')",
+                    '--url', "https://graph.microsoft.com/v1.0/applications/$objectId",
                     '--headers', 'Content-Type=application/json',
                     '--body', "@$tmp", '-o', 'none') -Target $apiClientId -Action 'patch API scope'
             }
             finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
         }
         else {
-            Write-Host "    DRYRUN  PATCH applications(appId='$apiClientId') api.oauth2PermissionScopes += access_as_user" -ForegroundColor DarkGray
+            Write-Host "    DRYRUN  PATCH applications/<object-id> api.oauth2PermissionScopes += access_as_user" -ForegroundColor DarkGray
         }
     }
 
