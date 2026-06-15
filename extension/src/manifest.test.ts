@@ -19,7 +19,7 @@ function pngSize(buf: Buffer): { width: number; height: number } {
 // regenerated — which would silently break every deployed policy entry.
 //
 // The canonical id is documented in extension/README.md ("Stable extension ID").
-const STABLE_EXTENSION_ID = 'akkfdaclmpfcnjalcifkcbhgjnnopman';
+const STABLE_EXTENSION_ID = 'dnkimhodjfogjibnbbfdjdapgmmiojio';
 
 const manifest = JSON.parse(readFileSync(fileURLToPath(manifestUrl), 'utf8')) as {
   key?: string;

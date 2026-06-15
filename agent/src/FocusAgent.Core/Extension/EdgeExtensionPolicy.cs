@@ -24,7 +24,7 @@ public static class EdgeExtensionPolicy
     /// build and machine, which is exactly what lets a per-user policy pin it — a
     /// policy keys an extension by ID.
     /// </summary>
-    public const string ExtensionId = "akkfdaclmpfcnjalcifkcbhgjnnopman";
+    public const string ExtensionId = "dnkimhodjfogjibnbbfdjdapgmmiojio";
 
     /// <summary>
     /// The Edge Add-ons store update manifest. Edge resolves the pinned listing

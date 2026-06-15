@@ -45,7 +45,7 @@ export const E2E_DB_PATH = path.join(os.tmpdir(), 'anchor-e2e.db');
  * and locked by src/manifest.test.ts (manifest key → id). If you regenerate the
  * signing key, update all three together.
  */
-export const STABLE_EXTENSION_ID = 'akkfdaclmpfcnjalcifkcbhgjnnopman';
+export const STABLE_EXTENSION_ID = 'dnkimhodjfogjibnbbfdjdapgmmiojio';
 
 // --- Seeded dev identities (mirror DevDataSeeder) -------------------------
 export const TEACHER_OID = '11111111-1111-1111-1111-111111111111';

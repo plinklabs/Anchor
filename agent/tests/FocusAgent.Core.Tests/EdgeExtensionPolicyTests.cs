@@ -17,7 +17,7 @@ public class EdgeExtensionPolicyTests
     {
         // Locks the ID to extension/README.md's pinned stable ID. A drift here
         // would write a policy that pins the wrong (or no) extension.
-        Assert.Equal("akkfdaclmpfcnjalcifkcbhgjnnopman", EdgeExtensionPolicy.ExtensionId);
+        Assert.Equal("dnkimhodjfogjibnbbfdjdapgmmiojio", EdgeExtensionPolicy.ExtensionId);
     }
 
     [Fact]
@@ -29,10 +29,10 @@ public class EdgeExtensionPolicyTests
     }
 
     [Theory]
-    [InlineData("akkfdaclmpfcnjalcifkcbhgjnnopman;https://edge.microsoft.com/extensionwebstorebase/v1/crx", true)]
-    [InlineData("akkfdaclmpfcnjalcifkcbhgjnnopman", true)]                    // id only, no update-url
-    [InlineData("AKKFDACLMPFCNJALCIFKCBHGJNNOPMAN;https://x", true)]          // case-insensitive
-    [InlineData(" akkfdaclmpfcnjalcifkcbhgjnnopman ;https://x", true)]        // padded
+    [InlineData("dnkimhodjfogjibnbbfdjdapgmmiojio;https://edge.microsoft.com/extensionwebstorebase/v1/crx", true)]
+    [InlineData("dnkimhodjfogjibnbbfdjdapgmmiojio", true)]                    // id only, no update-url
+    [InlineData("DNKIMHODJFOGJIBNBBFDJDAPGMMIOJIO;https://x", true)]          // case-insensitive
+    [InlineData(" dnkimhodjfogjibnbbfdjdapgmmiojio ;https://x", true)]        // padded
     [InlineData("someotherextensionidaaaaaaaaaaaa;https://x", false)]         // different extension
     [InlineData("", false)]
     [InlineData(null, false)]
