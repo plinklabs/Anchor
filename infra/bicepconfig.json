@@ -1,0 +1,16 @@
+{
+  "$schema": "https://aka.ms/bicep/config-schema",
+  "analyzers": {
+    "core": {
+      "enabled": true,
+      "rules": {
+        "no-hardcoded-env-urls": { "level": "error" },
+        "no-unused-params": { "level": "error" },
+        "no-unused-vars": { "level": "error" },
+        "prefer-interpolation": { "level": "error" },
+        "secure-parameter-default": { "level": "error" },
+        "no-hardcoded-location": { "level": "off" }
+      }
+    }
+  }
+}
