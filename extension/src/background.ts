@@ -62,9 +62,10 @@ async function ensureHub(): Promise<void> {
   const settings = await loadSettings();
   if (!settings.devImpersonateOid) {
     // Production-style auth (chrome.identity / Entra token) is a follow-up
-    // issue. Without it, the dev impersonation fallback is the only way to
-    // authenticate against the hub. Refuse to connect rather than spin in a
-    // 401 loop.
+    // issue — when it lands, re-add the "identity" permission to manifest.json
+    // (dropped here because the Edge store rejects unused permissions). Without
+    // it, the dev impersonation fallback is the only way to authenticate against
+    // the hub. Refuse to connect rather than spin in a 401 loop.
     log.warn('no auth configured — refusing to connect to hub. Set devImpersonateOid in chrome.storage.local for dev.');
     return;
   }
