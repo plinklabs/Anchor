@@ -9,15 +9,16 @@ them in the portal / CLI yourself.
 
 It mirrors the script step for step and uses the **same names** the script and
 [`infra/main.bicep`](../infra/main.bicep) use, so a deploy works whether you ran
-the script or followed this by hand. Where a step **always** needs a human even
-when the script runs, it is flagged **[MANUAL]** — those are the steps the script
-itself only prints instructions for (admin consent, and adding the API client
-secret to the App Service).
+the script or followed this by hand. Steps that the script can only *attempt*
+(tenant admin-consent, which needs directory-admin rights) are flagged
+**[MAY NEED A HUMAN]** — the script tries them and prints the command to run by
+hand if it couldn't.
 
 Related references:
 
-- [`infra/README.md`](../infra/README.md) — Bicep deploy (Option A) and the
-  pure-portal resource walk-through (Option B), folded into Step 3 below.
+- [`infra/README.md`](../infra/README.md) — the direct-Bicep deploy and the
+  pure-portal resource walk-through (both manual alternatives to the script),
+  folded into Step 3 below.
 - [`docs/RELEASE.md`](RELEASE.md) — the deploy pipeline and the authoritative
   inventory of every secret/variable the workflows consume.
 - [ROADMAP.md](../ROADMAP.md) — where fork bootstrap (workstream D) fits.
@@ -50,18 +51,25 @@ Bicep; they are created in Entra and their IDs are passed *into* the deploy:
 something unique (e.g. your school) so globally-unique resource names don't
 collide with the original `arcadia` deployment. This guide uses `yourschool`.
 
-## What the script automates vs. what is always manual
+## What the script automates
 
-The script (`scripts/setup.ps1`) automates Steps 1–6 and 8 below. **Two things
-are always manual** even when the script runs — it only prints the commands:
+The script (`scripts/setup.ps1`) automates **all** the steps below — including
+the two that used to be manual:
 
-- **[MANUAL] Entra admin consent** — granting tenant-wide consent for the API
-  permissions (and for the SPA to call the API) needs a Global Administrator /
-  Privileged Role Administrator. See [Step 7](#step-7--grant-admin-consent-manual).
-- **[MANUAL] API client secret → App Service** — the OBO Graph directory-search
-  call needs the API app's client secret added as an App Service setting. The
-  script creates the secret and prints it once, but does not write it to the App
-  Service. See [Step 6c](#6c-add-the-api-client-secret-to-the-app-service-manual).
+- **API client secret → App Service** — the script mints the `anchor-obo` secret
+  and writes it to the App Service as `AzureAd__ClientCredentials` after the
+  deploy (re-applying it each run, since the Bicep deploy rewrites the App
+  Service's app settings). See [Step 6c](#6c-add-the-api-client-secret-to-the-app-service).
+- **Entra service principals** — created for both app registrations so admin
+  consent has a service to consent against. See [Step 3c](#3c-create-service-principals).
+
+**One step may still need a human:**
+
+- **[MAY NEED A HUMAN] Entra admin consent** — granting tenant-wide consent for
+  the API permissions (and for the SPA to call the API) needs a Global
+  Administrator / Privileged Role Administrator. The script attempts it and
+  prints the command to run by hand if it lacks the rights (or the new
+  registration hasn't replicated yet). See [Step 7](#step-7--grant-admin-consent-may-need-a-human).
 
 ## Prerequisites
 
@@ -155,7 +163,7 @@ az ad app credential reset --id "$API_CLIENT_ID" --append \
 ```
 
 Copy the printed secret value now — it is shown **once**. You'll add it to the App
-Service in [Step 6c](#6c-add-the-api-client-secret-to-the-app-service-manual).
+Service in [Step 6c](#6c-add-the-api-client-secret-to-the-app-service).
 
 ### 3b. Dashboard SPA app registration
 
@@ -186,13 +194,26 @@ the deploy produces the Static Web App URL.
 > no `api://` prefix (see the note in [`dashboard/lib/auth/msal_config.dart`](../dashboard/lib/auth/msal_config.dart)).
 > The two-app layout below matches what the script provisions.
 
+### 3c. Create service principals
+
+`az ad app create` makes only the application *object*. Admin consent (Step 7)
+can only be granted against an app that also has a **service principal** in the
+tenant — without one, consenting the SPA against the API fails with *"your
+organization has not subscribed to service(s) (&lt;api-client-id&gt;)"*. Create
+one for each registration (idempotent — skip any that already exists):
+
+```bash
+az ad sp create --id "$API_CLIENT_ID"
+az ad sp create --id "$SPA_CLIENT_ID"
+```
+
 ---
 
 ## Step 4 — Deploy the infrastructure (Bicep)
 
-This is `infra/README.md` Option A. It creates the SQL server + database, App
-Service + plan, SignalR, and the Static Web App, and wires the Entra/CORS values
-as App Service application settings.
+This is the direct-Bicep deploy from `infra/README.md`. It creates the SQL server
++ database, App Service + plan, SignalR, and the Static Web App, and wires the
+Entra/CORS values as App Service application settings.
 
 ```bash
 az deployment group create \
@@ -227,7 +248,7 @@ edits; the defaults reproduce the live `arcadia` deployment. (Full table in
 | `signalrName` / `staticWebAppName` | `anchor-signalr` / `anchor-dashboard` | SignalR + dashboard SWA. |
 
 > **Portal fallback (no CLI).** If `az` gives you trouble, create each resource by
-> hand following [`infra/README.md` Option B](../infra/README.md#option-b-manual-setup-via-azure-portal)
+> hand following the [portal walk-through in `infra/README.md`](../infra/README.md#alternative-manual-setup-via-the-azure-portal)
 > (SQL DB, App Service, SignalR, Static Web App), then add the App Service
 > application settings from [Step 6](#step-6--app-service-application-settings)
 > manually — Bicep would otherwise have wired them.
@@ -289,11 +310,13 @@ Step 4, add them yourself now — see the table in
 double-underscore form maps to .NET nested keys (`AzureAd__TenantId` →
 `AzureAd:TenantId`).
 
-### 6c. Add the API client secret to the App Service [MANUAL]
+### 6c. Add the API client secret to the App Service
 
-This is **never** done by Bicep or the deploy workflows. Add the API client secret
-from Step 3a so the on-behalf-of Graph **user-directory search** works (without it
-that call fails on first use — the API still starts):
+The script does this automatically (after the deploy, and re-applied on every
+run because Bicep rewrites the App Service's app settings). Do it by hand only if
+you're following this guide manually. It adds the API client secret from Step 3a
+so the on-behalf-of Graph **user-directory search** works (without it that call
+fails on first use — the API still starts):
 
 ```bash
 az webapp config appsettings set \
@@ -304,12 +327,19 @@ az webapp config appsettings set \
 
 (Or App Service → **Settings → Environment variables** → add the two settings.)
 
+> Bicep does **not** declare these two settings and overwrites the whole app-setting
+> collection on each deploy, so if you redeploy by hand you must re-apply them
+> afterwards (the script does this for you).
+
 ---
 
-## Step 7 — Grant admin consent [MANUAL]
+## Step 7 — Grant admin consent [MAY NEED A HUMAN]
 
-Tenant-wide admin consent requires a **Global Administrator / Privileged Role
-Administrator**. Run, as such an admin:
+The script attempts this automatically at the end of its run. It only lands in
+your lap if the account running it isn't a directory admin (or the brand-new
+registration/service-principal hasn't replicated yet) — in which case it prints
+these commands. Tenant-wide admin consent requires a **Global Administrator /
+Privileged Role Administrator**. Run, as such an admin:
 
 ```bash
 az ad app permission admin-consent --id "$API_CLIENT_ID"
@@ -319,6 +349,10 @@ az ad app permission admin-consent --id "$SPA_CLIENT_ID"
 Or in the portal: **Entra → App registrations → `<app>` → API permissions →
 Grant admin consent for `<tenant>`**. Do this for both registrations. You can
 finish the rest of the setup first and grant consent afterwards.
+
+> If consent fails with *"your organization has not subscribed to service(s)"*,
+> the API's service principal is missing — run [Step 3c](#3c-create-service-principals)
+> first, then retry.
 
 ---
 
@@ -413,7 +447,8 @@ is no separate migration step.
 You have a working fork when, following only this doc:
 
 - [ ] `az deployment group create` succeeds and outputs the resource names/URLs.
-- [ ] Both Entra registrations exist; admin consent is granted (Step 7).
+- [ ] Both Entra registrations exist, each with a service principal (Step 3c).
+- [ ] Admin consent is granted for both registrations (Step 7).
 - [ ] The API client secret is set on the App Service (Step 6c).
 - [ ] The two GitHub secrets and five GitHub variables are set (Step 8).
 - [ ] A push to `main` triggers the matching deploy leg, and the deployed

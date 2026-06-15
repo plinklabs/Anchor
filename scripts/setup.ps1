@@ -66,6 +66,11 @@
     Bicep `uniqueSuffix` parameter. Pick something fork-specific (e.g. your
     school) so you do not collide with the original `arcadia` names.
 
+.PARAMETER SqlAdminLogin
+    SQL administrator login. When omitted, an existing SQL server's current
+    login is reused (Azure does not allow changing it on an existing server),
+    and a brand-new server falls back to the Bicep default (anchoradmin).
+
 .PARAMETER SqlAdminPassword
     SQL admin password (SecureString). Required for a real deploy. Prompted
     securely if omitted and not a dry run.
@@ -141,6 +146,7 @@ param(
     [string]$StaticWebAppLocation,
     [Parameter(Mandatory)]
     [string]$UniqueSuffix,
+    [string]$SqlAdminLogin,
     [securestring]$SqlAdminPassword,
     [string]$Repo,
     [string]$ApiAppName,
@@ -335,6 +341,50 @@ function Test-PermissionGranted {
     return $false
 }
 
+# Ensure a service principal (enterprise app) exists for an app registration.
+# `az ad app create` only creates the application *object*; without an SP in the
+# tenant the app is not a consentable "service", so granting admin consent to a
+# client that depends on it fails with "your organization has not subscribed to
+# service(s) (<app-id>)". Idempotent: skip when the SP already exists.
+function Add-ServicePrincipal {
+    param([string]$AppId, [string]$Label)
+    if (-not $AppId -or $AppId -match '<') { return }
+    $existing = Invoke-AzRead @('ad', 'sp', 'show', '--id', $AppId, '--query', 'id', '-o', 'tsv')
+    if ($existing) {
+        Write-Host "    Service principal for $Label already exists — skipping."
+        return
+    }
+    Invoke-Native -Exe 'az' -ArgList @('ad', 'sp', 'create', '--id', $AppId, '-o', 'none') `
+        -Target $AppId -Action "create service principal for $Label"
+}
+
+# Attempt to grant tenant-wide admin consent, falling back to printing the
+# manual command. Consent genuinely requires a tenant admin (the script-runner
+# may only own the subscription) and can transiently fail while a brand-new
+# app/scope/SP replicates — so this is best-effort, not fatal.
+function Grant-AdminConsent {
+    param([string]$AppId, [string]$Label)
+    if (-not $AppId -or $AppId -match '<') { return }
+    if ($WhatIfPreference) {
+        Write-Host "    DRYRUN  az ad app permission admin-consent --id $AppId ($Label)" -ForegroundColor DarkGray
+        return
+    }
+    # Local 'Continue' so az's stderr under a native call doesn't throw a
+    # NativeCommandError while $ErrorActionPreference is 'Stop' (same guard as
+    # Invoke-AzRead). We branch on the exit code, not on $?.
+    $ErrorActionPreference = 'Continue'
+    $out = & az ad app permission admin-consent --id $AppId -o none 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "    Admin consent granted for $Label ($AppId)." -ForegroundColor Green
+    }
+    else {
+        Write-Warning "Could not grant admin consent for $Label automatically — a tenant admin must do it (or the new app/scope has not replicated yet; retry in a minute)."
+        Write-Host "        az ad app permission admin-consent --id $AppId" -ForegroundColor Yellow
+        Write-Host "    Or: Entra portal -> App registrations -> $Label -> API permissions -> Grant admin consent." -ForegroundColor Yellow
+        if ($out) { Write-Host "    ($($out | Select-Object -First 1))" -ForegroundColor DarkGray }
+    }
+}
+
 # ── Step 1: preflight ────────────────────────────────────────────────────────
 
 Write-Step 'Preflight — tooling and login'
@@ -365,13 +415,71 @@ if (-not $SkipGitHub) {
     Write-Host "    GitHub repo       : $Repo"
 }
 
-# SQL password is required for a real deploy (the deploy always passes it, so
-# when adopting an existing SQL server supply the *current* admin password — a
-# different value resets it). Not needed when the deploy is skipped.
+# SQL password is required for a real deploy (the deploy always passes it on
+# every run). Note this is a *new* password that the deploy will SET on the SQL
+# server — operators are not entering an existing one, and on a re-run it
+# overwrites whatever is there. Not needed when the deploy is skipped.
+#
+# Validate up front so we fail at the keyboard, not 90 seconds into the Bicep
+# deploy with Azure's opaque "PasswordNotComplex". Azure SQL requires 8-128
+# chars from at least 3 of {uppercase, lowercase, digit, symbol}. We also reject
+# characters that the Windows az.cmd wrapper re-parses through cmd.exe
+# (( ) & ^ | < > % ! ", quotes and spaces), which would corrupt the value before
+# it ever reaches Azure.
+function Test-SqlPasswordComplexity {
+    param([string]$Pw)
+    $problems = @()
+    if ($Pw.Length -lt 8 -or $Pw.Length -gt 128) {
+        $problems += 'must be 8-128 characters long'
+    }
+    $categories = 0
+    if ($Pw -cmatch '[A-Z]')            { $categories++ }
+    if ($Pw -cmatch '[a-z]')            { $categories++ }
+    if ($Pw -match  '[0-9]')            { $categories++ }
+    if ($Pw -match  '[^A-Za-z0-9]')     { $categories++ }
+    if ($categories -lt 3) {
+        $problems += 'must mix at least 3 of: uppercase, lowercase, digit, symbol'
+    }
+    # cmd.exe-unsafe set (plus space/quotes); '#' '$' '@' '*' '-' '_' '+' '=' are fine.
+    if ($Pw -match '[()&^|<>%! "''`]') {
+        $problems += 'must not contain spaces, quotes, or any of  ( ) & ^ | < > % ! `'
+    }
+    return $problems
+}
+
 $sqlPwPlain = ConvertFrom-SecureStringPlain $SqlAdminPassword
-if (-not $sqlPwPlain -and -not $WhatIfPreference -and -not $SkipInfra) {
-    $SqlAdminPassword = Read-Host -AsSecureString -Prompt 'SQL admin password'
-    $sqlPwPlain = ConvertFrom-SecureStringPlain $SqlAdminPassword
+if ($sqlPwPlain) {
+    # Supplied via -SqlAdminPassword: still validate so a bad value fails fast.
+    $issues = Test-SqlPasswordComplexity $sqlPwPlain
+    if ($issues) {
+        throw "The supplied -SqlAdminPassword is not valid: $($issues -join '; ')."
+    }
+}
+elseif (-not $WhatIfPreference -and -not $SkipInfra) {
+    Write-Host ''
+    Write-Host '  SQL admin password' -ForegroundColor Cyan
+    Write-Host '    This SETS the password for the SQL admin login. If the SQL server'
+    Write-Host '    already exists this OVERWRITES its current password — you are not'
+    Write-Host '    being asked for the existing one. Choose a fresh password.'
+    Write-Host '    Requirements: 8-128 chars, at least 3 of {UPPER, lower, digit, symbol}.'
+    Write-Host '    Avoid spaces, quotes and  ( ) & ^ | < > % ! `  (they break on Windows).'
+    while (-not $sqlPwPlain) {
+        $pw1 = Read-Host -AsSecureString -Prompt '    Enter SQL admin password'
+        $p1  = ConvertFrom-SecureStringPlain $pw1
+        $issues = Test-SqlPasswordComplexity $p1
+        if ($issues) {
+            Write-Warning ("    Password rejected: {0}. Try again." -f ($issues -join '; '))
+            continue
+        }
+        $pw2 = Read-Host -AsSecureString -Prompt '    Confirm SQL admin password'
+        $p2  = ConvertFrom-SecureStringPlain $pw2
+        if ($p1 -ne $p2) {
+            Write-Warning '    Passwords did not match. Try again.'
+            continue
+        }
+        $SqlAdminPassword = $pw1
+        $sqlPwPlain = $p1
+    }
 }
 
 # ── Step 2: resource group ───────────────────────────────────────────────────
@@ -419,13 +527,32 @@ $resolvedAppLocation     = Resolve-ResourceLocation $AppServiceLocation   $appSe
 $resolvedSignalrLocation = Resolve-ResourceLocation $SignalRLocation      $signalrNameGuess      'Microsoft.SignalRService/SignalR'
 $resolvedSwaLocation     = Resolve-ResourceLocation $StaticWebAppLocation $staticWebAppNameGuess 'Microsoft.Web/staticSites'
 
+# SQL admin login: explicit override > existing server's login > Bicep default.
+# Azure does not allow changing an existing server's administrator login, so a
+# redeploy MUST pass the current one (adopt-in-place, like the regions above).
+# $null means "don't pass it" → the Bicep default applies (fresh environments).
+$resolvedSqlLogin = $SqlAdminLogin
+if (-not $resolvedSqlLogin) {
+    $existingSqlLogin = Invoke-AzRead @('sql', 'server', 'show', '--name', $sqlServerNameGuess, '--resource-group', $ResourceGroup, '--query', 'administratorLogin', '-o', 'tsv')
+    if ($existingSqlLogin) {
+        $resolvedSqlLogin = $existingSqlLogin
+        Write-Host "    SQL server $sqlServerNameGuess admin login is '$resolvedSqlLogin' — reusing (login is immutable)."
+    }
+}
+
 # Adopt the live Entra wiring from the App Service if present.
 $existingClientId = $null
 $existingTenantId = $null
+# Capture any ClientCredentials secret already on the App Service NOW, before
+# the deploy rewrites the app-setting collection. App settings (unlike the
+# write-once Entra secret) are readable, so this is how a resume re-applies the
+# OBO secret when the Entra credential can no longer be displayed.
+$existingApiSecret = $null
 $existingSettings = Get-AppServiceSetting -Name $appServiceNameGuess
 if ($existingSettings) {
-    $existingClientId = $existingSettings['AzureAd__ClientId']
-    $existingTenantId = $existingSettings['AzureAd__TenantId']
+    $existingClientId  = $existingSettings['AzureAd__ClientId']
+    $existingTenantId  = $existingSettings['AzureAd__TenantId']
+    $existingApiSecret = $existingSettings['AzureAd__ClientCredentials__0__ClientSecret']
     if ($existingClientId) {
         Write-Host "    App Service already wired to AzureAd__ClientId $existingClientId — preserving."
     }
@@ -449,6 +576,9 @@ $apiClientId = if ($EntraClientId) { $EntraClientId } elseif ($existingClientId)
 $apiAppAdopted = [bool]$apiClientId
 $spaClientId = $SpaClientId
 $scopeId = $null
+# Set only when we mint a new OBO client secret this run (write-once — it cannot
+# be re-read later). Applied to the App Service after the deploy.
+$freshApiSecret = $null
 
 if ($SkipEntra) {
     Write-Step 'Entra app registrations — SKIPPED (-SkipEntra)'
@@ -503,21 +633,26 @@ else {
     }
     else {
         $scopeId = [guid]::NewGuid().ToString()
+        # oauth2PermissionScopes is a property of the application's `api`
+        # (apiApplication) entity, not a top-level property — Graph rejects a
+        # top-level form with "Invalid property 'oauth2PermissionScopes'".
         $apiBody = @{
-            oauth2PermissionScopes = @(
-                @{
-                    id                      = $scopeId
-                    adminConsentDescription = 'Allow the app to access the Anchor API on behalf of the signed-in user.'
-                    adminConsentDisplayName = 'Access Anchor API'
-                    userConsentDescription  = 'Allow the app to access the Anchor API on your behalf.'
-                    userConsentDisplayName  = 'Access Anchor API'
-                    value                   = 'access_as_user'
-                    type                    = 'User'
-                    isEnabled               = $true
-                }
-            )
+            api = @{
+                oauth2PermissionScopes = @(
+                    @{
+                        id                      = $scopeId
+                        adminConsentDescription = 'Allow the app to access the Anchor API on behalf of the signed-in user.'
+                        adminConsentDisplayName = 'Access Anchor API'
+                        userConsentDescription  = 'Allow the app to access the Anchor API on your behalf.'
+                        userConsentDisplayName  = 'Access Anchor API'
+                        value                   = 'access_as_user'
+                        type                    = 'User'
+                        isEnabled               = $true
+                    }
+                )
+            }
         }
-        $apiBodyJson = ($apiBody | ConvertTo-Json -Depth 6 -Compress)
+        $apiBodyJson = ($apiBody | ConvertTo-Json -Depth 8 -Compress)
         # az ad app update --set api=... requires a JSON value; write to a temp file
         # to avoid shell-quoting issues with native arg parsing.
         if ($PSCmdlet.ShouldProcess($apiClientId, 'expose access_as_user scope')) {
@@ -555,8 +690,13 @@ else {
         $apiSecret = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'credential', 'reset', '--id', $apiClientId, '--display-name', 'anchor-obo', '--query', 'password', '-o', 'tsv') -Capture `
             -Target $apiClientId -Action 'create API client secret'
         if ($apiSecret) {
-            Write-Manual "API client secret created. Add it to the App Service as AzureAd__ClientCredentials__0__SourceType=ClientSecret and AzureAd__ClientCredentials__0__ClientSecret=<value> (needed for the user-directory search OBO call). Value is printed once below."
-            Write-Host "    AzureAd__ClientCredentials secret: $apiSecret" -ForegroundColor DarkYellow
+            # Held for the post-deploy step, which writes it to the App Service as
+            # AzureAd__ClientCredentials (only needed for the OBO user-directory
+            # search). Echoed once so the operator has a copy — it cannot be
+            # re-displayed after this run.
+            $freshApiSecret = $apiSecret
+            Write-Host "    API client secret 'anchor-obo' created — will be applied to the App Service after the deploy."
+            Write-Host "    (Record it now; it cannot be re-displayed) AzureAd__ClientCredentials secret: $apiSecret" -ForegroundColor DarkYellow
         }
     }
 
@@ -594,6 +734,17 @@ else {
     }
 }
 
+# ── Step 3b: service principals ──────────────────────────────────────────────
+# Admin consent (the final step) can only be granted against apps that have a
+# service principal in the tenant. `az ad app create` makes only the application
+# object, so ensure an SP exists for each — otherwise consenting the SPA against
+# the API fails with "your organization has not subscribed to service(s)".
+if (-not $SkipEntra) {
+    Write-Step 'Service principals'
+    Add-ServicePrincipal -AppId $apiClientId -Label 'API'
+    Add-ServicePrincipal -AppId $spaClientId -Label 'dashboard SPA'
+}
+
 # ── Step 4: deploy Bicep ─────────────────────────────────────────────────────
 # Per-resource regions are passed explicitly (resolved in Step 2b) so an
 # existing resource keeps its region. Skipped entirely under -SkipInfra, in
@@ -619,6 +770,7 @@ else {
         "staticWebAppLocation=$resolvedSwaLocation"
     )
     if ($apiClientId) { $deployArgs += "entraClientId=$apiClientId" }
+    if ($resolvedSqlLogin) { $deployArgs += "sqlAdminLogin=$resolvedSqlLogin" }
     if ($sqlPwPlain) { $deployArgs += "sqlAdminPassword=$sqlPwPlain" }
     $deployArgs += @('--query', 'properties.outputs', '-o', 'json')
 
@@ -681,6 +833,39 @@ if (-not $SkipEntra -and $spaClientId -and ($swaUrl -notmatch '<')) {
 }
 elseif (-not $SkipEntra -and $spaClientId) {
     Write-Host '    SPA redirect URI deferred — SWA URL not yet known (re-run after the deploy completes).' -ForegroundColor DarkGray
+}
+
+# ── Step 5b: apply the API client secret to the App Service ──────────────────
+# The OBO directory-search secret lives as AzureAd__ClientCredentials app
+# settings. Bicep owns — and on every deploy fully rewrites — the App Service's
+# app-setting collection, and does not declare ClientCredentials, so it must be
+# (re)applied here after the deploy. Value source: the secret minted this run,
+# else the value Step 2b read off the App Service before the deploy overwrote it
+# (so a resume preserves it even though the Entra secret can't be re-displayed).
+if (-not $SkipEntra -and -not $WhatIfPreference -and ($appServiceName -notmatch '<')) {
+    $secretToApply = if ($freshApiSecret) { $freshApiSecret } else { $existingApiSecret }
+    if ($secretToApply) {
+        Write-Step 'Apply API client secret to App Service'
+        $credSettings = @(
+            @{ name = 'AzureAd__ClientCredentials__0__SourceType';   value = 'ClientSecret' }
+            @{ name = 'AzureAd__ClientCredentials__0__ClientSecret'; value = $secretToApply }
+        )
+        $credTmp = New-TemporaryFile
+        try {
+            # Pass via @file so a secret containing cmd-special characters is not
+            # mangled by the Windows az.cmd -> cmd.exe re-parse.
+            Set-Content -LiteralPath $credTmp -Value ($credSettings | ConvertTo-Json -Depth 4 -Compress) -Encoding UTF8
+            Invoke-Native -Exe 'az' -ArgList @('webapp', 'config', 'appsettings', 'set',
+                '--name', $appServiceName, '--resource-group', $ResourceGroup,
+                '--settings', "@$credTmp", '-o', 'none') `
+                -Target $appServiceName -Action 'apply AzureAd__ClientCredentials secret'
+            Write-Host '    AzureAd__ClientCredentials applied (OBO user-directory search enabled).'
+        }
+        finally { Remove-Item -LiteralPath $credTmp -Force -ErrorAction SilentlyContinue }
+    }
+    elseif ($apiAppAdopted) {
+        Write-Manual "No OBO client secret available to apply (the adopted API app's secret can't be re-read and none is on the App Service). If you need the user-directory search, run 'az ad app credential reset --id $apiClientId --display-name anchor-obo' and re-run this script."
+    }
 }
 
 # ── Step 6: deployment secrets (SWA token + publish profile) ──────────────────
@@ -765,21 +950,22 @@ else {
     Set-GhVariable -Name 'API_SCOPE'         -Value $apiScope
 }
 
-# ── Final: manual follow-ups ─────────────────────────────────────────────────
+# ── Step 8: grant Entra admin consent ────────────────────────────────────────
+# Attempted automatically (best-effort: needs a tenant admin and depends on the
+# service principals from Step 3b). Grant-AdminConsent prints the manual command
+# if it can't, so the run still finishes cleanly.
 
-Write-Step 'Done — remaining manual steps'
+Write-Step 'Grant Entra admin consent'
+if ($SkipEntra) {
+    Write-Manual 'Entra was skipped (-SkipEntra); grant admin consent manually for your API and SPA apps once wired.'
+}
+else {
+    Grant-AdminConsent -AppId $apiClientId -Label 'API'
+    Grant-AdminConsent -AppId $spaClientId -Label 'dashboard SPA'
+}
 
-Write-Manual 'Grant Entra admin consent (requires a tenant admin):'
-if (-not $SkipEntra -and $apiClientId) {
-    Write-Host "    az ad app permission admin-consent --id $apiClientId" -ForegroundColor Yellow
-}
-if (-not $SkipEntra -and $spaClientId) {
-    Write-Host "    az ad app permission admin-consent --id $spaClientId" -ForegroundColor Yellow
-}
-Write-Host '    Or: Entra portal -> App registrations -> <app> -> API permissions -> Grant admin consent.' -ForegroundColor Yellow
-Write-Manual 'Add the API client secret to the App Service as AzureAd__ClientCredentials (see above) if the user-directory search is needed.'
 Write-Host ''
-Write-Host 'Provisioning plan complete. Push to `main` to trigger the deploy workflows.' -ForegroundColor Green
+Write-Host 'Provisioning complete. Push to `main` to trigger the deploy workflows.' -ForegroundColor Green
 
 # Reaching here means success: every mutating step goes through Invoke-Native,
 # which throws (terminating, under $ErrorActionPreference='Stop') on failure. The

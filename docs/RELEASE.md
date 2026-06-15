@@ -348,7 +348,8 @@ Useful flags: `-Location` (primary region) plus per-resource overrides
 `-StaticWebAppLocation`); `-SkipInfra` to only (re-)wire GitHub against an
 existing deployment; `-EntraClientId` / `-SpaClientId` to adopt hand-built app
 registrations. See [infra/README.md](../infra/README.md) for the full flow,
-region constraints, and the manual admin-consent follow-up. The manual steps
+region constraints, and admin-consent (which the script attempts automatically,
+falling back to a printed command if the runner isn't a tenant admin). The steps
 below remain the fallback when you provision by hand.
 
 1. Provision Azure resources — [`infra/main.bicep`](../infra/main.bicep) (App

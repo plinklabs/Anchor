@@ -123,7 +123,7 @@ Output lands in `extension/dist/`. Load it via `edge://extensions` → **Develop
 
 ### Azure infrastructure
 
-See [infra/README.md](infra/README.md) — Bicep template (Option A) is the recommended path; portal walkthrough (Option B) is provided as a fallback.
+See [infra/README.md](infra/README.md) — the `scripts/setup.ps1` one-command bootstrap is the recommended path; a direct-Bicep deploy and a portal walkthrough are provided as manual alternatives.
 
 ## Contributing
 
