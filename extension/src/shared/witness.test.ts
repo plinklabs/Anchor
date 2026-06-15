@@ -185,6 +185,61 @@ describe('WitnessClient', () => {
     expect(ports[1].posted).toEqual([{ type: 'ping' }]);
   });
 
+  it('grows the reconnect backoff when the port drops with no message (#243)', () => {
+    // A *missing* native host doesn't throw: connectNative hands back a port
+    // that drops a moment later with no message. The backoff must grow each
+    // cycle (1s → 2s → 4s …) instead of pinning at 1s, which it did when
+    // open() reset the attempt counter on mere port creation.
+    const h = makeHarness();
+    const ports = [new h.FakePort(), new h.FakePort(), new h.FakePort()];
+    let i = 0;
+    const client = new WitnessClient({
+      connect: () => ports[i++],
+      onAgentUnavailable: vi.fn(),
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    ports[0].drop();
+    expect(h.pendingDelays()).toContain(1_000);
+    expect(h.runDue(1_000)).toBe(1);
+
+    ports[1].drop();
+    expect(h.pendingDelays()).toContain(2_000);
+    expect(h.runDue(2_000)).toBe(1);
+
+    ports[2].drop();
+    expect(h.pendingDelays()).toContain(4_000);
+  });
+
+  it('resets the backoff once the host relays a message (#243)', () => {
+    const h = makeHarness();
+    const ports = [new h.FakePort(), new h.FakePort(), new h.FakePort()];
+    let i = 0;
+    const client = new WitnessClient({
+      connect: () => ports[i++],
+      onAgentUnavailable: vi.fn(),
+      onAgentAvailable: vi.fn(),
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    // Grow the backoff with two message-less drops...
+    ports[0].drop();
+    expect(h.runDue(1_000)).toBe(1);
+    ports[1].drop();
+    expect(h.runDue(2_000)).toBe(1);
+
+    // ...now the host proves itself live with a message, then drops again: the
+    // next reconnect is back at the 1s base delay, not 4s.
+    ports[2].emit({ type: 'agent_available' });
+    ports[2].drop();
+    expect(h.pendingDelays()).toContain(1_000);
+    expect(h.pendingDelays()).not.toContain(4_000);
+  });
+
   it('schedules a reconnect when connectNative throws (host not registered)', () => {
     const h = makeHarness();
     const client = new WitnessClient({
