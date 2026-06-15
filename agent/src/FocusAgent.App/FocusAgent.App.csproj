@@ -55,9 +55,9 @@
     <!-- Velopack runtime (#209): the agent ships unpackaged via Velopack, whose
          install/update/uninstall lifecycle hooks are dispatched by
          VelopackApp.Build().Run() at the very top of Program.Main. `vpk pack`
-         also refuses to package a build that doesn't reference + call it. The
-         auto-update *check* (UpdateManager against the GitHub Releases feed) is a
-         tracked follow-up; this reference establishes the required bootstrap. -->
+         also refuses to package a build that doesn't reference + call it. #224
+         builds on this: the agent's UpdateManager (VelopackUpdateManager +
+         AgentUpdateService) checks the GitHub Releases feed and stages deltas. -->
     <PackageReference Include="Velopack" Version="1.2.0" />
   </ItemGroup>
 

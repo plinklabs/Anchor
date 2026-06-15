@@ -15,6 +15,8 @@ using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
 using FocusAgent.Core.Tamper;
+using FocusAgent.Core.Updates;
+using FocusAgent.App.Updates;
 using FocusAgent.Native;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -47,6 +49,7 @@ public partial class App : Application
     private ConnectionManager? _connection;
     private StatusEndpoint? _statusEndpoint;
     private JoinByCodeFlow? _joinByCodeFlow;
+    private AgentUpdateService? _updateService;
     // Held only by the --show-test-toast path so the logger outlives the
     // async show/decide chain rather than getting disposed at OnLaunched return.
     private ILoggerFactory? _testLoggerFactory;
@@ -188,6 +191,15 @@ public partial class App : Application
                     onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly));
                 _statusEndpoint.Start(port);
             }
+
+            // #224: start the Velopack auto-update cadence — a check shortly after
+            // startup, then every Update:CheckInterval. It no-ops unless this is a
+            // real Velopack install (so dev runs / the e2e are untouched), downloads
+            // deltas in the background, and stages them for the NEXT restart so a
+            // student is never interrupted mid-session. Resolved + started last so a
+            // slow first check can't delay the agent coming up.
+            _updateService = _host.Services.GetRequiredService<AgentUpdateService>();
+            _updateService.Start();
         }
         catch (Exception ex)
         {
@@ -775,6 +787,8 @@ public partial class App : Application
             .Bind(builder.Configuration.GetSection(SessionSettings.SectionName));
         builder.Services.AddOptions<DevSettings>()
             .Bind(builder.Configuration.GetSection(DevSettings.SectionName));
+        builder.Services.AddOptions<UpdateSettings>()
+            .Bind(builder.Configuration.GetSection(UpdateSettings.SectionName));
 
         builder.Services.AddSingleton(dispatcher);
         builder.Services.AddSingleton(TimeProvider.System);
@@ -872,6 +886,16 @@ public partial class App : Application
         builder.Services.AddSingleton(sp => new GuidedInstallLauncher(
             sp.GetRequiredService<DispatcherQueue>(),
             sp.GetRequiredService<IStoreLauncher>()));
+
+        // #224: Velopack auto-update. The manager wraps a real UpdateManager over
+        // the configured GitHub Releases feed; the service owns the cadence (startup
+        // + interval) and the install/enabled gating, and downloads + stages deltas
+        // for the next restart. Both are no-ops on a non-install (dev run / e2e).
+        builder.Services.AddSingleton<IAgentUpdateManager>(sp =>
+            VelopackUpdateManager.ForGithub(
+                sp.GetRequiredService<IOptions<UpdateSettings>>().Value,
+                sp.GetRequiredService<ILogger<VelopackUpdateManager>>()));
+        builder.Services.AddSingleton<AgentUpdateService>();
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();
         Directory.CreateDirectory(logDir);
