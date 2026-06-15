@@ -503,21 +503,26 @@ else {
     }
     else {
         $scopeId = [guid]::NewGuid().ToString()
+        # oauth2PermissionScopes is a property of the application's `api`
+        # (apiApplication) entity, not a top-level property — Graph rejects a
+        # top-level form with "Invalid property 'oauth2PermissionScopes'".
         $apiBody = @{
-            oauth2PermissionScopes = @(
-                @{
-                    id                      = $scopeId
-                    adminConsentDescription = 'Allow the app to access the Anchor API on behalf of the signed-in user.'
-                    adminConsentDisplayName = 'Access Anchor API'
-                    userConsentDescription  = 'Allow the app to access the Anchor API on your behalf.'
-                    userConsentDisplayName  = 'Access Anchor API'
-                    value                   = 'access_as_user'
-                    type                    = 'User'
-                    isEnabled               = $true
-                }
-            )
+            api = @{
+                oauth2PermissionScopes = @(
+                    @{
+                        id                      = $scopeId
+                        adminConsentDescription = 'Allow the app to access the Anchor API on behalf of the signed-in user.'
+                        adminConsentDisplayName = 'Access Anchor API'
+                        userConsentDescription  = 'Allow the app to access the Anchor API on your behalf.'
+                        userConsentDisplayName  = 'Access Anchor API'
+                        value                   = 'access_as_user'
+                        type                    = 'User'
+                        isEnabled               = $true
+                    }
+                )
+            }
         }
-        $apiBodyJson = ($apiBody | ConvertTo-Json -Depth 6 -Compress)
+        $apiBodyJson = ($apiBody | ConvertTo-Json -Depth 8 -Compress)
         # az ad app update --set api=... requires a JSON value; write to a temp file
         # to avoid shell-quoting issues with native arg parsing.
         if ($PSCmdlet.ShouldProcess($apiClientId, 'expose access_as_user scope')) {
