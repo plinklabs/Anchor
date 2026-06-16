@@ -88,6 +88,18 @@ public static class Program
     public const string VerifyDsThemeArg = "--verify-ds-theme";
 
     /// <summary>
+    /// Dev-only flag (#248): show the real last-resort <see cref="Diagnostics.CrashReportWindow"/>
+    /// against a synthetic exception, with no WAM / hub / coordinator bootstrap, and
+    /// keep it up so its surface (friendly headline, selectable detail field, the
+    /// "Show technical details" expander, the magenta Copy button) can be
+    /// screenshotted. Lets the crash dialog be verified end-to-end (build → launch →
+    /// capture) without forcing a real crash. Used by the visual e2e
+    /// (CrashDialogVisualTests) and scripts/dev. The window's composition is the
+    /// production path; only the exception is synthetic.
+    /// </summary>
+    public const string ShowTestCrashArg = "--show-test-crash";
+
+    /// <summary>
     /// Dev-only flag (#44): swap <c>WamTokenProvider</c> for
     /// <c>InjectedTokenProvider</c> so the agent skips interactive sign-in
     /// entirely and authenticates to the backend via the
@@ -233,10 +245,23 @@ public static class Program
     public static bool ShowTestTrayMenu { get; private set; }
     public static bool ShowTestGuidedInstall { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
+    public static bool ShowTestCrash { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
     public static bool AutoJoin { get; private set; }
     public static bool SimulateInPrivate { get; private set; }
+
+    /// <summary>
+    /// Whether the last-resort crash dialog (#248) should be suppressed for this
+    /// launch. A headless e2e / verify / dev self-test run intentionally exercises
+    /// failure and must never block on a modal — there the fatal paths fall back to
+    /// the breadcrumb log + a visible non-zero exit instead. The real, user-facing
+    /// agent passes none of these flags, so it always gets the dialog.
+    /// </summary>
+    public static bool SuppressCrashDialog =>
+        InjectToken || StatusEndpointPort is not null || AutoJoin || SimulateInPrivate ||
+        ShowTestToast || ShowTestOverlay || ShowTestMainWindow || ShowTestJoinByCode ||
+        ShowTestTrayMenu || ShowTestGuidedInstall || VerifyDsTheme || ShowTestCrash;
 
     [STAThread]
     public static int Main(string[] args)
@@ -299,6 +324,7 @@ public static class Program
         ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));
         ShowTestGuidedInstall = args.Any(a => string.Equals(a, ShowTestGuidedInstallArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestCrash = args.Any(a => string.Equals(a, ShowTestCrashArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
         AutoJoin = args.Any(a => string.Equals(a, AutoJoinArg, StringComparison.OrdinalIgnoreCase));
@@ -308,7 +334,7 @@ public static class Program
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme)
+        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme && !ShowTestCrash)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)
