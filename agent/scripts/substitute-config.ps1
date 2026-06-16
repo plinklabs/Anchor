@@ -39,6 +39,18 @@
     unit test can drive substitution deterministically without mutating
     process-wide environment state.
 
+.PARAMETER OptionalTokens
+    Names of tokens that may legitimately be empty/whitespace (e.g. a blank
+    LoginHint). Every OTHER token is REQUIRED: a missing OR blank value fails the
+    build. This is the #247 hardening — the release that shipped a crashing agent
+    did so because all four required tokens resolved to "" (the CI variables were
+    misnamed), and an empty string used to count as a legitimate value, so the
+    pipeline baked `""` into a live config and shipped it. Treating blank as
+    missing for required tokens turns that silent, install-time-only failure into
+    a loud build failure. The template currently declares no optional tokens
+    (LoginHint is hardcoded "" in the template, not a placeholder), so this
+    defaults to empty.
+
 .EXAMPLE
     $env:BACKEND_BASE_URL = 'https://anchor-api-arcadia.azurewebsites.net'
     $env:AUTH_TENANT_ID   = '...'; $env:AUTH_CLIENT_ID = '...'; $env:AUTH_SCOPE = 'api://.../.default'
@@ -49,7 +61,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $Path,
 
-    [hashtable] $Values
+    [hashtable] $Values,
+
+    [string[]] $OptionalTokens = @()
 )
 
 Set-StrictMode -Version Latest
@@ -85,9 +99,16 @@ foreach ($token in $tokens) {
         if ($null -ne $envValue) { $value = $envValue }
     }
 
-    # An empty string is a legitimate value (e.g. a blank LoginHint), so only a
-    # genuinely *unset* source counts as missing.
-    if ($null -eq $value) {
+    # A required token must have a non-blank value. An *unset* source is missing
+    # as before; #247 additionally treats a blank (empty/whitespace) value as
+    # missing for required tokens, because a misnamed CI variable resolves to ""
+    # and would otherwise be baked in as a live (broken) backend URL/auth value
+    # and shipped — the exact failure that crashed agent-v0.1.0 on launch. A
+    # token listed in -OptionalTokens keeps the old "blank is legitimate" carve-
+    # out (e.g. a deliberately empty LoginHint).
+    $isOptional = $OptionalTokens -contains $token
+    $isBlank = ($null -ne $value) -and [string]::IsNullOrWhiteSpace($value)
+    if ($null -eq $value -or ($isBlank -and -not $isOptional)) {
         $missing += $token
         continue
     }
@@ -96,8 +117,9 @@ foreach ($token in $tokens) {
 }
 
 if ($missing.Count -gt 0) {
-    throw "No value supplied for placeholder(s): $($missing -join ', '). " +
-          "Set the matching environment variable (or pass -Values) for each."
+    throw "No value supplied for required placeholder(s): $($missing -join ', '). " +
+          "Set the matching environment variable (or pass -Values) to a non-blank " +
+          "value for each (or list a genuinely-optional token in -OptionalTokens)."
 }
 
 # Belt-and-braces: no real placeholder may survive. We re-scan for the same

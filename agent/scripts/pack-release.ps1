@@ -24,7 +24,18 @@
       4. Substitute the #{...}# placeholders in the PUBLISHED
          appsettings.Production.json (never the committed template) from env vars
          via substitute-config.ps1.
-      5. `vpk pack` the publish folder into ./artifacts/velopack.
+      5. `vpk pack` the publish folder into ./artifacts/velopack, with the app
+         icon, a success/conclusion page, and the portable bundle suppressed
+         (#247). Setup.exe runs the freshly-installed agent automatically — that
+         is Velopack's default post-install behaviour, so no extra flag is
+         needed for the "launch after install" acceptance criterion.
+
+    Release artifacts (#247): the output is a Setup.exe, the RELEASES feed, and
+    the full/delta nupkg. The nupkg + RELEASES are deliberately KEPT — they are
+    the Velopack auto-update feed the installed agent's UpdateManager downloads
+    (#224); dropping them would break delta auto-update. Only the standalone
+    portable .zip is suppressed (`--noPortable`), since the agent is installed,
+    not run portably, and it only adds noise to the release page.
 
     Auto-update wiring (the agent's UpdateManager pointed at the GitHub Releases
     feed) and re-homing auto-start to an HKCU Run key are tracked as separate
@@ -135,7 +146,24 @@ if ($SkipPack) {
 # vpk pack -> ./artifacts/velopack (a Setup.exe + the delta/full nupkg + the
 # RELEASES feed the agent's UpdateManager reads). The workflow then uploads this
 # folder to the GitHub Release for the tag.
+#
+# --icon       gives the Setup.exe, Start-menu shortcut, and uninstall entry the
+#              Anchor icon instead of a blank default (#247). Reuses the app's
+#              committed TrayIcon.ico — the same mark the running agent shows.
+# --noPortable drops the standalone portable .zip; the agent is installed, never
+#              run portably, so the zip is just release-page noise (#247). The
+#              nupkg/RELEASES auto-update feed is intentionally NOT dropped.
+# --instConclusion gives Setup a final success page so the install isn't a silent
+#              no-op (#247); Velopack already auto-launches the agent afterwards.
 $mainExe = 'FocusAgent.App.exe'
+$iconPath = Join-Path $agentDir 'src/FocusAgent.App/Assets/TrayIcon.ico'
+$conclusionPath = Join-Path $scriptDir 'release-assets/install-conclusion.txt'
+if (-not (Test-Path -LiteralPath $iconPath)) {
+    throw "App icon not found for vpk pack --icon: $iconPath"
+}
+if (-not (Test-Path -LiteralPath $conclusionPath)) {
+    throw "Installer conclusion text not found for vpk pack --instConclusion: $conclusionPath"
+}
 New-Item -ItemType Directory -Force -Path $velopackDir | Out-Null
 
 vpk pack `
@@ -145,6 +173,9 @@ vpk pack `
     --mainExe $mainExe `
     --packTitle 'Anchor Focus Agent' `
     --packAuthors 'Plink Labs' `
+    --icon $iconPath `
+    --instConclusion $conclusionPath `
+    --noPortable `
     --outputDir $velopackDir
 if ($LASTEXITCODE -ne 0) { throw "vpk pack failed ($LASTEXITCODE)." }
 

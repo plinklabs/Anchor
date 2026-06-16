@@ -6,6 +6,34 @@ public sealed record BackendSettings
 
     public string BaseUrl { get; init; } = "";
     public string HubPath { get; init; } = "/hubs/session";
+
+    /// <summary>
+    /// Throws a clear, actionable <see cref="InvalidOperationException"/> if
+    /// <see cref="BaseUrl"/> is blank or not an absolute http(s) URL. Called at
+    /// startup (#247): a release built without its per-deployment config bakes in
+    /// an empty BaseUrl, which the SignalR hub builder otherwise turns into a bare
+    /// <c>UriFormatException</c> thrown deep in DI — before any window or tray
+    /// icon exists — so the process just vanished ("opens and closes instantly").
+    /// Validating here converts that into a readable message the startup path can
+    /// surface in a visible dialog.
+    /// </summary>
+    public void EnsureValid()
+    {
+        if (string.IsNullOrWhiteSpace(BaseUrl))
+        {
+            throw new InvalidOperationException(
+                "Backend:BaseUrl is not configured, so the agent has no server to connect to. " +
+                "This usually means the installed build was packaged without its per-deployment " +
+                "configuration. Please reinstall from an official release.");
+        }
+
+        if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException(
+                $"Backend:BaseUrl ('{BaseUrl}') is not a valid absolute http(s) URL.");
+        }
+    }
 }
 
 public sealed record AuthSettings

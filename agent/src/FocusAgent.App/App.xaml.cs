@@ -112,6 +112,14 @@ public partial class App : Application
             var logger = _host.Services.GetRequiredService<ILogger<App>>();
             logger.LogInformation("FocusAgent starting (unpackaged WinUI 3)");
 
+            // #247: fail fast with a readable message if this build shipped without
+            // its per-deployment backend config. An empty Backend:BaseUrl would
+            // otherwise surface as a bare UriFormatException thrown inside the
+            // SignalR hub builder during DI below — before any UI — so the process
+            // vanished silently. WriteStartupFailure in the catch turns this into a
+            // visible dialog instead.
+            _host.Services.GetRequiredService<IOptions<BackendSettings>>().Value.EnsureValid();
+
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
                 logger.LogCritical(e.ExceptionObject as Exception, "Unhandled exception");
             TaskScheduler.UnobservedTaskException += (_, e) =>
@@ -703,7 +711,32 @@ public partial class App : Application
         {
             // last-resort logger; intentionally swallow
         }
+
+        // #247: surface a visible error so a fatal startup failure isn't an
+        // invisible "opens and closes instantly". A configuration problem (the
+        // empty-BaseUrl case EnsureValid raises) is already a clear, user-readable
+        // message; anything else gets a generic line plus the exception text. Best
+        // effort only — a failed MessageBox must never mask the rethrow below.
+        try
+        {
+            var body = ex is InvalidOperationException
+                ? ex.Message
+                : "Anchor couldn't start. Please contact your administrator." +
+                  $"{Environment.NewLine}{Environment.NewLine}{ex.Message}";
+            _ = MessageBoxW(IntPtr.Zero, body, "Anchor — startup error", MB_OK | MB_ICONERROR);
+        }
+        catch
+        {
+            // intentionally swallow
+        }
     }
+
+    [System.Runtime.InteropServices.DllImport(
+        "user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern int MessageBoxW(IntPtr hWnd, string text, string caption, uint type);
+
+    private const uint MB_OK = 0x00000000;
+    private const uint MB_ICONERROR = 0x00000010;
 
     /// <summary>
     /// The hosting environment name that selects the per-deployment config layer

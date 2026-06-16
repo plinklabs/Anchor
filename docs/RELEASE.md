@@ -122,12 +122,20 @@ push of an `agent-v*` tag. It builds the WinUI 3 agent self-contained
 (`win-x64`), packages it with **Velopack** (`vpk`), and uploads the
 `Setup.exe` + full/delta `.nupkg` + `RELEASES` feed to the **GitHub Release** for
 that tag. Installed agents read that feed and auto-update (delta) on the next tag.
+The portable `.zip` is suppressed (`--noPortable`) — the agent is installed, not
+run portably — but the `.nupkg` + `RELEASES` feed is kept; it **is** the
+auto-update channel. Setup carries the Anchor icon and a success page, and
+launches the agent automatically once installed.
 
 - The packaged `appsettings.Production.json` ships as a template with `#{...}#`
-  placeholders (#203); pack time substitutes them from the **`AGENT_*` repo
-  variables** (see the inventory) so a fork ships an agent pointed at its own
-  backend with no source edit — the agent-side mirror of the dashboard's
-  `--dart-define` substitution.
+  placeholders (#203); pack time substitutes them from the **same per-deployment
+  repo variables the dashboard uses** — `API_BASE_URL` / `ENTRA_TENANT_ID` /
+  `ENTRA_CLIENT_ID` / `API_SCOPE` (see the inventory) — so a fork ships an agent
+  pointed at its own backend with no source edit, the agent-side mirror of the
+  dashboard's `--dart-define` substitution. (There is one Entra app + backend per
+  deployment, so the agent reuses the dashboard's variables rather than a parallel
+  `AGENT_*` set. `substitute-config.ps1` fails the build if any required value is
+  blank, so a missing variable can't silently ship a dead config — #247.)
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
 - The agent ships **unsigned** (one SmartScreen "More info → Run anyway" on first
@@ -229,21 +237,22 @@ source, so a contributor building locally is unaffected.
 
 These drive the **tag-based** agent and extension releases. They are optional per
 fork: a fork that only runs its own cloud can ignore them; a fork that ships its
-own agent build sets the `AGENT_*` variables; the `EDGE_ADDONS_*` config belongs to
-whoever owns the canonical Edge listing (normally Plink Labs only).
+own agent build sets the four dashboard `vars.*` (the agent reuses them); the
+`EDGE_ADDONS_*` config belongs to whoever owns the canonical Edge listing
+(normally Plink Labs only).
 
 #### Agent — variables (`agent-release.yml`)
 
 Non-secret per-deployment config, substituted into the packaged
-`appsettings.Production.json` at pack time (#203). Each is a `vars.*` (public
-SPA/backend config, not a secret).
-
-| Name | What it is | If unset |
-| --- | --- | --- |
-| `AGENT_BACKEND_BASE_URL` | Backend API base URL the shipped agent targets. | Substituted as empty → the packaged agent falls back to its template/source default. |
-| `AGENT_AUTH_TENANT_ID` | Entra tenant ID for the agent's sign-in. | As above. |
-| `AGENT_AUTH_CLIENT_ID` | Entra **agent** app client ID. | As above. |
-| `AGENT_AUTH_SCOPE` | API scope the agent requests. | As above. |
+`appsettings.Production.json` at pack time (#203). The agent **reuses the same
+four `vars.*` the dashboard defines** — there is one Entra app + backend per
+deployment, so it reads `API_BASE_URL` / `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` /
+`API_SCOPE` (see the cloud-tier table above) rather than a parallel `AGENT_*` set
+that has to be kept in sync. (The original `AGENT_*` names were never created, so
+the first release baked in empty values and the shipped agent crashed on launch —
+#247.) Unlike the dashboard's silent fall-back, the agent pack **fails the build**
+if any of these is unset or blank (`substitute-config.ps1`), so a missing variable
+can't ship a dead config.
 
 #### Extension — Edge Add-ons submission (`extension-release.yml`)
 
