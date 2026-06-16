@@ -109,12 +109,13 @@ run this workflow**; it ships the canonical listing.
 > store upload.** The Edge Add-ons store rejects any manifest carrying a `key`
 > ("The manifest shouldn't contain the key field"), so `pack-extension.mjs`
 > strips it from the upload ZIP. The committed `key` only pins the ID for
-> *unpacked / self-hosted* installs (see **Stable extension ID** below); it does
-> **not** make the store-published extension install as `akkfda…`. Once the
-> store product is created, take its store-assigned ID and re-pin the agent-side
-> references to it — `EdgeExtensionPolicy.ExtensionId`, the witness-host
-> `allowed_origins`, and the force-install policy — or native messaging breaks
-> for every store-installed user. See **Post-publish: re-pin the store ID** below.
+> *unpacked / self-hosted* installs (see **Stable extension ID** below). Now that
+> the product exists, the committed `key` is the **store listing's own public
+> key**, so the unpacked / self-host ID equals the store-assigned ID
+> (`dnkimhodjfogjibnbbfdjdapgmmiojio`), and the agent-side references —
+> `EdgeExtensionPolicy.ExtensionId`, the witness-host `allowed_origins`, and the
+> force-install policy — are pinned to it. See **Post-publish: re-pin the store
+> ID** below.
 
 ### Publishing to the Edge Add-ons store
 
@@ -156,22 +157,21 @@ ID for unpacked / self-hosted installs.
 
 ### Post-publish: re-pin the store ID
 
-The committed `key` derives the ID `akkfda…`, but that is the ID only for
-*unpacked dev* and *self-hosted `.crx`* installs. **A store-published extension
-gets a different, store-assigned ID.** After creating the store product, read its
-ID from the dashboard and update every agent-side reference that currently hard-codes
-`akkfdaclmpfcnjalcifkcbhgjnnopman`:
+A store-published extension gets a **store-assigned ID** — different from the ID
+the committed `key` would otherwise derive for *unpacked dev* and *self-hosted
+`.crx`* installs. After the Edge Add-ons product was created (store ID
+`0RDCKF6C9SQ9`, package/CRX ID `dnkimhodjfogjibnbbfdjdapgmmiojio`), every
+agent-side reference was re-pinned from the old dev ID to the store ID (#241):
 
 - `EdgeExtensionPolicy.ExtensionId` (`agent/src/FocusAgent.Core/Extension/EdgeExtensionPolicy.cs`)
 - the witness-host `allowed_origins` (`agent/src/FocusAgent.WitnessHost/net.anchor.witness.template.json`)
 - the force-install policy in **Sideload** / **Agent self-registration** below
 - the matching agent + extension tests (`EdgeExtensionPolicyTests`, `e2e/config.ts`, `src/manifest.test.ts`)
 
-To keep *unpacked dev* installing as the same ID as the store build, replace the
-committed `key` with the store listing's public key (dashboard → package details)
-so `sha256(key)` re-derives the store ID — then the pinned-ID value above and the
-dev/self-host path agree again. Until that is done, the `akkfda…` force-install
-entry pointed at the store (below) will fetch the wrong/nonexistent ID.
+So *unpacked dev* installs as the same ID as the store build, the committed `key`
+was replaced with the store listing's public key (dashboard → package details) so
+`sha256(key)` re-derives the store ID — the pinned-ID value above and the
+dev/self-host path now agree.
 
 For a dev iteration loop:
 
@@ -360,7 +360,7 @@ registration: [`agent/src/FocusAgent.WitnessHost/README.md`](../agent/src/FocusA
 The extension ID is **pinned**:
 
 ```
-akkfdaclmpfcnjalcifkcbhgjnnopman
+dnkimhodjfogjibnbbfdjdapgmmiojio
 ```
 
 Edge/Chrome derive an unpacked extension's ID from its public key. Without a
@@ -420,10 +420,10 @@ here for future reference — not implemented in this scaffold):
 
 ```
 HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist
-  1 = REG_SZ  akkfdaclmpfcnjalcifkcbhgjnnopman;<update-url>
+  1 = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio;<update-url>
 ```
 
-The ID is the pinned `akkfdaclmpfcnjalcifkcbhgjnnopman` (see **Stable extension
+The ID is the pinned `dnkimhodjfogjibnbbfdjdapgmmiojio` (see **Stable extension
 ID** above). `<update-url>` points at an `updates.xml` manifest hosted on a local
 file share or HTTPS endpoint and referencing the packed `.crx`.
 
@@ -431,7 +431,7 @@ For unpacked dev installs the simpler shape is:
 
 ```
 HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallAllowlist
-  1 = REG_SZ  akkfdaclmpfcnjalcifkcbhgjnnopman
+  1 = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio
 ```
 
 paired with a developer-mode-loaded unpacked extension at a known path.
@@ -445,7 +445,7 @@ agent instead writes the **per-user** force-install policy itself on first run
 
 ```
 HKCU\Software\Policies\Microsoft\Edge\ExtensionInstallForcelist
-  1 = REG_SZ  akkfdaclmpfcnjalcifkcbhgjnnopman;https://edge.microsoft.com/extensionwebstorebase/v1/crx
+  1 = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio;https://edge.microsoft.com/extensionwebstorebase/v1/crx
 ```
 
 The agent removes its entry on uninstall (a Velopack `OnBeforeUninstall` hook).

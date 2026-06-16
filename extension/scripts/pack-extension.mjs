@@ -21,10 +21,11 @@
 //      Edge Add-ons submission consumes — but STRIP `key` from the packaged
 //      manifest. The Edge Add-ons store assigns the extension ID itself and
 //      rejects any manifest that ships a `key` ("The manifest shouldn't contain
-//      the key field"). The store-published ID is therefore store-assigned, not
-//      the committed key's `akkfda…`; the agent-side pins (EdgeExtensionPolicy,
-//      witness-host allowed_origins, force-install policy) must be updated to the
-//      store-assigned ID once the product exists.
+//      the key field"). The store-published ID is therefore store-assigned; the
+//      committed key is now the store listing's own public key, so it re-derives
+//      that same store-assigned ID (dnkimhodjfogjibnbbfdjdapgmmiojio) for unpacked
+//      installs, and the agent-side pins (EdgeExtensionPolicy, witness-host
+//      allowed_origins, force-install policy) match it.
 //
 // Usage:
 //   node scripts/pack-extension.mjs                      # version from package.json
