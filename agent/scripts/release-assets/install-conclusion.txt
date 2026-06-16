@@ -1,0 +1,6 @@
+Anchor Focus Agent is installed and will start automatically.
+
+You can find it in the system tray (next to the clock). It will run in the
+background and connect when your teacher starts a focus session.
+
+To open it any time, use the Anchor shortcut in the Start menu.
