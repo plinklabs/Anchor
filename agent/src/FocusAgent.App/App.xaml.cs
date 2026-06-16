@@ -388,10 +388,14 @@ public partial class App : Application
             SessionId: Guid.Parse("00000000-0000-0000-0000-000000000041"),
             ClassId: Guid.NewGuid(),
             StartedAt: DateTimeOffset.UtcNow,
-            JoinCode: "TOAST41",
+            JoinCode: SelfTestDemoContent.JoinCode,
             Apps: Array.Empty<AllowedAppDto>(),
             Domains: Array.Empty<AllowedDomainDto>());
-        var confirmation = new JoinConfirmation(payload, "Self-Test Teacher", TimeSpan.FromSeconds(5), TimeProvider.System);
+        // Presentable demo content (no debug strings): a real-looking teacher name,
+        // shared across the agent self-test surfaces and matched to the dashboard's
+        // demo teacher ("Ms Rivera") so the website's agent + dashboard shots tell
+        // one coherent story (#251).
+        var confirmation = new JoinConfirmation(payload, SelfTestDemoContent.TeacherName, TimeSpan.FromSeconds(5), TimeProvider.System);
 
         // Kick off the show on the UI thread — ShowJoinConfirmationAsync
         // internally enqueues window creation. The returned Task completes when
@@ -454,7 +458,7 @@ public partial class App : Application
             new() { MatchKind = AllowedAppMatchKind.Publisher, Value = "International GeoGebra Institute" },
         };
 
-        overlay.Show(rules, blockedAppName: "notepad");
+        overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName);
 
         // Deterministic show -> close -> linger cycle so both consumers can observe
         // it without a real backend or off-list app:
@@ -622,7 +626,9 @@ public partial class App : Application
 
         var menu = Tray.TrayMenu.Build(onOpen: () => { }, onJoinByCode: () => { }, onQuit: () => { });
         // Show a representative live state so the status eyebrow renders real text.
-        menu.StatusItem.Text = "CONNECTED — SELF-TEST";
+        // Presentable demo content (no debug strings) so this same surface is fit to
+        // ship as a website screenshot (#251).
+        menu.StatusItem.Text = SelfTestDemoContent.TrayStatus;
 
         // A small ink host window the flyout anchors to; sized so the open menu sits
         // wholly within (and over) it, which is the rect the e2e captures. The
@@ -632,7 +638,10 @@ public partial class App : Application
         {
             Background = (Microsoft.UI.Xaml.Media.Brush)Resources["PlinkSurfaceInkBrush"],
         };
-        var host = new Window { Title = "Anchor — Tray menu (self-test)" };
+        // Title is "Anchor" (not a "(self-test)" debug label): this host window's
+        // title bar is visible in the curated website screenshot of the tray menu
+        // (#251), so it must read like the shipped app.
+        var host = new Window { Title = "Anchor" };
         host.Content = root;
         _trayMenuSelfTestWindow = host;
 
