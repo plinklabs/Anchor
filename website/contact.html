@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="How to reach the Anchor team — report a problem or request a change through GitHub issues. A plain-language guide for teachers and IT staff with little GitHub experience.">
+  <title>Anchor — Contact · Plink Labs</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><path d='M 10.44 20.86 A 9 9 0 1 1 13.56 20.86' stroke='%23DB2777' stroke-width='1.5' stroke-linecap='round'/><circle cx='12' cy='12' r='1.8' fill='%23DB2777'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300&family=Hanken+Grotesk:wght@400;500&family=Space+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <a href="/" class="wordmark" aria-label="Plink Labs home">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M 10.44 20.86 A 9 9 0 1 1 13.56 20.86" stroke="#DB2777" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="12" cy="12" r="1.8" fill="#DB2777"/>
+      </svg>
+      <span>plink labs</span>
+    </a>
+    <nav>
+      <a href="https://github.com/plinklabs/Anchor">GitHub</a>
+    </nav>
+  </header>
+
+  <nav class="subnav" aria-label="Anchor site">
+    <a href="index.html">Home</a>
+    <a href="teachers.html">Teachers</a>
+    <a href="it.html">IT staff</a>
+    <a href="faq.html">FAQ</a>
+    <a href="contact.html" aria-current="page">Contact</a>
+  </nav>
+
+  <main class="doc">
+    <p class="eyebrow">Anchor</p>
+    <h1>Get in touch</h1>
+    <p class="lead">Found a bug, or have an idea that would make Anchor better? Anchor is open-source software made by teachers, and the whole conversation happens in the open — on GitHub, where the code lives. This page walks you through it, even if you've never used GitHub before. No mailing list, no support ticket queue; just open an issue and the team will see it.</p>
+
+    <!-- ============================================================
+         Step one: you need a (free) GitHub account.
+         ============================================================ -->
+    <section aria-labelledby="account-heading">
+      <p class="eyebrow" id="account-heading">Before you start</p>
+
+      <h2>You'll need a free GitHub account</h2>
+      <p>GitHub is the website that hosts Anchor's code and its public to-do list. To post anything there you need an account, which is <strong>free</strong> — there's nothing to buy and no Anchor-specific sign-up. If you don't have one yet, create it at <a href="https://github.com/signup">github.com/signup</a>; it takes a minute. You can use a personal or a school email address, whichever you prefer.</p>
+    </section>
+
+    <!-- ============================================================
+         How to open an issue — the New issue page + template picker.
+         ============================================================ -->
+    <section aria-labelledby="open-heading">
+      <p class="eyebrow" id="open-heading">How to open an issue</p>
+
+      <h2>Start a new issue</h2>
+      <p>An "issue" is just GitHub's word for a note to the team — a bug you hit, or a change you'd like. To begin, go to the <a href="https://github.com/plinklabs/Anchor/issues/new/choose">new issue page</a> and sign in if you're prompted. You'll be shown a short menu of templates; pick the one that best matches what you want to say, fill in the boxes it gives you, and press <strong>Submit new issue</strong>. That's the whole process — the template makes sure you don't forget anything important.</p>
+
+      <h2>Which template should I choose?</h2>
+      <p>The picker offers a few options. You don't have to get this exactly right — the team will reclassify it if needed — but choosing well helps your report land in the right place faster:</p>
+      <ul>
+        <li><strong>Bug report</strong> — something isn't working the way it should. The agent crashes, a block page won't go away, a session won't start, the dashboard shows the wrong thing. If it's broken, this is the one.</li>
+        <li><strong>Feature</strong> — a capability that doesn't exist yet and you'd like added. Support for a platform Anchor doesn't cover, a new kind of report, an integration that isn't there today.</li>
+        <li><strong>Enhancement</strong> — something already works, but could work better. A clearer message, a smoother step, a small improvement to an existing screen or behaviour. The difference from a feature is that the thing exists; you're refining it, not inventing it.</li>
+        <li><strong>Documentation</strong> — the software is fine, but the writing about it is missing, wrong, or confusing. A page that doesn't explain something, an instruction that's out of date, a gap on this very website.</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================
+         What makes a usable report — mirrors bug.yml fields.
+         ============================================================ -->
+    <section aria-labelledby="report-heading">
+      <p class="eyebrow" id="report-heading">Writing a report we can act on</p>
+
+      <h2>"It crashes" isn't enough — here's what helps</h2>
+      <p>A good report is one someone else can follow. "It crashes" tells us something is wrong but not where to look; a minute spent describing what happened saves a long back-and-forth and gets your problem fixed sooner. For a bug, the template asks for these pieces — they're the same ones any developer would need:</p>
+      <ul>
+        <li><strong>What you did</strong> — the steps to reproduce it, in order: what you clicked, opened, or started. If we can follow the same steps and see the same thing, it's as good as fixed.</li>
+        <li><strong>What you expected</strong> — what you thought would happen instead.</li>
+        <li><strong>What actually happened</strong> — the real result, including any error message word for word (a screenshot is perfect).</li>
+        <li><strong>Your environment</strong> — which Windows version, which Anchor agent or extension build, and anything else that might matter. The same bug can behave differently on different setups, so this narrows it down quickly.</li>
+      </ul>
+      <p>The other templates are shorter, but the spirit is the same: say what you want, why it matters, and how we'd know it was done. The more concrete you are, the easier you make it for someone to help.</p>
+    </section>
+
+    <!-- ============================================================
+         Where else to go — cross-links, school-data caveat.
+         ============================================================ -->
+    <section aria-labelledby="next-heading">
+      <p class="eyebrow" id="next-heading">A couple of things first</p>
+
+      <h2>Before you open one</h2>
+      <p>If your question is about how <em>your school</em> handles Anchor — what data is kept, who can see a session, how to get something deleted — the answer lives with your school or its IT administrator, who runs the backend; Plink Labs operates none and holds no student data. And it's worth a quick look at the <a href="faq.html">FAQ</a> first, since the most common questions are answered there. For anything else about Anchor itself, an issue is the way to reach us.</p>
+    </section>
+
+    <section class="callout">
+      <p class="eyebrow">Ready when you are</p>
+      <h2>Open an issue on GitHub</h2>
+      <p>Pick a template, fill in the boxes, and submit. Someone on the team will read it.</p>
+      <div class="cta-row">
+        <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor/issues/new/choose">Open a new issue</a>
+        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor">Source on GitHub</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Built in Belgium. Usable everywhere.</p>
+    <nav>
+      <a href="https://github.com/plinklabs">GitHub</a>
+      <span>·</span>
+      <span>GPL-3.0</span>
+    </nav>
+  </footer>
+
+</body>
+</html>
