@@ -1,0 +1,14 @@
+{
+  "name": "anchor-dashboard-screenshots",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Website screenshot generator for the Anchor teacher dashboard (#250).",
+  "scripts": {
+    "generate": "node generate-screenshots.mjs",
+    "generate:no-build": "node generate-screenshots.mjs --no-build"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.60.0"
+  }
+}
