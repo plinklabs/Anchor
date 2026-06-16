@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Anchor for teachers — a walkthrough of the dashboard: sign in, pick a class, start a focus session, add or remove bundles, watch the live events feed, approve unblock requests, and end the session. Plus what your students see on their devices.">
+  <title>Anchor for teachers · Plink Labs</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><path d='M 10.44 20.86 A 9 9 0 1 1 13.56 20.86' stroke='%23DB2777' stroke-width='1.5' stroke-linecap='round'/><circle cx='12' cy='12' r='1.8' fill='%23DB2777'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300&family=Hanken+Grotesk:wght@400;500&family=Space+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <a href="/" class="wordmark" aria-label="Plink Labs home">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M 10.44 20.86 A 9 9 0 1 1 13.56 20.86" stroke="#DB2777" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="12" cy="12" r="1.8" fill="#DB2777"/>
+      </svg>
+      <span>plink labs</span>
+    </a>
+    <nav>
+      <a href="https://github.com/plinklabs/Anchor">GitHub</a>
+    </nav>
+  </header>
+
+  <nav class="subnav" aria-label="Anchor site">
+    <a href="index.html">Home</a>
+    <a href="teachers.html" aria-current="page">Teachers</a>
+    <a href="it-staff.html">IT staff</a>
+    <a href="faq.html">FAQ</a>
+    <a href="contact.html">Contact</a>
+  </nav>
+
+  <main>
+
+    <!-- Hero — what a teacher does with Anchor, in one breath -->
+    <section class="hero">
+      <h1>Run a focus session from start to finish.</h1>
+      <p>Anchor puts you in control of one lesson at a time. You sign in, pick a class, and start a session; each student's device keeps to the apps and websites you allowed, and anything off task surfaces on your dashboard while it happens. Here is the whole flow, with the real screens you'll use.</p>
+    </section>
+
+    <!-- ============================================================
+         Section 1 — Dashboard walkthrough
+         ============================================================ -->
+    <section class="feature-section">
+      <p class="eyebrow">The dashboard walkthrough</p>
+      <p class="lead" style="max-width: 52rem; color: var(--muted); line-height: 1.65; margin-bottom: 1.75rem;">Everything a teacher does happens in the web dashboard — no install on your side, just a browser. The flow is short on purpose: sign in, pick a class, start, and keep an eye on the live view until you end it.</p>
+      <div class="feature-grid">
+        <article>
+          <p class="step">01</p>
+          <h3>Sign in</h3>
+          <p>Open the dashboard and sign in with your school Microsoft account. No separate Anchor password — it uses the account you already have.</p>
+        </article>
+        <article>
+          <p class="step">02</p>
+          <h3>Pick a class</h3>
+          <p>Choose the class you're teaching from the dropdown. Anchor defaults to the class that matches your timetable, so most lessons it's already selected.</p>
+        </article>
+        <article>
+          <p class="step">03</p>
+          <h3>Start the session</h3>
+          <p>One button — "Start session for 3B". Every signed-in student in that class is invited automatically; there's a join code on screen for anyone who needs to join by hand.</p>
+        </article>
+        <article>
+          <p class="step">04</p>
+          <h3>Choose the bundles</h3>
+          <p>Add or remove the bundles this lesson needs — Microsoft 365, Smartschool, GeoGebra. Edits push to every device live; nobody has to rejoin.</p>
+        </article>
+        <article>
+          <p class="step">05</p>
+          <h3>Watch the live feed</h3>
+          <p>The session view shows each student's state and a running events feed — joins, off-list pages, requests — as they happen, not as a report afterwards.</p>
+        </article>
+        <article>
+          <p class="step">06</p>
+          <h3>End the session</h3>
+          <p>"End session" stops enforcement everywhere at once. Devices go back to normal, and Anchor stops observing. The lesson is over; so is Anchor's reach.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Sign in / pick a class / start -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/dashboard-home.png" alt="Anchor dashboard home screen with a class dropdown set to '3B (2025-2026)' and a 'Start session for 3B' button" width="1440" height="900">
+        <figcaption>The home screen after sign-in — pick a class and start. Any session still running shows up at the top so you can resume or end it.</figcaption>
+      </figure>
+    </figure>
+
+    <!-- Pick / manage a class -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/dashboard-classes.png" alt="Anchor classes screen showing the roster for class 3B with students Ada Lovelace, Alan Turing, Grace Hopper, Katherine Johnson and a teacher" width="1440" height="900">
+        <figcaption>Classes hold the roster a session invites. Build one by hand, import a CSV, or populate it from your school's directory — then it's reusable every lesson.</figcaption>
+      </figure>
+    </figure>
+
+    <!-- Add / remove bundles -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/dashboard-bundles.png" alt="Anchor bundles editor showing an 'Exam apps' bundle with the domains geogebra.org, wikipedia.org and smartschool.be" width="1440" height="900">
+        <figcaption>Bundles are the allowlist in plain terms. You pick "Microsoft 365" or "Smartschool"; Anchor expands each into the real domains and apps behind the scenes. Pick from the catalogue per session — no raw domains to type.</figcaption>
+      </figure>
+    </figure>
+
+    <!-- Live session: events feed, unblock requests, end -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/dashboard-session.png" alt="Anchor live session view for class 3B showing the join code PLINK-3B, a pending unblock request for docs.google.com with an Approve button, the per-student state list, the allowed bundles, and a live activity feed" width="1440" height="900">
+        <figcaption>The live session — the join code, each student's state, the bundles in force, and the events feed. A student asking for a blocked site appears under "Pending requests"; one click on <strong>Approve</strong> opens it for the rest of the lesson. "End session" is always one click away, top right.</figcaption>
+      </figure>
+    </figure>
+
+    <section class="callout">
+      <p class="eyebrow">A note on the live view</p>
+      <h2>It's a window into the lesson, not a record of it</h2>
+      <p>The events feed and student states are live — they exist so you can quietly nudge a student back on task in the moment, the way you'd glance around the room. When the session ends, the live view is gone. Anchor keeps a short session history so you can look back at the last few weeks, but it isn't a permanent dossier and it never follows a student home.</p>
+    </section>
+
+    <!-- ============================================================
+         Section 2 — What your students see
+         ============================================================ -->
+    <section class="feature-section">
+      <p class="eyebrow">What your students see</p>
+      <p class="lead" style="max-width: 52rem; color: var(--muted); line-height: 1.65; margin-bottom: 1.75rem;">Anchor is calm on the student side too. There's no alarm, no lockout screen, no countdown of strikes — just a few gentle cues that a session is on and the device is keeping to the lesson. Here's every surface a student meets.</p>
+      <div class="feature-grid">
+        <article>
+          <h3>Join toast</h3>
+          <p>When you start the session, a small notice slides in on each device: "Ms Rivera started a focus session. Joining automatically." A short countdown, and a "Not now" button — joining is the default, declining is allowed and visible to you.</p>
+        </article>
+        <article>
+          <h3>App-block overlay</h3>
+          <p>If a student opens an app that isn't on the allowlist, it's set aside — not closed — and a quiet full-screen card offers the allowed apps to carry on with instead. Nothing is lost; the off-list app is just paused.</p>
+        </article>
+        <article>
+          <h3>Edge block page</h3>
+          <p>In the browser, an off-list page shows a friendly "let's stay on track" page rather than an error. It explains the page just isn't on the allowlist yet, and offers a "Request access" button that pings your dashboard.</p>
+        </article>
+        <article>
+          <h3>"You're in focus" popup</h3>
+          <p>Clicking the extension shows a small reassurance: the session is on, here's the class code, and here are the sites that are allowed right now. No mystery about what's enforced.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Join toast -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/agent-join-toast.png" alt="Anchor join toast on a student device reading 'Focus session starting — Ms Rivera started a focus session. Joining automatically.' with a 3-second countdown and a 'Not now' button" width="760" height="720">
+        <figcaption>The join toast — it names you, counts down a few seconds, and joins on its own. "Not now" lets a student decline; you see who did.</figcaption>
+      </figure>
+    </figure>
+
+    <!-- App-block overlay -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/agent-block-overlay.png" alt="Anchor app-block overlay on a student device reading 'Let's stay with the session — your teacher started a focus session, so this app is set aside for now,' listing allowed apps to switch to" width="2880" height="1800">
+        <figcaption>The app-block overlay — when an off-list app takes focus, Anchor sets it aside and points the student at the apps the lesson does allow. Calm, not a lockout.</figcaption>
+      </figure>
+    </figure>
+
+    <!-- Edge block page -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/extension-block-page.png" alt="Anchor Edge block page reading 'Let's stay on track — you're in an active focus session, so this site is paused for now,' showing the blocked URL with 'Go back' and 'Request access' buttons" width="1280" height="800">
+        <figcaption>The Edge block page — an off-list site isn't an error, it's "paused for now." The <strong>Request access</strong> button is the same request that lands in your dashboard for one-click approval.</figcaption>
+      </figure>
+    </figure>
+
+    <!-- "You're in focus" popup -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/extension-popup.png" alt="Anchor browser extension popup reading 'You're in focus — Anchor is keeping you on the sites your teacher allowed,' showing the class code PLINK-3B and a list of allowed sites" width="1280" height="800">
+        <figcaption>The "you're in focus" popup — what a student sees on clicking the extension: the session is on, the class code, and exactly which sites are allowed right now.</figcaption>
+      </figure>
+    </figure>
+
+    <!-- ============================================================
+         Section 3 — Tone / philosophy reassurance
+         ============================================================ -->
+    <section class="callout">
+      <p class="eyebrow">Calm by design, not surveillance</p>
+      <h2>It ends when the lesson ends</h2>
+      <p>Anchor is built for <strong>soft enforcement</strong>. It pulls focus back and makes off-task activity visible to you in the moment — it does not pretend to be tamper-proof, and a determined student can step around it. That's deliberate: the goal is to make drifting off task <strong>visible to a teacher</strong>, the way it already is in a physical room, not to wage a technical arms race against teenagers.</p>
+      <p>And it only watches while you have a session running, only the off-list parts — on-allowlist work is never logged. <strong>Nothing is tracked between sessions.</strong> The moment you click "End session", Anchor stops observing and the devices go back to normal. There's no background monitoring, no location, no keystrokes, no screen recording, and the data that does exist stays inside the school that runs the backend — not with us.</p>
+    </section>
+
+    <!-- CTAs / resources -->
+    <section class="callout">
+      <p class="eyebrow">Free &amp; open source</p>
+      <h2>Made by teachers, free for everyone</h2>
+      <p>Anchor is GPL-3.0 licensed and self-hostable. Your school runs its own backend; Plink Labs operates none and receives no student data. The full source — including exactly what each component collects — is public and auditable.</p>
+      <div class="cta-row">
+        <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor">Add to Edge</a>
+        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor/releases">Get the agent</a>
+        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor">Source on GitHub</a>
+      </div>
+    </section>
+
+    <section class="links">
+      <h2>Resources</h2>
+      <ul>
+        <li><a href="index.html">Home</a></li>
+        <li><a href="it-staff.html">For IT staff</a></li>
+        <li><a href="privacy.html">Privacy Policy</a></li>
+        <li><a href="https://github.com/plinklabs/Anchor/releases">Download the agent (GitHub Releases)</a></li>
+        <li><a href="https://github.com/plinklabs/Anchor">Source code on GitHub</a></li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>Built in Belgium. Usable everywhere.</p>
+    <nav>
+      <a href="https://github.com/plinklabs">GitHub</a>
+      <span>·</span>
+      <span>GPL-3.0</span>
+    </nav>
+  </footer>
+
+</body>
+</html>
