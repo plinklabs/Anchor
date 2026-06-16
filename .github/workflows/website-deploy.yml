@@ -1,0 +1,84 @@
+name: Website Deploy
+
+# Publish the co-located public website to the live GitHub Pages site.
+#
+# The website source lives in this repo under `website/`; the live site is the
+# separate `plinklabs.github.io` repo, which hosts several projects — Anchor
+# occupies only its `anchor/` subfolder. On a push to `main` that touches
+# `website/**`, this workflow mirrors `website/` into `plinklabs.github.io`'s
+# `anchor/` folder and pushes, so the published site never drifts from source.
+#
+# Scope: the sync writes ONLY `anchor/` in the Pages repo (rsync target is the
+# `anchor/` subdir, with `--delete` confined to that subtree). Files the Pages
+# repo owns at its root (index.html, style.css, other projects' folders) are
+# never touched.
+#
+# Idempotent: rsync only changes files whose content differs, and the commit
+# step is guarded by `git diff --quiet` — a re-run with no source change makes
+# no commit and pushes nothing (clean no-op).
+#
+# Auth: a scoped Personal Access Token with write access to plinklabs.github.io,
+# stored as the PLINKLABS_PAGES_DEPLOY_TOKEN secret (see docs/RELEASE.md). The
+# auto-provided GITHUB_TOKEN cannot push to another repo, so a cross-repo
+# credential is required.
+#
+# One-time manual step (NOT done here — tracked on the epic): the Anchor card in
+# plinklabs.github.io/index.html is currently unlinked; it should be turned into
+# a link to `/anchor/`. That file is the Pages repo's own root content, not part
+# of this co-located source, so it is a one-line manual PR in plinklabs.github.io
+# rather than something this sync can or should write.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/website-deploy.yml'
+
+permissions:
+  contents: read
+
+# Serialize deploys so two quick pushes can't race on the same target repo.
+concurrency:
+  group: website-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Anchor (website source)
+        uses: actions/checkout@v4
+        with:
+          path: anchor-src
+
+      - name: Checkout plinklabs.github.io (Pages target)
+        uses: actions/checkout@v4
+        with:
+          repository: plinklabs/plinklabs.github.io
+          token: ${{ secrets.PLINKLABS_PAGES_DEPLOY_TOKEN }}
+          path: pages
+
+      - name: Sync website/ into anchor/
+        # Mirror source → target/anchor/. The trailing slash on the source copies
+        # its *contents*; --delete confined to the anchor/ target removes files
+        # that no longer exist in source, so the published folder is an exact
+        # mirror. Only anchor/ is ever written.
+        run: |
+          mkdir -p pages/anchor
+          rsync -a --delete anchor-src/website/ pages/anchor/
+
+      - name: Commit and push if changed
+        # Idempotent: with no content change `git diff --quiet` exits 0 and we
+        # skip the commit/push entirely, so a re-run is a clean no-op.
+        working-directory: pages
+        run: |
+          git config user.name 'plinklabs-bot'
+          git config user.email 'bot@plinklabs.org'
+          git add anchor
+          if git diff --cached --quiet; then
+            echo 'No website changes to publish — nothing to do.'
+            exit 0
+          fi
+          git commit -m "Publish Anchor website from ${GITHUB_REPOSITORY}@${GITHUB_SHA::7}"
+          git push
