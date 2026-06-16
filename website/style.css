@@ -1,0 +1,370 @@
+/* ============================================================
+   Anchor subsite — self-contained stylesheet.
+   No dependency on the parent plinklabs.github.io/style.css.
+   Design tokens mirror the Plink Labs design system
+   (agent/external/plink-design-system).
+   ============================================================ */
+
+/* Design tokens */
+:root {
+  --ink:     #1B1B23;
+  --paper:   #FAF7F2;
+  --magenta: #DB2777;
+  --muted:   #9A958B;
+
+  --ff-display: 'Fraunces', Georgia, serif;
+  --ff-ui:      'Hanken Grotesk', system-ui, sans-serif;
+  --ff-mono:    'Space Mono', monospace;
+
+  --border:  1px solid rgba(27, 27, 35, 0.15);
+  --gutter:  clamp(1.25rem, 5vw, 3rem);
+}
+
+/* Reset */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--ff-ui);
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+a { color: inherit; text-decoration: none; }
+a:hover { color: var(--magenta); }
+
+img { max-width: 100%; display: block; }
+
+/* ============================================================
+   Header (wordmark + GitHub) — reused from the parent site.
+   ============================================================ */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.125rem var(--gutter);
+  border-bottom: var(--border);
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+header nav {
+  font-family: var(--ff-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+}
+
+/* ============================================================
+   In-subsite navigation: Home · Teachers · IT staff · FAQ · Contact
+   ============================================================ */
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(1rem, 4vw, 2rem);
+  padding: 0.875rem var(--gutter);
+  border-bottom: var(--border);
+  font-family: var(--ff-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+}
+
+.subnav a {
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 0.15s ease;
+}
+
+.subnav a:hover { color: var(--magenta); }
+
+.subnav a[aria-current="page"] {
+  color: var(--ink);
+  border-bottom: 1.5px solid var(--magenta);
+  padding-bottom: 0.2rem;
+}
+
+/* ============================================================
+   Main + Hero
+   ============================================================ */
+main { flex: 1; }
+
+.hero {
+  padding: clamp(3rem, 8vw, 6rem) var(--gutter) clamp(2.5rem, 6vw, 4rem);
+  border-bottom: var(--border);
+  max-width: 52rem;
+}
+
+.hero h1 {
+  font-family: var(--ff-display);
+  font-size: clamp(1.875rem, 4.5vw, 3.25rem);
+  font-weight: 300;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin-bottom: 1.25rem;
+}
+
+.hero p {
+  color: var(--muted);
+  font-size: clamp(0.875rem, 2vw, 1rem);
+  line-height: 1.65;
+}
+
+/* Section eyebrow label (shared) */
+.eyebrow {
+  font-family: var(--ff-mono);
+  font-size: 0.65rem;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 1.25rem;
+}
+
+/* ============================================================
+   Resources link list (from migrated index)
+   ============================================================ */
+.links {
+  padding: 0 var(--gutter) clamp(2.5rem, 6vw, 4rem);
+}
+.links h2 {
+  font-family: var(--ff-mono);
+  font-size: 0.65rem;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 1.25rem;
+}
+.links ul { list-style: none; }
+.links li { border-top: var(--border); }
+.links li:last-child { border-bottom: var(--border); }
+.links a {
+  display: block;
+  padding: 1rem 0;
+  font-family: var(--ff-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+/* ============================================================
+   CTA buttons — magenta primary / outline secondary
+   ============================================================ */
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--ff-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.75rem 1.4rem;
+  border: 1.5px solid var(--magenta);
+  border-radius: 2px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.cta--primary {
+  background: var(--magenta);
+  color: var(--paper);
+}
+.cta--primary:hover {
+  background: #be1f66;
+  border-color: #be1f66;
+  color: var(--paper);
+}
+
+.cta--secondary {
+  background: transparent;
+  color: var(--ink);
+}
+.cta--secondary:hover {
+  background: var(--magenta);
+  color: var(--paper);
+}
+
+/* ============================================================
+   Screenshot figure — image + caption, hairline border, paper frame
+   ============================================================ */
+.screenshot {
+  margin: clamp(2rem, 5vw, 3rem) var(--gutter);
+  max-width: 60rem;
+}
+
+.screenshot figure {
+  border: var(--border);
+  background: var(--paper);
+  padding: clamp(0.5rem, 2vw, 1rem);
+}
+
+.screenshot img {
+  width: 100%;
+  border: var(--border);
+}
+
+.screenshot figcaption {
+  font-family: var(--ff-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-top: 0.75rem;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   How-it-works / feature grid
+   ============================================================ */
+.feature-section {
+  padding: clamp(2.5rem, 6vw, 4rem) var(--gutter);
+  border-top: var(--border);
+}
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  border-top: var(--border);
+  border-left: var(--border);
+}
+
+.feature-grid article {
+  padding: 1.5rem 1.5rem 1.75rem;
+  border-right: var(--border);
+  border-bottom: var(--border);
+}
+
+.feature-grid .step {
+  font-family: var(--ff-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.feature-grid h3 {
+  font-family: var(--ff-mono);
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--magenta);
+  letter-spacing: 0.02em;
+  margin-bottom: 0.5rem;
+}
+
+.feature-grid p {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* ============================================================
+   Callout block
+   ============================================================ */
+.callout {
+  margin: clamp(2rem, 5vw, 3rem) var(--gutter);
+  padding: clamp(1.5rem, 4vw, 2rem);
+  border: var(--border);
+  border-left: 3px solid var(--magenta);
+  background: rgba(219, 39, 119, 0.04);
+  max-width: 52rem;
+}
+
+.callout .eyebrow {
+  color: var(--magenta);
+  margin-bottom: 0.75rem;
+}
+
+.callout h2 {
+  font-family: var(--ff-display);
+  font-size: clamp(1.125rem, 2.5vw, 1.4rem);
+  font-weight: 300;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.5rem;
+}
+
+.callout p {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+/* ============================================================
+   Prose document (privacy / legal copy)
+   ============================================================ */
+.doc {
+  padding: clamp(3rem, 8vw, 6rem) var(--gutter) clamp(2.5rem, 6vw, 4rem);
+  max-width: 46rem;
+}
+.doc .eyebrow {
+  color: var(--magenta);
+  margin-bottom: 1rem;
+}
+.doc h1 {
+  font-family: var(--ff-display);
+  font-size: clamp(1.875rem, 4.5vw, 3rem);
+  font-weight: 300;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.75rem;
+}
+.doc .updated {
+  font-family: var(--ff-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 2.5rem;
+}
+.doc h2 {
+  font-family: var(--ff-display);
+  font-size: clamp(1.125rem, 2.5vw, 1.4rem);
+  font-weight: 300;
+  letter-spacing: -0.01em;
+  margin: 2.5rem 0 0.75rem;
+}
+.doc p, .doc li {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.doc p { margin-bottom: 1rem; }
+.doc ul { padding-left: 1.25rem; margin-bottom: 1rem; }
+.doc li { margin-bottom: 0.5rem; }
+.doc strong { font-weight: 500; }
+.doc a { color: var(--magenta); }
+.doc a:hover { text-decoration: underline; }
+.doc .lead { color: var(--muted); font-size: 1rem; }
+
+/* ============================================================
+   Footer ("Built in Belgium…", GPL-3.0) — reused from parent site.
+   ============================================================ */
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 1.125rem var(--gutter);
+  border-top: var(--border);
+  font-family: var(--ff-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+footer nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
