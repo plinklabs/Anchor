@@ -165,6 +165,31 @@ headless runner than the JSON-state suite. In CI they run as a separate,
 over several runs; the blocking state run uses `--filter "Category!=Visual"`. The
 state suite stays the high-value, low-flake gate.
 
+#### Curated website screenshots (#251)
+
+The same self-test surfaces double as the source for the student-facing
+screenshots on the [Anchor website](../website). A separate opt-in generator,
+`WebsiteScreenshots`, drives the join toast, the app-block overlay, the main
+window, and the tray menu through the identical launch + capture path, but
+against presentable demo content (teacher "Ms Rivera", class `PLINK-3B`, a
+readable allowlist — see `FocusAgent.App.SelfTestDemoContent`, matched to the
+dashboard's demo data) and writes a fixed, named PNG set straight into
+`website/assets/` instead of the timestamped `TestResults/` triage dump.
+
+It carries the `Category=WebsiteScreenshots` trait (so a `Category=Visual` run
+never touches it) and is gated on `ANCHOR_WEBSITE_SHOTS=1` (so an unfiltered run
+never overwrites the committed images). Regenerate with one command:
+
+```powershell
+./scripts/dev/generate-website-screenshots.ps1
+```
+
+That builds the agent, sets the gate, runs the generator, and writes
+`agent-join-toast.png`, `agent-block-overlay.png`, `agent-main-window.png`, and
+`agent-tray-menu.png` into `website/assets/`. The browser-side shots (the
+extension block page + popup) are reused from `extension/store-listing/` and are
+not regenerated here. See [`website/assets/README.md`](../website/assets/README.md).
+
 **Still deferred:** the #92 off-list-window re-minimize-on-restore path. Unlike
 the overlay/toast it has no self-test seam — exercising it end-to-end needs a
 real off-list window foregrounded and a real `EVENT_SYSTEM_FOREGROUND` hook fire,

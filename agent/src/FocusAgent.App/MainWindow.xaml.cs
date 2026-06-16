@@ -323,7 +323,7 @@ public sealed partial class MainWindow : Window
     {
         var window = new MainWindow(TimeSpan.FromSeconds(10));
         window._connectionSnapshot = new ConnectionStatusSnapshot(
-            ConnectionStatus.Connected, "Ada Lovelace", LastError: null);
+            ConnectionStatus.Connected, SelfTestDemoContent.StudentName, LastError: null);
         window._joinedSessionId = Guid.NewGuid();
         window._sessionStartedAt = DateTimeOffset.Now.AddMinutes(-12);
         window._lastPingAt = DateTimeOffset.UtcNow;

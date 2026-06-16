@@ -147,6 +147,16 @@ internal static class WindowCapture
     public static Bitmap Capture(IntPtr hwnd) => CaptureRect(GetWindowScreenRect(hwnd));
 
     /// <summary>
+    /// Park the mouse cursor in the top-left corner so a stray hover tooltip
+    /// (e.g. the title bar's "Close" caption tip) can't bleed into a capture. The
+    /// visual-enforcement specs don't care — they assert on coarse pixel stats —
+    /// but the curated website screenshots (<see cref="WebsiteScreenshots"/>) are
+    /// shipped images, so they move the pointer out of the frame first to keep the
+    /// shot clean and deterministic.
+    /// </summary>
+    public static void ParkCursor() => SetCursorPos(0, 0);
+
+    /// <summary>
     /// Capture a fixed screen rect to a 32bpp bitmap. Capturing by <em>rect</em>
     /// (not HWND) is what lets a spec re-capture the same patch of screen after
     /// its window is gone — the before/after that proves the window was really
@@ -270,6 +280,9 @@ internal static class WindowCapture
         public Rect rcWork;
         public uint dwFlags;
     }
+
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetDC(IntPtr hwnd);
