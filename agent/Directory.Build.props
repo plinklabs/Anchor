@@ -24,7 +24,7 @@
     Velopack) and is kept in lockstep with this value by AppxManifestVersionTests.
   -->
   <PropertyGroup>
-    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionPrefix>0.1.1</VersionPrefix>
   </PropertyGroup>
 
 </Project>
