@@ -903,9 +903,26 @@ $apiScope = "$outEntraAudience/access_as_user"
 if (-not $SkipEntra -and $spaClientId -and ($swaUrl -notmatch '<')) {
     Write-Step 'Entra SPA — redirect URI + API pre-authorization'
     $redirect = "$swaUrl/"
-    Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'update', '--id', $spaClientId,
-        '--web-redirect-uris', $redirect, '-o', 'none') `
-        -Target $spaClientId -Action "set SPA redirect URI $redirect"
+    # The dashboard is an MSAL.js SPA: its redirect URI must live on the Entra
+    # app's *SPA* platform, not Web. A Web redirect makes sign-in fail with
+    # AADSTS9002326 ("cross-origin token redemption is permitted only for the
+    # 'Single-Page Application' client-type") because MSAL redeems the auth code
+    # cross-origin with PKCE. `az ad app update` has no --spa flag, so PATCH the
+    # application's `spa.redirectUris` via Graph (and clear any Web redirect so
+    # the two platforms don't disagree). Body via @file so the Windows
+    # az.cmd -> cmd.exe re-parse can't mangle the JSON.
+    $spaObjId = az ad app show --id $spaClientId --query id -o tsv
+    $spaTmp = New-TemporaryFile
+    try {
+        Set-Content -LiteralPath $spaTmp -Encoding UTF8 `
+            -Value "{""spa"":{""redirectUris"":[""$redirect""]},""web"":{""redirectUris"":[]}}"
+        Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PATCH',
+            '--uri', "https://graph.microsoft.com/v1.0/applications/$spaObjId",
+            '--headers', 'Content-Type=application/json',
+            '--body', "@$spaTmp", '-o', 'none') `
+            -Target $spaClientId -Action "set SPA redirect URI $redirect"
+    }
+    finally { Remove-Item -LiteralPath $spaTmp -Force -ErrorAction SilentlyContinue }
     # Request the API's access_as_user scope from the SPA (needs a resolved scope id).
     if ($apiClientId -and $scopeId -and $outEntraAudience -ne 'api://') {
         Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'permission', 'add', '--id', $spaClientId,
@@ -1004,7 +1021,13 @@ else {
             return
         }
         if ($PSCmdlet.ShouldProcess("$Repo/$Name", 'set GitHub secret')) {
-            $Value | & gh secret set $Name --repo $Repo --body -
+            # Pipe the value via stdin and let gh read it: `gh secret set` takes the
+            # value from standard input when --body is omitted. Do NOT pass `--body -`
+            # — gh treats `-` as the literal secret value (it is not a stdin sentinel),
+            # which silently wrote "-" into AZURE_STATIC_WEB_APPS_API_TOKEN /
+            # AZURE_WEBAPP_PUBLISH_PROFILE and broke every deploy with an invalid
+            # token/credential (issue #272).
+            $Value | & gh secret set $Name --repo $Repo
             if ($LASTEXITCODE -ne 0) { throw "gh secret set $Name failed ($LASTEXITCODE)" }
             Write-Host "    secret  $Name set"
         }

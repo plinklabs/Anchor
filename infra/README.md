@@ -180,6 +180,42 @@ recreating costs nothing — but mind these:
   it, you can't recover it — set a fresh one on the recreate (the script prompts
   for it and the deploy applies it).
 
+#### Dashboard returns 404 after publish (deploy-token authentication)
+
+Symptom: the build leg of `Dashboard CI / Deploy` passes, but the **Deploy to
+Azure Static Web Apps** step fails with `deployment_token provided was invalid`,
+so nothing is published and the dashboard URL returns a bare **404** (issue
+#272). The GitHub secret is write-only, so a wrong value isn't visible in the UI
+— **check the failed run's logs, not the secret.** Two causes have actually bitten:
+
+1. **The secret holds a bad value.** `gh secret set` reads the value from
+   **stdin when `--body` is omitted**; passing `--body -` writes the *literal*
+   string `-` (gh does not treat `-` as a stdin sentinel). That silently wrote
+   `-` into `AZURE_STATIC_WEB_APPS_API_TOKEN`. Re-sync from Azure's live token —
+   note the corrected `gh` invocation (pipe to stdin, **no** `--body -`):
+
+   ```bash
+   az staticwebapp secrets list -n anchor-dashboard -g anchor-rg \
+     --query properties.apiKey -o tsv \
+     | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --repo plinklabs/Anchor
+
+   gh run rerun <run-id> --failed   # re-run the failed deploy with the new secret
+   ```
+
+   `scripts/setup.ps1` refetches and re-sets this secret on every run (the token
+   is **not** a Bicep output, so an infra-only `az deployment` does not re-sync
+   it) — re-running the bootstrap fixes it too.
+
+2. **The SWA instance itself won't serve.** If the token is valid (a manual
+   `swa deploy` succeeds) yet every path still 404s with no SWA response headers
+   (`ETag` / `Strict-Transport-Security` absent), the instance's content layer is
+   stuck. Confirm by deploying the *same* build to a throwaway SWA
+   (`az staticwebapp create -n anchor-dashboard-probe -g anchor-rg -l westeurope
+   --sku Free`) — if that serves 200, recreate `anchor-dashboard`. The Free tier
+   hands out a **new random hostname**, so re-point the Entra SPA redirect URI
+   and the API's `Cors__AllowedOrigins__0` to it (re-running `scripts/setup.ps1`
+   does both), then re-run the deploy.
+
 ### Upgrading SignalR for pilot
 
 When you need more than 20 connections, change the SKU in `main.bicep`:
