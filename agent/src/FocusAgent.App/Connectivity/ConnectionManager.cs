@@ -196,11 +196,13 @@ public sealed class ConnectionManager : IAsyncDisposable
         return TimeSpan.FromSeconds(seconds);
     }
 
+    // AuthFailureMessage (in Core) maps the MSAL error code to the user-facing
+    // line — notably translating a WAM broker-config error (0xCAA2000x, #271)
+    // into something actionable instead of the raw WAM_provider_error_<hresult>.
     private static string DescribeAuthFailure(Exception ex) => ex switch
     {
-        MsalException msal when !string.IsNullOrWhiteSpace(msal.ErrorCode) =>
-            $"Sign-in failed ({msal.ErrorCode}). Click Sign in to try again.",
-        _ => "Sign-in failed. Click Sign in to try again.",
+        MsalException msal => AuthFailureMessage.Describe(msal.ErrorCode),
+        _ => AuthFailureMessage.Describe(null),
     };
 
     private string DescribeConnectFailure(Exception ex)

@@ -11,13 +11,17 @@
       1. Preflight: confirm `az` and `gh` are installed, that you are logged in
          to both, and resolve the target GitHub repository.
       2. Create the resource group (idempotent).
-      3. Create / update the two Entra app registrations the product needs:
+      3. Create / update the three Entra app registrations the product needs:
             - the API app registration (exposes an `access_as_user` scope and
               an `api://<id>` identifier URI; gets a client secret for the
-              on-behalf-of Graph directory search), and
+              on-behalf-of Graph directory search),
             - the dashboard SPA app registration (SPA redirect URI for the
-              Static Web App, pre-authorized to call the API scope).
-         Both are looked up by display name first, so re-runs reuse them.
+              Static Web App, pre-authorized to call the API scope), and
+            - the agent app registration (a Windows desktop *public client* for
+              WAM/broker sign-in: the broker redirect URI
+              ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId>, "allow public
+              client flows", and the API `access_as_user` permission).
+         All are looked up by display name first, so re-runs reuse them.
       4. Deploy infra/main.bicep into the resource group, passing the Entra
          tenant/client IDs so the App Service application settings are wired.
       5. Read the deployment outputs (resource names + URLs).
@@ -86,6 +90,16 @@
     Display name of the dashboard SPA Entra app registration.
     Default: Anchor Dashboard (<suffix>).
 
+.PARAMETER AgentAppName
+    Display name of the agent (Windows desktop, public-client) Entra app
+    registration. Default: Anchor Agent (<suffix>). This is a SEPARATE
+    registration from the dashboard SPA: the agent signs in through WAM (the
+    Windows broker), which needs a public-client app with the broker redirect
+    URI ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId> and "allow public
+    client flows" enabled — neither of which an SPA registration carries.
+    Reusing the SPA id made release sign-in fail with WAM_provider_error
+    0xCAA2000x ("IncorrectConfiguration") (#271).
+
 .PARAMETER BicepFile
     Path to the Bicep template. Default: infra/main.bicep relative to the repo.
 
@@ -116,6 +130,11 @@
 .PARAMETER SpaClientId
     Override / supply the dashboard SPA app registration client ID, mirroring
     -EntraClientId for the SPA. Used for the GitHub ENTRA_CLIENT_ID variable.
+
+.PARAMETER AgentClientId
+    Override / supply the agent public-client app registration client ID,
+    mirroring -SpaClientId for the agent. Used for the GitHub AGENT_CLIENT_ID
+    variable that the agent release workflow bakes into the published agent.
 
 .EXAMPLE
     ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf
@@ -151,13 +170,15 @@ param(
     [string]$Repo,
     [string]$ApiAppName,
     [string]$SpaAppName,
+    [string]$AgentAppName,
     [string]$BicepFile,
     [switch]$SkipGitHub,
     [switch]$SkipEntra,
     [switch]$SkipInfra,
     [string]$EntraTenantId,
     [string]$EntraClientId,
-    [string]$SpaClientId
+    [string]$SpaClientId,
+    [string]$AgentClientId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -166,6 +187,7 @@ Set-StrictMode -Version Latest
 # ── Defaults derived from the suffix ─────────────────────────────────────────
 if (-not $ApiAppName) { $ApiAppName = "Anchor API ($UniqueSuffix)" }
 if (-not $SpaAppName) { $SpaAppName = "Anchor Dashboard ($UniqueSuffix)" }
+if (-not $AgentAppName) { $AgentAppName = "Anchor Agent ($UniqueSuffix)" }
 if (-not $BicepFile) {
     $BicepFile = Join-Path (Join-Path $PSScriptRoot '..') 'infra/main.bicep'
 }
@@ -734,6 +756,65 @@ else {
     }
 }
 
+# ── Step 3a-ii: agent (Windows desktop) public-client app registration ───────
+# The agent signs in through WAM (the Windows broker) — a *public client* flow —
+# so it needs its OWN registration, distinct from the dashboard SPA: WAM requires
+# the broker redirect URI ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId> and
+# "allow public client flows" (isFallbackPublicClient), neither of which an SPA
+# registration carries. Reusing the SPA id made release sign-in fail with
+# WAM_provider_error 0xCAA2000x ("IncorrectConfiguration") (#271). Looked up by
+# display name so a re-run reuses it; adopted untouched when -AgentClientId is
+# supplied. Defined outside the guard so the later SP / consent / GitHub steps
+# can reference it under Set-StrictMode even when -SkipEntra is set.
+$agentClientId = $AgentClientId
+if (-not $SkipEntra) {
+    Write-Step "Entra app registration (agent, public client) — $AgentAppName"
+
+    if ($agentClientId) {
+        Write-Host "    Using provided agent app id: $agentClientId"
+    }
+    else {
+        $foundAgent = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'list', '--display-name', $AgentAppName, '--query', '[0].appId', '-o', 'tsv') -Capture -ReadOnly
+        if ($foundAgent) {
+            $agentClientId = $foundAgent
+            Write-Host "    Found existing agent app: $agentClientId"
+        }
+        else {
+            $createdAgent = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'create', '--display-name', $AgentAppName, '--sign-in-audience', 'AzureADMyOrg', '--query', 'appId', '-o', 'tsv') -Capture `
+                -Target $AgentAppName -Action 'create agent public-client app registration'
+            $agentClientId = if ($createdAgent) { $createdAgent } else { '<agent-client-id>' }
+            Write-Host "    Created agent app: $agentClientId"
+        }
+    }
+
+    # Mark it a public client and register the WAM broker redirect URI. Idempotent:
+    # az overwrites the public-client redirect set, and re-asserting the flag is a
+    # no-op. The placeholder id only occurs under -WhatIf (nothing was created).
+    if ($agentClientId -notmatch '<') {
+        $brokerRedirect = "ms-appx-web://Microsoft.AAD.BrokerPlugin/$agentClientId"
+        Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'update', '--id', $agentClientId,
+            '--set', 'isFallbackPublicClient=true',
+            '--public-client-redirect-uris', $brokerRedirect, '-o', 'none') `
+            -Target $agentClientId -Action 'enable public client flows + set WAM broker redirect URI'
+
+        # Request the API's access_as_user scope so the agent can obtain a token
+        # for the backend (skip if already granted so a re-run doesn't duplicate).
+        if ($apiClientId -and $scopeId) {
+            if (Test-PermissionGranted -AppId $agentClientId -ResourceAppId $apiClientId -PermissionId $scopeId) {
+                Write-Host "    Agent already requests API access_as_user — skipping."
+            }
+            else {
+                Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'permission', 'add', '--id', $agentClientId,
+                    '--api', $apiClientId, '--api-permissions', "$scopeId=Scope", '-o', 'none') `
+                    -Target $agentClientId -Action 'grant API access_as_user to agent'
+            }
+        }
+        else {
+            Write-Manual "Agent app: could not resolve the API access_as_user scope id — grant the agent the API 'access_as_user' permission manually, or it cannot get a backend token."
+        }
+    }
+}
+
 # ── Step 3b: service principals ──────────────────────────────────────────────
 # Admin consent (the final step) can only be granted against apps that have a
 # service principal in the tenant. `az ad app create` makes only the application
@@ -743,6 +824,7 @@ if (-not $SkipEntra) {
     Write-Step 'Service principals'
     Add-ServicePrincipal -AppId $apiClientId -Label 'API'
     Add-ServicePrincipal -AppId $spaClientId -Label 'dashboard SPA'
+    Add-ServicePrincipal -AppId $agentClientId -Label 'agent'
 }
 
 # ── Step 4: deploy Bicep ─────────────────────────────────────────────────────
@@ -898,10 +980,11 @@ else {
 }
 
 # ── Step 7: GitHub secrets + variables ───────────────────────────────────────
-# Names verified against .github/workflows/backend-deploy.yml and
-# dashboard-deploy.yml. Secrets: AZURE_WEBAPP_PUBLISH_PROFILE,
-# AZURE_STATIC_WEB_APPS_API_TOKEN. Variables: AZURE_WEBAPP_NAME, API_BASE_URL,
-# ENTRA_TENANT_ID, ENTRA_CLIENT_ID, API_SCOPE.
+# Names verified against .github/workflows/backend-deploy.yml,
+# dashboard-deploy.yml and agent-release.yml. Secrets:
+# AZURE_WEBAPP_PUBLISH_PROFILE, AZURE_STATIC_WEB_APPS_API_TOKEN. Variables:
+# AZURE_WEBAPP_NAME, API_BASE_URL, ENTRA_TENANT_ID, ENTRA_CLIENT_ID, API_SCOPE,
+# AGENT_CLIENT_ID (the agent release's public-client id, #271).
 
 if ($SkipGitHub) {
     Write-Step 'GitHub secrets/variables — SKIPPED (-SkipGitHub)'
@@ -948,6 +1031,15 @@ else {
     # last resort (single-app setups).
     Set-GhVariable -Name 'ENTRA_CLIENT_ID'   -Value ($(if ($spaClientId) { $spaClientId } else { $outEntraClient }))
     Set-GhVariable -Name 'API_SCOPE'         -Value $apiScope
+    # The agent's own public-client registration id (#271). The agent release
+    # workflow reads AGENT_CLIENT_ID — distinct from ENTRA_CLIENT_ID (the SPA) —
+    # because WAM sign-in needs a public client, not the SPA registration.
+    if ($agentClientId -and $agentClientId -notmatch '<') {
+        Set-GhVariable -Name 'AGENT_CLIENT_ID' -Value $agentClientId
+    }
+    else {
+        Write-Manual 'No agent app id resolved — AGENT_CLIENT_ID not set. The agent release will fail config substitution until it is set (re-run without -SkipEntra, or pass -AgentClientId).'
+    }
 }
 
 # ── Step 8: grant Entra admin consent ────────────────────────────────────────
@@ -957,11 +1049,12 @@ else {
 
 Write-Step 'Grant Entra admin consent'
 if ($SkipEntra) {
-    Write-Manual 'Entra was skipped (-SkipEntra); grant admin consent manually for your API and SPA apps once wired.'
+    Write-Manual 'Entra was skipped (-SkipEntra); grant admin consent manually for your API, SPA and agent apps once wired.'
 }
 else {
     Grant-AdminConsent -AppId $apiClientId -Label 'API'
     Grant-AdminConsent -AppId $spaClientId -Label 'dashboard SPA'
+    Grant-AdminConsent -AppId $agentClientId -Label 'agent'
 }
 
 Write-Host ''
