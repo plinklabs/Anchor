@@ -1004,7 +1004,13 @@ else {
             return
         }
         if ($PSCmdlet.ShouldProcess("$Repo/$Name", 'set GitHub secret')) {
-            $Value | & gh secret set $Name --repo $Repo --body -
+            # Pipe the value via stdin and let gh read it: `gh secret set` takes the
+            # value from standard input when --body is omitted. Do NOT pass `--body -`
+            # — gh treats `-` as the literal secret value (it is not a stdin sentinel),
+            # which silently wrote "-" into AZURE_STATIC_WEB_APPS_API_TOKEN /
+            # AZURE_WEBAPP_PUBLISH_PROFILE and broke every deploy with an invalid
+            # token/credential (issue #272).
+            $Value | & gh secret set $Name --repo $Repo
             if ($LASTEXITCODE -ne 0) { throw "gh secret set $Name failed ($LASTEXITCODE)" }
             Write-Host "    secret  $Name set"
         }

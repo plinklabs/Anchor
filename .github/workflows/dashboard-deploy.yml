@@ -58,4 +58,3 @@ jobs:
           action: upload
           app_location: dashboard/build/web
           skip_app_build: true
-          skip_api_build: true
