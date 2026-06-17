@@ -146,14 +146,16 @@ auto-update channel. Setup carries the Anchor icon and a success page, and
 launches the agent automatically once installed.
 
 - The packaged `appsettings.Production.json` ships as a template with `#{...}#`
-  placeholders (#203); pack time substitutes them from the **same per-deployment
-  repo variables the dashboard uses** — `API_BASE_URL` / `ENTRA_TENANT_ID` /
-  `ENTRA_CLIENT_ID` / `API_SCOPE` (see the inventory) — so a fork ships an agent
-  pointed at its own backend with no source edit, the agent-side mirror of the
-  dashboard's `--dart-define` substitution. (There is one Entra app + backend per
-  deployment, so the agent reuses the dashboard's variables rather than a parallel
-  `AGENT_*` set. `substitute-config.ps1` fails the build if any required value is
-  blank, so a missing variable can't silently ship a dead config — #247.)
+  placeholders (#203); pack time substitutes them from per-deployment repo
+  variables — `API_BASE_URL` / `ENTRA_TENANT_ID` / `API_SCOPE` (shared with the
+  dashboard) plus `AGENT_CLIENT_ID` — so a fork ships an agent pointed at its own
+  backend with no source edit, the agent-side mirror of the dashboard's
+  `--dart-define` substitution. The agent's **client id is its own**
+  (`AGENT_CLIENT_ID`), distinct from the dashboard SPA's `ENTRA_CLIENT_ID`:
+  the agent signs in through WAM (a public client), which the SPA registration
+  can't serve — reusing it made release sign-in fail with `WAM_provider_error_…`
+  (`0xCAA2000x`) (#271). `substitute-config.ps1` fails the build if any required
+  value is blank, so a missing variable can't silently ship a dead config — #247.
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
 - The agent ships **unsigned** (one SmartScreen "More info → Run anyway" on first
@@ -256,22 +258,31 @@ source, so a contributor building locally is unaffected.
 
 These drive the **tag-based** agent and extension releases. They are optional per
 fork: a fork that only runs its own cloud can ignore them; a fork that ships its
-own agent build sets the four dashboard `vars.*` (the agent reuses them); the
-`EDGE_ADDONS_*` config belongs to whoever owns the canonical Edge listing
-(normally Plink Labs only).
+own agent build sets the agent `vars.*` below; the `EDGE_ADDONS_*` config belongs
+to whoever owns the canonical Edge listing (normally Plink Labs only).
 
 #### Agent — variables (`agent-release.yml`)
 
 Non-secret per-deployment config, substituted into the packaged
-`appsettings.Production.json` at pack time (#203). The agent **reuses the same
-four `vars.*` the dashboard defines** — there is one Entra app + backend per
-deployment, so it reads `API_BASE_URL` / `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` /
-`API_SCOPE` (see the cloud-tier table above) rather than a parallel `AGENT_*` set
-that has to be kept in sync. (The original `AGENT_*` names were never created, so
-the first release baked in empty values and the shipped agent crashed on launch —
-#247.) Unlike the dashboard's silent fall-back, the agent pack **fails the build**
-if any of these is unset or blank (`substitute-config.ps1`), so a missing variable
-can't ship a dead config.
+`appsettings.Production.json` at pack time (#203). Backend URL, tenant and API
+scope are **shared with the dashboard** (`API_BASE_URL` / `ENTRA_TENANT_ID` /
+`API_SCOPE`, see the cloud-tier table above) — one backend + tenant per
+deployment. The **client id, however, is the agent's own** (`AGENT_CLIENT_ID`),
+*not* the dashboard SPA's `ENTRA_CLIENT_ID`:
+
+| Name | Used by | What it is | If unset |
+| --- | --- | --- | --- |
+| `AGENT_CLIENT_ID` | `agent-release.yml` | Entra **agent** (public-client) app client ID, with the WAM broker redirect URI and "allow public client flows". | Pack **fails the build** (`substitute-config.ps1`). |
+
+The agent signs in through WAM (the Windows broker), a public-client flow that
+needs the broker redirect URI `ms-appx-web://Microsoft.AAD.BrokerPlugin/<id>` and
+"allow public client flows" — neither of which the dashboard's SPA registration
+carries. Pointing the agent at `ENTRA_CLIENT_ID` made release sign-in fail with
+`WAM_provider_error_…` (`0xCAA2000x`, "IncorrectConfiguration") (#271);
+[`scripts/setup.ps1`](../scripts/setup.ps1) provisions a dedicated agent
+registration and sets this variable. Unlike the dashboard's silent fall-back, the
+agent pack **fails the build** if any required value is unset or blank
+(`substitute-config.ps1`), so a missing variable can't ship a dead config (#247).
 
 #### Extension — Edge Add-ons submission (`extension-release.yml`)
 
@@ -396,8 +407,9 @@ below remain the fallback when you provision by hand.
    connection string for you.
 3. Add the GitHub **secrets**: `AZURE_WEBAPP_PUBLISH_PROFILE`,
    `AZURE_STATIC_WEB_APPS_API_TOKEN`.
-4. Add the GitHub **variables**: `AZURE_WEBAPP_NAME`, and the four dashboard
-   `API_BASE_URL` / `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `API_SCOPE`.
+4. Add the GitHub **variables**: `AZURE_WEBAPP_NAME`, the four dashboard
+   `API_BASE_URL` / `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `API_SCOPE`, and
+   `AGENT_CLIENT_ID` (the agent's public-client id) if you ship agent releases.
 5. Confirm `CI Gate / gate` is the required status check on `main` (and `develop`).
    No other check should be required.
 6. Push a backend or dashboard change to `main` → the matching deploy leg runs

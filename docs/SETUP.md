@@ -37,7 +37,7 @@ One Azure resource group containing:
 | SignalR Service | SignalR | Free | `anchor-signalr` |
 | Static Web App (dashboard) | Static Web App | Free | `anchor-dashboard` |
 
-Plus **two Entra ID (Azure AD) app registrations** — these are *not* deployed by
+Plus **three Entra ID (Azure AD) app registrations** — these are *not* deployed by
 Bicep; they are created in Entra and their IDs are passed *into* the deploy:
 
 - **API** app registration — exposes an `access_as_user` scope and an
@@ -46,6 +46,14 @@ Bicep; they are created in Entra and their IDs are passed *into* the deploy:
 - **Dashboard SPA** app registration — a redirect URI pointing at the Static Web
   App, the Graph `User.Read` permission, and pre-authorization to call the API
   scope.
+- **Agent** app registration — a Windows desktop **public client** for the agent's
+  WAM/broker sign-in. It needs the broker redirect URI
+  `ms-appx-web://Microsoft.AAD.BrokerPlugin/<agent-client-id>`, **Allow public
+  client flows** enabled, and the API `access_as_user` permission. This must be a
+  *separate* registration from the Dashboard SPA: an SPA registration carries
+  neither the broker redirect URI nor public-client flows, so reusing its id makes
+  the agent fail at sign-in with `WAM_provider_error_…` (`0xCAA2000x`,
+  "IncorrectConfiguration") in release builds (#271).
 
 `<suffix>` is your fork-specific [`uniqueSuffix`](../infra/main.bicep) — pick
 something unique (e.g. your school) so globally-unique resource names don't
@@ -60,8 +68,8 @@ the two that used to be manual:
   and writes it to the App Service as `AzureAd__ClientCredentials` after the
   deploy (re-applying it each run, since the Bicep deploy rewrites the App
   Service's app settings). See [Step 6c](#6c-add-the-api-client-secret-to-the-app-service).
-- **Entra service principals** — created for both app registrations so admin
-  consent has a service to consent against. See [Step 3c](#3c-create-service-principals).
+- **Entra service principals** — created for all three app registrations so admin
+  consent has a service to consent against. See [Step 3d](#3d-create-service-principals).
 
 **One step may still need a human:**
 
@@ -119,9 +127,10 @@ group name, pass it to every `az` command below with `--resource-group`.
 
 ## Step 3 — Entra app registrations
 
-Create both registrations **before** the deploy — the deploy needs the API client
-ID. (The SPA redirect URI is finished in [Step 5](#finish-the-spa-redirect-uri--api-pre-authorization)
-after the deploy, once you know the Static Web App URL.)
+Create all three registrations **before** the deploy — the deploy needs the API
+client ID. (The SPA redirect URI is finished in [Step 5](#finish-the-spa-redirect-uri--api-pre-authorization)
+after the deploy, once you know the Static Web App URL; the agent registration is
+self-contained and needs no post-deploy step.)
 
 You can do this with `az` (mirrors the script) or in the **Entra portal → App
 registrations**.
@@ -192,9 +201,49 @@ the deploy produces the Static Web App URL.
 > the API and the SPA, you can skip 3b and reuse the API app as the SPA client.
 > Entra then requires the dashboard's `API_SCOPE` to use the GUID client ID with
 > no `api://` prefix (see the note in [`dashboard/lib/auth/msal_config.dart`](../dashboard/lib/auth/msal_config.dart)).
-> The two-app layout below matches what the script provisions.
+> The two-app layout below matches what the script provisions. **This
+> simplification does not extend to the agent** — the agent always needs its own
+> public-client registration (3c), because WAM/broker sign-in is incompatible with
+> an SPA/web registration.
 
-### 3c. Create service principals
+### 3c. Agent (Windows desktop) app registration
+
+The agent signs in through **WAM** (the Windows Web Account Manager broker) — a
+**public-client** flow. This needs its own registration, distinct from the
+Dashboard SPA: WAM requires the broker redirect URI and "allow public client
+flows", neither of which an SPA registration carries. Reusing the SPA id makes the
+agent fail at sign-in with `WAM_provider_error_…` (`0xCAA2000x`,
+"IncorrectConfiguration") in release builds (#271).
+
+```bash
+# Create (single-tenant), capture its appId (the AGENT client ID).
+AGENT_CLIENT_ID=$(az ad app create \
+  --display-name "Anchor Agent (yourschool)" \
+  --sign-in-audience AzureADMyOrg \
+  --query appId -o tsv)
+
+# Mark it a public client and register the WAM broker redirect URI.
+az ad app update --id "$AGENT_CLIENT_ID" \
+  --set isFallbackPublicClient=true \
+  --public-client-redirect-uris "ms-appx-web://Microsoft.AAD.BrokerPlugin/$AGENT_CLIENT_ID"
+
+# Request the API's access_as_user scope so the agent can get a backend token.
+# <scope-id> is the access_as_user scope GUID from Step 3a.
+az ad app permission add --id "$AGENT_CLIENT_ID" \
+  --api "$API_CLIENT_ID" --api-permissions "<scope-id>=Scope"
+```
+
+In the portal the equivalents are **Authentication → Add a platform → Mobile and
+desktop applications → Custom redirect URI**
+`ms-appx-web://Microsoft.AAD.BrokerPlugin/<AGENT_CLIENT_ID>`, **Advanced settings →
+Allow public client flows → Yes**, and **API permissions → Add → Anchor API →
+`access_as_user`**.
+
+Save the GUID as `AGENT_CLIENT_ID` — it becomes the GitHub Actions variable of the
+same name that the [agent release workflow](../.github/workflows/agent-release.yml)
+bakes into the shipped agent (separate from the SPA's `ENTRA_CLIENT_ID`).
+
+### 3d. Create service principals
 
 `az ad app create` makes only the application *object*. Admin consent (Step 7)
 can only be granted against an app that also has a **service principal** in the
@@ -205,6 +254,7 @@ one for each registration (idempotent — skip any that already exists):
 ```bash
 az ad sp create --id "$API_CLIENT_ID"
 az ad sp create --id "$SPA_CLIENT_ID"
+az ad sp create --id "$AGENT_CLIENT_ID"
 ```
 
 ---
@@ -347,11 +397,11 @@ az ad app permission admin-consent --id "$SPA_CLIENT_ID"
 ```
 
 Or in the portal: **Entra → App registrations → `<app>` → API permissions →
-Grant admin consent for `<tenant>`**. Do this for both registrations. You can
+Grant admin consent for `<tenant>`**. Do this for all three registrations. You can
 finish the rest of the setup first and grant consent afterwards.
 
 > If consent fails with *"your organization has not subscribed to service(s)"*,
-> the API's service principal is missing — run [Step 3c](#3c-create-service-principals)
+> the API's service principal is missing — run [Step 3d](#3d-create-service-principals)
 > first, then retry.
 
 ---
@@ -359,7 +409,8 @@ finish the rest of the setup first and grant consent afterwards.
 ## Step 8 — GitHub secrets and variables
 
 The deploy workflows ([`backend-deploy.yml`](../.github/workflows/backend-deploy.yml),
-[`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml)) read the
+[`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml)) and the
+[`agent-release.yml`](../.github/workflows/agent-release.yml) packaging read the
 deploy target from repo Actions **variables** and auth from **secrets** — so a
 fork deploys to its own Azure with no source edits. The authoritative inventory is
 in [`docs/RELEASE.md`](RELEASE.md#required-secrets-and-variables); set exactly
@@ -403,6 +454,7 @@ az staticwebapp secrets list --name anchor-dashboard --query properties.apiKey -
 | `ENTRA_TENANT_ID` | your tenant GUID | `dashboard-deploy.yml` |
 | `ENTRA_CLIENT_ID` | the **dashboard SPA** client ID (Step 3b) | `dashboard-deploy.yml` |
 | `API_SCOPE` | `<entraAudience>/access_as_user` (two-app), or `<client-id>/.default` (single-app) | `dashboard-deploy.yml` |
+| `AGENT_CLIENT_ID` | the **agent** public-client ID (Step 3c) | `agent-release.yml` |
 
 ```bash
 gh variable set AZURE_WEBAPP_NAME --repo OWNER/REPO --body "anchor-api-yourschool"
@@ -410,7 +462,14 @@ gh variable set API_BASE_URL      --repo OWNER/REPO --body "https://anchor-api-y
 gh variable set ENTRA_TENANT_ID   --repo OWNER/REPO --body "<your-tenant-guid>"
 gh variable set ENTRA_CLIENT_ID   --repo OWNER/REPO --body "$SPA_CLIENT_ID"
 gh variable set API_SCOPE         --repo OWNER/REPO --body "api://$API_CLIENT_ID/access_as_user"
+gh variable set AGENT_CLIENT_ID   --repo OWNER/REPO --body "$AGENT_CLIENT_ID"
 ```
+
+> **`AGENT_CLIENT_ID` vs `ENTRA_CLIENT_ID`.** These are deliberately different
+> registrations. The agent uses WAM (a public client) and `ENTRA_CLIENT_ID` is the
+> dashboard's SPA — pointing the agent at the SPA id makes release sign-in fail
+> with `WAM_provider_error_…` (`0xCAA2000x`) (#271). The agent shares
+> `ENTRA_TENANT_ID` and `API_SCOPE`, only the client id differs.
 
 > **`API_SCOPE` form.** With **two** app registrations the script sets
 > `<entraAudience>/access_as_user` (i.e. `api://<api-client-id>/access_as_user`) —
@@ -447,9 +506,9 @@ is no separate migration step.
 You have a working fork when, following only this doc:
 
 - [ ] `az deployment group create` succeeds and outputs the resource names/URLs.
-- [ ] Both Entra registrations exist, each with a service principal (Step 3c).
-- [ ] Admin consent is granted for both registrations (Step 7).
+- [ ] All three Entra registrations exist, each with a service principal (Step 3d).
+- [ ] Admin consent is granted for all three registrations (Step 7).
 - [ ] The API client secret is set on the App Service (Step 6c).
-- [ ] The two GitHub secrets and five GitHub variables are set (Step 8).
+- [ ] The two GitHub secrets and six GitHub variables are set (Step 8).
 - [ ] A push to `main` triggers the matching deploy leg, and the deployed
       dashboard signs in and reaches the API.
