@@ -903,9 +903,26 @@ $apiScope = "$outEntraAudience/access_as_user"
 if (-not $SkipEntra -and $spaClientId -and ($swaUrl -notmatch '<')) {
     Write-Step 'Entra SPA — redirect URI + API pre-authorization'
     $redirect = "$swaUrl/"
-    Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'update', '--id', $spaClientId,
-        '--web-redirect-uris', $redirect, '-o', 'none') `
-        -Target $spaClientId -Action "set SPA redirect URI $redirect"
+    # The dashboard is an MSAL.js SPA: its redirect URI must live on the Entra
+    # app's *SPA* platform, not Web. A Web redirect makes sign-in fail with
+    # AADSTS9002326 ("cross-origin token redemption is permitted only for the
+    # 'Single-Page Application' client-type") because MSAL redeems the auth code
+    # cross-origin with PKCE. `az ad app update` has no --spa flag, so PATCH the
+    # application's `spa.redirectUris` via Graph (and clear any Web redirect so
+    # the two platforms don't disagree). Body via @file so the Windows
+    # az.cmd -> cmd.exe re-parse can't mangle the JSON.
+    $spaObjId = az ad app show --id $spaClientId --query id -o tsv
+    $spaTmp = New-TemporaryFile
+    try {
+        Set-Content -LiteralPath $spaTmp -Encoding UTF8 `
+            -Value "{""spa"":{""redirectUris"":[""$redirect""]},""web"":{""redirectUris"":[]}}"
+        Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PATCH',
+            '--uri', "https://graph.microsoft.com/v1.0/applications/$spaObjId",
+            '--headers', 'Content-Type=application/json',
+            '--body', "@$spaTmp", '-o', 'none') `
+            -Target $spaClientId -Action "set SPA redirect URI $redirect"
+    }
+    finally { Remove-Item -LiteralPath $spaTmp -Force -ErrorAction SilentlyContinue }
     # Request the API's access_as_user scope from the SPA (needs a resolved scope id).
     if ($apiClientId -and $scopeId -and $outEntraAudience -ne 'api://') {
         Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'permission', 'add', '--id', $spaClientId,
