@@ -338,6 +338,11 @@ unpackaged (so `dotnet run` works for dev); passing
 `/p:WindowsPackageType=MSIX` flips it to a packaged build that emits an
 `.msix` under `agent/artifacts/` (gitignored).
 
+> The **shipped** agent is the unpackaged build, distributed via Velopack on
+> GitHub Releases (see [`docs/RELEASE.md`](../docs/RELEASE.md)). The MSIX path
+> below exists for **local sideload / testing only** — Anchor is BYOD and is
+> never pushed to devices via Intune/MDM.
+
 ### Build the MSIX
 
 ```powershell
@@ -411,21 +416,5 @@ First launch prompts the user to allow the StartupTask. Declining means the
 agent will not auto-start at login (the user can flip this later from Windows
 Settings → Apps → Startup). The MSIX declares a single startup task,
 `AnchorFocusAgentStartup`, which launches `FocusAgent.App` at user login.
-
-### Tenant distribution via Intune
-
-For pilot or school-wide rollout we do **not** buy a paid code-signing
-certificate. Instead:
-
-1. Sign the MSIX with the self-signed cert above (the production cert can be
-   the same one — keep it in a secure store, not the repo).
-2. Upload the `.msix` to Intune as a "Line-of-business app" (or Win32 app).
-3. Push the **signing cert's public key** (`anchor-dev.cer`) to managed
-   devices via an Intune **Trusted certificate** profile, targeted at the
-   `Trusted Root Certification Authorities` or `Trusted People` store
-   (LocalMachine).
-4. Assign the app to a user / device group. Intune installs it silently.
-
-Once the cert is in the device's trust store, the MSIX installs cleanly with
-no SmartScreen prompt and no paid CA involvement. See issue #1 (closed) for
-the decision rationale.
+(The shipped unpackaged build instead registers startup via a per-user
+`HKCU\...\Run` entry — see `FocusAgent.Core.Startup.StartupRegistrar`, #225.)
