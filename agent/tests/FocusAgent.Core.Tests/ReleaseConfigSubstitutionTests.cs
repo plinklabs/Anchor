@@ -110,6 +110,39 @@ public class ReleaseConfigSubstitutionTests
         }
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Substitution_FailsLoudly_WhenARequiredValueIsBlank(string blank)
+    {
+        var temp = CopyTemplateToTemp();
+        try
+        {
+            // #247 hardening: a misnamed CI variable resolves to an EMPTY string,
+            // not an unset one. The script used to accept "" as a legitimate value
+            // and shipped a dead config (empty Backend:BaseUrl -> UriFormatException
+            // -> instant crash). A blank required value must now fail the build,
+            // exactly like a missing one, leaving the template untouched.
+            var (exit, _, stderr) = RunScript(
+                temp,
+                new Dictionary<string, string>
+                {
+                    ["BACKEND_BASE_URL"] = blank,
+                    ["AUTH_TENANT_ID"] = "t",
+                    ["AUTH_CLIENT_ID"] = "c",
+                    ["AUTH_SCOPE"] = "s",
+                });
+
+            Assert.True(exit != 0, "Script should have failed on the blank BACKEND_BASE_URL value.");
+            Assert.Contains("BACKEND_BASE_URL", stderr);
+            Assert.Contains("#{BACKEND_BASE_URL}#", File.ReadAllText(temp));
+        }
+        finally
+        {
+            File.Delete(temp);
+        }
+    }
+
     private static string CopyTemplateToTemp()
     {
         Assert.True(File.Exists(TemplatePath), $"Missing template at {TemplatePath}.");

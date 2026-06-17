@@ -25,7 +25,12 @@ name: Agent Release
 # `vars.*` (non-secret SPA/backend config) — the agent-side mirror of the
 # dashboard's `--dart-define` substitution (dashboard-deploy.yml, #202). A fork
 # sets its own values and ships an agent targeting its own backend with no
-# source edit.
+# source edit. The agent reuses the SAME repo variables the dashboard already
+# defines (API_BASE_URL / ENTRA_TENANT_ID / ENTRA_CLIENT_ID / API_SCOPE) — there
+# is one Entra app + backend per deployment, so the agent and dashboard read the
+# one set rather than a parallel AGENT_* set that has to be kept in sync (#247:
+# the original AGENT_* names were never created, so every value baked in empty
+# and the shipped agent crashed on launch).
 #
 # Signing: none. The agent ships unsigned, so first install shows one SmartScreen
 # "More info -> Run anyway" prompt (#209 scope decision). Code-signing is a later
@@ -88,10 +93,10 @@ jobs:
         # is non-secret per-deployment config (a fork's own backend/Entra),
         # hence vars.* — see the workflow header.
         env:
-          BACKEND_BASE_URL: ${{ vars.AGENT_BACKEND_BASE_URL }}
-          AUTH_TENANT_ID: ${{ vars.AGENT_AUTH_TENANT_ID }}
-          AUTH_CLIENT_ID: ${{ vars.AGENT_AUTH_CLIENT_ID }}
-          AUTH_SCOPE: ${{ vars.AGENT_AUTH_SCOPE }}
+          BACKEND_BASE_URL: ${{ vars.API_BASE_URL }}
+          AUTH_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
+          AUTH_CLIENT_ID: ${{ vars.ENTRA_CLIENT_ID }}
+          AUTH_SCOPE: ${{ vars.API_SCOPE }}
         run: ./agent/scripts/pack-release.ps1 -Version '${{ steps.ver.outputs.version }}'
 
       # Upload the Velopack output (Setup.exe + full/delta nupkg + RELEASES feed)

@@ -137,6 +137,13 @@ export class WitnessClient {
   private readonly pingIntervalMs: number;
 
   private port: RuntimePort | null = null;
+  /**
+   * Whether the current port has proven a live host by relaying at least one
+   * message. `connectNative` to a *missing* host doesn't throw — it returns a
+   * port that drops a moment later (#243) — so port creation alone is not proof
+   * of a connection. Only a received message resets the reconnect backoff.
+   */
+  private established = false;
   private reconnectAttempt = 0;
   private pingTimer: number | null = null;
   private reconnectTimer: number | null = null;
@@ -185,14 +192,24 @@ export class WitnessClient {
     }
 
     this.port = port;
+    this.established = false;
     port.onMessage.addListener((message) => this.handleMessage(message));
     port.onDisconnect.addListener(() => this.handleDisconnect());
-    log.info('witness port connected to agent host');
-    this.reconnectAttempt = 0;
+    // Don't claim a connection yet: a missing host hands back a port that drops
+    // immediately (#243). We confirm the link — and reset the backoff — only
+    // once the host actually relays a message (see handleMessage).
+    log.debug('witness port opened; awaiting first host message');
     this.armPing();
   }
 
   private handleMessage(message: unknown): void {
+    if (!this.established) {
+      // First message over this port is proof of a live host: now reset the
+      // reconnect backoff so a healthy agent comes back to the 1s base delay.
+      this.established = true;
+      this.reconnectAttempt = 0;
+      log.info('witness port connected to agent host');
+    }
     const msg = message as WitnessHostMessage;
     const signal = classifyHostMessage(msg);
     if (signal === 'agent_unavailable') {
@@ -210,7 +227,15 @@ export class WitnessClient {
   }
 
   private handleDisconnect(): void {
-    log.warn('witness port disconnected');
+    if (this.established) {
+      // An established link dropping is a real event (agent/browser restart).
+      log.info('witness port disconnected');
+    } else {
+      // A port that drops before any message means the host was never there —
+      // the expected, quiet case on a device without the agent (#243).
+      log.debug('witness port dropped before any host message (agent likely absent)');
+    }
+    this.established = false;
     this.port = null;
     this.clearPing();
     this.scheduleReconnect();

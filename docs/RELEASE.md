@@ -14,7 +14,7 @@ different places at different cadences:
 
 | Tier | What ships | Trigger | Mechanism |
 | --- | --- | --- | --- |
-| **Cloud** (continuous) | Backend API → Azure App Service; teacher dashboard → Azure Static Web Apps | **push to `main`** (path-filtered) | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml), [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml) |
+| **Cloud** (continuous) | Backend API → Azure App Service; teacher dashboard → Azure Static Web Apps; public website → GitHub Pages | **push to `main`** (path-filtered) | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml), [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml), [`website-deploy.yml`](../.github/workflows/website-deploy.yml) |
 | **Client** (tag-based) | Desktop agent → GitHub Releases via Velopack; Edge extension → Edge Add-ons store | **a version tag** (`agent-v*` / `extension-v*`) | [`agent-release.yml`](../.github/workflows/agent-release.yml) (#209), [`extension-release.yml`](../.github/workflows/extension-release.yml) (#210) |
 
 The split is intentional:
@@ -44,6 +44,24 @@ each path-filtered so an unrelated push never triggers it:
 | --- | --- | --- | --- |
 | Backend API → Azure App Service | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml) | `workflow_run` after **Backend CI** succeeds on `main` | publish-profile secret |
 | Dashboard → Azure Static Web Apps | [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml) | `push` to `main` under `dashboard/**` | SWA deployment token |
+| Public website → GitHub Pages | [`website-deploy.yml`](../.github/workflows/website-deploy.yml) | `push` to `main` under `website/**` | cross-repo deploy PAT |
+
+The website leg is a **cross-repo mirror**: the site source lives here under
+`website/`, but the live site is the separate `plinklabs.github.io` repo (which
+hosts several projects). On a `website/**` push to `main`, the workflow syncs
+`website/` into that repo's `anchor/` subfolder and pushes. It writes **only**
+`anchor/` (the `rsync --delete` target is the `anchor/` subdir, so the Pages
+repo's root files and other projects are never touched) and is **idempotent**
+(the commit is guarded by `git diff --cached --quiet`, so a re-run with no source
+change is a clean no-op). The cross-repo push needs a scoped credential —
+`GITHUB_TOKEN` only reaches this repo — see the secrets inventory below.
+
+> **One-time manual front-page link (NOT automated).** The Anchor card in
+> `plinklabs.github.io/index.html` is currently unlinked; it should be turned
+> into a link to `/anchor/`. That `index.html` is the Pages repo's own root
+> content, not part of the co-located `website/` source, so the sync neither can
+> nor should write it. Land it as a one-line manual PR in `plinklabs.github.io`
+> (tracked on the website epic). One-time only — once linked it stays linked.
 
 Both target their resource by a **repo Actions variable** (not a hardcoded name),
 so a fork deploys to its own `anchor-api-<suffix>` / Static Web App with no source
@@ -122,12 +140,20 @@ push of an `agent-v*` tag. It builds the WinUI 3 agent self-contained
 (`win-x64`), packages it with **Velopack** (`vpk`), and uploads the
 `Setup.exe` + full/delta `.nupkg` + `RELEASES` feed to the **GitHub Release** for
 that tag. Installed agents read that feed and auto-update (delta) on the next tag.
+The portable `.zip` is suppressed (`--noPortable`) — the agent is installed, not
+run portably — but the `.nupkg` + `RELEASES` feed is kept; it **is** the
+auto-update channel. Setup carries the Anchor icon and a success page, and
+launches the agent automatically once installed.
 
 - The packaged `appsettings.Production.json` ships as a template with `#{...}#`
-  placeholders (#203); pack time substitutes them from the **`AGENT_*` repo
-  variables** (see the inventory) so a fork ships an agent pointed at its own
-  backend with no source edit — the agent-side mirror of the dashboard's
-  `--dart-define` substitution.
+  placeholders (#203); pack time substitutes them from the **same per-deployment
+  repo variables the dashboard uses** — `API_BASE_URL` / `ENTRA_TENANT_ID` /
+  `ENTRA_CLIENT_ID` / `API_SCOPE` (see the inventory) — so a fork ships an agent
+  pointed at its own backend with no source edit, the agent-side mirror of the
+  dashboard's `--dart-define` substitution. (There is one Entra app + backend per
+  deployment, so the agent reuses the dashboard's variables rather than a parallel
+  `AGENT_*` set. `substitute-config.ps1` fails the build if any required value is
+  blank, so a missing variable can't silently ship a dead config — #247.)
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
 - The agent ships **unsigned** (one SmartScreen "More info → Run anyway" on first
@@ -144,9 +170,15 @@ present — publishes/updates the **single canonical** Edge listing via the Part
 Center API.
 
 - The extension is **backend-agnostic** (it gets its backend URL from the on-box
-  agent at runtime, #204), so there is **one** canonical listing (stable ID
-  `akkfdaclmpfcnjalcifkcbhgjnnopman`) that every fork reuses. **Forks normally do
-  not run this workflow** — it ships the Plink Labs listing.
+  agent at runtime, #204), so there is **one** canonical listing that every fork
+  reuses. **Forks normally do not run this workflow** — it ships the Plink Labs
+  listing.
+- The Edge store **assigns** the published extension ID and rejects a manifest
+  carrying a `key`, so `pack-extension.mjs` strips it from the upload ZIP. The
+  committed `key` only pins the ID for unpacked dev / self-hosted installs — once
+  the store product exists, re-pin the agent-side references to the store-assigned
+  ID (see [`extension/README.md`](../extension/README.md) "Post-publish: re-pin the
+  store ID").
 - If the `EDGE_ADDONS_*` config (see the inventory) is unset, the job still builds
   + packages + uploads the ZIP and prints manual-submit instructions, so the
   listing can be brought up before the API is wired.
@@ -194,6 +226,7 @@ entries are optional per fork — see [the client section](#client-tier).
 | --- | --- | --- |
 | `AZURE_WEBAPP_PUBLISH_PROFILE` | `backend-deploy.yml` | The App Service **publish profile** XML. Azure Portal → the `anchor-api-*` App Service → *Get publish profile* (or `az webapp deployment list-publishing-profiles --xml`). Paste the whole XML as the secret value. Rotate by downloading a fresh profile after resetting publish credentials. |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | `dashboard-deploy.yml` | The Static Web App **deployment token**. Azure Portal → the Static Web App → *Manage deployment token* (or `az staticwebapp secrets list`). |
+| `PLINKLABS_PAGES_DEPLOY_TOKEN` | `website-deploy.yml` | A **scoped deploy credential** with write access to the `plinklabs.github.io` Pages repo, used to push the synced `anchor/` folder cross-repo (`GITHUB_TOKEN` only reaches this repo). Create a fine-grained PAT scoped to **only** `plinklabs/plinklabs.github.io` with **Contents: Read and write**, on a bot/service account, and paste the token as the secret value. (A deploy key is an alternative; the workflow uses a token via `actions/checkout`.) Rotate by regenerating the PAT and replacing the secret. A fork publishing its own site points this at its own Pages repo and updates the `repository:` in `website-deploy.yml`. |
 | `GITHUB_TOKEN` | `dashboard-deploy.yml`, `ci-gate.yml` | Auto-provided by GitHub Actions; **no setup needed**. Listed only so the inventory is complete. |
 
 > **Hardening note.** The backend publish-profile auth is the simplest path that
@@ -223,21 +256,22 @@ source, so a contributor building locally is unaffected.
 
 These drive the **tag-based** agent and extension releases. They are optional per
 fork: a fork that only runs its own cloud can ignore them; a fork that ships its
-own agent build sets the `AGENT_*` variables; the `EDGE_ADDONS_*` config belongs to
-whoever owns the canonical Edge listing (normally Plink Labs only).
+own agent build sets the four dashboard `vars.*` (the agent reuses them); the
+`EDGE_ADDONS_*` config belongs to whoever owns the canonical Edge listing
+(normally Plink Labs only).
 
 #### Agent — variables (`agent-release.yml`)
 
 Non-secret per-deployment config, substituted into the packaged
-`appsettings.Production.json` at pack time (#203). Each is a `vars.*` (public
-SPA/backend config, not a secret).
-
-| Name | What it is | If unset |
-| --- | --- | --- |
-| `AGENT_BACKEND_BASE_URL` | Backend API base URL the shipped agent targets. | Substituted as empty → the packaged agent falls back to its template/source default. |
-| `AGENT_AUTH_TENANT_ID` | Entra tenant ID for the agent's sign-in. | As above. |
-| `AGENT_AUTH_CLIENT_ID` | Entra **agent** app client ID. | As above. |
-| `AGENT_AUTH_SCOPE` | API scope the agent requests. | As above. |
+`appsettings.Production.json` at pack time (#203). The agent **reuses the same
+four `vars.*` the dashboard defines** — there is one Entra app + backend per
+deployment, so it reads `API_BASE_URL` / `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` /
+`API_SCOPE` (see the cloud-tier table above) rather than a parallel `AGENT_*` set
+that has to be kept in sync. (The original `AGENT_*` names were never created, so
+the first release baked in empty values and the shipped agent crashed on launch —
+#247.) Unlike the dashboard's silent fall-back, the agent pack **fails the build**
+if any of these is unset or blank (`substitute-config.ps1`), so a missing variable
+can't ship a dead config.
 
 #### Extension — Edge Add-ons submission (`extension-release.yml`)
 
@@ -293,6 +327,9 @@ release**.
      separate migration step.
    - **dashboard** — a push under `dashboard/**` builds with the `vars.*`
      dart-defines and uploads to the Static Web App.
+   - **website** — a push under `website/**` mirrors `website/` into the
+     `plinklabs.github.io` repo's `anchor/` folder and pushes (idempotent; only
+     `anchor/` is written). Needs `PLINKLABS_PAGES_DEPLOY_TOKEN`.
 3. Confirm the deploy succeeded in the Actions tab; the deployed tip is live.
 
 ### Agent (`agent-v*`)

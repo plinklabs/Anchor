@@ -83,7 +83,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 
 ### 5.1 Lifecycle
 
-- Installs once per laptop (MSIX installer, code-signed).
+- Installs per user from a Velopack package on GitHub Releases (BYOD, no admin rights, no code-signing cert); updates itself via Velopack deltas.
 - Runs at user login as a tray app.
 - Authenticates silently to the backend via Entra (WAM).
 - Maintains a persistent SignalR connection.
@@ -117,7 +117,7 @@ Key APIs in use:
 
 We accept that BYOD without admin rights means a determined student can kill the agent. There is **no watchdog**: a student who is willing to kill the agent will simply kill the watchdog too, and the installer complexity it would add (service registration, SCM permissions, an extra StartupTask the user has to approve) buys nothing real. Instead:
 
-- The agent registers itself to auto-start at login via the MSIX `windows.startupTask` extension, so a reboot or sign-out brings it back the next time the student signs in.
+- The agent registers itself to auto-start at login via a per-user `HKCU\...\Run` entry (#225), so a reboot or sign-out brings it back the next time the student signs in.
 - Loss of heartbeat for > N seconds during an active session surfaces in the dashboard's live student-state panel as "agent stopped reporting" — that's the signal teachers actually act on.
 - We treat tampering as a **social problem visible to the teacher**, not a technical arms race.
 
@@ -220,7 +220,7 @@ Identity is always the Entra object ID. We do not store or trust client-supplied
 - WinUI 3 tray app, Entra silent auth, SignalR client.
 - Foreground hook + minimize off-list apps.
 - Hand-coded allowlist (no bundles yet).
-- MSIX packaging, code-signing cert acquisition (start procurement early — multi-week lead time).
+- Velopack packaging + GitHub Releases auto-update (no code-signing cert required).
 
 ### Phase 3 — extension v1 (1 week elapsed)
 

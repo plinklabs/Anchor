@@ -13,10 +13,15 @@ name: Extension Release
 #
 # Backend-agnostic, one canonical listing: the extension gets its backend URL from
 # the agent at runtime (#204), so every fork reuses the ONE published listing
-# (stable ID akkfdaclmpfcnjalcifkcbhgjnnopman) instead of publishing near-identical
-# copies. Forks therefore normally do NOT run this workflow; it ships the canonical
-# Plink Labs listing. The pinned `key` in the manifest (committed) preserves the
-# stable ID across every build (#123) — packaged dist/ keeps it, locked by a test.
+# instead of publishing near-identical copies. Forks therefore normally do NOT run
+# this workflow; it ships the canonical Plink Labs listing.
+#
+# Extension ID: the Edge store ASSIGNS the published ID and rejects a manifest that
+# ships a `key`, so pack-extension.mjs strips `key` from the upload ZIP (locked by a
+# test). The committed `key` (#123) only pins the ID for unpacked dev / self-hosted
+# installs; it does NOT carry into the store-published ID. After the product is
+# created, the agent-side pins must be re-set to the store-assigned ID — see
+# extension/README.md "Post-publish: re-pin the store ID".
 #
 # Gate interaction: like agent-release.yml / backend-deploy.yml this workflow has
 # NO `pull_request` trigger, so it never produces a check on a PR and must NOT be

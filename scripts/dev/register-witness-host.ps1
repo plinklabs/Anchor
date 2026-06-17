@@ -11,7 +11,7 @@
     `HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\net.anchor.witness`
     whose default value points at a host-manifest JSON. The manifest's `path`
     must be the ABSOLUTE path to the host exe, and `allowed_origins` must name the
-    pinned extension ID (akkfdaclmpfcnjalcifkcbhgjnnopman, see extension/README.md).
+    pinned extension ID (dnkimhodjfogjibnbbfdjdapgmmiojio, see extension/README.md).
 
     This script builds the host (unless -SkipBuild), writes the manifest with the
     real exe path next to the exe, and sets the registry key. Re-run it after a

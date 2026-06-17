@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Privacy policy for Anchor, Plink Labs' classroom focus-session software, including its Microsoft Edge extension.">
+  <title>Anchor — Privacy Policy · Plink Labs</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><path d='M 10.44 20.86 A 9 9 0 1 1 13.56 20.86' stroke='%23DB2777' stroke-width='1.5' stroke-linecap='round'/><circle cx='12' cy='12' r='1.8' fill='%23DB2777'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300&family=Hanken+Grotesk:wght@400;500&family=Space+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <a href="/" class="wordmark" aria-label="Plink Labs home">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M 10.44 20.86 A 9 9 0 1 1 13.56 20.86" stroke="#DB2777" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="12" cy="12" r="1.8" fill="#DB2777"/>
+      </svg>
+      <span>plink labs</span>
+    </a>
+    <nav>
+      <a href="https://github.com/plinklabs/Anchor">GitHub</a>
+    </nav>
+  </header>
+
+  <nav class="subnav" aria-label="Anchor site">
+    <a href="index.html">Home</a>
+    <a href="teachers.html">Teachers</a>
+    <a href="it.html">IT staff</a>
+    <a href="faq.html">FAQ</a>
+    <a href="contact.html">Contact</a>
+  </nav>
+
+  <main class="doc">
+    <p class="eyebrow">Anchor</p>
+    <h1>Privacy Policy</h1>
+    <p class="updated">Last updated 15 June 2026</p>
+
+    <p class="lead">Anchor is open-source classroom software made by teachers. It is built to enforce focus during a lesson, not to surveil students — it only observes activity while a teacher has an active focus session running, and the data it produces stays inside the school that operates it.</p>
+
+    <h2>What Anchor is</h2>
+    <p>Anchor is a school-internal focus-session system for managed and bring-your-own-device classroom laptops. A teacher starts a session for a class; for its duration each student's device softly enforces a teacher-defined allowlist of apps and websites, and off-list activity is shown live on the teacher's dashboard. This policy covers the <strong>Anchor Microsoft Edge extension</strong> and the on-device agent it works with.</p>
+
+    <h2>Who controls your data</h2>
+    <p>Anchor is <strong>backend-agnostic and self-hosted</strong>: each school or organisation runs its own Anchor backend, and the extension is told which backend to use by the agent installed on the device. The <strong>school that deploys Anchor is the data controller</strong> and decides how the data is stored, retained, and used, under its own policies and applicable law.</p>
+    <p>Plink Labs publishes the software as open source. Plink Labs does <strong>not</strong> operate a backend, does not receive any data the extension collects, and has no access to any school's data.</p>
+
+    <h2>What the extension collects, and when</h2>
+    <p>The extension only inspects or transmits anything <strong>while a teacher-started focus session is active</strong>. Outside an active session it inspects no URLs and sends no data. During an active session, it sends the following to the school's Anchor backend:</p>
+    <ul>
+      <li><strong>Off-allowlist page visits</strong> — when a student navigates to a page that is not on the session's allowlist, the page's URL and hostname, the time it occurred, and an internal browser tab identifier. On-allowlist browsing is <strong>not</strong> recorded.</li>
+      <li><strong>Unblock requests</strong> — if a student asks the teacher to allow a blocked site, the hostname being requested.</li>
+      <li><strong>Integrity signals</strong> — events that indicate the enforcement may have been bypassed during the session (for example, opening a private/InPrivate window, revoking the extension's site access, or the on-device agent becoming unavailable).</li>
+      <li><strong>Session liveness</strong> — periodic heartbeats indicating the extension is still running for the active session.</li>
+    </ul>
+    <p>This activity is associated with the signed-in student for the duration of the session so the teacher can see which student's device is off task. The extension does not record keystrokes, page contents, screenshots, passwords, or any browsing that happens outside an active session.</p>
+
+    <h2>Where data is stored locally</h2>
+    <p>On the device, the extension keeps only what it needs to run: the current session's allowlist and metadata (cleared when the session ends or the browser restarts) and the backend address supplied by the agent. It does not maintain a local browsing history.</p>
+
+    <h2>How the data is used</h2>
+    <p>Data is used solely for Anchor's single purpose: enforcing the focus session and giving the supervising teacher live visibility of off-task activity during that session. It is <strong>not</strong> used for advertising, sold or rented, shared with third parties, used to build profiles beyond the classroom context, or used to assess creditworthiness.</p>
+
+    <h2>Data retention</h2>
+    <p>Because each school operates its own backend, retention and deletion are governed by that school's configuration and policies. Questions about how long your data is kept, or requests to access or delete it, should be directed to your school or its IT administrator, who controls the Anchor deployment.</p>
+
+    <h2>Children's privacy</h2>
+    <p>Anchor is used in schools, including with students who may be minors, under the authority and direction of the school. The school is responsible for the lawful basis (including any required parental notice or consent) for using Anchor with its students. Plink Labs does not knowingly collect data directly from children — it operates no backend and receives no data.</p>
+
+    <h2>Open source</h2>
+    <p>Anchor's full source code, including exactly what the extension collects and sends, is public and auditable at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If the data Anchor collects changes, this policy will be updated and the "last updated" date above revised. Material changes will be reflected in the published extension listing.</p>
+
+    <h2>Contact</h2>
+    <p>For questions about Anchor itself, open an issue at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>. For questions about how your specific school handles Anchor data, contact your school or its IT administrator.</p>
+  </main>
+
+  <footer>
+    <p>Built in Belgium. Usable everywhere.</p>
+    <nav>
+      <a href="https://github.com/plinklabs">GitHub</a>
+      <span>·</span>
+      <span>GPL-3.0</span>
+    </nav>
+  </footer>
+
+</body>
+</html>

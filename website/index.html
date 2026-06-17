@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Anchor — classroom focus and device management software by Plink Labs. A teacher starts a focus session; each student device softly enforces an allowlist; off-task activity surfaces live on the dashboard.">
+  <title>Anchor · Plink Labs</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><path d='M 10.44 20.86 A 9 9 0 1 1 13.56 20.86' stroke='%23DB2777' stroke-width='1.5' stroke-linecap='round'/><circle cx='12' cy='12' r='1.8' fill='%23DB2777'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300&family=Hanken+Grotesk:wght@400;500&family=Space+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <a href="/" class="wordmark" aria-label="Plink Labs home">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M 10.44 20.86 A 9 9 0 1 1 13.56 20.86" stroke="#DB2777" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="12" cy="12" r="1.8" fill="#DB2777"/>
+      </svg>
+      <span>plink labs</span>
+    </a>
+    <nav>
+      <a href="https://github.com/plinklabs/Anchor">GitHub</a>
+    </nav>
+  </header>
+
+  <nav class="subnav" aria-label="Anchor site">
+    <a href="index.html" aria-current="page">Home</a>
+    <a href="teachers.html">Teachers</a>
+    <a href="it.html">IT staff</a>
+    <a href="faq.html">FAQ</a>
+    <a href="contact.html">Contact</a>
+  </nav>
+
+  <main>
+
+    <!-- Hero — one-line value proposition + primary CTAs -->
+    <section class="hero">
+      <h1>Classroom focus, while a lesson lasts — and not a minute longer.</h1>
+      <p>Anchor lets a teacher start a focus session for a class. For its duration each student's device softly keeps to a teacher-defined allowlist, and off-task activity surfaces live on the teacher's dashboard. Made by teachers, free and open source for everyone.</p>
+      <!--
+        CTA target assumption: the Edge Add-ons listing is not public yet, so
+        "Add to Edge" points at the repository for now. Repoint it to the
+        canonical Edge Add-ons URL once the extension is published. (Issue #254)
+      -->
+      <div class="cta-row">
+        <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor">Add to Edge</a>
+        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor/releases">Get the agent</a>
+        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor">Source on GitHub</a>
+      </div>
+    </section>
+
+    <!-- What Anchor is — plain language -->
+    <section class="feature-section">
+      <p class="eyebrow">What Anchor is</p>
+      <div class="feature-grid">
+        <article>
+          <p class="step">01</p>
+          <h3>A teacher starts a session</h3>
+          <p>A teacher opens Anchor and starts a focus session for the class, choosing the allowlist of apps and websites that lesson needs.</p>
+        </article>
+        <article>
+          <p class="step">02</p>
+          <h3>Devices keep to the allowlist</h3>
+          <p>For the session's duration, each signed-in student's device softly enforces that allowlist. Off-list apps get pushed to the background; off-list pages show a friendly block page.</p>
+        </article>
+        <article>
+          <p class="step">03</p>
+          <h3>Off-task activity surfaces live</h3>
+          <p>When a device drifts off task, it shows up on the teacher's dashboard in real time — so the teacher can quietly nudge a student back, not police a log later.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Philosophy — no monitoring, no privacy invasion, only voluntary focus -->
+    <section class="callout">
+      <p class="eyebrow">No monitoring, no surveillance</p>
+      <h2>Soft enforcement: off-task is made visible, not impossible</h2>
+      <p>Anchor is built for <strong>soft enforcement</strong>. The agent pulls focus back and surfaces off-list activity, but it does not pretend to be tamper-proof — a motivated student can defeat it, and that is by design. The goal is to make off-task behaviour <strong>visible to the teacher</strong>, not impossible.</p>
+      <p>Nothing is recorded between sessions. Anchor only observes activity while a teacher has a session running, and only the off-list parts; on-allowlist work is never logged. We are honest about who is in control: a teacher set this up, it ends when the lesson ends, and the data stays inside the school that runs it.</p>
+    </section>
+
+    <!-- How it works — teacher → backend → student devices + the five components -->
+    <section class="feature-section">
+      <p class="eyebrow">How it works</p>
+      <p class="lead" style="max-width: 52rem; color: var(--muted); line-height: 1.65; margin-bottom: 1.75rem;">A teacher starts a session from the dashboard. The backend pushes it to every signed-in student device over a realtime channel; each device enforces the allowlist locally and reports off-list activity straight back to the dashboard. Five small components do the work:</p>
+      <div class="feature-grid">
+        <article>
+          <h3>Agent</h3>
+          <p>A native Windows tray app on each student laptop. It joins the session, gently pulls focus back from off-list apps, and shows the block overlay.</p>
+        </article>
+        <article>
+          <h3>Edge extension</h3>
+          <p>Filters URLs inside Edge against the session allowlist and shows a friendly block page for off-list pages.</p>
+        </article>
+        <article>
+          <h3>Witness</h3>
+          <p>A native-messaging bridge so the agent and extension watch each other: if either is disabled mid-session, the other reports it.</p>
+        </article>
+        <article>
+          <h3>Dashboard</h3>
+          <p>The teacher's web instrument: start and stop sessions, manage classes and allowlists, and watch live student state.</p>
+        </article>
+        <article>
+          <h3>Backend</h3>
+          <p>Each school self-hosts its own backend. It relays sessions to devices and stores classes, allowlists, and session events — and nothing else.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- See it — dashboard session view + student block overlay -->
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/dashboard-session.png" alt="Anchor teacher dashboard during a live focus session, showing each student's device state" width="1280" height="800">
+        <figcaption>The teacher's view — a live session, with each student's device state and any off-task activity surfacing in real time.</figcaption>
+      </figure>
+    </figure>
+
+    <figure class="screenshot">
+      <figure>
+        <img src="assets/agent-block-overlay.png" alt="Anchor block overlay on a student device explaining that the current focus session does not allow this app" width="1280" height="800">
+        <figcaption>The student's view — when something off-list takes focus, Anchor calmly explains the session and steps back out of the way.</figcaption>
+      </figure>
+    </figure>
+
+    <!-- CTAs / resources -->
+    <section class="callout">
+      <p class="eyebrow">Free &amp; open source</p>
+      <h2>Made by teachers, free for everyone</h2>
+      <p>Anchor is GPL-3.0 licensed and self-hostable. Each school runs its own backend; Plink Labs operates none and receives no student data. The full source — including exactly what each component collects — is public and auditable.</p>
+      <div class="cta-row">
+        <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor">Add to Edge</a>
+        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor/releases">Get the agent</a>
+        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor">Source on GitHub</a>
+      </div>
+    </section>
+
+    <section class="links">
+      <h2>Resources</h2>
+      <ul>
+        <li><a href="teachers.html">For teachers</a></li>
+        <li><a href="it.html">For IT staff</a></li>
+        <li><a href="privacy.html">Privacy Policy</a></li>
+        <li><a href="https://github.com/plinklabs/Anchor/releases">Download the agent (GitHub Releases)</a></li>
+        <li><a href="https://github.com/plinklabs/Anchor">Source code on GitHub</a></li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>Built in Belgium. Usable everywhere.</p>
+    <nav>
+      <a href="https://github.com/plinklabs">GitHub</a>
+      <span>·</span>
+      <span>GPL-3.0</span>
+    </nav>
+  </footer>
+
+</body>
+</html>

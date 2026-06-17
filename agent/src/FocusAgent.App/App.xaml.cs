@@ -1,5 +1,6 @@
 using FocusAgent.App.Auth;
 using FocusAgent.App.Connectivity;
+using FocusAgent.App.Diagnostics;
 using FocusAgent.App.Extension;
 using FocusAgent.App.Focus;
 using FocusAgent.App.Realtime;
@@ -7,6 +8,7 @@ using FocusAgent.App.Sessions;
 using FocusAgent.App.Tamper;
 using FocusAgent.App.Tray;
 using FocusAgent.Core.Auth;
+using FocusAgent.Core.Diagnostics;
 using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Extension;
 using FocusAgent.Core.Focus;
@@ -18,6 +20,7 @@ using FocusAgent.Core.Tamper;
 using FocusAgent.Core.Updates;
 using FocusAgent.App.Updates;
 using FocusAgent.Native;
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -103,6 +106,27 @@ public partial class App : Application
             return;
         }
 
+        if (Program.ShowTestCrash)
+        {
+            RunCrashDialogSelfTest();
+            return;
+        }
+
+        // #248: surface a fatal UI-thread exception thrown *after* startup (a click
+        // handler, a timer callback marshalled to the dispatcher) instead of letting
+        // WinUI swallow it into a silent exit. Handling it (e.Handled) keeps the
+        // process from being torn down before the dialog can be read. Suppressed in
+        // headless/dev runs, which intentionally exercise failure and must not block
+        // on a modal. Wired here (not the ctor) so it's in place before any window.
+        if (!Program.SuppressCrashDialog)
+        {
+            UnhandledException += (_, e) =>
+            {
+                e.Handled = true;
+                CrashReporter.ReportUiThreadFatal(this, e.Exception);
+            };
+        }
+
         try
         {
             var dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -112,8 +136,24 @@ public partial class App : Application
             var logger = _host.Services.GetRequiredService<ILogger<App>>();
             logger.LogInformation("FocusAgent starting (unpackaged WinUI 3)");
 
+            // #247: fail fast with a readable message if this build shipped without
+            // its per-deployment backend config. An empty Backend:BaseUrl would
+            // otherwise surface as a bare UriFormatException thrown inside the
+            // SignalR hub builder during DI below — before any UI — so the process
+            // vanished silently. CrashReporter in the catch turns this into a
+            // visible, copyable dialog instead (#248).
+            _host.Services.GetRequiredService<IOptions<BackendSettings>>().Value.EnsureValid();
+
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
                 logger.LogCritical(e.ExceptionObject as Exception, "Unhandled exception");
+                // #248: a fatal exception on a background thread tears the process
+                // down; surface the copyable crash dialog (blocking, on this thread)
+                // before it exits, instead of dying silently. Suppressed in
+                // headless/dev runs so the e2e's intentional failures don't block.
+                if (!Program.SuppressCrashDialog && e.ExceptionObject is Exception fatal)
+                    CrashReporter.ReportBackgroundFatal(fatal);
+            };
             TaskScheduler.UnobservedTaskException += (_, e) =>
                 logger.LogError(e.Exception, "Unobserved task exception");
 
@@ -203,8 +243,21 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            WriteStartupFailure(ex);
-            throw;
+            // #248: a headless/dev run (the e2e, a verify script) intentionally
+            // exercises startup failure and must not block on a modal — keep the old
+            // behaviour there: write the breadcrumb and rethrow so the process fails
+            // visibly via its exit code.
+            if (Program.SuppressCrashDialog)
+            {
+                CrashReporter.WriteLog(ex);
+                throw;
+            }
+
+            // The real app: surface a copyable crash dialog instead of the silent
+            // "opens and closes instantly". ReportStartupFatal keeps the message
+            // pump alive behind the window (and exits when it's closed), so we must
+            // NOT rethrow — that would tear the process down under the dialog.
+            CrashReporter.ReportStartupFatal(this, ex);
         }
     }
 
@@ -335,10 +388,14 @@ public partial class App : Application
             SessionId: Guid.Parse("00000000-0000-0000-0000-000000000041"),
             ClassId: Guid.NewGuid(),
             StartedAt: DateTimeOffset.UtcNow,
-            JoinCode: "TOAST41",
+            JoinCode: SelfTestDemoContent.JoinCode,
             Apps: Array.Empty<AllowedAppDto>(),
             Domains: Array.Empty<AllowedDomainDto>());
-        var confirmation = new JoinConfirmation(payload, "Self-Test Teacher", TimeSpan.FromSeconds(5), TimeProvider.System);
+        // Presentable demo content (no debug strings): a real-looking teacher name,
+        // shared across the agent self-test surfaces and matched to the dashboard's
+        // demo teacher ("Ms Rivera") so the website's agent + dashboard shots tell
+        // one coherent story (#251).
+        var confirmation = new JoinConfirmation(payload, SelfTestDemoContent.TeacherName, TimeSpan.FromSeconds(5), TimeProvider.System);
 
         // Kick off the show on the UI thread — ShowJoinConfirmationAsync
         // internally enqueues window creation. The returned Task completes when
@@ -401,7 +458,7 @@ public partial class App : Application
             new() { MatchKind = AllowedAppMatchKind.Publisher, Value = "International GeoGebra Institute" },
         };
 
-        overlay.Show(rules, blockedAppName: "notepad");
+        overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName);
 
         // Deterministic show -> close -> linger cycle so both consumers can observe
         // it without a real backend or off-list app:
@@ -458,6 +515,52 @@ public partial class App : Application
 
         _mainWindow = MainWindow.CreateSelfTest();
         _mainWindow.Activate();
+    }
+
+    // Held by the --show-test-crash path so the window outlives OnLaunched.
+    private CrashReportWindow? _crashSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#248): show the real last-resort <see cref="CrashReportWindow"/>
+    /// against a synthetic exception (no host / WAM / hub bootstrap), then keep the
+    /// process alive so the visual e2e (CrashDialogVisualTests) and scripts/dev can
+    /// screenshot it. The window's composition — the friendly headline, the
+    /// selectable detail field, the "Show technical details" expander and the magenta
+    /// Copy button — is the production path; only the exception is synthetic. See
+    /// Program.cs.
+    /// </summary>
+    private void RunCrashDialogSelfTest()
+    {
+        // Like the other window self-tests: explicit shutdown so the process stays up
+        // after the window is shown (it isn't torn down here), and the observer kills
+        // it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        Exception synthetic;
+        try
+        {
+            throw new InvalidOperationException(
+                "Backend:BaseUrl is empty — the agent was built without its per-deployment configuration.",
+                new UriFormatException("Invalid URI: The URI is empty."));
+        }
+        catch (Exception ex)
+        {
+            // Throw + catch so the synthetic exception carries a real stack trace,
+            // exercising the expander's full-stack rendering the same way a live
+            // crash would.
+            synthetic = ex;
+        }
+
+        var detail = CrashDiagnostics.BuildDetail(
+            synthetic,
+            typeof(App).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion?.Split('+', 2)[0],
+            Path.Combine(AgentLogPaths.LocalAppDataLogDirectory(), "startup-error.log"));
+
+        _crashSelfTestWindow = new CrashReportWindow(
+            "Anchor couldn't start", detail, CrashDiagnostics.BuildFullStack(synthetic));
+        _crashSelfTestWindow.ConfigureAndShow();
     }
 
     // Held by the --show-test-joinbycode path so the window outlives OnLaunched.
@@ -523,7 +626,9 @@ public partial class App : Application
 
         var menu = Tray.TrayMenu.Build(onOpen: () => { }, onJoinByCode: () => { }, onQuit: () => { });
         // Show a representative live state so the status eyebrow renders real text.
-        menu.StatusItem.Text = "CONNECTED — SELF-TEST";
+        // Presentable demo content (no debug strings) so this same surface is fit to
+        // ship as a website screenshot (#251).
+        menu.StatusItem.Text = SelfTestDemoContent.TrayStatus;
 
         // A small ink host window the flyout anchors to; sized so the open menu sits
         // wholly within (and over) it, which is the rect the e2e captures. The
@@ -533,7 +638,10 @@ public partial class App : Application
         {
             Background = (Microsoft.UI.Xaml.Media.Brush)Resources["PlinkSurfaceInkBrush"],
         };
-        var host = new Window { Title = "Anchor — Tray menu (self-test)" };
+        // Title is "Anchor" (not a "(self-test)" debug label): this host window's
+        // title bar is visible in the curated website screenshot of the tray menu
+        // (#251), so it must read like the shipped app.
+        var host = new Window { Title = "Anchor" };
         host.Content = root;
         _trayMenuSelfTestWindow = host;
 
@@ -687,22 +795,6 @@ public partial class App : Application
 
         Environment.ExitCode = ok ? 0 : 1;
         Exit();
-    }
-
-    private static void WriteStartupFailure(Exception ex)
-    {
-        try
-        {
-            var dir = AgentLogPaths.LocalAppDataLogDirectory();
-            Directory.CreateDirectory(dir);
-            File.AppendAllText(
-                Path.Combine(dir, "startup-error.log"),
-                $"{DateTimeOffset.Now:O}{Environment.NewLine}{ex}{Environment.NewLine}{Environment.NewLine}");
-        }
-        catch
-        {
-            // last-resort logger; intentionally swallow
-        }
     }
 
     /// <summary>
