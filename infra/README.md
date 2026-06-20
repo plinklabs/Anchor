@@ -170,10 +170,12 @@ recreating costs nothing — but mind these:
   consent you granted still holds — so you skip that manual step. You only need
   to re-consent if you delete/recreate the apps or a new permission is added.
 - **GitHub secrets/variables are not touched** (they live in the repo), but the
-  `AZURE_WEBAPP_PUBLISH_PROFILE` secret and `AZURE_STATIC_WEB_APPS_API_TOKEN`
-  are **bound to the deleted resources** — they go stale. Re-run
-  `scripts/setup.ps1` to refetch and overwrite them; deploys will fail to
-  authenticate in the gap. A recreated Static Web App may also get a **new
+  `AZURE_STATIC_WEB_APPS_API_TOKEN` secret and the backend OIDC variables
+  (`AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID`, plus the
+  Website Contributor role assignment on the App Service) are **bound to the
+  deleted resources** — they go stale. Re-run `scripts/setup.ps1` to recreate the
+  deploy identity + role assignment and refetch the SWA token; deploys will fail
+  to authenticate in the gap. A recreated Static Web App may also get a **new
   default hostname**, which invalidates the SPA redirect URI — the script
   rewrites it from the new SWA URL on each run.
 - **The SQL admin password cannot be read back from Azure.** If you didn't save

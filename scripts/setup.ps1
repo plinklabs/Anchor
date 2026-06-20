@@ -112,9 +112,9 @@
     then pass -EntraClientId / -EntraTenantId for the deploy to be usable.
 
 .PARAMETER SkipInfra
-    Do not deploy infra/main.bicep. Resource names are still resolved and the
-    live deployment credentials (SWA token + publish profile) are still read so
-    GitHub secrets/variables can be (re-)wired against an environment that
+    Do not deploy infra/main.bicep. Resource names are still resolved, the SWA
+    deployment token is still read, and the OIDC deploy identity is still wired
+    so GitHub secrets/variables can be (re-)set against an environment that
     already exists. Use to resume after the infra is already deployed, or to
     re-wire GitHub for the live env without touching Azure.
 
@@ -135,6 +135,16 @@
     Override / supply the agent public-client app registration client ID,
     mirroring -SpaClientId for the agent. Used for the GitHub AGENT_CLIENT_ID
     variable that the agent release workflow bakes into the published agent.
+
+.PARAMETER DeployClientId
+    Override / supply the deploy app registration client ID (the OIDC identity
+    backend-deploy.yml logs in as), mirroring -AgentClientId. Used for the GitHub
+    AZURE_CLIENT_ID variable. Supply with -SkipEntra when you manage the deploy
+    app out of band.
+
+.PARAMETER DeployAppName
+    Display name of the deploy app registration. Default: "Anchor Deploy
+    (<suffix>)".
 
 .EXAMPLE
     ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf
@@ -171,6 +181,7 @@ param(
     [string]$ApiAppName,
     [string]$SpaAppName,
     [string]$AgentAppName,
+    [string]$DeployAppName,
     [string]$BicepFile,
     [switch]$SkipGitHub,
     [switch]$SkipEntra,
@@ -178,7 +189,8 @@ param(
     [string]$EntraTenantId,
     [string]$EntraClientId,
     [string]$SpaClientId,
-    [string]$AgentClientId
+    [string]$AgentClientId,
+    [string]$DeployClientId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -188,6 +200,7 @@ Set-StrictMode -Version Latest
 if (-not $ApiAppName) { $ApiAppName = "Anchor API ($UniqueSuffix)" }
 if (-not $SpaAppName) { $SpaAppName = "Anchor Dashboard ($UniqueSuffix)" }
 if (-not $AgentAppName) { $AgentAppName = "Anchor Agent ($UniqueSuffix)" }
+if (-not $DeployAppName) { $DeployAppName = "Anchor Deploy ($UniqueSuffix)" }
 if (-not $BicepFile) {
     $BicepFile = Join-Path (Join-Path $PSScriptRoot '..') 'infra/main.bicep'
 }
@@ -378,6 +391,57 @@ function Add-ServicePrincipal {
     }
     Invoke-Native -Exe 'az' -ArgList @('ad', 'sp', 'create', '--id', $AppId, '-o', 'none') `
         -Target $AppId -Action "create service principal for $Label"
+}
+
+# Ensure the deploy service principal holds **Website Contributor** on the target
+# App Service — the least-privilege role azure/webapps-deploy needs over OIDC
+# (#274). Idempotent: skips when the assignment already exists. Created through
+# `az rest` (the ARM REST API) rather than `az role assignment create`, because
+# that command fails with "MissingSubscription" whenever --scope is a full
+# resource id on the az CLI build used here; the REST PUT carries the scope in
+# the URL and is unaffected. Existence is checked with `... list --all --assignee`
+# (which works) and filtered in PowerShell to avoid passing a quote-heavy
+# JMESPath through the Windows az.cmd re-parse.
+function Set-AppServiceDeployRole {
+    # SupportsShouldProcess so -WhatIf flows through; the actual mutation (the
+    # `az rest` PUT) is gated by Invoke-Native's own ShouldProcess.
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$AppId, [string]$SubscriptionId, [string]$ResourceGroupName, [string]$SiteName)
+    if (-not $AppId -or $AppId -match '<') { return }
+    $roleDefId = 'de139f84-1756-47ae-9be6-808fbbe84772'   # Website Contributor (well-known)
+    $siteScope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$SiteName"
+
+    $spId = Invoke-AzRead @('ad', 'sp', 'show', '--id', $AppId, '--query', 'id', '-o', 'tsv')
+    if (-not $spId) {
+        Write-Manual "Deploy SP not found for $AppId — cannot assign Website Contributor. Re-run without -SkipEntra."
+        return
+    }
+
+    $existingJson = Invoke-AzRead @('role', 'assignment', 'list', '--all', '--assignee', $AppId, '-o', 'json')
+    if ($existingJson) {
+        foreach ($ra in ($existingJson | ConvertFrom-Json)) {
+            if ((Test-Prop $ra 'roleDefinitionName' 'Website Contributor') -and (Test-Prop $ra 'scope' $siteScope)) {
+                Write-Host '    Deploy SP already has Website Contributor on the App Service — skipping.'
+                return
+            }
+        }
+    }
+
+    $raGuid = [guid]::NewGuid().ToString()
+    $body = @{ properties = @{
+            roleDefinitionId = "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$roleDefId"
+            principalId      = $spId
+            principalType    = 'ServicePrincipal'
+        } } | ConvertTo-Json -Depth 5 -Compress
+    $bodyTmp = New-TemporaryFile
+    try {
+        Set-Content -LiteralPath $bodyTmp -Value $body -Encoding UTF8
+        Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PUT',
+            '--uri', "https://management.azure.com$siteScope/providers/Microsoft.Authorization/roleAssignments/${raGuid}?api-version=2022-04-01",
+            '--body', "@$bodyTmp", '-o', 'none') `
+            -Target $SiteName -Action 'assign Website Contributor to the deploy SP'
+    }
+    finally { Remove-Item -LiteralPath $bodyTmp -Force -ErrorAction SilentlyContinue }
 }
 
 # Attempt to grant tenant-wide admin consent, falling back to printing the
@@ -967,20 +1031,98 @@ if (-not $SkipEntra -and -not $WhatIfPreference -and ($appServiceName -notmatch 
     }
 }
 
-# ── Step 6: deployment secrets (SWA token + publish profile) ──────────────────
+# ── Step 5b: deploy identity (OIDC federated credentials) ─────────────────────
+# backend-deploy.yml authenticates to Azure with OIDC (azure/login), not a
+# publish-profile secret (#274): a dedicated app registration ("Anchor Deploy")
+# holds Website Contributor on the App Service, and a federated credential lets
+# the GitHub Actions job — subject repo:<owner>/<repo>:environment:production,
+# matching the workflow's `environment: production` — exchange its id-token for an
+# Azure token, with no long-lived secret to leak or mis-set. $deployClientId is
+# set outside the -SkipEntra guard so the GitHub step can wire AZURE_CLIENT_ID
+# under StrictMode even when app registrations are managed out of band.
+$deployClientId = $DeployClientId
+if (-not $SkipEntra) {
+    Write-Step "Deploy identity (OIDC) — $DeployAppName"
+
+    if ($deployClientId) {
+        Write-Host "    Using provided deploy app id: $deployClientId"
+    }
+    else {
+        $foundDeploy = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'list', '--display-name', $DeployAppName, '--query', '[0].appId', '-o', 'tsv') -Capture -ReadOnly
+        if ($foundDeploy) {
+            $deployClientId = $foundDeploy
+            Write-Host "    Found existing deploy app: $deployClientId"
+        }
+        else {
+            $createdDeploy = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'create', '--display-name', $DeployAppName, '--sign-in-audience', 'AzureADMyOrg', '--query', 'appId', '-o', 'tsv') -Capture `
+                -Target $DeployAppName -Action 'create deploy app registration'
+            $deployClientId = if ($createdDeploy) { $createdDeploy } else { '<deploy-client-id>' }
+            Write-Host "    Created deploy app: $deployClientId"
+        }
+    }
+
+    if ($deployClientId -notmatch '<') {
+        # SP so the role assignment has a principal (no admin consent needed — the
+        # deploy app is an RBAC identity, not a consentable API client).
+        Add-ServicePrincipal -AppId $deployClientId -Label 'deploy'
+
+        # Website Contributor on the App Service. Needs the resolved name; under a
+        # -WhatIf / -SkipInfra dry run it stays a placeholder, so guard on it.
+        if ($appServiceName -notmatch '<') {
+            Set-AppServiceDeployRole -AppId $deployClientId -SubscriptionId $acct.id -ResourceGroupName $ResourceGroup -SiteName $appServiceName
+        }
+
+        # Federated credential for the GitHub environment. The subject needs the
+        # repo, which is only resolved when GitHub wiring is in play.
+        if (-not $SkipGitHub -and $Repo) {
+            $ficSubject = "repo:${Repo}:environment:production"
+            $haveFic = $false
+            $ficJson = Invoke-AzRead @('ad', 'app', 'federated-credential', 'list', '--id', $deployClientId, '-o', 'json')
+            if ($ficJson) {
+                foreach ($fc in ($ficJson | ConvertFrom-Json)) {
+                    if (Test-Prop $fc 'subject' $ficSubject) { $haveFic = $true; break }
+                }
+            }
+            if ($haveFic) {
+                Write-Host "    Federated credential for '$ficSubject' already exists — skipping."
+            }
+            else {
+                $fic = @{
+                    name        = 'github-anchor-production'
+                    issuer      = 'https://token.actions.githubusercontent.com'
+                    subject     = $ficSubject
+                    audiences   = @('api://AzureADTokenExchange')
+                    description = 'GitHub Actions backend-deploy (production) OIDC'
+                } | ConvertTo-Json -Depth 4 -Compress
+                $ficTmp = New-TemporaryFile
+                try {
+                    Set-Content -LiteralPath $ficTmp -Value $fic -Encoding UTF8
+                    Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'federated-credential', 'create', '--id', $deployClientId, '--parameters', "@$ficTmp", '-o', 'none') `
+                        -Target $deployClientId -Action "add federated credential ($ficSubject)"
+                }
+                finally { Remove-Item -LiteralPath $ficTmp -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        else {
+            Write-Manual 'Repo not resolved (-SkipGitHub) — federated credential not created. Add one with subject repo:<owner>/<repo>:environment:production on the deploy app, or the OIDC deploy cannot authenticate.'
+        }
+    }
+}
+
+# ── Step 6: deployment secrets (SWA token) ───────────────────────────────────
 
 Write-Step 'Fetch deployment credentials'
 
-# These are reads, not mutations, but they only succeed once the SWA / App
-# Service actually exist (i.e. after a real deploy). In -WhatIf there is no
-# deployed resource, so skip the live reads and use placeholders so the GitHub
-# wiring plan still prints. In a real run we tolerate a not-yet-existing
-# resource (e.g. resuming after a half-finished deploy): the credential stays a
-# placeholder and Step 7 skips that secret rather than failing the whole run.
+# The SWA token is a read, not a mutation, but it only succeeds once the Static
+# Web App actually exists (i.e. after a real deploy). In -WhatIf there is no
+# deployed resource, so skip the live read and use a placeholder so the GitHub
+# wiring plan still prints. In a real run we tolerate a not-yet-existing resource
+# (e.g. resuming after a half-finished deploy): the token stays a placeholder and
+# Step 7 skips that secret rather than failing the whole run. (The backend no
+# longer needs a publish profile — it deploys via the OIDC identity from Step 5b.)
 if ($WhatIfPreference) {
     Write-Host '    DRYRUN  (skipping live credential reads; resources not deployed)' -ForegroundColor DarkGray
     $swaToken = '<swa-deployment-token>'
-    $publishProfile = '<publish-profile-xml>'
 }
 else {
     $swaToken = Invoke-AzRead @('staticwebapp', 'secrets', 'list', '--name', $staticWebAppName, '--query', 'properties.apiKey', '-o', 'tsv')
@@ -988,20 +1130,15 @@ else {
         $swaToken = '<swa-deployment-token>'
         Write-Host "    Static Web App '$staticWebAppName' not reachable yet — skipping its token (re-run after deploy)." -ForegroundColor Yellow
     }
-
-    $publishProfile = Invoke-AzRead @('webapp', 'deployment', 'list-publishing-profiles', '--name', $appServiceName, '--resource-group', $ResourceGroup, '--xml')
-    if (-not $publishProfile) {
-        $publishProfile = '<publish-profile-xml>'
-        Write-Host "    App Service '$appServiceName' not reachable yet — skipping publish profile (re-run after deploy)." -ForegroundColor Yellow
-    }
 }
 
 # ── Step 7: GitHub secrets + variables ───────────────────────────────────────
 # Names verified against .github/workflows/backend-deploy.yml,
 # dashboard-deploy.yml and agent-release.yml. Secrets:
-# AZURE_WEBAPP_PUBLISH_PROFILE, AZURE_STATIC_WEB_APPS_API_TOKEN. Variables:
-# AZURE_WEBAPP_NAME, API_BASE_URL, ENTRA_TENANT_ID, ENTRA_CLIENT_ID, API_SCOPE,
-# AGENT_CLIENT_ID (the agent release's public-client id, #271).
+# AZURE_STATIC_WEB_APPS_API_TOKEN. Variables: AZURE_WEBAPP_NAME, AZURE_CLIENT_ID,
+# AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (backend OIDC login, #274), API_BASE_URL,
+# ENTRA_TENANT_ID, ENTRA_CLIENT_ID, API_SCOPE, AGENT_CLIENT_ID (the agent
+# release's public-client id, #271).
 
 if ($SkipGitHub) {
     Write-Step 'GitHub secrets/variables — SKIPPED (-SkipGitHub)'
@@ -1024,9 +1161,8 @@ else {
             # Pipe the value via stdin and let gh read it: `gh secret set` takes the
             # value from standard input when --body is omitted. Do NOT pass `--body -`
             # — gh treats `-` as the literal secret value (it is not a stdin sentinel),
-            # which silently wrote "-" into AZURE_STATIC_WEB_APPS_API_TOKEN /
-            # AZURE_WEBAPP_PUBLISH_PROFILE and broke every deploy with an invalid
-            # token/credential (issue #272).
+            # which silently wrote "-" into AZURE_STATIC_WEB_APPS_API_TOKEN and broke
+            # the dashboard deploy with an invalid token (issue #272).
             $Value | & gh secret set $Name --repo $Repo
             if ($LASTEXITCODE -ne 0) { throw "gh secret set $Name failed ($LASTEXITCODE)" }
             Write-Host "    secret  $Name set"
@@ -1044,10 +1180,21 @@ else {
         if (-not $WhatIfPreference) { Write-Host "    var     $Name = $Value" }
     }
 
-    Set-GhSecret -Name 'AZURE_WEBAPP_PUBLISH_PROFILE'   -Value $publishProfile
     Set-GhSecret -Name 'AZURE_STATIC_WEB_APPS_API_TOKEN' -Value $swaToken
 
     Set-GhVariable -Name 'AZURE_WEBAPP_NAME' -Value $appServiceName
+    # OIDC login for backend-deploy.yml (#274): the deploy app's client id plus the
+    # tenant/subscription it targets. These are identifiers, not secrets, hence
+    # variables. AZURE_CLIENT_ID falls back to a manual note when the deploy app
+    # couldn't be resolved (e.g. -SkipEntra without -DeployClientId).
+    if ($deployClientId -and $deployClientId -notmatch '<') {
+        Set-GhVariable -Name 'AZURE_CLIENT_ID' -Value $deployClientId
+    }
+    else {
+        Write-Manual 'No deploy app id resolved — AZURE_CLIENT_ID not set. The backend deploy cannot authenticate until it is set (re-run without -SkipEntra, or pass -DeployClientId).'
+    }
+    Set-GhVariable -Name 'AZURE_TENANT_ID'       -Value $tenantId
+    Set-GhVariable -Name 'AZURE_SUBSCRIPTION_ID' -Value $acct.id
     Set-GhVariable -Name 'API_BASE_URL'      -Value $appServiceUrl
     Set-GhVariable -Name 'ENTRA_TENANT_ID'   -Value $outEntraTenant
     # The dashboard SPA client id when we created one, else the API id as a

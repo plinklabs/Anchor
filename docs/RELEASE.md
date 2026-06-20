@@ -42,7 +42,7 @@ each path-filtered so an unrelated push never triggers it:
 
 | Leg | Workflow | Trigger | Auth |
 | --- | --- | --- | --- |
-| Backend API → Azure App Service | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml) | `workflow_run` after **Backend CI** succeeds on `main` | publish-profile secret |
+| Backend API → Azure App Service | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml) | `workflow_run` after **Backend CI** succeeds on `main` | OIDC federated credential (`azure/login`) |
 | Dashboard → Azure Static Web Apps | [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml) | `push` to `main` under `dashboard/**` | SWA deployment token |
 | Public website → GitHub Pages | [`website-deploy.yml`](../.github/workflows/website-deploy.yml) | `push` to `main` under `website/**` | cross-repo deploy PAT |
 
@@ -226,24 +226,32 @@ entries are optional per fork — see [the client section](#client-tier).
 
 | Name | Used by | What it is / where to get it |
 | --- | --- | --- |
-| `AZURE_WEBAPP_PUBLISH_PROFILE` | `backend-deploy.yml` | The App Service **publish profile** XML. Azure Portal → the `anchor-api-*` App Service → *Get publish profile* (or `az webapp deployment list-publishing-profiles --xml`). Paste the whole XML as the secret value. Rotate by downloading a fresh profile after resetting publish credentials. |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | `dashboard-deploy.yml` | The Static Web App **deployment token**. Azure Portal → the Static Web App → *Manage deployment token* (or `az staticwebapp secrets list`). |
 | `PLINKLABS_PAGES_DEPLOY_TOKEN` | `website-deploy.yml` | A **scoped deploy credential** with write access to the `plinklabs.github.io` Pages repo, used to push the synced `anchor/` folder cross-repo (`GITHUB_TOKEN` only reaches this repo). Create a fine-grained PAT scoped to **only** `plinklabs/plinklabs.github.io` with **Contents: Read and write**, on a bot/service account, and paste the token as the secret value. (A deploy key is an alternative; the workflow uses a token via `actions/checkout`.) Rotate by regenerating the PAT and replacing the secret. A fork publishing its own site points this at its own Pages repo and updates the `repository:` in `website-deploy.yml`. |
 | `GITHUB_TOKEN` | `dashboard-deploy.yml`, `ci-gate.yml` | Auto-provided by GitHub Actions; **no setup needed**. Listed only so the inventory is complete. |
 
-> **Hardening note.** The backend publish-profile auth is the simplest path that
-> works without an Azure RBAC role assignment. Migrating to **OIDC federated
-> credentials** (`azure/login` with a workload-identity federation, no long-lived
-> secret) is the planned later upgrade; it removes `AZURE_WEBAPP_PUBLISH_PROFILE`
-> in favour of `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID`
-> repo variables plus a federated credential on the app registration. Tracked as a
-> follow-up; the workflow notes it in-file too.
+> **Backend auth — OIDC, no secret.** `backend-deploy.yml` authenticates to Azure
+> with **OIDC federated credentials** (`azure/login`), so there is no long-lived
+> backend deploy secret (#274). A dedicated `anchor-deploy` app registration holds
+> **Website Contributor** on the App Service (least privilege), and a federated
+> credential with subject `repo:<owner>/<repo>:environment:production` (matching
+> the deploy job's `environment: production`) lets the Actions run exchange its
+> id-token for an Azure token. The deploy job declares `permissions: id-token:
+> write`. Config lives in the `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` /
+> `AZURE_SUBSCRIPTION_ID` repo variables below (identifiers, not secrets).
+> `scripts/setup.ps1` provisions the app, SP, role assignment and federated
+> credential, and sets those variables, so a fork is wired with no manual steps.
+> (This replaced the old `AZURE_WEBAPP_PUBLISH_PROFILE` secret, which stopped
+> working once SCM basic-auth publishing was disabled on the App Service.)
 
 ### Cloud tier — GitHub Actions variables
 
 | Name | Used by | What it is | If unset |
 | --- | --- | --- | --- |
 | `AZURE_WEBAPP_NAME` | `backend-deploy.yml` | App Service name, e.g. `anchor-api-arcadia`. | Deploy fails — `azure/webapps-deploy` has no target. **Required to deploy.** |
+| `AZURE_CLIENT_ID` | `backend-deploy.yml` | Client (app) ID of the `anchor-deploy` app registration the deploy logs in as via OIDC. | `azure/login` fails — no credentials. **Required to deploy.** |
+| `AZURE_TENANT_ID` | `backend-deploy.yml` | Entra tenant ID for `azure/login`. | `azure/login` fails. **Required to deploy.** |
+| `AZURE_SUBSCRIPTION_ID` | `backend-deploy.yml` | Subscription the App Service lives in, for `azure/login`. | `azure/login` fails. **Required to deploy.** |
 | `API_BASE_URL` | `dashboard-deploy.yml` | Backend API base URL baked into the dashboard build (`--dart-define`). | Falls back to the dev default in `lib/main.dart`. |
 | `ENTRA_TENANT_ID` | `dashboard-deploy.yml` | Entra tenant ID for dashboard MSAL.js. | Falls back to the dev default in `lib/auth/msal_config.dart`. |
 | `ENTRA_CLIENT_ID` | `dashboard-deploy.yml` | Entra **dashboard SPA** app client ID. | Falls back to the dev default. |
@@ -405,12 +413,17 @@ below remain the fallback when you provision by hand.
 2. Configure the **App Service application settings** above (Entra IDs, CORS
    origins, client credentials). Bicep wires the SQL connection string and SignalR
    connection string for you.
-3. Add the GitHub **secrets**: `AZURE_WEBAPP_PUBLISH_PROFILE`,
-   `AZURE_STATIC_WEB_APPS_API_TOKEN`.
-4. Add the GitHub **variables**: `AZURE_WEBAPP_NAME`, the four dashboard
-   `API_BASE_URL` / `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `API_SCOPE`, and
-   `AGENT_CLIENT_ID` (the agent's public-client id) if you ship agent releases.
-5. Confirm `CI Gate / gate` is the required status check on `main` (and `develop`).
+3. Create the **backend deploy identity**: an `anchor-deploy` app registration +
+   service principal with **Website Contributor** on the App Service, and a
+   federated credential (issuer `https://token.actions.githubusercontent.com`,
+   subject `repo:<owner>/<repo>:environment:production`, audience
+   `api://AzureADTokenExchange`). No secret to store.
+4. Add the GitHub **secret**: `AZURE_STATIC_WEB_APPS_API_TOKEN`.
+5. Add the GitHub **variables**: `AZURE_WEBAPP_NAME`, the backend OIDC trio
+   `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID`, the four
+   dashboard `API_BASE_URL` / `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `API_SCOPE`,
+   and `AGENT_CLIENT_ID` (the agent's public-client id) if you ship agent releases.
+6. Confirm `CI Gate / gate` is the required status check on `main` (and `develop`).
    No other check should be required.
-6. Push a backend or dashboard change to `main` → the matching deploy leg runs
+7. Push a backend or dashboard change to `main` → the matching deploy leg runs
    automatically.

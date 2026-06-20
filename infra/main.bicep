@@ -173,7 +173,11 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: appPlan.id
     siteConfig: {
-      linuxFxVersion: 'DOTNETCORE|8.0'
+      // Keep in sync with backend/src/Anchor.Api/Anchor.Api.csproj <TargetFramework>
+      // and the `dotnet-version` in .github/workflows/backend-deploy.yml — a build
+      // targeting a newer runtime than this deploys "successfully" but 503s on a
+      // host pinned to the older one (#276).
+      linuxFxVersion: 'DOTNETCORE|10.0'
       // Entra + CORS application settings (double-underscore form). Provisioning
       // them here means the deployed API gets its environment-specific config
       // from the infra, not from committed appsettings.json.

@@ -319,7 +319,7 @@ You need these (Bicep [output](../infra/main.bicep) names):
 
 | Output | Example | Used for |
 | --- | --- | --- |
-| `appServiceName` | `anchor-api-yourschool` | GitHub variable `AZURE_WEBAPP_NAME`; publish profile |
+| `appServiceName` | `anchor-api-yourschool` | GitHub variable `AZURE_WEBAPP_NAME`; deploy role scope |
 | `appServiceUrl` | `https://anchor-api-yourschool.azurewebsites.net` | GitHub variable `API_BASE_URL` |
 | `staticWebAppName` | `anchor-dashboard` | SWA deployment token |
 | `swaUrl` | `https://<host>.azurestaticapps.net` | SPA redirect URI; CORS origin |
@@ -416,31 +416,63 @@ fork deploys to its own Azure with no source edits. The authoritative inventory 
 in [`docs/RELEASE.md`](RELEASE.md#required-secrets-and-variables); set exactly
 these.
 
-### Fetch the two credentials
+### Create the backend deploy identity (OIDC)
+
+`backend-deploy.yml` logs in to Azure with **OIDC federated credentials**
+(`azure/login`) — no long-lived secret (#274). Create a dedicated app
+registration that holds **Website Contributor** on the App Service, then a
+federated credential GitHub can exchange its id-token against. The subject must
+match the deploy job's environment, `repo:OWNER/REPO:environment:production`.
+
+```bash
+# App registration + service principal for the deploy
+DEPLOY_APP_ID=$(az ad app create --display-name "Anchor Deploy (yourschool)" \
+  --sign-in-audience AzureADMyOrg --query appId -o tsv)
+az ad sp create --id "$DEPLOY_APP_ID"
+
+# Website Contributor on just the App Service (least privilege)
+SUB=$(az account show --query id -o tsv)
+SP_ID=$(az ad sp show --id "$DEPLOY_APP_ID" --query id -o tsv)
+az role assignment create --assignee-object-id "$SP_ID" \
+  --assignee-principal-type ServicePrincipal --role "Website Contributor" \
+  --scope "/subscriptions/$SUB/resourceGroups/anchor-rg/providers/Microsoft.Web/sites/anchor-api-yourschool"
+
+# Federated credential for the production environment
+az ad app federated-credential create --id "$DEPLOY_APP_ID" --parameters '{
+  "name": "github-anchor-production",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:OWNER/REPO:environment:production",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+```
+
+> If `az role assignment create --scope <resource-id>` fails with
+> `MissingSubscription` (a known az CLI quirk on some builds), `scripts/setup.ps1`
+> does the same assignment via the ARM REST API (`az rest`) and is the
+> recommended path — it provisions all of the above for you.
+
+### Fetch the dashboard credential
 
 ```bash
 # Static Web App deployment token (→ AZURE_STATIC_WEB_APPS_API_TOKEN)
 az staticwebapp secrets list --name anchor-dashboard \
   --query properties.apiKey -o tsv
-
-# App Service publish profile XML (→ AZURE_WEBAPP_PUBLISH_PROFILE)
-az webapp deployment list-publishing-profiles \
-  --name anchor-api-yourschool --resource-group anchor-rg --xml
 ```
 
-### Set the secrets
+### Set the secret
+
+The backend no longer needs a secret (it uses OIDC above). Only the dashboard
+SWA token is a secret:
 
 | Secret | Value | Used by |
 | --- | --- | --- |
-| `AZURE_WEBAPP_PUBLISH_PROFILE` | the publish-profile XML above | `backend-deploy.yml` |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | the SWA deployment token above | `dashboard-deploy.yml` |
 
 ```bash
-az webapp deployment list-publishing-profiles --name anchor-api-yourschool \
-  --resource-group anchor-rg --xml | gh secret set AZURE_WEBAPP_PUBLISH_PROFILE --repo OWNER/REPO --body -
-
+# Pipe via stdin and OMIT --body: gh reads stdin when --body is absent. Do NOT
+# pass `--body -` — gh writes the literal string "-" as the value (#272).
 az staticwebapp secrets list --name anchor-dashboard --query properties.apiKey -o tsv \
-  | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --repo OWNER/REPO --body -
+  | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --repo OWNER/REPO
 ```
 
 (`GITHUB_TOKEN` is auto-provided by Actions — no setup.)
@@ -450,6 +482,9 @@ az staticwebapp secrets list --name anchor-dashboard --query properties.apiKey -
 | Variable | Value | Used by |
 | --- | --- | --- |
 | `AZURE_WEBAPP_NAME` | `appServiceName`, e.g. `anchor-api-yourschool` | `backend-deploy.yml` |
+| `AZURE_CLIENT_ID` | the **deploy** app client ID (`$DEPLOY_APP_ID` above) | `backend-deploy.yml` |
+| `AZURE_TENANT_ID` | your tenant GUID | `backend-deploy.yml` |
+| `AZURE_SUBSCRIPTION_ID` | the subscription the App Service lives in | `backend-deploy.yml` |
 | `API_BASE_URL` | `appServiceUrl` | `dashboard-deploy.yml` |
 | `ENTRA_TENANT_ID` | your tenant GUID | `dashboard-deploy.yml` |
 | `ENTRA_CLIENT_ID` | the **dashboard SPA** client ID (Step 3b) | `dashboard-deploy.yml` |
@@ -457,7 +492,10 @@ az staticwebapp secrets list --name anchor-dashboard --query properties.apiKey -
 | `AGENT_CLIENT_ID` | the **agent** public-client ID (Step 3c) | `agent-release.yml` |
 
 ```bash
-gh variable set AZURE_WEBAPP_NAME --repo OWNER/REPO --body "anchor-api-yourschool"
+gh variable set AZURE_WEBAPP_NAME      --repo OWNER/REPO --body "anchor-api-yourschool"
+gh variable set AZURE_CLIENT_ID        --repo OWNER/REPO --body "$DEPLOY_APP_ID"
+gh variable set AZURE_TENANT_ID        --repo OWNER/REPO --body "<your-tenant-guid>"
+gh variable set AZURE_SUBSCRIPTION_ID  --repo OWNER/REPO --body "$SUB"
 gh variable set API_BASE_URL      --repo OWNER/REPO --body "https://anchor-api-yourschool.azurewebsites.net"
 gh variable set ENTRA_TENANT_ID   --repo OWNER/REPO --body "<your-tenant-guid>"
 gh variable set ENTRA_CLIENT_ID   --repo OWNER/REPO --body "$SPA_CLIENT_ID"
