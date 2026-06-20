@@ -4,6 +4,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/auth_token_store.dart';
 import '../api/sessions_api.dart';
+import '../widgets/api_error_text.dart';
 
 /// The dashboard home page (AD3, #168) — paper treatment + brand voice.
 ///
@@ -31,7 +32,7 @@ class _HomePageState extends State<HomePage> {
   List<ClassSummary>? _classes;
   ClassSummary? _selected;
   bool _busy = false;
-  String? _error;
+  ApiErrorMessage? _error;
   List<ActiveSession> _activeSessions = const [];
   final Set<String> _endingSessions = {};
 
@@ -72,7 +73,10 @@ class _HomePageState extends State<HomePage> {
       await _loadActiveSessions();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load start-session data: $e');
+      setState(() => _error = describeApiError(
+            e,
+            generic: 'Could not load start-session data. Please try again.',
+          ));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -106,7 +110,8 @@ class _HomePageState extends State<HomePage> {
       context.go('/session/${session.id}');
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to start session: $e');
+      setState(() => _error =
+          describeApiError(e, generic: 'Failed to start session. Please try again.'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -130,7 +135,8 @@ class _HomePageState extends State<HomePage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to end session: $e');
+      setState(() => _error =
+          describeApiError(e, generic: 'Failed to end session. Please try again.'));
     } finally {
       if (mounted) setState(() => _endingSessions.remove(sessionId));
     }
@@ -214,12 +220,15 @@ class _HomePageState extends State<HomePage> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   )
-                else if (classes == null || classes.isEmpty)
+                // The genuine "no classes yet" empty state — only when the load
+                // actually succeeded. A failed load (e.g. a 403) is carried by
+                // the error notice below, not dressed up as an empty roster.
+                else if ((classes == null || classes.isEmpty) && _error == null)
                   Text(
                     'No classes assigned to you yet.',
                     style: text.bodyLarge?.copyWith(color: PlinkColors.ink60),
                   )
-                else ...<Widget>[
+                else if (classes != null && classes.isNotEmpty) ...<Widget>[
                   if (department != null && department.isNotEmpty) ...<Widget>[
                     Text(
                       'YOUR DEPARTMENT · ${department.toUpperCase()}',
@@ -271,13 +280,7 @@ class _HomePageState extends State<HomePage> {
 
                 if (_error != null) ...<Widget>[
                   const SizedBox(height: PlinkSpacing.s4),
-                  Text(
-                    _error!,
-                    key: const Key('home-error'),
-                    style: text.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
+                  ApiErrorText(_error!, key: const Key('home-error')),
                 ],
               ],
             ),

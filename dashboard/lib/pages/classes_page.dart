@@ -3,6 +3,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/classes_api.dart';
 import '../api/sessions_api.dart';
+import '../widgets/api_error_text.dart';
 import 'add_student_search.dart';
 
 /// Classes / roster manager (#152), redesigned to the paper treatment (AD6,
@@ -43,7 +44,7 @@ class _ClassesPageState extends State<ClassesPage> {
   bool _loadingSchools = false;
   bool _savingCodes = false;
   bool _bulkImporting = false;
-  String? _error;
+  ApiErrorMessage? _error;
   List<ClassMembershipImportResult>? _lastImportResults;
 
   // Editable copies of the selected class's schoolTag / classCode. Sit
@@ -84,7 +85,10 @@ class _ClassesPageState extends State<ClassesPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load classes: $e');
+      setState(() => _error = describeApiError(
+            e,
+            generic: 'Could not load classes. Please try again.',
+          ));
     } finally {
       if (mounted) setState(() => _loadingClasses = false);
     }
@@ -119,7 +123,10 @@ class _ClassesPageState extends State<ClassesPage> {
       setState(() => _roster = roster);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load roster: $e');
+      setState(() => _error = describeApiError(
+            e,
+            generic: 'Could not load roster. Please try again.',
+          ));
     } finally {
       if (mounted) setState(() => _loadingRoster = false);
     }
@@ -210,7 +217,8 @@ class _ClassesPageState extends State<ClassesPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not delete class: $e');
+      setState(() => _error =
+          describeApiError(e, generic: 'Could not delete class. Please try again.'));
     }
   }
 
@@ -240,7 +248,10 @@ class _ClassesPageState extends State<ClassesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not save school + code: $e');
+      setState(() => _error = describeApiError(
+            e,
+            generic: 'Could not save school + code. Please try again.',
+          ));
     } finally {
       if (mounted) setState(() => _savingCodes = false);
     }
@@ -258,7 +269,8 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to add member: $e');
+      setState(() => _error =
+          describeApiError(e, generic: 'Failed to add member. Please try again.'));
     }
   }
 
@@ -294,7 +306,8 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to remove member: $e');
+      setState(() => _error =
+          describeApiError(e, generic: 'Failed to remove member. Please try again.'));
     }
   }
 
@@ -309,7 +322,8 @@ class _ClassesPageState extends State<ClassesPage> {
 
     final parsed = parseRosterCsv(pasted);
     if (parsed.rows.isEmpty) {
-      setState(() => _error = parsed.error ?? 'No valid rows in CSV.');
+      setState(() =>
+          _error = ApiErrorMessage(parsed.error ?? 'No valid rows in CSV.'));
       return;
     }
     try {
@@ -319,7 +333,8 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Import failed: $e');
+      setState(() =>
+          _error = describeApiError(e, generic: 'Import failed. Please try again.'));
     }
   }
 
@@ -337,7 +352,10 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Populate from Graph failed: $e');
+      setState(() => _error = describeApiError(
+            e,
+            generic: 'Populate from Graph failed. Please try again.',
+          ));
     } finally {
       if (mounted) setState(() => _bulkImporting = false);
     }
@@ -383,10 +401,18 @@ class _ClassesPageState extends State<ClassesPage> {
           ),
           Expanded(
             child: _selected == null
+                // No class selected: surface a load failure (e.g. a 403) here
+                // rather than letting it vanish — the roster pane that would
+                // otherwise render the error never mounts without a selection.
                 ? Center(
-                    child: Text(
-                      'Pick a class on the left.',
-                      style: monoLabel(PlinkColors.muted),
+                    child: Padding(
+                      padding: const EdgeInsets.all(PlinkSpacing.s6),
+                      child: _error != null
+                          ? ApiErrorText(_error!, textAlign: TextAlign.center)
+                          : Text(
+                              'Pick a class on the left.',
+                              style: monoLabel(PlinkColors.muted),
+                            ),
                     ),
                   )
                 : _RosterPane(
@@ -473,6 +499,10 @@ class _ClassList extends StatelessWidget {
         Expanded(
           child: loading && classes == null
               ? const Center(child: CircularProgressIndicator())
+              // A null list means the load didn't complete (errored or not yet
+              // run); only an actually-loaded empty list is "no classes".
+              : classes == null
+              ? const SizedBox.shrink()
               : list.isEmpty
               ? Padding(
                   padding: const EdgeInsets.all(PlinkSpacing.s4),
@@ -604,7 +634,7 @@ class _RosterPane extends StatelessWidget {
   final void Function(String) onClassCodeChanged;
   final Future<void> Function() onSaveCodes;
   final Future<void> Function() onBulkImport;
-  final String? error;
+  final ApiErrorMessage? error;
   final List<ClassMembershipImportResult>? lastImportResults;
   final Future<List<DirectoryUser>> Function(String query) onSearch;
   final Future<void> Function(String entraOid, String? displayName) onAdd;
@@ -695,12 +725,7 @@ class _RosterPane extends StatelessWidget {
           ),
           if (error != null) ...[
             const SizedBox(height: PlinkSpacing.s3),
-            Text(
-              error!,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-            ),
+            ApiErrorText(error!),
           ],
           if (lastImportResults != null) ...[
             const SizedBox(height: PlinkSpacing.s3),
@@ -997,7 +1022,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
   final _classCode = TextEditingController();
   String? _schoolTag;
   bool _saving = false;
-  String? _error;
+  ApiErrorMessage? _error;
 
   @override
   void initState() {
@@ -1046,7 +1071,10 @@ class _NewClassDialogState extends State<_NewClassDialog> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = 'Could not create class: $e';
+        _error = describeApiError(
+          e,
+          generic: 'Could not create class. Please try again.',
+        );
       });
     }
   }
@@ -1110,12 +1138,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
             ),
             if (_error != null) ...[
               const SizedBox(height: PlinkSpacing.s3),
-              Text(
-                _error!,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-              ),
+              ApiErrorText(_error!),
             ],
           ],
         ),
