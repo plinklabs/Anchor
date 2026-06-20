@@ -413,6 +413,16 @@ below remain the fallback when you provision by hand.
 2. Configure the **App Service application settings** above (Entra IDs, CORS
    origins, client credentials). Bicep wires the SQL connection string and SignalR
    connection string for you.
+   - **Entra app roles (authorization).** The backend authorizes entirely on the
+     access token's `roles` claim (`RequireRole("Teacher")` / `"Student"`), so the
+     API app registration must **define** the `Teacher` and `Student` app roles
+     **and** at least one user must be **assigned** the `Teacher` role on the API
+     enterprise app — otherwise every teacher gets a 403 on a fresh environment
+     (#280). `Admin` is *not* an Entra role: it is a DB-only designation resolved
+     by `AdminRoleAuthorizationHandler` (#75). `scripts/setup.ps1` defines the
+     roles and bootstraps the operator (or `-TeacherUpn`) as the first teacher;
+     the by-hand steps and the full role model are in
+     [`docs/SETUP.md`](SETUP.md#how-authorization-works-the-role-model).
 3. Create the **backend deploy identity**: an `anchor-deploy` app registration +
    service principal with **Website Contributor** on the App Service, and a
    federated credential (issuer `https://token.actions.githubusercontent.com`,

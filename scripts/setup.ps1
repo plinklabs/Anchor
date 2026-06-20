@@ -14,7 +14,9 @@
       3. Create / update the three Entra app registrations the product needs:
             - the API app registration (exposes an `access_as_user` scope and
               an `api://<id>` identifier URI; gets a client secret for the
-              on-behalf-of Graph directory search),
+              on-behalf-of Graph directory search; defines the `Teacher` and
+              `Student` app roles and assigns the operator the `Teacher` role so
+              a legitimate teacher is not 403'd on a fresh environment — #280),
             - the dashboard SPA app registration (SPA redirect URI for the
               Static Web App, pre-authorized to call the API scope), and
             - the agent app registration (a Windows desktop *public client* for
@@ -146,6 +148,17 @@
     Display name of the deploy app registration. Default: "Anchor Deploy
     (<suffix>)".
 
+.PARAMETER TeacherUpn
+    UPN of the user to bootstrap as a teacher — assigned the API app's `Teacher`
+    app role so their access token carries roles:["Teacher"] and the dashboard's
+    Home/History/Classes endpoints authorize instead of 403ing (#280). Default:
+    the signed-in operator (when az is logged in as a user, not a service
+    principal). Without at least one assignment a freshly provisioned environment
+    has no teacher at all. Best-effort: assigning an app role needs Graph
+    privilege (a directory admin); the script prints a [MANUAL] note with the
+    portal path if it can't. The assigned user must sign out/in for the new role
+    to appear in their token.
+
 .EXAMPLE
     ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf
     # Dry run: prints the full provisioning plan for the lincolnhigh fork.
@@ -182,6 +195,7 @@ param(
     [string]$SpaAppName,
     [string]$AgentAppName,
     [string]$DeployAppName,
+    [string]$TeacherUpn,
     [string]$BicepFile,
     [switch]$SkipGitHub,
     [switch]$SkipEntra,
@@ -444,6 +458,182 @@ function Set-AppServiceDeployRole {
     finally { Remove-Item -LiteralPath $bodyTmp -Force -ErrorAction SilentlyContinue }
 }
 
+# Ensure the API app registration defines the Entra app roles that drive
+# production authorization. The API validates the access token's `roles` claim
+# (JwtBearerSetup sets RoleClaimType = "roles"; endpoints RequireRole("Teacher")
+# / "Student"), but a token only carries `roles` for an app role the caller has
+# been *assigned*, and a role can only be assigned if the app *defines* it. A
+# freshly created (or hand-built) API registration ships with appRoles: [], so no
+# teacher token ever carries roles:["Teacher"] and every teacher gets a 403 on
+# Home/History/Classes (#280). It only "works" in dev because the
+# DevImpersonationAuthHandler fabricates the claim from the seeded DB user.
+#
+# Idempotent and additive: match each wanted role on its `value`, reuse the
+# existing id on a re-run (a changed id would invalidate prior assignments and
+# in-flight tokens), and PATCH the full appRoles array preserving any roles
+# already present — so an adopted registration is topped up, not disturbed. PATCH
+# applications/{objectId} via Graph because `az ad app update` has no clean
+# appRoles flag, and by object id (no parens) so the Windows az.cmd -> cmd.exe
+# re-parse can't mangle the URL (same reasoning as the scope PATCH above).
+#
+# Admin is deliberately NOT an Entra app role: it is a DB-only designation
+# resolved per request by AdminRoleAuthorizationHandler (#75), so only Teacher
+# and Student are defined here.
+function Set-ApiAppRole {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$AppId)
+    if (-not $AppId -or $AppId -match '<') { return }
+
+    # The roles the product needs, matched against the live appRoles by `value`.
+    $wanted = @(
+        @{ value = 'Teacher'; displayName = 'Teacher'; description = 'Teachers: full access to classes, history and live sessions.' }
+        @{ value = 'Student'; displayName = 'Student'; description = 'Students: the supervised in-session experience.' }
+    )
+
+    $existingJson = Invoke-AzRead @('ad', 'app', 'show', '--id', $AppId, '--query', 'appRoles', '-o', 'json')
+    $existing = if ($existingJson) { @($existingJson | ConvertFrom-Json) } else { @() }
+
+    $haveValues = @{}
+    foreach ($r in $existing) {
+        if (($r.PSObject.Properties.Name -contains 'value') -and $r.value) { $haveValues[$r.value] = $true }
+    }
+
+    $missing = @($wanted | Where-Object { -not $haveValues.ContainsKey($_.value) })
+    if (-not $missing) {
+        Write-Host '    API app roles Teacher + Student already defined — skipping.'
+        return
+    }
+
+    # Merge: re-emit every existing role with only the writable fields (Graph
+    # rejects a write that carries the read-only `origin`), reusing its id, then
+    # append the missing ones with a fresh id and allowedMemberTypes ["User"].
+    $merged = @()
+    foreach ($r in $existing) {
+        $merged += [pscustomobject]@{
+            id                 = $r.id
+            allowedMemberTypes = $r.allowedMemberTypes
+            displayName        = $r.displayName
+            description        = $r.description
+            value              = $r.value
+            isEnabled          = $r.isEnabled
+        }
+    }
+    foreach ($w in $missing) {
+        $merged += [pscustomobject]@{
+            id                 = [guid]::NewGuid().ToString()
+            allowedMemberTypes = @('User')
+            displayName        = $w.displayName
+            description        = $w.description
+            value              = $w.value
+            isEnabled          = $true
+        }
+        Write-Host "    Defining API app role '$($w.value)'."
+    }
+
+    $missingValues = ($missing | ForEach-Object { $_.value }) -join ', '
+    if ($PSCmdlet.ShouldProcess($AppId, "define API app roles ($missingValues)")) {
+        $objectId = Invoke-AzRead @('ad', 'app', 'show', '--id', $AppId, '--query', 'id', '-o', 'tsv')
+        if (-not $objectId) { throw "Could not resolve the directory object id for app $AppId" }
+        $body = @{ appRoles = $merged } | ConvertTo-Json -Depth 6 -Compress
+        $tmp = New-TemporaryFile
+        try {
+            Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
+            Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PATCH',
+                '--url', "https://graph.microsoft.com/v1.0/applications/$objectId",
+                '--headers', 'Content-Type=application/json',
+                '--body', "@$tmp", '-o', 'none') -Target $AppId -Action 'patch API app roles'
+        }
+        finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    else {
+        Write-Host "    DRYRUN  PATCH applications/<object-id> appRoles += $missingValues" -ForegroundColor DarkGray
+    }
+}
+
+# Bootstrap a teacher: assign $TeacherUpn (default: the signed-in operator) the
+# API's `Teacher` app role on the API service principal, so their access token
+# carries roles:["Teacher"] and the dashboard's Home/History/Classes endpoints
+# authorize instead of 403ing (#280). Without at least one assignment a freshly
+# provisioned environment has no teacher at all. Best-effort: assigning an app
+# role needs Graph privilege (a directory admin); print a [MANUAL] note with the
+# portal path if it can't. The user must sign out/in for the role to appear in
+# their token. Depends on the API SP (Step 3b) and the app roles (Set-ApiAppRole)
+# already existing.
+function Add-TeacherRoleAssignment {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$ApiAppId, [string]$TeacherUpn, [string]$ApiAppLabel)
+    if (-not $ApiAppId -or $ApiAppId -match '<') { return }
+    if (-not $TeacherUpn) {
+        Write-Manual 'No -TeacherUpn given and no signed-in user UPN to default to (az may be logged in as a service principal) — no teacher bootstrapped. Assign a user the API app Teacher role in Entra (Enterprise applications -> the API app -> Users and groups), or every teacher gets a 403.'
+        return
+    }
+
+    # The Teacher app role lives on the API *service principal* (the resource);
+    # the assignment ties a user principal to it. Resolve both, plus the role id.
+    $apiSpId = Invoke-AzRead @('ad', 'sp', 'show', '--id', $ApiAppId, '--query', 'id', '-o', 'tsv')
+    if (-not $apiSpId) {
+        Write-Manual "API service principal not found for $ApiAppId — cannot bootstrap a teacher. Re-run without -SkipEntra so the 'Service principals' step creates it."
+        return
+    }
+    $roleId = $null
+    $rolesJson = Invoke-AzRead @('ad', 'sp', 'show', '--id', $ApiAppId, '--query', 'appRoles', '-o', 'json')
+    if ($rolesJson) {
+        foreach ($r in ($rolesJson | ConvertFrom-Json)) {
+            if (Test-Prop $r 'value' 'Teacher') { $roleId = $r.id; break }
+        }
+    }
+    if (-not $roleId) {
+        Write-Manual "Teacher app role not found on the API SP for $ApiAppId — cannot bootstrap a teacher (was the app-roles step skipped, or has it not replicated yet?)."
+        return
+    }
+
+    $userId = Invoke-AzRead @('ad', 'user', 'show', '--id', $TeacherUpn, '--query', 'id', '-o', 'tsv')
+    if (-not $userId) {
+        Write-Manual "Could not resolve a user for '$TeacherUpn' in this tenant — no teacher bootstrapped. Pass -TeacherUpn <a real tenant user>, or assign the Teacher role by hand."
+        return
+    }
+
+    # Idempotent: skip when this user already holds the Teacher role on the API SP.
+    $assignedJson = Invoke-AzRead @('rest', '--method', 'GET', '--url', "https://graph.microsoft.com/v1.0/users/$userId/appRoleAssignments", '-o', 'json')
+    if ($assignedJson) {
+        $assigned = $assignedJson | ConvertFrom-Json
+        $list = if (($assigned.PSObject.Properties.Name -contains 'value')) { $assigned.value } else { $assigned }
+        foreach ($a in $list) {
+            if ((Test-Prop $a 'resourceId' $apiSpId) -and (Test-Prop $a 'appRoleId' $roleId)) {
+                Write-Host "    $TeacherUpn already has the Teacher app role — skipping."
+                return
+            }
+        }
+    }
+
+    if ($PSCmdlet.ShouldProcess($TeacherUpn, 'assign the API Teacher app role')) {
+        # Local 'Continue' so az's stderr under a native call doesn't throw a
+        # NativeCommandError while $ErrorActionPreference is 'Stop'; branch on the
+        # exit code (same guard as Grant-AdminConsent). Best-effort, not fatal.
+        $ErrorActionPreference = 'Continue'
+        $body = @{ principalId = $userId; resourceId = $apiSpId; appRoleId = $roleId } | ConvertTo-Json -Compress
+        $tmp = New-TemporaryFile
+        try {
+            Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
+            $out = & az rest --method POST --url "https://graph.microsoft.com/v1.0/users/$userId/appRoleAssignments" --headers 'Content-Type=application/json' --body "@$tmp" -o none 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "    Assigned the Teacher app role to $TeacherUpn." -ForegroundColor Green
+                Write-Host '    (They must sign out and back in for the new role to appear in their token.)'
+            }
+            else {
+                $label = if ($ApiAppLabel) { $ApiAppLabel } else { 'the API app' }
+                Write-Warning "Could not assign the Teacher app role to $TeacherUpn automatically — needs Graph privilege (a directory admin), or the new role has not replicated yet."
+                Write-Host "    Entra portal -> Enterprise applications -> $label -> Users and groups -> Add user/group -> $TeacherUpn -> role 'Teacher'." -ForegroundColor Yellow
+                if ($out) { Write-Host "    ($($out | Select-Object -First 1))" -ForegroundColor DarkGray }
+            }
+        }
+        finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    else {
+        Write-Host "    DRYRUN  POST users/<id>/appRoleAssignments (Teacher on $ApiAppId for $TeacherUpn)" -ForegroundColor DarkGray
+    }
+}
+
 # Attempt to grant tenant-wide admin consent, falling back to printing the
 # manual command. Consent genuinely requires a tenant admin (the script-runner
 # may only own the subscription) and can transiently fail while a brand-new
@@ -490,6 +680,15 @@ $acct = $account | ConvertFrom-Json
 $tenantId = if ($EntraTenantId) { $EntraTenantId } else { $acct.tenantId }
 Write-Host "    Azure subscription : $($acct.name) ($($acct.id))"
 Write-Host "    Tenant            : $tenantId"
+
+# The signed-in operator's UPN, used to default -TeacherUpn (#280). Only when az
+# is logged in as a *user* — a service-principal login has no UPN to bootstrap.
+$operatorUpn = $null
+if (($acct.PSObject.Properties.Name -contains 'user') -and $acct.user -and
+    ($acct.user.PSObject.Properties.Name -contains 'name')) {
+    $isUserLogin = ($acct.user.PSObject.Properties.Name -notcontains 'type') -or ($acct.user.type -eq 'user')
+    if ($isUserLogin) { $operatorUpn = $acct.user.name }
+}
 
 if (-not $SkipGitHub) {
     # gh auth (read-only)
@@ -889,6 +1088,21 @@ if (-not $SkipEntra) {
     Add-ServicePrincipal -AppId $apiClientId -Label 'API'
     Add-ServicePrincipal -AppId $spaClientId -Label 'dashboard SPA'
     Add-ServicePrincipal -AppId $agentClientId -Label 'agent'
+}
+
+# ── Step 3c: API app roles + teacher bootstrap (#280) ────────────────────────
+# Production authorization is driven entirely by the access token's `roles`
+# claim, which only carries an app role the caller has been *assigned* to a role
+# the app *defines*. Define the Teacher/Student roles on the API app, then assign
+# the operator (or -TeacherUpn) the Teacher role — otherwise a freshly
+# provisioned environment 403s every legitimate teacher. Runs after the SPs so
+# the role assignment has the API SP to target; applies to an adopted API app too
+# (idempotent + additive), which is exactly the gap on the live arcadia env.
+if (-not $SkipEntra) {
+    Write-Step 'API app roles (Teacher / Student) + teacher bootstrap'
+    Set-ApiAppRole -AppId $apiClientId
+    $effectiveTeacherUpn = if ($TeacherUpn) { $TeacherUpn } else { $operatorUpn }
+    Add-TeacherRoleAssignment -ApiAppId $apiClientId -TeacherUpn $effectiveTeacherUpn -ApiAppLabel $ApiAppName
 }
 
 # ── Step 4: deploy Bicep ─────────────────────────────────────────────────────
