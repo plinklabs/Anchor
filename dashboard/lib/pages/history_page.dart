@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/sessions_api.dart';
+import '../widgets/api_error_text.dart';
 import 'past_session_shared.dart';
 
 /// History list (AD7, #172), redesigned to the paper treatment so it reads like
@@ -30,7 +31,7 @@ class _HistoryPageState extends State<HistoryPage> {
   final List<SessionHistoryEntry> _entries = [];
   bool _loading = false;
   bool _exhausted = false;
-  String? _error;
+  ApiErrorMessage? _error;
 
   @override
   void initState() {
@@ -56,7 +57,10 @@ class _HistoryPageState extends State<HistoryPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load past sessions: $e');
+      setState(() => _error = describeApiError(
+            e,
+            generic: 'Could not load past sessions. Please try again.',
+          ));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -78,13 +82,7 @@ class _HistoryPageState extends State<HistoryPage> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(PlinkSpacing.s6),
-          child: Text(
-            _error!,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.error,
-                ),
-            textAlign: TextAlign.center,
-          ),
+          child: ApiErrorText(_error!, textAlign: TextAlign.center),
         ),
       );
     }
@@ -147,13 +145,7 @@ class _HistoryPageState extends State<HistoryPage> {
         padding: const EdgeInsets.all(PlinkSpacing.s5),
         child: Column(
           children: [
-            Text(
-              _error!,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-              textAlign: TextAlign.center,
-            ),
+            ApiErrorText(_error!, textAlign: TextAlign.center),
             const SizedBox(height: PlinkSpacing.s3),
             // Calm ink — retrying a fetch is never the magenta spark.
             OutlinedButton(
