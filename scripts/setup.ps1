@@ -11,13 +11,19 @@
       1. Preflight: confirm `az` and `gh` are installed, that you are logged in
          to both, and resolve the target GitHub repository.
       2. Create the resource group (idempotent).
-      3. Create / update the two Entra app registrations the product needs:
+      3. Create / update the three Entra app registrations the product needs:
             - the API app registration (exposes an `access_as_user` scope and
               an `api://<id>` identifier URI; gets a client secret for the
-              on-behalf-of Graph directory search), and
+              on-behalf-of Graph directory search; defines the `Teacher` and
+              `Student` app roles and assigns the operator the `Teacher` role so
+              a legitimate teacher is not 403'd on a fresh environment — #280),
             - the dashboard SPA app registration (SPA redirect URI for the
-              Static Web App, pre-authorized to call the API scope).
-         Both are looked up by display name first, so re-runs reuse them.
+              Static Web App, pre-authorized to call the API scope), and
+            - the agent app registration (a Windows desktop *public client* for
+              WAM/broker sign-in: the broker redirect URI
+              ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId>, "allow public
+              client flows", and the API `access_as_user` permission).
+         All are looked up by display name first, so re-runs reuse them.
       4. Deploy infra/main.bicep into the resource group, passing the Entra
          tenant/client IDs so the App Service application settings are wired.
       5. Read the deployment outputs (resource names + URLs).
@@ -86,6 +92,16 @@
     Display name of the dashboard SPA Entra app registration.
     Default: Anchor Dashboard (<suffix>).
 
+.PARAMETER AgentAppName
+    Display name of the agent (Windows desktop, public-client) Entra app
+    registration. Default: Anchor Agent (<suffix>). This is a SEPARATE
+    registration from the dashboard SPA: the agent signs in through WAM (the
+    Windows broker), which needs a public-client app with the broker redirect
+    URI ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId> and "allow public
+    client flows" enabled — neither of which an SPA registration carries.
+    Reusing the SPA id made release sign-in fail with WAM_provider_error
+    0xCAA2000x ("IncorrectConfiguration") (#271).
+
 .PARAMETER BicepFile
     Path to the Bicep template. Default: infra/main.bicep relative to the repo.
 
@@ -98,9 +114,9 @@
     then pass -EntraClientId / -EntraTenantId for the deploy to be usable.
 
 .PARAMETER SkipInfra
-    Do not deploy infra/main.bicep. Resource names are still resolved and the
-    live deployment credentials (SWA token + publish profile) are still read so
-    GitHub secrets/variables can be (re-)wired against an environment that
+    Do not deploy infra/main.bicep. Resource names are still resolved, the SWA
+    deployment token is still read, and the OIDC deploy identity is still wired
+    so GitHub secrets/variables can be (re-)set against an environment that
     already exists. Use to resume after the infra is already deployed, or to
     re-wire GitHub for the live env without touching Azure.
 
@@ -116,6 +132,32 @@
 .PARAMETER SpaClientId
     Override / supply the dashboard SPA app registration client ID, mirroring
     -EntraClientId for the SPA. Used for the GitHub ENTRA_CLIENT_ID variable.
+
+.PARAMETER AgentClientId
+    Override / supply the agent public-client app registration client ID,
+    mirroring -SpaClientId for the agent. Used for the GitHub AGENT_CLIENT_ID
+    variable that the agent release workflow bakes into the published agent.
+
+.PARAMETER DeployClientId
+    Override / supply the deploy app registration client ID (the OIDC identity
+    backend-deploy.yml logs in as), mirroring -AgentClientId. Used for the GitHub
+    AZURE_CLIENT_ID variable. Supply with -SkipEntra when you manage the deploy
+    app out of band.
+
+.PARAMETER DeployAppName
+    Display name of the deploy app registration. Default: "Anchor Deploy
+    (<suffix>)".
+
+.PARAMETER TeacherUpn
+    UPN of the user to bootstrap as a teacher — assigned the API app's `Teacher`
+    app role so their access token carries roles:["Teacher"] and the dashboard's
+    Home/History/Classes endpoints authorize instead of 403ing (#280). Default:
+    the signed-in operator (when az is logged in as a user, not a service
+    principal). Without at least one assignment a freshly provisioned environment
+    has no teacher at all. Best-effort: assigning an app role needs Graph
+    privilege (a directory admin); the script prints a [MANUAL] note with the
+    portal path if it can't. The assigned user must sign out/in for the new role
+    to appear in their token.
 
 .EXAMPLE
     ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf
@@ -151,13 +193,18 @@ param(
     [string]$Repo,
     [string]$ApiAppName,
     [string]$SpaAppName,
+    [string]$AgentAppName,
+    [string]$DeployAppName,
+    [string]$TeacherUpn,
     [string]$BicepFile,
     [switch]$SkipGitHub,
     [switch]$SkipEntra,
     [switch]$SkipInfra,
     [string]$EntraTenantId,
     [string]$EntraClientId,
-    [string]$SpaClientId
+    [string]$SpaClientId,
+    [string]$AgentClientId,
+    [string]$DeployClientId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -166,6 +213,8 @@ Set-StrictMode -Version Latest
 # ── Defaults derived from the suffix ─────────────────────────────────────────
 if (-not $ApiAppName) { $ApiAppName = "Anchor API ($UniqueSuffix)" }
 if (-not $SpaAppName) { $SpaAppName = "Anchor Dashboard ($UniqueSuffix)" }
+if (-not $AgentAppName) { $AgentAppName = "Anchor Agent ($UniqueSuffix)" }
+if (-not $DeployAppName) { $DeployAppName = "Anchor Deploy ($UniqueSuffix)" }
 if (-not $BicepFile) {
     $BicepFile = Join-Path (Join-Path $PSScriptRoot '..') 'infra/main.bicep'
 }
@@ -358,6 +407,233 @@ function Add-ServicePrincipal {
         -Target $AppId -Action "create service principal for $Label"
 }
 
+# Ensure the deploy service principal holds **Website Contributor** on the target
+# App Service — the least-privilege role azure/webapps-deploy needs over OIDC
+# (#274). Idempotent: skips when the assignment already exists. Created through
+# `az rest` (the ARM REST API) rather than `az role assignment create`, because
+# that command fails with "MissingSubscription" whenever --scope is a full
+# resource id on the az CLI build used here; the REST PUT carries the scope in
+# the URL and is unaffected. Existence is checked with `... list --all --assignee`
+# (which works) and filtered in PowerShell to avoid passing a quote-heavy
+# JMESPath through the Windows az.cmd re-parse.
+function Set-AppServiceDeployRole {
+    # SupportsShouldProcess so -WhatIf flows through; the actual mutation (the
+    # `az rest` PUT) is gated by Invoke-Native's own ShouldProcess.
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$AppId, [string]$SubscriptionId, [string]$ResourceGroupName, [string]$SiteName)
+    if (-not $AppId -or $AppId -match '<') { return }
+    $roleDefId = 'de139f84-1756-47ae-9be6-808fbbe84772'   # Website Contributor (well-known)
+    $siteScope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$SiteName"
+
+    $spId = Invoke-AzRead @('ad', 'sp', 'show', '--id', $AppId, '--query', 'id', '-o', 'tsv')
+    if (-not $spId) {
+        Write-Manual "Deploy SP not found for $AppId — cannot assign Website Contributor. Re-run without -SkipEntra."
+        return
+    }
+
+    $existingJson = Invoke-AzRead @('role', 'assignment', 'list', '--all', '--assignee', $AppId, '-o', 'json')
+    if ($existingJson) {
+        foreach ($ra in ($existingJson | ConvertFrom-Json)) {
+            if ((Test-Prop $ra 'roleDefinitionName' 'Website Contributor') -and (Test-Prop $ra 'scope' $siteScope)) {
+                Write-Host '    Deploy SP already has Website Contributor on the App Service — skipping.'
+                return
+            }
+        }
+    }
+
+    $raGuid = [guid]::NewGuid().ToString()
+    $body = @{ properties = @{
+            roleDefinitionId = "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$roleDefId"
+            principalId      = $spId
+            principalType    = 'ServicePrincipal'
+        } } | ConvertTo-Json -Depth 5 -Compress
+    $bodyTmp = New-TemporaryFile
+    try {
+        Set-Content -LiteralPath $bodyTmp -Value $body -Encoding UTF8
+        Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PUT',
+            '--uri', "https://management.azure.com$siteScope/providers/Microsoft.Authorization/roleAssignments/${raGuid}?api-version=2022-04-01",
+            '--body', "@$bodyTmp", '-o', 'none') `
+            -Target $SiteName -Action 'assign Website Contributor to the deploy SP'
+    }
+    finally { Remove-Item -LiteralPath $bodyTmp -Force -ErrorAction SilentlyContinue }
+}
+
+# Ensure the API app registration defines the Entra app roles that drive
+# production authorization. The API validates the access token's `roles` claim
+# (JwtBearerSetup sets RoleClaimType = "roles"; endpoints RequireRole("Teacher")
+# / "Student"), but a token only carries `roles` for an app role the caller has
+# been *assigned*, and a role can only be assigned if the app *defines* it. A
+# freshly created (or hand-built) API registration ships with appRoles: [], so no
+# teacher token ever carries roles:["Teacher"] and every teacher gets a 403 on
+# Home/History/Classes (#280). It only "works" in dev because the
+# DevImpersonationAuthHandler fabricates the claim from the seeded DB user.
+#
+# Idempotent and additive: match each wanted role on its `value`, reuse the
+# existing id on a re-run (a changed id would invalidate prior assignments and
+# in-flight tokens), and PATCH the full appRoles array preserving any roles
+# already present — so an adopted registration is topped up, not disturbed. PATCH
+# applications/{objectId} via Graph because `az ad app update` has no clean
+# appRoles flag, and by object id (no parens) so the Windows az.cmd -> cmd.exe
+# re-parse can't mangle the URL (same reasoning as the scope PATCH above).
+#
+# Admin is deliberately NOT an Entra app role: it is a DB-only designation
+# resolved per request by AdminRoleAuthorizationHandler (#75), so only Teacher
+# and Student are defined here.
+function Set-ApiAppRole {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$AppId)
+    if (-not $AppId -or $AppId -match '<') { return }
+
+    # The roles the product needs, matched against the live appRoles by `value`.
+    $wanted = @(
+        @{ value = 'Teacher'; displayName = 'Teacher'; description = 'Teachers: full access to classes, history and live sessions.' }
+        @{ value = 'Student'; displayName = 'Student'; description = 'Students: the supervised in-session experience.' }
+    )
+
+    $existingJson = Invoke-AzRead @('ad', 'app', 'show', '--id', $AppId, '--query', 'appRoles', '-o', 'json')
+    $existing = if ($existingJson) { @($existingJson | ConvertFrom-Json) } else { @() }
+
+    $haveValues = @{}
+    foreach ($r in $existing) {
+        if (($r.PSObject.Properties.Name -contains 'value') -and $r.value) { $haveValues[$r.value] = $true }
+    }
+
+    $missing = @($wanted | Where-Object { -not $haveValues.ContainsKey($_.value) })
+    if (-not $missing) {
+        Write-Host '    API app roles Teacher + Student already defined — skipping.'
+        return
+    }
+
+    # Merge: re-emit every existing role with only the writable fields (Graph
+    # rejects a write that carries the read-only `origin`), reusing its id, then
+    # append the missing ones with a fresh id and allowedMemberTypes ["User"].
+    $merged = @()
+    foreach ($r in $existing) {
+        $merged += [pscustomobject]@{
+            id                 = $r.id
+            allowedMemberTypes = $r.allowedMemberTypes
+            displayName        = $r.displayName
+            description        = $r.description
+            value              = $r.value
+            isEnabled          = $r.isEnabled
+        }
+    }
+    foreach ($w in $missing) {
+        $merged += [pscustomobject]@{
+            id                 = [guid]::NewGuid().ToString()
+            allowedMemberTypes = @('User')
+            displayName        = $w.displayName
+            description        = $w.description
+            value              = $w.value
+            isEnabled          = $true
+        }
+        Write-Host "    Defining API app role '$($w.value)'."
+    }
+
+    $missingValues = ($missing | ForEach-Object { $_.value }) -join ', '
+    if ($PSCmdlet.ShouldProcess($AppId, "define API app roles ($missingValues)")) {
+        $objectId = Invoke-AzRead @('ad', 'app', 'show', '--id', $AppId, '--query', 'id', '-o', 'tsv')
+        if (-not $objectId) { throw "Could not resolve the directory object id for app $AppId" }
+        $body = @{ appRoles = $merged } | ConvertTo-Json -Depth 6 -Compress
+        $tmp = New-TemporaryFile
+        try {
+            Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
+            Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PATCH',
+                '--url', "https://graph.microsoft.com/v1.0/applications/$objectId",
+                '--headers', 'Content-Type=application/json',
+                '--body', "@$tmp", '-o', 'none') -Target $AppId -Action 'patch API app roles'
+        }
+        finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    else {
+        Write-Host "    DRYRUN  PATCH applications/<object-id> appRoles += $missingValues" -ForegroundColor DarkGray
+    }
+}
+
+# Bootstrap a teacher: assign $TeacherUpn (default: the signed-in operator) the
+# API's `Teacher` app role on the API service principal, so their access token
+# carries roles:["Teacher"] and the dashboard's Home/History/Classes endpoints
+# authorize instead of 403ing (#280). Without at least one assignment a freshly
+# provisioned environment has no teacher at all. Best-effort: assigning an app
+# role needs Graph privilege (a directory admin); print a [MANUAL] note with the
+# portal path if it can't. The user must sign out/in for the role to appear in
+# their token. Depends on the API SP (Step 3b) and the app roles (Set-ApiAppRole)
+# already existing.
+function Add-TeacherRoleAssignment {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$ApiAppId, [string]$TeacherUpn, [string]$ApiAppLabel)
+    if (-not $ApiAppId -or $ApiAppId -match '<') { return }
+    if (-not $TeacherUpn) {
+        Write-Manual 'No -TeacherUpn given and no signed-in user UPN to default to (az may be logged in as a service principal) — no teacher bootstrapped. Assign a user the API app Teacher role in Entra (Enterprise applications -> the API app -> Users and groups), or every teacher gets a 403.'
+        return
+    }
+
+    # The Teacher app role lives on the API *service principal* (the resource);
+    # the assignment ties a user principal to it. Resolve both, plus the role id.
+    $apiSpId = Invoke-AzRead @('ad', 'sp', 'show', '--id', $ApiAppId, '--query', 'id', '-o', 'tsv')
+    if (-not $apiSpId) {
+        Write-Manual "API service principal not found for $ApiAppId — cannot bootstrap a teacher. Re-run without -SkipEntra so the 'Service principals' step creates it."
+        return
+    }
+    $roleId = $null
+    $rolesJson = Invoke-AzRead @('ad', 'sp', 'show', '--id', $ApiAppId, '--query', 'appRoles', '-o', 'json')
+    if ($rolesJson) {
+        foreach ($r in ($rolesJson | ConvertFrom-Json)) {
+            if (Test-Prop $r 'value' 'Teacher') { $roleId = $r.id; break }
+        }
+    }
+    if (-not $roleId) {
+        Write-Manual "Teacher app role not found on the API SP for $ApiAppId — cannot bootstrap a teacher (was the app-roles step skipped, or has it not replicated yet?)."
+        return
+    }
+
+    $userId = Invoke-AzRead @('ad', 'user', 'show', '--id', $TeacherUpn, '--query', 'id', '-o', 'tsv')
+    if (-not $userId) {
+        Write-Manual "Could not resolve a user for '$TeacherUpn' in this tenant — no teacher bootstrapped. Pass -TeacherUpn <a real tenant user>, or assign the Teacher role by hand."
+        return
+    }
+
+    # Idempotent: skip when this user already holds the Teacher role on the API SP.
+    $assignedJson = Invoke-AzRead @('rest', '--method', 'GET', '--url', "https://graph.microsoft.com/v1.0/users/$userId/appRoleAssignments", '-o', 'json')
+    if ($assignedJson) {
+        $assigned = $assignedJson | ConvertFrom-Json
+        $list = if (($assigned.PSObject.Properties.Name -contains 'value')) { $assigned.value } else { $assigned }
+        foreach ($a in $list) {
+            if ((Test-Prop $a 'resourceId' $apiSpId) -and (Test-Prop $a 'appRoleId' $roleId)) {
+                Write-Host "    $TeacherUpn already has the Teacher app role — skipping."
+                return
+            }
+        }
+    }
+
+    if ($PSCmdlet.ShouldProcess($TeacherUpn, 'assign the API Teacher app role')) {
+        # Local 'Continue' so az's stderr under a native call doesn't throw a
+        # NativeCommandError while $ErrorActionPreference is 'Stop'; branch on the
+        # exit code (same guard as Grant-AdminConsent). Best-effort, not fatal.
+        $ErrorActionPreference = 'Continue'
+        $body = @{ principalId = $userId; resourceId = $apiSpId; appRoleId = $roleId } | ConvertTo-Json -Compress
+        $tmp = New-TemporaryFile
+        try {
+            Set-Content -LiteralPath $tmp -Value $body -Encoding UTF8
+            $out = & az rest --method POST --url "https://graph.microsoft.com/v1.0/users/$userId/appRoleAssignments" --headers 'Content-Type=application/json' --body "@$tmp" -o none 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "    Assigned the Teacher app role to $TeacherUpn." -ForegroundColor Green
+                Write-Host '    (They must sign out and back in for the new role to appear in their token.)'
+            }
+            else {
+                $label = if ($ApiAppLabel) { $ApiAppLabel } else { 'the API app' }
+                Write-Warning "Could not assign the Teacher app role to $TeacherUpn automatically — needs Graph privilege (a directory admin), or the new role has not replicated yet."
+                Write-Host "    Entra portal -> Enterprise applications -> $label -> Users and groups -> Add user/group -> $TeacherUpn -> role 'Teacher'." -ForegroundColor Yellow
+                if ($out) { Write-Host "    ($($out | Select-Object -First 1))" -ForegroundColor DarkGray }
+            }
+        }
+        finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+    else {
+        Write-Host "    DRYRUN  POST users/<id>/appRoleAssignments (Teacher on $ApiAppId for $TeacherUpn)" -ForegroundColor DarkGray
+    }
+}
+
 # Attempt to grant tenant-wide admin consent, falling back to printing the
 # manual command. Consent genuinely requires a tenant admin (the script-runner
 # may only own the subscription) and can transiently fail while a brand-new
@@ -404,6 +680,15 @@ $acct = $account | ConvertFrom-Json
 $tenantId = if ($EntraTenantId) { $EntraTenantId } else { $acct.tenantId }
 Write-Host "    Azure subscription : $($acct.name) ($($acct.id))"
 Write-Host "    Tenant            : $tenantId"
+
+# The signed-in operator's UPN, used to default -TeacherUpn (#280). Only when az
+# is logged in as a *user* — a service-principal login has no UPN to bootstrap.
+$operatorUpn = $null
+if (($acct.PSObject.Properties.Name -contains 'user') -and $acct.user -and
+    ($acct.user.PSObject.Properties.Name -contains 'name')) {
+    $isUserLogin = ($acct.user.PSObject.Properties.Name -notcontains 'type') -or ($acct.user.type -eq 'user')
+    if ($isUserLogin) { $operatorUpn = $acct.user.name }
+}
 
 if (-not $SkipGitHub) {
     # gh auth (read-only)
@@ -734,6 +1019,65 @@ else {
     }
 }
 
+# ── Step 3a-ii: agent (Windows desktop) public-client app registration ───────
+# The agent signs in through WAM (the Windows broker) — a *public client* flow —
+# so it needs its OWN registration, distinct from the dashboard SPA: WAM requires
+# the broker redirect URI ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId> and
+# "allow public client flows" (isFallbackPublicClient), neither of which an SPA
+# registration carries. Reusing the SPA id made release sign-in fail with
+# WAM_provider_error 0xCAA2000x ("IncorrectConfiguration") (#271). Looked up by
+# display name so a re-run reuses it; adopted untouched when -AgentClientId is
+# supplied. Defined outside the guard so the later SP / consent / GitHub steps
+# can reference it under Set-StrictMode even when -SkipEntra is set.
+$agentClientId = $AgentClientId
+if (-not $SkipEntra) {
+    Write-Step "Entra app registration (agent, public client) — $AgentAppName"
+
+    if ($agentClientId) {
+        Write-Host "    Using provided agent app id: $agentClientId"
+    }
+    else {
+        $foundAgent = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'list', '--display-name', $AgentAppName, '--query', '[0].appId', '-o', 'tsv') -Capture -ReadOnly
+        if ($foundAgent) {
+            $agentClientId = $foundAgent
+            Write-Host "    Found existing agent app: $agentClientId"
+        }
+        else {
+            $createdAgent = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'create', '--display-name', $AgentAppName, '--sign-in-audience', 'AzureADMyOrg', '--query', 'appId', '-o', 'tsv') -Capture `
+                -Target $AgentAppName -Action 'create agent public-client app registration'
+            $agentClientId = if ($createdAgent) { $createdAgent } else { '<agent-client-id>' }
+            Write-Host "    Created agent app: $agentClientId"
+        }
+    }
+
+    # Mark it a public client and register the WAM broker redirect URI. Idempotent:
+    # az overwrites the public-client redirect set, and re-asserting the flag is a
+    # no-op. The placeholder id only occurs under -WhatIf (nothing was created).
+    if ($agentClientId -notmatch '<') {
+        $brokerRedirect = "ms-appx-web://Microsoft.AAD.BrokerPlugin/$agentClientId"
+        Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'update', '--id', $agentClientId,
+            '--set', 'isFallbackPublicClient=true',
+            '--public-client-redirect-uris', $brokerRedirect, '-o', 'none') `
+            -Target $agentClientId -Action 'enable public client flows + set WAM broker redirect URI'
+
+        # Request the API's access_as_user scope so the agent can obtain a token
+        # for the backend (skip if already granted so a re-run doesn't duplicate).
+        if ($apiClientId -and $scopeId) {
+            if (Test-PermissionGranted -AppId $agentClientId -ResourceAppId $apiClientId -PermissionId $scopeId) {
+                Write-Host "    Agent already requests API access_as_user — skipping."
+            }
+            else {
+                Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'permission', 'add', '--id', $agentClientId,
+                    '--api', $apiClientId, '--api-permissions', "$scopeId=Scope", '-o', 'none') `
+                    -Target $agentClientId -Action 'grant API access_as_user to agent'
+            }
+        }
+        else {
+            Write-Manual "Agent app: could not resolve the API access_as_user scope id — grant the agent the API 'access_as_user' permission manually, or it cannot get a backend token."
+        }
+    }
+}
+
 # ── Step 3b: service principals ──────────────────────────────────────────────
 # Admin consent (the final step) can only be granted against apps that have a
 # service principal in the tenant. `az ad app create` makes only the application
@@ -743,6 +1087,22 @@ if (-not $SkipEntra) {
     Write-Step 'Service principals'
     Add-ServicePrincipal -AppId $apiClientId -Label 'API'
     Add-ServicePrincipal -AppId $spaClientId -Label 'dashboard SPA'
+    Add-ServicePrincipal -AppId $agentClientId -Label 'agent'
+}
+
+# ── Step 3c: API app roles + teacher bootstrap (#280) ────────────────────────
+# Production authorization is driven entirely by the access token's `roles`
+# claim, which only carries an app role the caller has been *assigned* to a role
+# the app *defines*. Define the Teacher/Student roles on the API app, then assign
+# the operator (or -TeacherUpn) the Teacher role — otherwise a freshly
+# provisioned environment 403s every legitimate teacher. Runs after the SPs so
+# the role assignment has the API SP to target; applies to an adopted API app too
+# (idempotent + additive), which is exactly the gap on the live arcadia env.
+if (-not $SkipEntra) {
+    Write-Step 'API app roles (Teacher / Student) + teacher bootstrap'
+    Set-ApiAppRole -AppId $apiClientId
+    $effectiveTeacherUpn = if ($TeacherUpn) { $TeacherUpn } else { $operatorUpn }
+    Add-TeacherRoleAssignment -ApiAppId $apiClientId -TeacherUpn $effectiveTeacherUpn -ApiAppLabel $ApiAppName
 }
 
 # ── Step 4: deploy Bicep ─────────────────────────────────────────────────────
@@ -821,9 +1181,26 @@ $apiScope = "$outEntraAudience/access_as_user"
 if (-not $SkipEntra -and $spaClientId -and ($swaUrl -notmatch '<')) {
     Write-Step 'Entra SPA — redirect URI + API pre-authorization'
     $redirect = "$swaUrl/"
-    Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'update', '--id', $spaClientId,
-        '--web-redirect-uris', $redirect, '-o', 'none') `
-        -Target $spaClientId -Action "set SPA redirect URI $redirect"
+    # The dashboard is an MSAL.js SPA: its redirect URI must live on the Entra
+    # app's *SPA* platform, not Web. A Web redirect makes sign-in fail with
+    # AADSTS9002326 ("cross-origin token redemption is permitted only for the
+    # 'Single-Page Application' client-type") because MSAL redeems the auth code
+    # cross-origin with PKCE. `az ad app update` has no --spa flag, so PATCH the
+    # application's `spa.redirectUris` via Graph (and clear any Web redirect so
+    # the two platforms don't disagree). Body via @file so the Windows
+    # az.cmd -> cmd.exe re-parse can't mangle the JSON.
+    $spaObjId = az ad app show --id $spaClientId --query id -o tsv
+    $spaTmp = New-TemporaryFile
+    try {
+        Set-Content -LiteralPath $spaTmp -Encoding UTF8 `
+            -Value "{""spa"":{""redirectUris"":[""$redirect""]},""web"":{""redirectUris"":[]}}"
+        Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PATCH',
+            '--uri', "https://graph.microsoft.com/v1.0/applications/$spaObjId",
+            '--headers', 'Content-Type=application/json',
+            '--body', "@$spaTmp", '-o', 'none') `
+            -Target $spaClientId -Action "set SPA redirect URI $redirect"
+    }
+    finally { Remove-Item -LiteralPath $spaTmp -Force -ErrorAction SilentlyContinue }
     # Request the API's access_as_user scope from the SPA (needs a resolved scope id).
     if ($apiClientId -and $scopeId -and $outEntraAudience -ne 'api://') {
         Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'permission', 'add', '--id', $spaClientId,
@@ -868,20 +1245,98 @@ if (-not $SkipEntra -and -not $WhatIfPreference -and ($appServiceName -notmatch 
     }
 }
 
-# ── Step 6: deployment secrets (SWA token + publish profile) ──────────────────
+# ── Step 5b: deploy identity (OIDC federated credentials) ─────────────────────
+# backend-deploy.yml authenticates to Azure with OIDC (azure/login), not a
+# publish-profile secret (#274): a dedicated app registration ("Anchor Deploy")
+# holds Website Contributor on the App Service, and a federated credential lets
+# the GitHub Actions job — subject repo:<owner>/<repo>:environment:production,
+# matching the workflow's `environment: production` — exchange its id-token for an
+# Azure token, with no long-lived secret to leak or mis-set. $deployClientId is
+# set outside the -SkipEntra guard so the GitHub step can wire AZURE_CLIENT_ID
+# under StrictMode even when app registrations are managed out of band.
+$deployClientId = $DeployClientId
+if (-not $SkipEntra) {
+    Write-Step "Deploy identity (OIDC) — $DeployAppName"
+
+    if ($deployClientId) {
+        Write-Host "    Using provided deploy app id: $deployClientId"
+    }
+    else {
+        $foundDeploy = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'list', '--display-name', $DeployAppName, '--query', '[0].appId', '-o', 'tsv') -Capture -ReadOnly
+        if ($foundDeploy) {
+            $deployClientId = $foundDeploy
+            Write-Host "    Found existing deploy app: $deployClientId"
+        }
+        else {
+            $createdDeploy = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'create', '--display-name', $DeployAppName, '--sign-in-audience', 'AzureADMyOrg', '--query', 'appId', '-o', 'tsv') -Capture `
+                -Target $DeployAppName -Action 'create deploy app registration'
+            $deployClientId = if ($createdDeploy) { $createdDeploy } else { '<deploy-client-id>' }
+            Write-Host "    Created deploy app: $deployClientId"
+        }
+    }
+
+    if ($deployClientId -notmatch '<') {
+        # SP so the role assignment has a principal (no admin consent needed — the
+        # deploy app is an RBAC identity, not a consentable API client).
+        Add-ServicePrincipal -AppId $deployClientId -Label 'deploy'
+
+        # Website Contributor on the App Service. Needs the resolved name; under a
+        # -WhatIf / -SkipInfra dry run it stays a placeholder, so guard on it.
+        if ($appServiceName -notmatch '<') {
+            Set-AppServiceDeployRole -AppId $deployClientId -SubscriptionId $acct.id -ResourceGroupName $ResourceGroup -SiteName $appServiceName
+        }
+
+        # Federated credential for the GitHub environment. The subject needs the
+        # repo, which is only resolved when GitHub wiring is in play.
+        if (-not $SkipGitHub -and $Repo) {
+            $ficSubject = "repo:${Repo}:environment:production"
+            $haveFic = $false
+            $ficJson = Invoke-AzRead @('ad', 'app', 'federated-credential', 'list', '--id', $deployClientId, '-o', 'json')
+            if ($ficJson) {
+                foreach ($fc in ($ficJson | ConvertFrom-Json)) {
+                    if (Test-Prop $fc 'subject' $ficSubject) { $haveFic = $true; break }
+                }
+            }
+            if ($haveFic) {
+                Write-Host "    Federated credential for '$ficSubject' already exists — skipping."
+            }
+            else {
+                $fic = @{
+                    name        = 'github-anchor-production'
+                    issuer      = 'https://token.actions.githubusercontent.com'
+                    subject     = $ficSubject
+                    audiences   = @('api://AzureADTokenExchange')
+                    description = 'GitHub Actions backend-deploy (production) OIDC'
+                } | ConvertTo-Json -Depth 4 -Compress
+                $ficTmp = New-TemporaryFile
+                try {
+                    Set-Content -LiteralPath $ficTmp -Value $fic -Encoding UTF8
+                    Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'federated-credential', 'create', '--id', $deployClientId, '--parameters', "@$ficTmp", '-o', 'none') `
+                        -Target $deployClientId -Action "add federated credential ($ficSubject)"
+                }
+                finally { Remove-Item -LiteralPath $ficTmp -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        else {
+            Write-Manual 'Repo not resolved (-SkipGitHub) — federated credential not created. Add one with subject repo:<owner>/<repo>:environment:production on the deploy app, or the OIDC deploy cannot authenticate.'
+        }
+    }
+}
+
+# ── Step 6: deployment secrets (SWA token) ───────────────────────────────────
 
 Write-Step 'Fetch deployment credentials'
 
-# These are reads, not mutations, but they only succeed once the SWA / App
-# Service actually exist (i.e. after a real deploy). In -WhatIf there is no
-# deployed resource, so skip the live reads and use placeholders so the GitHub
-# wiring plan still prints. In a real run we tolerate a not-yet-existing
-# resource (e.g. resuming after a half-finished deploy): the credential stays a
-# placeholder and Step 7 skips that secret rather than failing the whole run.
+# The SWA token is a read, not a mutation, but it only succeeds once the Static
+# Web App actually exists (i.e. after a real deploy). In -WhatIf there is no
+# deployed resource, so skip the live read and use a placeholder so the GitHub
+# wiring plan still prints. In a real run we tolerate a not-yet-existing resource
+# (e.g. resuming after a half-finished deploy): the token stays a placeholder and
+# Step 7 skips that secret rather than failing the whole run. (The backend no
+# longer needs a publish profile — it deploys via the OIDC identity from Step 5b.)
 if ($WhatIfPreference) {
     Write-Host '    DRYRUN  (skipping live credential reads; resources not deployed)' -ForegroundColor DarkGray
     $swaToken = '<swa-deployment-token>'
-    $publishProfile = '<publish-profile-xml>'
 }
 else {
     $swaToken = Invoke-AzRead @('staticwebapp', 'secrets', 'list', '--name', $staticWebAppName, '--query', 'properties.apiKey', '-o', 'tsv')
@@ -889,19 +1344,15 @@ else {
         $swaToken = '<swa-deployment-token>'
         Write-Host "    Static Web App '$staticWebAppName' not reachable yet — skipping its token (re-run after deploy)." -ForegroundColor Yellow
     }
-
-    $publishProfile = Invoke-AzRead @('webapp', 'deployment', 'list-publishing-profiles', '--name', $appServiceName, '--resource-group', $ResourceGroup, '--xml')
-    if (-not $publishProfile) {
-        $publishProfile = '<publish-profile-xml>'
-        Write-Host "    App Service '$appServiceName' not reachable yet — skipping publish profile (re-run after deploy)." -ForegroundColor Yellow
-    }
 }
 
 # ── Step 7: GitHub secrets + variables ───────────────────────────────────────
-# Names verified against .github/workflows/backend-deploy.yml and
-# dashboard-deploy.yml. Secrets: AZURE_WEBAPP_PUBLISH_PROFILE,
-# AZURE_STATIC_WEB_APPS_API_TOKEN. Variables: AZURE_WEBAPP_NAME, API_BASE_URL,
-# ENTRA_TENANT_ID, ENTRA_CLIENT_ID, API_SCOPE.
+# Names verified against .github/workflows/backend-deploy.yml,
+# dashboard-deploy.yml and agent-release.yml. Secrets:
+# AZURE_STATIC_WEB_APPS_API_TOKEN. Variables: AZURE_WEBAPP_NAME, AZURE_CLIENT_ID,
+# AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (backend OIDC login, #274), API_BASE_URL,
+# ENTRA_TENANT_ID, ENTRA_CLIENT_ID, API_SCOPE, AGENT_CLIENT_ID (the agent
+# release's public-client id, #271).
 
 if ($SkipGitHub) {
     Write-Step 'GitHub secrets/variables — SKIPPED (-SkipGitHub)'
@@ -921,7 +1372,12 @@ else {
             return
         }
         if ($PSCmdlet.ShouldProcess("$Repo/$Name", 'set GitHub secret')) {
-            $Value | & gh secret set $Name --repo $Repo --body -
+            # Pipe the value via stdin and let gh read it: `gh secret set` takes the
+            # value from standard input when --body is omitted. Do NOT pass `--body -`
+            # — gh treats `-` as the literal secret value (it is not a stdin sentinel),
+            # which silently wrote "-" into AZURE_STATIC_WEB_APPS_API_TOKEN and broke
+            # the dashboard deploy with an invalid token (issue #272).
+            $Value | & gh secret set $Name --repo $Repo
             if ($LASTEXITCODE -ne 0) { throw "gh secret set $Name failed ($LASTEXITCODE)" }
             Write-Host "    secret  $Name set"
         }
@@ -938,16 +1394,36 @@ else {
         if (-not $WhatIfPreference) { Write-Host "    var     $Name = $Value" }
     }
 
-    Set-GhSecret -Name 'AZURE_WEBAPP_PUBLISH_PROFILE'   -Value $publishProfile
     Set-GhSecret -Name 'AZURE_STATIC_WEB_APPS_API_TOKEN' -Value $swaToken
 
     Set-GhVariable -Name 'AZURE_WEBAPP_NAME' -Value $appServiceName
+    # OIDC login for backend-deploy.yml (#274): the deploy app's client id plus the
+    # tenant/subscription it targets. These are identifiers, not secrets, hence
+    # variables. AZURE_CLIENT_ID falls back to a manual note when the deploy app
+    # couldn't be resolved (e.g. -SkipEntra without -DeployClientId).
+    if ($deployClientId -and $deployClientId -notmatch '<') {
+        Set-GhVariable -Name 'AZURE_CLIENT_ID' -Value $deployClientId
+    }
+    else {
+        Write-Manual 'No deploy app id resolved — AZURE_CLIENT_ID not set. The backend deploy cannot authenticate until it is set (re-run without -SkipEntra, or pass -DeployClientId).'
+    }
+    Set-GhVariable -Name 'AZURE_TENANT_ID'       -Value $tenantId
+    Set-GhVariable -Name 'AZURE_SUBSCRIPTION_ID' -Value $acct.id
     Set-GhVariable -Name 'API_BASE_URL'      -Value $appServiceUrl
     Set-GhVariable -Name 'ENTRA_TENANT_ID'   -Value $outEntraTenant
     # The dashboard SPA client id when we created one, else the API id as a
     # last resort (single-app setups).
     Set-GhVariable -Name 'ENTRA_CLIENT_ID'   -Value ($(if ($spaClientId) { $spaClientId } else { $outEntraClient }))
     Set-GhVariable -Name 'API_SCOPE'         -Value $apiScope
+    # The agent's own public-client registration id (#271). The agent release
+    # workflow reads AGENT_CLIENT_ID — distinct from ENTRA_CLIENT_ID (the SPA) —
+    # because WAM sign-in needs a public client, not the SPA registration.
+    if ($agentClientId -and $agentClientId -notmatch '<') {
+        Set-GhVariable -Name 'AGENT_CLIENT_ID' -Value $agentClientId
+    }
+    else {
+        Write-Manual 'No agent app id resolved — AGENT_CLIENT_ID not set. The agent release will fail config substitution until it is set (re-run without -SkipEntra, or pass -AgentClientId).'
+    }
 }
 
 # ── Step 8: grant Entra admin consent ────────────────────────────────────────
@@ -957,11 +1433,12 @@ else {
 
 Write-Step 'Grant Entra admin consent'
 if ($SkipEntra) {
-    Write-Manual 'Entra was skipped (-SkipEntra); grant admin consent manually for your API and SPA apps once wired.'
+    Write-Manual 'Entra was skipped (-SkipEntra); grant admin consent manually for your API, SPA and agent apps once wired.'
 }
 else {
     Grant-AdminConsent -AppId $apiClientId -Label 'API'
     Grant-AdminConsent -AppId $spaClientId -Label 'dashboard SPA'
+    Grant-AdminConsent -AppId $agentClientId -Label 'agent'
 }
 
 Write-Host ''

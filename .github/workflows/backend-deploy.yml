@@ -10,11 +10,17 @@ name: Backend Deploy
 # job `if` because `workflow_run` fires for every conclusion (success, failure,
 # cancelled) and for any head branch.
 #
-# Auth uses a publish-profile secret (AZURE_WEBAPP_PUBLISH_PROFILE). Migrating to
-# OIDC federated credentials is a later hardening upgrade (see docs/RELEASE.md).
-# The target App Service name comes from the AZURE_WEBAPP_NAME repo Actions
-# variable so a fork deploys to its own `anchor-api-<school>` resource with no
-# source edits, mirroring the dashboard-deploy convention (#202).
+# Auth uses OIDC federated credentials (azure/login) — no long-lived secret. The
+# job requests an `id-token`, exchanges it for an Azure access token against a
+# federated credential on the `anchor-deploy` app registration (subject
+# `repo:<owner>/<repo>:environment:production`, matching this job's `environment`
+# below), and webapps-deploy then deploys with that token. The SP holds only
+# **Website Contributor** on the target App Service. This replaced the old
+# AZURE_WEBAPP_PUBLISH_PROFILE secret, which could not work once SCM basic-auth
+# publishing was disabled on the App Service (#274). The client/tenant/sub IDs
+# and the App Service name come from repo Actions variables so a fork deploys to
+# its own `anchor-api-<school>` resource with no source edits, mirroring the
+# dashboard-deploy convention (#202); `scripts/setup.ps1` provisions them.
 
 on:
   workflow_run:
@@ -24,6 +30,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write   # request the OIDC token for azure/login
 
 jobs:
   build-and-deploy:
@@ -53,9 +60,15 @@ jobs:
           --configuration Release
           --output ${{ runner.temp }}/publish
 
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ vars.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: ${{ runner.temp }}/publish

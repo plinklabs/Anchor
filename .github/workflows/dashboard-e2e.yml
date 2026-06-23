@@ -64,3 +64,15 @@ jobs:
             -d web-server \
             --browser-name=chrome \
             --headless
+
+      # Boots the real app as a teacher whose Teacher role isn't provisioned yet
+      # and walks Home → Classes → History, asserting each 403 surfaces the calm
+      # not-authorized notice rather than a raw `ApiException(403):` (#278).
+      - name: Run graceful-403 e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/graceful_403_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless

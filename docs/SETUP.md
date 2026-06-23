@@ -37,19 +37,62 @@ One Azure resource group containing:
 | SignalR Service | SignalR | Free | `anchor-signalr` |
 | Static Web App (dashboard) | Static Web App | Free | `anchor-dashboard` |
 
-Plus **two Entra ID (Azure AD) app registrations** — these are *not* deployed by
+Plus **three Entra ID (Azure AD) app registrations** — these are *not* deployed by
 Bicep; they are created in Entra and their IDs are passed *into* the deploy:
 
 - **API** app registration — exposes an `access_as_user` scope and an
-  `api://<client-id>` identifier URI, and holds a client secret for the
-  on-behalf-of Graph directory search.
+  `api://<client-id>` identifier URI, holds a client secret for the
+  on-behalf-of Graph directory search, and **defines the `Teacher` and `Student`
+  app roles** that drive production authorization (the API reads them from the
+  token's `roles` claim). One user is assigned the `Teacher` role to bootstrap
+  the environment — without it every teacher is 403'd (#280; see
+  [the role model](#how-authorization-works-the-role-model)).
 - **Dashboard SPA** app registration — a redirect URI pointing at the Static Web
   App, the Graph `User.Read` permission, and pre-authorization to call the API
   scope.
+- **Agent** app registration — a Windows desktop **public client** for the agent's
+  WAM/broker sign-in. It needs the broker redirect URI
+  `ms-appx-web://Microsoft.AAD.BrokerPlugin/<agent-client-id>`, **Allow public
+  client flows** enabled, and the API `access_as_user` permission. This must be a
+  *separate* registration from the Dashboard SPA: an SPA registration carries
+  neither the broker redirect URI nor public-client flows, so reusing its id makes
+  the agent fail at sign-in with `WAM_provider_error_…` (`0xCAA2000x`,
+  "IncorrectConfiguration") in release builds (#271).
 
 `<suffix>` is your fork-specific [`uniqueSuffix`](../infra/main.bicep) — pick
 something unique (e.g. your school) so globally-unique resource names don't
 collide with the original `arcadia` deployment. This guide uses `yourschool`.
+
+### How authorization works (the role model)
+
+The backend authorizes **entirely on the access token's `roles` claim**:
+[`JwtBearerSetup`](../backend/src/Anchor.Api/JwtBearerSetup.cs) sets
+`RoleClaimType = "roles"`, and the endpoints gate on
+[`RequireRole("Teacher")` / `RequireRole("Student")`](../backend/src/Anchor.Api/Program.cs).
+A token only carries `roles: ["Teacher"]` when the signed-in user has been
+**assigned the `Teacher` app role**, and a role can only be assigned if the API
+app registration **defines** it. So two things must exist in Entra:
+
+1. The API registration defines the `Teacher` and `Student` app roles
+   (`allowedMemberTypes: ["User"]`, enabled). **Step 3a** does this.
+2. At least one user is assigned the `Teacher` role on the API enterprise app
+   (service principal), or every teacher gets a **403** on Home/History/Classes.
+   **Step 3e** bootstraps the operator as that teacher.
+
+> **This bit it me (#280).** A brand-new app registration ships with
+> `appRoles: []`, and the script used to never define them — so no token could
+> carry `roles`, and every legitimate teacher was 403'd on a fresh environment.
+> It only "worked" locally because the
+> [`DevImpersonationAuthHandler`](../backend/src/Anchor.Api/Auth/DevImpersonationAuthHandler.cs)
+> fabricates the `roles` claim from the seeded DB user; there is no equivalent in
+> production.
+
+**`Admin` is _not_ an Entra app role.** Entra mints only `Teacher` / `Student`;
+`Admin` is a **DB-only** designation, resolved per-request by a database lookup in
+[`AdminRoleAuthorizationHandler`](../backend/src/Anchor.Api/Auth/AdminRoleAuthorizationHandler.cs)
+(#75), with a first-admin DB bootstrap in
+[`MeController`](../backend/src/Anchor.Api/Controllers/MeController.cs). So **only
+`Teacher` and `Student` are defined in Entra** — do not add an `Admin` app role.
 
 ## What the script automates
 
@@ -60,8 +103,12 @@ the two that used to be manual:
   and writes it to the App Service as `AzureAd__ClientCredentials` after the
   deploy (re-applying it each run, since the Bicep deploy rewrites the App
   Service's app settings). See [Step 6c](#6c-add-the-api-client-secret-to-the-app-service).
-- **Entra service principals** — created for both app registrations so admin
-  consent has a service to consent against. See [Step 3c](#3c-create-service-principals).
+- **Entra service principals** — created for all three app registrations so admin
+  consent has a service to consent against. See [Step 3d](#3d-create-service-principals).
+- **API app roles + a bootstrap teacher** — defines the `Teacher` / `Student` app
+  roles on the API registration and assigns the operator (or `-TeacherUpn`) the
+  `Teacher` role, so a freshly provisioned environment has a working teacher
+  instead of 403ing every one (#280). See [Step 3e](#3e-define-the-api-app-roles-and-bootstrap-a-teacher).
 
 **One step may still need a human:**
 
@@ -119,9 +166,10 @@ group name, pass it to every `az` command below with `--resource-group`.
 
 ## Step 3 — Entra app registrations
 
-Create both registrations **before** the deploy — the deploy needs the API client
-ID. (The SPA redirect URI is finished in [Step 5](#finish-the-spa-redirect-uri--api-pre-authorization)
-after the deploy, once you know the Static Web App URL.)
+Create all three registrations **before** the deploy — the deploy needs the API
+client ID. (The SPA redirect URI is finished in [Step 5](#finish-the-spa-redirect-uri--api-pre-authorization)
+after the deploy, once you know the Static Web App URL; the agent registration is
+self-contained and needs no post-deploy step.)
 
 You can do this with `az` (mirrors the script) or in the **Entra portal → App
 registrations**.
@@ -165,6 +213,39 @@ az ad app credential reset --id "$API_CLIENT_ID" --append \
 Copy the printed secret value now — it is shown **once**. You'll add it to the App
 Service in [Step 6c](#6c-add-the-api-client-secret-to-the-app-service).
 
+**Define the `Teacher` and `Student` app roles.** These drive production
+authorization (see [the role model](#how-authorization-works-the-role-model)) —
+without them no token carries a `roles` claim and every teacher is 403'd (#280).
+`az ad app` has no clean `appRoles` flag, so PATCH the application object via
+Graph (by **object id**, not the `applications(appId=…)` form — its parentheses
+break the Windows `az.cmd` re-parse). Use fresh GUIDs for the two `id` fields:
+
+```bash
+OBJ_ID=$(az ad app show --id "$API_CLIENT_ID" --query id -o tsv)
+cat > approles.json <<JSON
+{ "appRoles": [
+  { "id": "$(cat /proc/sys/kernel/random/uuid)", "allowedMemberTypes": ["User"],
+    "displayName": "Teacher", "value": "Teacher", "isEnabled": true,
+    "description": "Teachers: full access to classes, history and live sessions." },
+  { "id": "$(cat /proc/sys/kernel/random/uuid)", "allowedMemberTypes": ["User"],
+    "displayName": "Student", "value": "Student", "isEnabled": true,
+    "description": "Students: the supervised in-session experience." }
+] }
+JSON
+az rest --method PATCH \
+  --url "https://graph.microsoft.com/v1.0/applications/$OBJ_ID" \
+  --headers "Content-Type=application/json" --body @approles.json
+```
+
+In the portal: **App registrations → Anchor API → App roles → Create app role**,
+once each for `Teacher` and `Student` (Allowed member types: **Users/Groups**,
+Value: `Teacher` / `Student`, **Do you want to enable this app role?** Yes).
+
+> **Re-running.** If the roles already exist, reuse their existing `id`s — a
+> changed id invalidates every prior assignment and in-flight token. The script
+> matches on `value` and only adds what's missing; by hand, GET the current
+> `appRoles` first and only append the ones that aren't there.
+
 ### 3b. Dashboard SPA app registration
 
 ```bash
@@ -192,9 +273,49 @@ the deploy produces the Static Web App URL.
 > the API and the SPA, you can skip 3b and reuse the API app as the SPA client.
 > Entra then requires the dashboard's `API_SCOPE` to use the GUID client ID with
 > no `api://` prefix (see the note in [`dashboard/lib/auth/msal_config.dart`](../dashboard/lib/auth/msal_config.dart)).
-> The two-app layout below matches what the script provisions.
+> The two-app layout below matches what the script provisions. **This
+> simplification does not extend to the agent** — the agent always needs its own
+> public-client registration (3c), because WAM/broker sign-in is incompatible with
+> an SPA/web registration.
 
-### 3c. Create service principals
+### 3c. Agent (Windows desktop) app registration
+
+The agent signs in through **WAM** (the Windows Web Account Manager broker) — a
+**public-client** flow. This needs its own registration, distinct from the
+Dashboard SPA: WAM requires the broker redirect URI and "allow public client
+flows", neither of which an SPA registration carries. Reusing the SPA id makes the
+agent fail at sign-in with `WAM_provider_error_…` (`0xCAA2000x`,
+"IncorrectConfiguration") in release builds (#271).
+
+```bash
+# Create (single-tenant), capture its appId (the AGENT client ID).
+AGENT_CLIENT_ID=$(az ad app create \
+  --display-name "Anchor Agent (yourschool)" \
+  --sign-in-audience AzureADMyOrg \
+  --query appId -o tsv)
+
+# Mark it a public client and register the WAM broker redirect URI.
+az ad app update --id "$AGENT_CLIENT_ID" \
+  --set isFallbackPublicClient=true \
+  --public-client-redirect-uris "ms-appx-web://Microsoft.AAD.BrokerPlugin/$AGENT_CLIENT_ID"
+
+# Request the API's access_as_user scope so the agent can get a backend token.
+# <scope-id> is the access_as_user scope GUID from Step 3a.
+az ad app permission add --id "$AGENT_CLIENT_ID" \
+  --api "$API_CLIENT_ID" --api-permissions "<scope-id>=Scope"
+```
+
+In the portal the equivalents are **Authentication → Add a platform → Mobile and
+desktop applications → Custom redirect URI**
+`ms-appx-web://Microsoft.AAD.BrokerPlugin/<AGENT_CLIENT_ID>`, **Advanced settings →
+Allow public client flows → Yes**, and **API permissions → Add → Anchor API →
+`access_as_user`**.
+
+Save the GUID as `AGENT_CLIENT_ID` — it becomes the GitHub Actions variable of the
+same name that the [agent release workflow](../.github/workflows/agent-release.yml)
+bakes into the shipped agent (separate from the SPA's `ENTRA_CLIENT_ID`).
+
+### 3d. Create service principals
 
 `az ad app create` makes only the application *object*. Admin consent (Step 7)
 can only be granted against an app that also has a **service principal** in the
@@ -205,7 +326,46 @@ one for each registration (idempotent — skip any that already exists):
 ```bash
 az ad sp create --id "$API_CLIENT_ID"
 az ad sp create --id "$SPA_CLIENT_ID"
+az ad sp create --id "$AGENT_CLIENT_ID"
 ```
+
+### 3e. Define the API app roles and bootstrap a teacher
+
+Two pieces, both required or every teacher is 403'd (#280), see
+[the role model](#how-authorization-works-the-role-model):
+
+1. **Define the `Teacher` / `Student` app roles** on the API registration — done
+   in [Step 3a](#3a-api-app-registration) above.
+2. **Assign one user the `Teacher` role** on the API **service principal** (just
+   created in 3d), so their token carries `roles: ["Teacher"]`. Assign yourself
+   (or whoever will be the first teacher):
+
+```bash
+# Teacher role id (defined in 3a) and the API service principal object id.
+TEACHER_UPN="you@yourschool.example"
+API_SP_ID=$(az ad sp show --id "$API_CLIENT_ID" --query id -o tsv)
+ROLE_ID=$(az ad sp show --id "$API_CLIENT_ID" \
+  --query "appRoles[?value=='Teacher'].id | [0]" -o tsv)
+USER_ID=$(az ad user show --id "$TEACHER_UPN" --query id -o tsv)
+
+az rest --method POST \
+  --url "https://graph.microsoft.com/v1.0/users/$USER_ID/appRoleAssignments" \
+  --headers "Content-Type=application/json" \
+  --body "{\"principalId\":\"$USER_ID\",\"resourceId\":\"$API_SP_ID\",\"appRoleId\":\"$ROLE_ID\"}"
+```
+
+In the portal: **Enterprise applications → Anchor API → Users and groups → Add
+user/group →** pick the user **→ role `Teacher`**.
+
+> **Sign out / in.** The assigned user must re-acquire a token (sign out and back
+> in) for the new role to appear in their `roles` claim. Until then they still
+> see a 403.
+
+> **[MAY NEED A HUMAN]** Assigning an app role needs Graph privilege (a directory
+> admin). `scripts/setup.ps1` attempts it and prints this manual step if it lacks
+> the rights. Additional teachers are onboarded the same way (portal path above);
+> this step only bootstraps the *first* one so the environment isn't dead on
+> arrival.
 
 ---
 
@@ -269,7 +429,7 @@ You need these (Bicep [output](../infra/main.bicep) names):
 
 | Output | Example | Used for |
 | --- | --- | --- |
-| `appServiceName` | `anchor-api-yourschool` | GitHub variable `AZURE_WEBAPP_NAME`; publish profile |
+| `appServiceName` | `anchor-api-yourschool` | GitHub variable `AZURE_WEBAPP_NAME`; deploy role scope |
 | `appServiceUrl` | `https://anchor-api-yourschool.azurewebsites.net` | GitHub variable `API_BASE_URL` |
 | `staticWebAppName` | `anchor-dashboard` | SWA deployment token |
 | `swaUrl` | `https://<host>.azurestaticapps.net` | SPA redirect URI; CORS origin |
@@ -347,11 +507,11 @@ az ad app permission admin-consent --id "$SPA_CLIENT_ID"
 ```
 
 Or in the portal: **Entra → App registrations → `<app>` → API permissions →
-Grant admin consent for `<tenant>`**. Do this for both registrations. You can
+Grant admin consent for `<tenant>`**. Do this for all three registrations. You can
 finish the rest of the setup first and grant consent afterwards.
 
 > If consent fails with *"your organization has not subscribed to service(s)"*,
-> the API's service principal is missing — run [Step 3c](#3c-create-service-principals)
+> the API's service principal is missing — run [Step 3d](#3d-create-service-principals)
 > first, then retry.
 
 ---
@@ -359,37 +519,70 @@ finish the rest of the setup first and grant consent afterwards.
 ## Step 8 — GitHub secrets and variables
 
 The deploy workflows ([`backend-deploy.yml`](../.github/workflows/backend-deploy.yml),
-[`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml)) read the
+[`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml)) and the
+[`agent-release.yml`](../.github/workflows/agent-release.yml) packaging read the
 deploy target from repo Actions **variables** and auth from **secrets** — so a
 fork deploys to its own Azure with no source edits. The authoritative inventory is
 in [`docs/RELEASE.md`](RELEASE.md#required-secrets-and-variables); set exactly
 these.
 
-### Fetch the two credentials
+### Create the backend deploy identity (OIDC)
+
+`backend-deploy.yml` logs in to Azure with **OIDC federated credentials**
+(`azure/login`) — no long-lived secret (#274). Create a dedicated app
+registration that holds **Website Contributor** on the App Service, then a
+federated credential GitHub can exchange its id-token against. The subject must
+match the deploy job's environment, `repo:OWNER/REPO:environment:production`.
+
+```bash
+# App registration + service principal for the deploy
+DEPLOY_APP_ID=$(az ad app create --display-name "Anchor Deploy (yourschool)" \
+  --sign-in-audience AzureADMyOrg --query appId -o tsv)
+az ad sp create --id "$DEPLOY_APP_ID"
+
+# Website Contributor on just the App Service (least privilege)
+SUB=$(az account show --query id -o tsv)
+SP_ID=$(az ad sp show --id "$DEPLOY_APP_ID" --query id -o tsv)
+az role assignment create --assignee-object-id "$SP_ID" \
+  --assignee-principal-type ServicePrincipal --role "Website Contributor" \
+  --scope "/subscriptions/$SUB/resourceGroups/anchor-rg/providers/Microsoft.Web/sites/anchor-api-yourschool"
+
+# Federated credential for the production environment
+az ad app federated-credential create --id "$DEPLOY_APP_ID" --parameters '{
+  "name": "github-anchor-production",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:OWNER/REPO:environment:production",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+```
+
+> If `az role assignment create --scope <resource-id>` fails with
+> `MissingSubscription` (a known az CLI quirk on some builds), `scripts/setup.ps1`
+> does the same assignment via the ARM REST API (`az rest`) and is the
+> recommended path — it provisions all of the above for you.
+
+### Fetch the dashboard credential
 
 ```bash
 # Static Web App deployment token (→ AZURE_STATIC_WEB_APPS_API_TOKEN)
 az staticwebapp secrets list --name anchor-dashboard \
   --query properties.apiKey -o tsv
-
-# App Service publish profile XML (→ AZURE_WEBAPP_PUBLISH_PROFILE)
-az webapp deployment list-publishing-profiles \
-  --name anchor-api-yourschool --resource-group anchor-rg --xml
 ```
 
-### Set the secrets
+### Set the secret
+
+The backend no longer needs a secret (it uses OIDC above). Only the dashboard
+SWA token is a secret:
 
 | Secret | Value | Used by |
 | --- | --- | --- |
-| `AZURE_WEBAPP_PUBLISH_PROFILE` | the publish-profile XML above | `backend-deploy.yml` |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | the SWA deployment token above | `dashboard-deploy.yml` |
 
 ```bash
-az webapp deployment list-publishing-profiles --name anchor-api-yourschool \
-  --resource-group anchor-rg --xml | gh secret set AZURE_WEBAPP_PUBLISH_PROFILE --repo OWNER/REPO --body -
-
+# Pipe via stdin and OMIT --body: gh reads stdin when --body is absent. Do NOT
+# pass `--body -` — gh writes the literal string "-" as the value (#272).
 az staticwebapp secrets list --name anchor-dashboard --query properties.apiKey -o tsv \
-  | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --repo OWNER/REPO --body -
+  | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --repo OWNER/REPO
 ```
 
 (`GITHUB_TOKEN` is auto-provided by Actions — no setup.)
@@ -399,18 +592,32 @@ az staticwebapp secrets list --name anchor-dashboard --query properties.apiKey -
 | Variable | Value | Used by |
 | --- | --- | --- |
 | `AZURE_WEBAPP_NAME` | `appServiceName`, e.g. `anchor-api-yourschool` | `backend-deploy.yml` |
+| `AZURE_CLIENT_ID` | the **deploy** app client ID (`$DEPLOY_APP_ID` above) | `backend-deploy.yml` |
+| `AZURE_TENANT_ID` | your tenant GUID | `backend-deploy.yml` |
+| `AZURE_SUBSCRIPTION_ID` | the subscription the App Service lives in | `backend-deploy.yml` |
 | `API_BASE_URL` | `appServiceUrl` | `dashboard-deploy.yml` |
 | `ENTRA_TENANT_ID` | your tenant GUID | `dashboard-deploy.yml` |
 | `ENTRA_CLIENT_ID` | the **dashboard SPA** client ID (Step 3b) | `dashboard-deploy.yml` |
 | `API_SCOPE` | `<entraAudience>/access_as_user` (two-app), or `<client-id>/.default` (single-app) | `dashboard-deploy.yml` |
+| `AGENT_CLIENT_ID` | the **agent** public-client ID (Step 3c) | `agent-release.yml` |
 
 ```bash
-gh variable set AZURE_WEBAPP_NAME --repo OWNER/REPO --body "anchor-api-yourschool"
+gh variable set AZURE_WEBAPP_NAME      --repo OWNER/REPO --body "anchor-api-yourschool"
+gh variable set AZURE_CLIENT_ID        --repo OWNER/REPO --body "$DEPLOY_APP_ID"
+gh variable set AZURE_TENANT_ID        --repo OWNER/REPO --body "<your-tenant-guid>"
+gh variable set AZURE_SUBSCRIPTION_ID  --repo OWNER/REPO --body "$SUB"
 gh variable set API_BASE_URL      --repo OWNER/REPO --body "https://anchor-api-yourschool.azurewebsites.net"
 gh variable set ENTRA_TENANT_ID   --repo OWNER/REPO --body "<your-tenant-guid>"
 gh variable set ENTRA_CLIENT_ID   --repo OWNER/REPO --body "$SPA_CLIENT_ID"
 gh variable set API_SCOPE         --repo OWNER/REPO --body "api://$API_CLIENT_ID/access_as_user"
+gh variable set AGENT_CLIENT_ID   --repo OWNER/REPO --body "$AGENT_CLIENT_ID"
 ```
+
+> **`AGENT_CLIENT_ID` vs `ENTRA_CLIENT_ID`.** These are deliberately different
+> registrations. The agent uses WAM (a public client) and `ENTRA_CLIENT_ID` is the
+> dashboard's SPA — pointing the agent at the SPA id makes release sign-in fail
+> with `WAM_provider_error_…` (`0xCAA2000x`) (#271). The agent shares
+> `ENTRA_TENANT_ID` and `API_SCOPE`, only the client id differs.
 
 > **`API_SCOPE` form.** With **two** app registrations the script sets
 > `<entraAudience>/access_as_user` (i.e. `api://<api-client-id>/access_as_user`) —
@@ -447,9 +654,12 @@ is no separate migration step.
 You have a working fork when, following only this doc:
 
 - [ ] `az deployment group create` succeeds and outputs the resource names/URLs.
-- [ ] Both Entra registrations exist, each with a service principal (Step 3c).
-- [ ] Admin consent is granted for both registrations (Step 7).
+- [ ] All three Entra registrations exist, each with a service principal (Step 3d).
+- [ ] The API registration defines the `Teacher` / `Student` app roles, and one
+      user is assigned `Teacher` on the API service principal (Step 3e) — else
+      every teacher gets a 403.
+- [ ] Admin consent is granted for all three registrations (Step 7).
 - [ ] The API client secret is set on the App Service (Step 6c).
-- [ ] The two GitHub secrets and five GitHub variables are set (Step 8).
+- [ ] The two GitHub secrets and six GitHub variables are set (Step 8).
 - [ ] A push to `main` triggers the matching deploy leg, and the deployed
       dashboard signs in and reaches the API.
