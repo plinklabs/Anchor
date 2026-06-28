@@ -28,7 +28,8 @@ internal static class WitnessHostRegistration
     /// <summary>
     /// Register the host (idempotent). Used by the dev CLI mode, which supplies an
     /// explicit throwaway key + host exe path so the test never touches the live Edge
-    /// key. Returns whether a write happened.
+    /// key. Returns whether a write happened. Auth config is dev-omitted here — the dev
+    /// CLI path registers for the dev impersonation flow, not real student auth (#289).
     /// </summary>
     public static bool EnsureRegistered(string? keyOverride, string hostExePath, string backendUrl) =>
         Build(keyOverride).EnsureRegistered(hostExePath, backendUrl);
@@ -50,7 +51,12 @@ internal static class WitnessHostRegistration
     /// Best-effort: the witness link is a tamper signal, never load-bearing for the
     /// agent itself, so a failure here must never block startup.
     /// </summary>
-    public static void RegisterForStartup(string backendUrl)
+    /// <param name="auth">
+    /// The deployment's Entra config (#289), handed to the host so the extension can
+    /// acquire a real student token in release. Null in dev (the extension then uses
+    /// the dev impersonation shortcut).
+    /// </param>
+    public static void RegisterForStartup(string backendUrl, WitnessAuthConfig? auth = null)
     {
         try
         {
@@ -63,7 +69,7 @@ internal static class WitnessHostRegistration
                 return;
             }
 
-            Build(keyOverride: null).EnsureRegistered(hostExePath, backendUrl);
+            Build(keyOverride: null).EnsureRegistered(hostExePath, backendUrl, auth);
         }
         catch
         {

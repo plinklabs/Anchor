@@ -22,7 +22,11 @@
             - the agent app registration (a Windows desktop *public client* for
               WAM/broker sign-in: the broker redirect URI
               ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId>, "allow public
-              client flows", and the API `access_as_user` permission).
+              client flows", and the API `access_as_user` permission). The
+              browser extension reuses this same app to sign the student in
+              (#289), so it also gets the fixed
+              https://<extension-id>.chromiumapp.org/ Web redirect URI and
+              implicit access-token issuance for chrome.identity.launchWebAuthFlow.
          All are looked up by display name first, so re-runs reuse them.
       4. Deploy infra/main.bicep into the resource group, passing the Entra
          tenant/client IDs so the App Service application settings are wired.
@@ -1059,6 +1063,22 @@ if (-not $SkipEntra) {
             '--set', 'isFallbackPublicClient=true',
             '--public-client-redirect-uris', $brokerRedirect, '-o', 'none') `
             -Target $agentClientId -Action 'enable public client flows + set WAM broker redirect URI'
+
+        # The browser extension reuses this same app registration to sign the
+        # student in (#289): it can't use the WAM broker, so it rides Edge's
+        # Office 365 session via chrome.identity.launchWebAuthFlow, which redirects
+        # to a fixed https://<extension-id>.chromiumapp.org/ URL. That needs a Web
+        # platform redirect URI plus implicit access-token issuance (the extension
+        # uses the implicit flow to avoid the SPA token-endpoint CORS problem). The
+        # extension id is pinned by the manifest key, so this redirect is the same
+        # constant for every deployment — see extension/README.md ("Stable
+        # extension ID") and EdgeExtensionPolicy.ExtensionId in the agent.
+        $extensionId = 'dnkimhodjfogjibnbbfdjdapgmmiojio'
+        $extensionRedirect = "https://$extensionId.chromiumapp.org/"
+        Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'update', '--id', $agentClientId,
+            '--web-redirect-uris', $extensionRedirect,
+            '--enable-access-token-issuance', 'true', '-o', 'none') `
+            -Target $agentClientId -Action 'add extension chromiumapp.org redirect URI + enable implicit access tokens'
 
         # Request the API's access_as_user scope so the agent can obtain a token
         # for the backend (skip if already granted so a re-run doesn't duplicate).

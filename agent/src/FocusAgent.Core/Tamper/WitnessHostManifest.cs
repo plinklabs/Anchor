@@ -57,6 +57,13 @@ public static class WitnessHostManifest
     /// </summary>
     public const string BackendUrlFileName = "backend-url.json";
 
+    /// <summary>
+    /// The optional production-auth config file the host reads (#289). MUST match
+    /// <c>AuthConfig.FileName</c> in FocusAgent.WitnessHost (same cross-project
+    /// duplication as <see cref="BackendUrlFileName"/>, locked by a test).
+    /// </summary>
+    public const string AuthConfigFileName = "auth-config.json";
+
     private const string Description =
         "Anchor focus-agent witness link (#146): native-messaging bridge between the " +
         "Anchor extension and the on-box FocusAgent.";
@@ -70,6 +77,10 @@ public static class WitnessHostManifest
     /// <summary>The backend-url.json path for a host exe living in <paramref name="hostDir"/>.</summary>
     public static string BackendUrlPathFor(string hostDir) =>
         Path.Combine(hostDir, BackendUrlFileName);
+
+    /// <summary>The auth-config.json path for a host exe living in <paramref name="hostDir"/>.</summary>
+    public static string AuthConfigPathFor(string hostDir) =>
+        Path.Combine(hostDir, AuthConfigFileName);
 
     /// <summary>
     /// The host-manifest JSON Edge consumes: the absolute exe path Edge launches plus
@@ -106,6 +117,28 @@ public static class WitnessHostManifest
         return JsonSerializer.Serialize(new BackendUrlFile(backendUrl.Trim()), Indented);
     }
 
+    /// <summary>
+    /// The <c>auth-config.json</c> the host reads (#289):
+    /// <c>{"tenantId":"…","clientId":"…","scope":"…"}</c> — the shape
+    /// <c>AuthConfig</c> deserializes. Lets the agent hand the host its configured
+    /// <c>Auth</c> section so the extension can mint a real student token in release.
+    /// </summary>
+    public static string BuildAuthConfigFile(WitnessAuthConfig auth)
+    {
+        ArgumentNullException.ThrowIfNull(auth);
+        if (string.IsNullOrWhiteSpace(auth.TenantId) ||
+            string.IsNullOrWhiteSpace(auth.ClientId) ||
+            string.IsNullOrWhiteSpace(auth.Scope))
+        {
+            throw new ArgumentException(
+                "TenantId, ClientId and Scope must all be provided.", nameof(auth));
+        }
+
+        return JsonSerializer.Serialize(
+            new AuthConfigFile(auth.TenantId.Trim(), auth.ClientId.Trim(), auth.Scope.Trim()),
+            Indented);
+    }
+
     private sealed record Manifest(
         [property: JsonPropertyName("name")] string Name,
         [property: JsonPropertyName("description")] string Description,
@@ -115,4 +148,19 @@ public static class WitnessHostManifest
 
     private sealed record BackendUrlFile(
         [property: JsonPropertyName("backendUrl")] string BackendUrl);
+
+    private sealed record AuthConfigFile(
+        [property: JsonPropertyName("tenantId")] string TenantId,
+        [property: JsonPropertyName("clientId")] string ClientId,
+        [property: JsonPropertyName("scope")] string Scope);
 }
+
+/// <summary>
+/// The per-deployment Entra config the agent hands the witness host to write to
+/// <c>auth-config.json</c> (#289). A plain carrier of the three values the
+/// extension needs to acquire a student token; sourced from the agent's bound
+/// <c>Auth</c> section. Lives beside <see cref="WitnessHostManifest"/> so the
+/// registrar and the file builder share one shape without Core depending on the
+/// host project or the App's settings types.
+/// </summary>
+public sealed record WitnessAuthConfig(string TenantId, string ClientId, string Scope);

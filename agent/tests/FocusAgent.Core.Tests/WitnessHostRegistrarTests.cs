@@ -23,6 +23,11 @@ public class WitnessHostRegistrarTests
     private static string BackendPathFor(string exePath) =>
         Path.Combine(Path.GetDirectoryName(exePath)!, "backend-url.json");
 
+    private static string AuthPathFor(string exePath) =>
+        Path.Combine(Path.GetDirectoryName(exePath)!, "auth-config.json");
+
+    private static readonly WitnessAuthConfig Auth = new("tenant-1", "client-1", "api://x/.default");
+
     [Fact]
     public void EnsureRegistered_writes_manifest_backend_and_key_on_a_clean_store()
     {
@@ -107,6 +112,48 @@ public class WitnessHostRegistrarTests
         Assert.False(wrote);
         Assert.Equal(0, store.KeyWriteCount);
         Assert.Equal(0, store.FileWriteCount);
+    }
+
+    [Fact]
+    public void EnsureRegistered_writes_the_auth_config_file_when_auth_is_supplied()
+    {
+        var store = new FakeWitnessHostStore();
+
+        var wrote = new WitnessHostRegistrar(store).EnsureRegistered(ExeA, Backend, Auth);
+
+        Assert.True(wrote);
+        var auth = JsonDocument.Parse(store.Files[AuthPathFor(ExeA)]).RootElement;
+        Assert.Equal("tenant-1", auth.GetProperty("tenantId").GetString());
+        Assert.Equal("client-1", auth.GetProperty("clientId").GetString());
+        Assert.Equal("api://x/.default", auth.GetProperty("scope").GetString());
+    }
+
+    [Fact]
+    public void EnsureRegistered_writes_no_auth_config_file_in_dev_when_auth_is_null()
+    {
+        var store = new FakeWitnessHostStore();
+
+        new WitnessHostRegistrar(store).EnsureRegistered(ExeA, Backend, auth: null);
+
+        // A dev / no-auth deployment leaves no auth-config.json behind, so the host
+        // sends no auth_config and the extension stays on the dev impersonation path.
+        Assert.False(store.Files.ContainsKey(AuthPathFor(ExeA)));
+    }
+
+    [Fact]
+    public void EnsureRegistered_rewrites_the_auth_config_file_when_it_changes()
+    {
+        var store = new FakeWitnessHostStore();
+        var registrar = new WitnessHostRegistrar(store);
+        registrar.EnsureRegistered(ExeA, Backend, Auth);
+        store.FileWriteCount = 0;
+
+        var wrote = registrar.EnsureRegistered(ExeA, Backend, new WitnessAuthConfig("tenant-2", "client-1", "api://x/.default"));
+
+        Assert.True(wrote);
+        Assert.Equal(1, store.FileWriteCount); // only the auth-config file changed
+        var auth = JsonDocument.Parse(store.Files[AuthPathFor(ExeA)]).RootElement;
+        Assert.Equal("tenant-2", auth.GetProperty("tenantId").GetString());
     }
 
     [Fact]

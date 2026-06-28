@@ -30,7 +30,14 @@ if (string.IsNullOrWhiteSpace(pipeName)) pipeName = WitnessLink.PipeName;
 var backendUrl = BackendUrlConfig.ResolveFromEnvironment();
 var backendUrlMessage = BackendUrlConfig.BuildMessage(backendUrl);
 
+// Resolve this deployment's Entra tenant/client/scope (#289) the same way and
+// hand it down too, so the extension can mint a real student token for the hub.
+// Null in a dev build (no per-deployment auth configured) — the extension then
+// falls back to the dev_impersonate_oid shortcut.
+var authConfig = AuthConfig.ResolveFromEnvironment();
+var authConfigMessage = authConfig is not null ? AuthConfig.BuildMessage(authConfig) : null;
+
 await using var agent = new NamedPipeAgentLink(pipeName);
-var bridge = new WitnessBridge(input, output, agent, backendUrlMessage);
+var bridge = new WitnessBridge(input, output, agent, backendUrlMessage, authConfigMessage);
 await bridge.RunAsync(cts.Token);
 return 0;

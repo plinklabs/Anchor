@@ -185,9 +185,18 @@ public partial class App : Application
             // the equivalent, so the agent does it itself at startup (idempotent),
             // mirroring the force-install policy write above. Hands the host the
             // agent's configured Backend:BaseUrl so the extension targets the right
-            // backend in release, not the dev fallback. Best-effort, off the UI thread.
+            // backend in release, not the dev fallback. Also hands down the deployment's
+            // Entra tenant/client/scope (#289) so the extension can mint a real student
+            // token for the hub — null in dev (no Auth configured), where the extension
+            // stays on the dev impersonation shortcut. Best-effort, off the UI thread.
             var backendBaseUrl = _host.Services.GetRequiredService<IOptions<BackendSettings>>().Value.BaseUrl;
-            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(backendBaseUrl));
+            var auth = _host.Services.GetRequiredService<IOptions<AuthSettings>>().Value;
+            var witnessAuth = !string.IsNullOrWhiteSpace(auth.TenantId)
+                              && !string.IsNullOrWhiteSpace(auth.ClientId)
+                              && !string.IsNullOrWhiteSpace(auth.Scope)
+                ? new WitnessAuthConfig(auth.TenantId, auth.ClientId, auth.Scope)
+                : null;
+            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(backendBaseUrl, witnessAuth));
             // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
             // SessionLeft subscriptions are wired before the first session — the
             // poll loop starts on join and reports any open Edge InPrivate window.

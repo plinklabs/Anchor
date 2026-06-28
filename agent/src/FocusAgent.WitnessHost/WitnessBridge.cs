@@ -27,6 +27,7 @@ public sealed class WitnessBridge
     private readonly Stream _output;
     private readonly IAgentLink _agent;
     private readonly string? _backendUrlMessage;
+    private readonly string? _authConfigMessage;
     private readonly Channel<string> _outbound =
         Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
 
@@ -36,12 +37,24 @@ public sealed class WitnessBridge
     /// backend from the agent at runtime. Null leaves the channel
     /// liveness-only (its previous behaviour).
     /// </param>
-    public WitnessBridge(Stream input, Stream output, IAgentLink agent, string? backendUrlMessage = null)
+    /// <param name="authConfigMessage">
+    /// Optional pre-built <c>auth_config</c> native message (#289) the host hands
+    /// the extension up front, so it learns the deployment's Entra tenant/client/
+    /// scope and can acquire a real student token. Null in dev (the extension then
+    /// stays on the <c>dev_impersonate_oid</c> path).
+    /// </param>
+    public WitnessBridge(
+        Stream input,
+        Stream output,
+        IAgentLink agent,
+        string? backendUrlMessage = null,
+        string? authConfigMessage = null)
     {
         _input = input;
         _output = output;
         _agent = agent;
         _backendUrlMessage = backendUrlMessage;
+        _authConfigMessage = authConfigMessage;
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -55,6 +68,12 @@ public sealed class WitnessBridge
         // any agent up/down message and never races stdout.
         if (_backendUrlMessage is not null)
             _outbound.Writer.TryWrite(_backendUrlMessage);
+
+        // ...and its production auth config (#289), the same way: the extension
+        // needs both to enforce in release — the backend to target and the Entra
+        // tenant/client/scope to mint a student token for it.
+        if (_authConfigMessage is not null)
+            _outbound.Writer.TryWrite(_authConfigMessage);
 
         var writer = Task.Run(() => DrainOutboundAsync(ct), CancellationToken.None);
         try

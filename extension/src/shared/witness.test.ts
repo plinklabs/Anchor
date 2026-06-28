@@ -31,6 +31,17 @@ describe('classifyHostMessage', () => {
     expect(classifyHostMessage({ type: 'backend_url', url: '' })).toBe('ignore');
     expect(classifyHostMessage({ type: 'backend_url', url: '   ' })).toBe('ignore');
   });
+
+  it('maps a complete auth_config message to its signal (#289)', () => {
+    expect(classifyHostMessage({ type: 'auth_config', tenantId: 't', clientId: 'c', scope: 's' }))
+      .toBe('auth_config');
+  });
+
+  it('ignores a partial auth_config — a half-filled config cannot drive sign-in', () => {
+    expect(classifyHostMessage({ type: 'auth_config', tenantId: 't', clientId: 'c' })).toBe('ignore');
+    expect(classifyHostMessage({ type: 'auth_config', tenantId: 't', clientId: '', scope: 's' })).toBe('ignore');
+    expect(classifyHostMessage({ type: 'auth_config', tenantId: '  ', clientId: 'c', scope: 's' })).toBe('ignore');
+  });
 });
 
 describe('nextReconnectDelayMs', () => {
@@ -161,6 +172,29 @@ describe('WitnessClient', () => {
     // A blank url is not delivered — it can't wipe a good configuration.
     port.emit({ type: 'backend_url', url: '   ' });
     expect(onBackendUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a complete auth_config the host relays to onAuthConfig (#289)', () => {
+    const h = makeHarness();
+    const port = new h.FakePort();
+    const onAuthConfig = vi.fn();
+    const client = new WitnessClient({
+      connect: () => port,
+      onAgentUnavailable: vi.fn(),
+      onAuthConfig,
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    port.emit({ type: 'auth_config', tenantId: '  t  ', clientId: '  c  ', scope: '  s  ' });
+    expect(onAuthConfig).toHaveBeenCalledTimes(1);
+    // Fields are trimmed before delivery.
+    expect(onAuthConfig).toHaveBeenCalledWith({ tenantId: 't', clientId: 'c', scope: 's' });
+
+    // A partial config is not delivered — it can't half-configure a working auth.
+    port.emit({ type: 'auth_config', tenantId: 't', clientId: '', scope: 's' });
+    expect(onAuthConfig).toHaveBeenCalledTimes(1);
   });
 
   it('reconnects with backoff after the port drops', () => {

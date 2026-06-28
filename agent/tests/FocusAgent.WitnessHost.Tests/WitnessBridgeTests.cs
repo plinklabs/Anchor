@@ -37,6 +37,53 @@ public class WitnessBridgeTests
             frames);
     }
 
+    [Fact]
+    public async Task Hands_down_backend_url_then_auth_config_up_front()
+    {
+        using var input = new MemoryStream(); // immediate EOF
+        using var output = new MemoryStream();
+        var agent = new FakeAgentLink();
+
+        await new WitnessBridge(
+            input, output, agent,
+            backendUrlMessage: "{\"type\":\"backend_url\",\"url\":\"https://anchor.example\"}",
+            authConfigMessage: "{\"type\":\"auth_config\",\"tenantId\":\"t\",\"clientId\":\"c\",\"scope\":\"s\"}")
+            .RunAsync();
+
+        output.Position = 0;
+        var frames = ReadAllFrames(output);
+        // Both config messages land before any liveness traffic, backend URL first so
+        // the extension knows where to point before it tries to authenticate (#289).
+        Assert.Equal(
+            new[]
+            {
+                "{\"type\":\"backend_url\",\"url\":\"https://anchor.example\"}",
+                "{\"type\":\"auth_config\",\"tenantId\":\"t\",\"clientId\":\"c\",\"scope\":\"s\"}",
+            },
+            frames);
+    }
+
+    [Fact]
+    public async Task Omits_auth_config_when_none_supplied()
+    {
+        using var input = new MemoryStream(); // immediate EOF
+        using var output = new MemoryStream();
+        var agent = new FakeAgentLink();
+
+        await new WitnessBridge(
+            input, output, agent,
+            backendUrlMessage: "{\"type\":\"backend_url\",\"url\":\"https://anchor.example\"}")
+            .RunAsync();
+
+        output.Position = 0;
+        var frames = ReadAllFrames(output);
+        // Dev / no-auth deployment: only the backend URL goes down; the extension then
+        // stays on the dev_impersonate_oid path.
+        Assert.Equal(
+            new[] { "{\"type\":\"backend_url\",\"url\":\"https://anchor.example\"}" },
+            frames);
+    }
+
     private static byte[] Frame(string json)
     {
         var payload = Encoding.UTF8.GetBytes(json);

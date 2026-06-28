@@ -26,6 +26,7 @@ const manifest = JSON.parse(readFileSync(fileURLToPath(manifestUrl), 'utf8')) as
   version?: string;
   icons?: Record<string, string>;
   action?: { default_icon?: Record<string, string>; default_popup?: string };
+  permissions?: string[];
 };
 
 const pkg = JSON.parse(
@@ -83,6 +84,16 @@ describe('version sync (#204, #208)', () => {
       version?: string;
     };
     expect(dist.version).toBe(pkg.version);
+  });
+});
+
+// Issue #289: production student auth acquires an Entra token via
+// chrome.identity.launchWebAuthFlow, which requires the "identity" permission. It
+// was dropped earlier (the Edge store rejects unused permissions) and re-added when
+// the auth path landed; lock it so a future trim can't silently break sign-in.
+describe('identity permission (#289)', () => {
+  it('declares the identity permission so launchWebAuthFlow works', () => {
+    expect(manifest.permissions).toContain('identity');
   });
 });
 
