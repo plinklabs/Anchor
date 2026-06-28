@@ -90,9 +90,27 @@ app registration **defines** it. So two things must exist in Entra:
 **`Admin` is _not_ an Entra app role.** Entra mints only `Teacher` / `Student`;
 `Admin` is a **DB-only** designation, resolved per-request by a database lookup in
 [`AdminRoleAuthorizationHandler`](../backend/src/Anchor.Api/Auth/AdminRoleAuthorizationHandler.cs)
-(#75), with a first-admin DB bootstrap in
-[`MeController`](../backend/src/Anchor.Api/Controllers/MeController.cs). So **only
-`Teacher` and `Student` are defined in Entra** — do not add an `Admin` app role.
+(#75). So **only `Teacher` and `Student` are defined in Entra** — do not add an
+`Admin` app role.
+
+The first-admin auto-bootstrap in
+[`MeController`](../backend/src/Anchor.Api/Controllers/MeController.cs) is **gated
+on the Development environment only** — a misconfigured production deployment must
+never be able to mint admins by accident. On a real (Azure SQL) deployment there
+is therefore no automatic first admin: the first teacher signs in as `Teacher` and
+stays there, and bundle setup (`POST /bundles`) is Admin-only, so the catalogue is
+unmanageable until someone is promoted. Promote the first admin manually, once:
+
+```powershell
+# The target teacher must have signed in to Anchor at least once first (so their
+# Users row exists). Then, as the operator who ran setup.ps1:
+./scripts/promote-admin.ps1 -UserPrincipalName teacher@school.edu
+```
+
+See [`scripts/promote-admin.ps1`](../scripts/promote-admin.ps1) for options (it
+discovers the SQL server from the resource group, opens a temporary firewall rule
+for your IP, and supports `-WhatIf`). That first admin can then promote others via
+the admin-only `POST /me/promote` endpoint without further DB surgery.
 
 ## What the script automates
 
