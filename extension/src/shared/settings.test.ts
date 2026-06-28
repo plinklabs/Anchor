@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   DEV_FALLBACK_BACKEND_URL,
   loadSettings,
+  persistAuthConfig,
   persistBackendUrl,
+  resolveAuthMode,
+  type ExtensionSettings,
 } from './settings';
 
 // Minimal in-memory chrome.storage.local so the settings helpers can be
@@ -81,5 +84,66 @@ describe('persistBackendUrl', () => {
     const changed = await persistBackendUrl('   ');
     expect(changed).toBe(false);
     expect(store.backendUrl).toBe('https://anchor.example');
+  });
+});
+
+const FULL_AUTH = { tenantId: 'tenant-1', clientId: 'client-1', scope: 'api://x/.default' };
+
+describe('loadSettings authConfig (#289)', () => {
+  beforeEach(() => installChromeStorageMock());
+
+  it('is null when nothing is stored', async () => {
+    expect((await loadSettings()).authConfig).toBeNull();
+  });
+
+  it('loads a complete stored auth config', async () => {
+    installChromeStorageMock({ authConfig: FULL_AUTH });
+    expect((await loadSettings()).authConfig).toEqual(FULL_AUTH);
+  });
+
+  it('treats a partial stored auth config as null (no half-configured sign-in)', async () => {
+    installChromeStorageMock({ authConfig: { tenantId: 't', clientId: '', scope: 's' } });
+    expect((await loadSettings()).authConfig).toBeNull();
+  });
+});
+
+describe('persistAuthConfig (#289)', () => {
+  it('stores a fresh config and reports it changed', async () => {
+    const store = installChromeStorageMock();
+    expect(await persistAuthConfig(FULL_AUTH)).toBe(true);
+    expect(store.authConfig).toEqual(FULL_AUTH);
+  });
+
+  it('trims fields before storing', async () => {
+    const store = installChromeStorageMock();
+    await persistAuthConfig({ tenantId: '  tenant-1  ', clientId: '  client-1  ', scope: '  api://x/.default  ' });
+    expect(store.authConfig).toEqual(FULL_AUTH);
+  });
+
+  it('is a no-op (returns false) when unchanged', async () => {
+    installChromeStorageMock({ authConfig: FULL_AUTH });
+    expect(await persistAuthConfig(FULL_AUTH)).toBe(false);
+  });
+
+  it('rejects an incomplete config so a malformed host message cannot half-configure auth', async () => {
+    const store = installChromeStorageMock({ authConfig: FULL_AUTH });
+    expect(await persistAuthConfig({ tenantId: 't', clientId: 'c', scope: '   ' })).toBe(false);
+    expect(store.authConfig).toEqual(FULL_AUTH);
+  });
+});
+
+describe('resolveAuthMode (#289)', () => {
+  const base: ExtensionSettings = { backendUrl: 'https://x', devImpersonateOid: null, authConfig: null };
+
+  it('prefers the dev impersonation shortcut when set, even alongside an auth config', () => {
+    expect(resolveAuthMode({ ...base, devImpersonateOid: 'oid', authConfig: FULL_AUTH })).toBe('dev');
+  });
+
+  it('uses token mode when only an auth config is present', () => {
+    expect(resolveAuthMode({ ...base, authConfig: FULL_AUTH })).toBe('token');
+  });
+
+  it('is none when neither is configured', () => {
+    expect(resolveAuthMode(base)).toBe('none');
   });
 });

@@ -8,7 +8,7 @@ namespace FocusAgent.IntegrationTests;
 /// <summary>
 /// End-to-end proof for #225: the <em>real</em> built agent writes (and, on
 /// uninstall, removes) the per-user "start at login" entry under
-/// <c>HKCU\...\Run</c> — the unpackaged-friendly replacement for the MSIX
+/// <c>HKCU\...\Run</c> — the unpackaged-friendly equivalent of a packaged app's
 /// <c>windows.startupTask</c> extension. This is the one real-world uncertainty the
 /// issue calls out — whether the agent can self-register the Run key on a clean,
 /// unmanaged BYOD box without admin — so it's exercised against the actual

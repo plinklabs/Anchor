@@ -1,12 +1,15 @@
 // Thin wrapper around @microsoft/signalr that knows how to:
 //   - build the hub URL (with the dev impersonation query string when set)
+//   - attach a real Entra access token via SignalR's accessTokenFactory (#289)
 //   - call JoinSession after auth succeeds
 //   - surface SessionStarted / SessionEnded as plain callbacks
 //   - report a BlockedUrl event back to the backend
 //
 // Keeping the SignalR API surface contained here means background.ts stays
-// readable and the auth-mode swap (dev impersonation → real Entra token)
-// only touches one file.
+// readable. The two auth modes are mutually exclusive: in dev the impersonation
+// OID rides the query string; in production an accessTokenFactory supplies a real
+// token (SignalR appends it as ?access_token= for WebSocket/SSE, which is what the
+// backend's JwtBearer OnMessageReceived reads on the hub path).
 
 import * as signalR from '@microsoft/signalr';
 import { logger } from './logger';
@@ -35,7 +38,17 @@ export class HubClient {
   private readonly connection: signalR.HubConnection;
   private readonly settings: ExtensionSettings;
 
-  constructor(settings: ExtensionSettings, callbacks: HubCallbacks) {
+  /**
+   * @param accessTokenFactory Production auth (#289): returns a fresh Entra access
+   *   token for the hub. SignalR calls it on connect and every reconnect, so it
+   *   doubles as the refresh hook. Omitted in dev, where the impersonation OID on
+   *   the query string authenticates instead.
+   */
+  constructor(
+    settings: ExtensionSettings,
+    callbacks: HubCallbacks,
+    accessTokenFactory?: () => Promise<string>,
+  ) {
     this.settings = settings;
     this.connection = new signalR.HubConnectionBuilder()
       .withUrl(this.buildHubUrl(), {
@@ -44,6 +57,10 @@ export class HubClient {
         // and prefer WebSockets / SSE.
         transport: signalR.HttpTransportType.WebSockets
           | signalR.HttpTransportType.ServerSentEvents,
+        // In production, supply a real Entra token; SignalR appends it as
+        // ?access_token= for the WebSocket/SSE transports. Mutually exclusive with
+        // the dev_impersonate_oid query string (see buildHubUrl).
+        ...(accessTokenFactory ? { accessTokenFactory } : {}),
       })
       .withAutomaticReconnect()
       .configureLogging(signalR.LogLevel.Information)

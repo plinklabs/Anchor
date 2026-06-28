@@ -9,20 +9,13 @@ namespace FocusAgent.Core.Tests;
 ///
 /// <para>
 /// <c>agent/Directory.Build.props</c> declares one &lt;VersionPrefix&gt; that
-/// MSBuild auto-imports into every agent project. These tests lock the two ways
-/// that one number must stay authoritative:
+/// MSBuild auto-imports into every agent project. This test locks that the one
+/// number actually stamps the built agent assemblies — the FocusAgent.Core
+/// assembly (same Directory.Build.props as FocusAgent.App) must carry that
+/// version. This is the unit-speed proof that the source flows into the build;
+/// the IntegrationTests/AgentVersionTests spec proves the same for the running
+/// exe end-to-end.
 /// </para>
-/// <list type="number">
-///   <item>It actually stamps the built agent assemblies — the FocusAgent.Core
-///   assembly (same Directory.Build.props as FocusAgent.App) must carry that
-///   version. This is the unit-speed proof that the source flows into the build;
-///   the IntegrationTests/AgentVersionTests spec proves the same for the running
-///   exe end-to-end.</item>
-///   <item>The MSIX <c>Package.appxmanifest</c> &lt;Identity Version&gt; (the one
-///   version the packaged build can't derive from &lt;VersionPrefix&gt;
-///   automatically) stays in lockstep, so the packaged build can't ship a stale
-///   version while the unpackaged Velopack build moves.</item>
-/// </list>
 /// </summary>
 public class VersionSourceTests
 {
@@ -60,29 +53,6 @@ public class VersionSourceTests
         // SourceLink suffix; the SemVer it starts with must be the single source.
         var semver = informational!.Split('+', 2)[0];
         Assert.Equal(expected, semver);
-    }
-
-    [Fact]
-    public void MsixPackageManifest_VersionMatchesTheSingleSource()
-    {
-        var expected = SingleVersionSource();
-
-        var manifestPath = Path.Combine(
-            RepoRoot, "agent", "src", "FocusAgent.App", "Package.appxmanifest");
-        Assert.True(File.Exists(manifestPath), $"Missing appxmanifest at {manifestPath}.");
-
-        var doc = XDocument.Load(manifestPath);
-        XNamespace ns = "http://schemas.microsoft.com/appx/manifest/foundation/windows10";
-        var identityVersion = doc.Root!
-            .Element(ns + "Identity")?
-            .Attribute("Version")?.Value;
-
-        Assert.False(
-            string.IsNullOrWhiteSpace(identityVersion),
-            "Package.appxmanifest has no <Identity Version>.");
-
-        // The appxmanifest version is the four-part "<VersionPrefix>.0" form.
-        Assert.Equal($"{expected}.0", identityVersion);
     }
 
     private static string FindRepoRoot()

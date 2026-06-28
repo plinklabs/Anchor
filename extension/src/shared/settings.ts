@@ -17,23 +17,47 @@
 //
 // devImpersonateOid is a dev-only shortcut: in Development the backend
 // (#72) accepts a dev_impersonate_oid query parameter on the hub URL in
-// place of a real Entra token. Production rollout will swap this for a
-// chrome.identity.launchWebAuthFlow path — tracked in a follow-up issue.
+// place of a real Entra token. In production the extension instead acquires a
+// real Entra access token via chrome.identity.launchWebAuthFlow (#289) using the
+// authConfig the agent hands down over the witness link — config, not identity,
+// exactly like backendUrl, so one published extension serves every fork.
 
 import { logger } from './logger';
 
 const log = logger('settings');
+
+/**
+ * Per-deployment Entra config the agent hands down over the witness link (#289),
+ * used to acquire a student access token for the hub via launchWebAuthFlow. NOT
+ * baked into the published extension — a single listing serves every fork, so the
+ * tenant/client/scope are learned from the on-box agent at runtime (same posture
+ * as backendUrl, #204).
+ */
+export interface AuthConfig {
+  /** Entra tenant (directory) id the sign-in authority targets. */
+  tenantId: string;
+  /** Public-client app registration id the extension authenticates as. */
+  clientId: string;
+  /** API scope to request, e.g. `api://<api-app-id>/access_as_user`. */
+  scope: string;
+}
 
 export interface ExtensionSettings {
   /** Base URL of the Anchor backend, no trailing slash. */
   backendUrl: string;
   /**
    * Dev-only impersonation OID. When set, the extension passes it as the
-   * dev_impersonate_oid query parameter on the SignalR hub URL. Leave empty
-   * in production deployments — the extension will then refuse to connect
-   * until real auth lands.
+   * dev_impersonate_oid query parameter on the SignalR hub URL — the dev
+   * authentication shortcut, which takes precedence over real auth.
    */
   devImpersonateOid: string | null;
+  /**
+   * Production Entra auth config (#289). When set (and no devImpersonateOid),
+   * the extension acquires a real student token via launchWebAuthFlow and sends
+   * it as the hub's access_token. Null until the agent hands it down — the
+   * extension then refuses to connect rather than spin in a 401 loop.
+   */
+  authConfig: AuthConfig | null;
 }
 
 /**
@@ -47,20 +71,29 @@ export const DEV_FALLBACK_BACKEND_URL = 'http://localhost:5276';
 const DEFAULTS: ExtensionSettings = {
   backendUrl: DEV_FALLBACK_BACKEND_URL,
   devImpersonateOid: null,
+  authConfig: null,
 };
 
 /** chrome.storage.local key the agent-pushed backend URL is persisted under. */
 export const BACKEND_URL_KEY = 'backendUrl';
 
-const STORAGE_KEYS: (keyof ExtensionSettings)[] = ['backendUrl', 'devImpersonateOid'];
+/** chrome.storage.local key the agent-pushed auth config is persisted under (#289). */
+export const AUTH_CONFIG_KEY = 'authConfig';
+
+const STORAGE_KEYS: (keyof ExtensionSettings)[] = ['backendUrl', 'devImpersonateOid', 'authConfig'];
 
 export async function loadSettings(): Promise<ExtensionSettings> {
   const stored = await chrome.storage.local.get(STORAGE_KEYS);
   const merged: ExtensionSettings = {
     backendUrl: trimTrailingSlash(stringOr(stored.backendUrl, DEFAULTS.backendUrl)),
     devImpersonateOid: nonEmptyOr(stored.devImpersonateOid, DEFAULTS.devImpersonateOid),
+    authConfig: parseAuthConfig(stored.authConfig),
   };
-  log.debug('settings loaded', { backendUrl: merged.backendUrl, hasImpersonateOid: merged.devImpersonateOid !== null });
+  log.debug('settings loaded', {
+    backendUrl: merged.backendUrl,
+    hasImpersonateOid: merged.devImpersonateOid !== null,
+    hasAuthConfig: merged.authConfig !== null,
+  });
   return merged;
 }
 
@@ -85,6 +118,69 @@ export async function persistBackendUrl(url: string): Promise<boolean> {
   await chrome.storage.local.set({ [BACKEND_URL_KEY]: next });
   log.info('stored agent-provided backend url', { url: next });
   return true;
+}
+
+/**
+ * Persist an auth config the agent handed down over the witness link (#289).
+ * Returns true if the stored value changed (the caller reconnects the hub onto
+ * the new config). A config missing any of tenant/client/scope is rejected so a
+ * malformed host message can't half-configure auth and wedge sign-in.
+ */
+export async function persistAuthConfig(config: AuthConfig): Promise<boolean> {
+  const next = normalizeAuthConfig(config);
+  if (next === null) {
+    log.warn('ignoring incomplete auth config from agent');
+    return false;
+  }
+  const stored = await chrome.storage.local.get(AUTH_CONFIG_KEY);
+  const current = parseAuthConfig(stored.authConfig);
+  if (current && authConfigsEqual(current, next)) {
+    log.debug('agent auth config unchanged');
+    return false;
+  }
+  await chrome.storage.local.set({ [AUTH_CONFIG_KEY]: next });
+  log.info('stored agent-provided auth config', { tenantId: next.tenantId, clientId: next.clientId });
+  return true;
+}
+
+/**
+ * How the extension should authenticate to the hub, given its settings (#289):
+ *   - `dev`   — a devImpersonateOid is set; use the dev_impersonate_oid shortcut.
+ *               Takes precedence so a dev box / e2e harness never needs real auth.
+ *   - `token` — no dev oid but an authConfig is present; acquire a real Entra
+ *               access token and send it as access_token.
+ *   - `none`  — neither is configured; the extension can't authenticate yet
+ *               (the agent hasn't handed down config) and must refuse to connect.
+ */
+export type HubAuthMode = 'dev' | 'token' | 'none';
+
+export function resolveAuthMode(settings: ExtensionSettings): HubAuthMode {
+  if (settings.devImpersonateOid) return 'dev';
+  if (settings.authConfig) return 'token';
+  return 'none';
+}
+
+/** Parse + validate a stored/raw auth config; null unless all fields are present. */
+function parseAuthConfig(value: unknown): AuthConfig | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  return normalizeAuthConfig({
+    tenantId: typeof v.tenantId === 'string' ? v.tenantId : '',
+    clientId: typeof v.clientId === 'string' ? v.clientId : '',
+    scope: typeof v.scope === 'string' ? v.scope : '',
+  });
+}
+
+function normalizeAuthConfig(config: AuthConfig): AuthConfig | null {
+  const tenantId = config.tenantId?.trim() ?? '';
+  const clientId = config.clientId?.trim() ?? '';
+  const scope = config.scope?.trim() ?? '';
+  if (!tenantId || !clientId || !scope) return null;
+  return { tenantId, clientId, scope };
+}
+
+function authConfigsEqual(a: AuthConfig, b: AuthConfig): boolean {
+  return a.tenantId === b.tenantId && a.clientId === b.clientId && a.scope === b.scope;
 }
 
 function stringOr(value: unknown, fallback: string): string {

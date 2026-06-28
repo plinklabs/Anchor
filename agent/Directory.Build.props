@@ -18,13 +18,9 @@
 
     The design-system submodule under external/ has its OWN Directory.Build.props
     and does not import this one, so its version is intentionally independent.
-
-    The MSIX Package.appxmanifest (FocusAgent.App) carries its own four-part
-    <Identity Version="…">; it is MSIX-build-only (the agent ships unpackaged via
-    Velopack) and is kept in lockstep with this value by AppxManifestVersionTests.
   -->
   <PropertyGroup>
-    <VersionPrefix>0.1.2</VersionPrefix>
+    <VersionPrefix>0.1.3</VersionPrefix>
   </PropertyGroup>
 
 </Project>
