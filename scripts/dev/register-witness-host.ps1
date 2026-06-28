@@ -17,8 +17,10 @@
     real exe path next to the exe, and sets the registry key. Re-run it after a
     rebuild only if the exe path changed (it won't for a normal Debug build).
 
-    Production installs will do the equivalent from the agent installer; this is
-    the dev-machine shortcut.
+    Production installs do the equivalent from the agent itself: it registers the
+    host at startup and removes the key on uninstall (WitnessHostRegistrar, #288).
+    This script is the dev-machine shortcut (a Debug build doesn't ship the host
+    next to the agent, so the startup registrar there is a no-op).
 
 .PARAMETER Unregister
     Remove the registry key (leaves the built exe/manifest in place).
