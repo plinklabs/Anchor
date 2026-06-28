@@ -4,7 +4,9 @@ import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { selectTabsToRestore } from './shared/tab-restore';
-import { loadSettings, persistBackendUrl } from './shared/settings';
+import { loadSettings, persistBackendUrl, persistAuthConfig, resolveAuthMode } from './shared/settings';
+import { EntraAuthenticator } from './shared/auth';
+import type { AuthConfig } from './shared/settings';
 import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
 import { WitnessClient, WITNESS_HOST_NAME } from './shared/witness';
 import {
@@ -36,6 +38,12 @@ const BLOCK_PAGE_FILE = 'block-page.html';
 let hubClient: HubClient | null = null;
 let witness: WitnessClient | null = null;
 let heartbeat: SessionHeartbeat | null = null;
+let authenticator: EntraAuthenticator | null = null;
+// Bounds interactive sign-in to at most one window per service-worker lifetime
+// (#289): a dismissed prompt must not re-pop on every SignalR reconnect. Reset
+// when a new auth config arrives or the worker restarts (module state is lost on
+// hibernation), so a genuinely-signed-out student is re-prompted next wake.
+let interactiveSignInTried = false;
 
 chrome.runtime.onInstalled.addListener((details) => {
   log.info('extension installed', { reason: details.reason });
@@ -60,21 +68,39 @@ ensureWitness();
 async function ensureHub(): Promise<void> {
   if (hubClient) return;
   const settings = await loadSettings();
-  if (!settings.devImpersonateOid) {
-    // Production-style auth (chrome.identity / Entra token) is a follow-up
-    // issue — when it lands, re-add the "identity" permission to manifest.json
-    // (dropped here because the Edge store rejects unused permissions). Without
-    // it, the dev impersonation fallback is the only way to authenticate against
-    // the hub. Refuse to connect rather than spin in a 401 loop.
-    log.warn('no auth configured — refusing to connect to hub. Set devImpersonateOid in chrome.storage.local for dev.');
-    return;
-  }
-  hubClient = new HubClient(settings, {
+  const mode = resolveAuthMode(settings);
+
+  const callbacks = {
     onSessionStarted: handleSessionStarted,
     onSessionEnded: handleSessionEnded,
     onAllowlistAmended: handleAllowlistAmended,
     onSessionBundlesUpdated: handleSessionBundlesUpdated,
-  });
+  };
+
+  if (mode === 'none') {
+    // Neither the dev impersonation shortcut nor a production auth config is set,
+    // so the extension can't authenticate yet — the agent hasn't handed down its
+    // auth_config (or this is a misconfigured dev box). Refuse rather than spin in
+    // a 401 loop; ensureHub re-runs when the agent pushes config (#289 / #204).
+    log.warn('no auth configured — refusing to connect to hub (awaiting agent auth_config, or set devImpersonateOid for dev)');
+    return;
+  }
+
+  if (mode === 'token') {
+    // Production: acquire a real Entra access token (#289). The factory rides
+    // Edge's existing Office 365 session silently; it permits one interactive
+    // sign-in per worker lifetime if SSO can't satisfy it, then stays silent.
+    authenticator ??= new EntraAuthenticator(settings.authConfig!);
+    hubClient = new HubClient(settings, callbacks, () => {
+      const allowInteractive = !interactiveSignInTried;
+      interactiveSignInTried = true;
+      return authenticator!.getToken({ allowInteractive });
+    });
+  } else {
+    // Dev: the impersonation OID rides the hub URL query string (no token).
+    hubClient = new HubClient(settings, callbacks);
+  }
+
   try {
     await hubClient.start();
   } catch (err) {
@@ -389,6 +415,7 @@ function ensureWitness(): void {
     connect: () => chrome.runtime.connectNative(WITNESS_HOST_NAME),
     onAgentUnavailable: () => void reportTamperIfInSession('agent_unavailable'),
     onBackendUrl: (url) => void handleBackendUrlFromAgent(url),
+    onAuthConfig: (config) => void handleAuthConfigFromAgent(config),
   });
   witness.start();
 }
@@ -416,6 +443,38 @@ async function handleBackendUrlFromAgent(url: string): Promise<void> {
       log.debug('stopping hub before backend switch threw', err);
     }
     hubClient = null;
+  }
+  await ensureHub();
+}
+
+// The agent is also the source of truth for the deployment's Entra auth config
+// (#289), handed down over the same witness link so one published extension serves
+// every fork. We persist it and, if it changed (or the hub never came up because
+// no auth was configured yet), rebuild the hub — and the authenticator — against
+// it. Same trust boundary as the backend URL: only the registered native host can
+// reach this path.
+async function handleAuthConfigFromAgent(config: AuthConfig): Promise<void> {
+  let changed: boolean;
+  try {
+    changed = await persistAuthConfig(config);
+  } catch (err) {
+    log.error('failed to persist agent-provided auth config', err);
+    return;
+  }
+  if (changed) {
+    // Drop the cached authenticator + the per-worker interactive guard so the
+    // next connect re-acquires a token under the new tenant/client/scope.
+    authenticator = null;
+    interactiveSignInTried = false;
+    if (hubClient) {
+      log.info('auth config changed — restarting hub under the new auth config');
+      try {
+        await hubClient.stop();
+      } catch (err) {
+        log.debug('stopping hub before auth switch threw', err);
+      }
+      hubClient = null;
+    }
   }
   await ensureHub();
 }

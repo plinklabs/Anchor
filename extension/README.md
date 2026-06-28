@@ -279,11 +279,35 @@ The extension reads two settings from `chrome.storage.local`:
 | Key                  | Default                 | What it does |
 | -------------------- | ----------------------- | ------------ |
 | `backendUrl`         | `http://localhost:5276` | Base URL of the Anchor backend. No trailing slash. |
-| `devImpersonateOid`  | _(none)_                | Dev-only impersonation OID. Sent as the `dev_impersonate_oid` query parameter on the SignalR hub URL so the backend can authenticate without a real Entra token. |
+| `devImpersonateOid`  | _(none)_                | Dev-only impersonation OID. Sent as the `dev_impersonate_oid` query parameter on the SignalR hub URL so the backend can authenticate without a real Entra token. Takes precedence over production auth. |
+| `authConfig`         | _(none)_                | Production Entra config `{tenantId, clientId, scope}`. The agent hands it down over the witness link in release; with it set (and no `devImpersonateOid`) the extension acquires a real student token. Not for dev. |
 
-Without `devImpersonateOid` set, the extension refuses to connect to the hub —
-production Entra auth via `chrome.identity` is a follow-up issue, and spinning
-in a 401 loop is worse than a clean refuse.
+With neither `devImpersonateOid` nor `authConfig` set, the extension refuses to
+connect to the hub — spinning in a 401 loop is worse than a clean refuse.
+
+### Production authentication (#289)
+
+In release the extension authenticates to the hub with a **real Entra access
+token** instead of `dev_impersonate_oid`. It can't use the Windows WAM broker the
+on-box agent uses, so it rides Edge's existing Office 365 session via
+`chrome.identity.launchWebAuthFlow` (OAuth2 **implicit** flow — the token comes
+back in the redirect fragment, so there's no token-endpoint call and thus no SPA
+CORS problem). The token is sent as the hub's `access_token` via SignalR's
+`accessTokenFactory`; acquisition is silent-first (`prompt=none`) and only falls
+back to an interactive sign-in if SSO can't satisfy it.
+
+The deployment's Entra **tenant / client / scope** are *not* baked into the
+published extension (one listing serves every fork, like `backendUrl`, #204). The
+agent hands them down over the witness link as an `auth_config` message, sourced
+from its own `Auth` config — see `extension/src/shared/auth.ts` and the agent's
+`AuthConfig`/`WitnessHostRegistrar`.
+
+**App-registration requirement (one-time, per deployment).** The flow redirects to
+the fixed `https://<extension-id>.chromiumapp.org/` URL, which must be registered
+on the agent's app registration as a **Web** redirect URI with **implicit
+access-token issuance** enabled. `scripts/setup.ps1` wires this automatically; for
+a hand-rolled tenant, add that redirect URI and tick *Access tokens* under the
+app's Implicit grant settings.
 
 To set the values for dev:
 

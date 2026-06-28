@@ -31,15 +31,18 @@ public class WitnessHostManifestTests
         Assert.Equal("net.anchor.witness.json", WitnessHostManifest.ManifestFileName);
         // Must equal BackendUrlConfig.FileName in the host project (Core can't reference it).
         Assert.Equal("backend-url.json", WitnessHostManifest.BackendUrlFileName);
+        // Must equal AuthConfig.FileName in the host project, likewise (#289).
+        Assert.Equal("auth-config.json", WitnessHostManifest.AuthConfigFileName);
     }
 
     [Fact]
-    public void Manifest_and_backend_files_sit_next_to_the_host_exe()
+    public void Manifest_and_config_files_sit_next_to_the_host_exe()
     {
         var dir = Path.GetDirectoryName(ExePath)!;
 
         Assert.Equal(Path.Combine(dir, "net.anchor.witness.json"), WitnessHostManifest.ManifestPathFor(dir));
         Assert.Equal(Path.Combine(dir, "backend-url.json"), WitnessHostManifest.BackendUrlPathFor(dir));
+        Assert.Equal(Path.Combine(dir, "auth-config.json"), WitnessHostManifest.AuthConfigPathFor(dir));
     }
 
     [Fact]
@@ -85,5 +88,30 @@ public class WitnessHostManifestTests
     public void BuildBackendUrlFile_rejects_a_blank_url(string url)
     {
         Assert.Throws<ArgumentException>(() => WitnessHostManifest.BuildBackendUrlFile(url));
+    }
+
+    [Fact]
+    public void BuildAuthConfigFile_emits_the_shape_authconfig_parses()
+    {
+        var json = WitnessHostManifest.BuildAuthConfigFile(
+            new WitnessAuthConfig(" tenant-1 ", " client-1 ", " api://x/.default "));
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        // AuthConfig deserializes {"tenantId":"…","clientId":"…","scope":"…"} and the
+        // values are trimmed on write so a stray space in config can't break sign-in.
+        Assert.Equal("tenant-1", root.GetProperty("tenantId").GetString());
+        Assert.Equal("client-1", root.GetProperty("clientId").GetString());
+        Assert.Equal("api://x/.default", root.GetProperty("scope").GetString());
+    }
+
+    [Theory]
+    [InlineData("", "client", "scope")]
+    [InlineData("tenant", "   ", "scope")]
+    [InlineData("tenant", "client", "")]
+    public void BuildAuthConfigFile_rejects_a_partial_config(string tenantId, string clientId, string scope)
+    {
+        Assert.Throws<ArgumentException>(
+            () => WitnessHostManifest.BuildAuthConfigFile(new WitnessAuthConfig(tenantId, clientId, scope)));
     }
 }

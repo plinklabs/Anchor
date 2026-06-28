@@ -34,6 +34,13 @@ export interface LoadExtensionOptions {
    * than a seeded chrome.storage value.
    */
   witnessBackendUrl?: string;
+  /**
+   * When set (Windows only), launch Edge with the ANCHOR_WITNESS_AUTH_* env vars
+   * so the real host also hands down a production auth_config (#289). Lets a spec
+   * prove the agent→extension auth-config plumbing works end-to-end (the AAD
+   * sign-in itself can't be driven without a real tenant, so it's out of scope).
+   */
+  witnessAuth?: { tenantId: string; clientId: string; scope: string };
 }
 
 export interface ExtensionSettings {
@@ -67,9 +74,18 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   // it should hand the extension. connectNative inherits the browser's env, so
   // setting it here is what the launched host reads.
   let witnessHost: RegisteredWitnessHost | null = null;
-  if (options.witnessBackendUrl) {
+  if (options.witnessBackendUrl || options.witnessAuth) {
     witnessHost = registerWitnessHost();
+  }
+  if (options.witnessBackendUrl) {
     process.env.ANCHOR_WITNESS_BACKEND_URL = options.witnessBackendUrl;
+  }
+  // #289: the host reads these from its inherited env and hands the values down
+  // as an auth_config message (the per-deployment source).
+  if (options.witnessAuth) {
+    process.env.ANCHOR_WITNESS_AUTH_TENANT_ID = options.witnessAuth.tenantId;
+    process.env.ANCHOR_WITNESS_AUTH_CLIENT_ID = options.witnessAuth.clientId;
+    process.env.ANCHOR_WITNESS_AUTH_SCOPE = options.witnessAuth.scope;
   }
 
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-ext-e2e-'));
@@ -129,6 +145,9 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
       if (witnessHost) {
         witnessHost.unregister();
         delete process.env.ANCHOR_WITNESS_BACKEND_URL;
+        delete process.env.ANCHOR_WITNESS_AUTH_TENANT_ID;
+        delete process.env.ANCHOR_WITNESS_AUTH_CLIENT_ID;
+        delete process.env.ANCHOR_WITNESS_AUTH_SCOPE;
       }
       fs.rmSync(userDataDir, { recursive: true, force: true });
     },

@@ -21,6 +21,7 @@
 // so the WitnessClient can be driven with a fake port in tests.
 
 import { logger } from './logger';
+import type { AuthConfig } from './settings';
 
 const log = logger('witness');
 
@@ -44,6 +45,10 @@ export interface WitnessHostMessage {
   type?: string;
   /** Present on a `backend_url` message: the agent's backend base URL. */
   url?: string;
+  /** Present on an `auth_config` message (#289): the deployment's Entra config. */
+  tenantId?: string;
+  clientId?: string;
+  scope?: string;
 }
 
 /**
@@ -57,6 +62,7 @@ export type WitnessHostSignal =
   | 'agent_unavailable'
   | 'agent_available'
   | 'backend_url'
+  | 'auth_config'
   | 'ignore';
 
 /**
@@ -76,9 +82,19 @@ export function classifyHostMessage(msg: WitnessHostMessage | null | undefined):
       return 'agent_available';
     case 'backend_url':
       return typeof msg.url === 'string' && msg.url.trim().length > 0 ? 'backend_url' : 'ignore';
+    case 'auth_config':
+      // All three fields must be present and non-blank — a half-filled config
+      // can't drive a valid sign-in and must not overwrite a working one (#289).
+      return isNonBlank(msg.tenantId) && isNonBlank(msg.clientId) && isNonBlank(msg.scope)
+        ? 'auth_config'
+        : 'ignore';
     default:
       return 'ignore';
   }
+}
+
+function isNonBlank(value: string | undefined): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 /**
@@ -115,6 +131,13 @@ export interface WitnessClientDeps {
    * reach this path, so the URL can't be set by an arbitrary web page.
    */
   onBackendUrl?: (url: string) => void;
+  /**
+   * Invoked when the host hands down the deployment's Entra auth config (#289).
+   * The caller persists it and (re)connects the hub so the extension can mint a
+   * real student token. Same trust boundary as onBackendUrl — only the registered
+   * native host can reach it.
+   */
+  onAuthConfig?: (config: AuthConfig) => void;
   /** Injected for tests; defaults to the globals. */
   setTimeoutFn?: (callback: () => void, ms: number) => number;
   clearTimeoutFn?: (handle: number) => void;
@@ -132,6 +155,7 @@ export class WitnessClient {
   private readonly onAgentUnavailable: () => void;
   private readonly onAgentAvailable?: () => void;
   private readonly onBackendUrl?: (url: string) => void;
+  private readonly onAuthConfig?: (config: AuthConfig) => void;
   private readonly setTimeoutFn: (callback: () => void, ms: number) => number;
   private readonly clearTimeoutFn: (handle: number) => void;
   private readonly pingIntervalMs: number;
@@ -154,6 +178,7 @@ export class WitnessClient {
     this.onAgentUnavailable = deps.onAgentUnavailable;
     this.onAgentAvailable = deps.onAgentAvailable;
     this.onBackendUrl = deps.onBackendUrl;
+    this.onAuthConfig = deps.onAuthConfig;
     this.setTimeoutFn = deps.setTimeoutFn ?? ((cb, ms) => setTimeout(cb, ms) as unknown as number);
     this.clearTimeoutFn = deps.clearTimeoutFn ?? ((h) => clearTimeout(h));
     this.pingIntervalMs = deps.pingIntervalMs ?? WITNESS_PING_INTERVAL_MS;
@@ -223,6 +248,15 @@ export class WitnessClient {
       const url = msg.url!.trim();
       log.info('agent handed down backend url', { url });
       this.onBackendUrl?.(url);
+    } else if (signal === 'auth_config') {
+      // classifyHostMessage already validated all three fields are non-blank.
+      const config: AuthConfig = {
+        tenantId: msg.tenantId!.trim(),
+        clientId: msg.clientId!.trim(),
+        scope: msg.scope!.trim(),
+      };
+      log.info('agent handed down auth config', { tenantId: config.tenantId, clientId: config.clientId });
+      this.onAuthConfig?.(config);
     }
   }
 

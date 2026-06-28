@@ -23,7 +23,8 @@
     "tabs",
     "webNavigation",
     "storage",
-    "nativeMessaging"
+    "nativeMessaging",
+    "identity"
   ],
   "host_permissions": ["<all_urls>"],
   "incognito": "spanning",

@@ -42,13 +42,19 @@ public sealed class WitnessHostRegistrar
     }
 
     /// <summary>
-    /// Ensure the manifest, backend-url file, and HKCU key all describe the host exe at
-    /// <paramref name="hostExePath"/> targeting <paramref name="backendUrl"/>, returning
-    /// whether any write happened. Idempotent: each artifact is only (re-)written when
-    /// missing or stale, so calling on every launch never churns identical content and
-    /// never leaks a duplicate.
+    /// Ensure the manifest, backend-url file, optional auth-config file, and HKCU key
+    /// all describe the host exe at <paramref name="hostExePath"/> targeting
+    /// <paramref name="backendUrl"/>, returning whether any write happened. Idempotent:
+    /// each artifact is only (re-)written when missing or stale, so calling on every
+    /// launch never churns identical content and never leaks a duplicate.
     /// </summary>
-    public bool EnsureRegistered(string hostExePath, string backendUrl)
+    /// <param name="auth">
+    /// The deployment's Entra config (#289). When supplied, an <c>auth-config.json</c>
+    /// is written next to the host so the extension can mint a real student token; null
+    /// in dev (no per-deployment auth), where the extension uses the dev impersonation
+    /// shortcut and the host sends no <c>auth_config</c>.
+    /// </param>
+    public bool EnsureRegistered(string hostExePath, string backendUrl, WitnessAuthConfig? auth = null)
     {
         if (string.IsNullOrWhiteSpace(hostExePath))
             throw new ArgumentException("Host exe path must be provided.", nameof(hostExePath));
@@ -62,8 +68,15 @@ public sealed class WitnessHostRegistrar
         var wroteManifest = EnsureFile(manifestPath, WitnessHostManifest.BuildManifest(hostExePath), "host manifest");
         var wroteBackend = EnsureFile(backendUrlPath, WitnessHostManifest.BuildBackendUrlFile(backendUrl), "backend-url file");
 
+        var wroteAuth = false;
+        if (auth is not null)
+        {
+            var authPath = WitnessHostManifest.AuthConfigPathFor(hostDir);
+            wroteAuth = EnsureFile(authPath, WitnessHostManifest.BuildAuthConfigFile(auth), "auth-config file");
+        }
+
         var wroteKey = EnsureKey(manifestPath);
-        return wroteManifest || wroteBackend || wroteKey;
+        return wroteManifest || wroteBackend || wroteAuth || wroteKey;
     }
 
     /// <summary>
