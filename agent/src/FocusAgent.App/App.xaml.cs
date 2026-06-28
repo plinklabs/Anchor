@@ -177,6 +177,17 @@ public partial class App : Application
             // guided window, never crash the agent.
             _extensionRegistrar = _host.Services.GetRequiredService<ExtensionSelfRegistrar>();
             _ = _extensionRegistrar.RegisterAndVerifyAsync();
+            // #288: register the witness native-messaging host so Edge can launch
+            // anchor-witness-host.exe when the extension connectNative()s — the link
+            // the extension self-detection (the guided-install popup's success signal)
+            // and the backend_url hand-down both ride on. In dev this is the
+            // register-witness-host.ps1 script's job; the release installer never did
+            // the equivalent, so the agent does it itself at startup (idempotent),
+            // mirroring the force-install policy write above. Hands the host the
+            // agent's configured Backend:BaseUrl so the extension targets the right
+            // backend in release, not the dev fallback. Best-effort, off the UI thread.
+            var backendBaseUrl = _host.Services.GetRequiredService<IOptions<BackendSettings>>().Value.BaseUrl;
+            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(backendBaseUrl));
             // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
             // SessionLeft subscriptions are wired before the first session — the
             // poll loop starts on join and reports any open Edge InPrivate window.
