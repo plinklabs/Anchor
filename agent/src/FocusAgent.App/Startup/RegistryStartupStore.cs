@@ -11,7 +11,7 @@ namespace FocusAgent.App.Startup;
 /// "start at login" value under <c>HKEY_CURRENT_USER\...\Run</c> via
 /// <c>Microsoft.Win32.Registry</c> (#225). Per-user, so it needs no admin rights —
 /// the whole reason Anchor uses HKCU rather than the managed-device HKLM path, and
-/// the unpackaged-friendly replacement for the MSIX <c>windows.startupTask</c>.
+/// the unpackaged-friendly equivalent of a packaged app's <c>windows.startupTask</c>.
 ///
 /// The key root is injectable so the integration test can point the same code at a
 /// throwaway HKCU subtree instead of the live Run key, and assert the real registry

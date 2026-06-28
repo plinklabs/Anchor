@@ -203,9 +203,8 @@ version **independently**.
 - **Agent.** MSBuild auto-imports `Directory.Build.props` into every agent
   project, so the one `<VersionPrefix>` drives `AssemblyVersion`/`FileVersion`, the
   `InformationalVersion` reported on the `/status` endpoint, and the Velopack
-  package version. The MSIX `Package.appxmanifest` `<Identity Version>` is kept in
-  lockstep (`<VersionPrefix>.0`) by a unit test. The design-system submodule under
-  `external/` versions independently by design.
+  package version. The design-system submodule under `external/` versions
+  independently by design.
 - **Extension.** `package.json` `version` is the single source; the packed
   manifest version is stamped from it and a test locks them together.
 - **Tag = release.** Each release workflow derives the package version from the tag

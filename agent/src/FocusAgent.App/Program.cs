@@ -275,9 +275,10 @@ public static class Program
         // UpdateManager against the GitHub Releases feed) is wired in App startup
         // via AgentUpdateService (#224).
         VelopackApp.Build()
-            // #225: re-home "start the agent at login" from the MSIX-only
-            // windows.startupTask extension to a per-user HKCU\...\Run entry (no
-            // admin, no MDM). Velopack fires OnAfterInstall on first install and
+            // #225: "start the agent at login" lives in a per-user HKCU\...\Run
+            // entry (no admin, no MDM) — the unpackaged build's equivalent of a
+            // packaged app's windows.startupTask extension. Velopack fires
+            // OnAfterInstall on first install and
             // OnAfterUpdate after each update (a new versioned install dir), so the
             // agent (re-)points the Run value at the freshly-installed exe on both.
             // Idempotent — a re-run never leaks a duplicate or a stale path.

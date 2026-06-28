@@ -5,8 +5,8 @@ namespace FocusAgent.Core.Startup;
 
 /// <summary>
 /// Manages the agent's per-user "start at login" registration under
-/// <c>HKCU\...\Run</c> (#225), replacing the MSIX-only <c>windows.startupTask</c>
-/// extension for the unpackaged Velopack build.
+/// <c>HKCU\...\Run</c> (#225) — the unpackaged Velopack build's equivalent of a
+/// packaged app's <c>windows.startupTask</c> extension.
 ///
 /// On install / first-run (and again on every update, since a Velopack update
 /// lands in a new versioned install dir) the agent ensures the Run value points at

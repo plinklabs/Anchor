@@ -17,7 +17,7 @@ namespace FocusAgent.Core.Updates;
 /// missing) is logged and swallowed so a flaky update path can never crash or
 /// block the agent. The whole loop no-ops when the agent isn't a real Velopack
 /// install (<see cref="IAgentUpdateManager.IsInstalled"/>) — a <c>dotnet run</c>
-/// / self-test / MSIX build has nothing to update against.
+/// or self-test launch has nothing to update against.
 /// </para>
 /// </summary>
 public sealed class AgentUpdateService : IAsyncDisposable
@@ -78,7 +78,7 @@ public sealed class AgentUpdateService : IAsyncDisposable
             if (!_manager.IsInstalled)
             {
                 _log.LogInformation(
-                    "Agent is not a Velopack install (dev run / MSIX / self-test); skipping auto-update checks.");
+                    "Agent is not a Velopack install (dev run / self-test); skipping auto-update checks.");
                 return;
             }
 

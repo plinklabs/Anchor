@@ -4,10 +4,10 @@ namespace FocusAgent.Core.Startup;
 /// The identity + registry shape of the per-user "start at login" entry the agent
 /// writes under <c>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</c> (#225).
 ///
-/// The agent ships <em>unpackaged</em> via Velopack, so the MSIX-only
-/// <c>windows.startupTask</c> extension in <c>Package.appxmanifest</c> no longer
-/// applies to the shipped build. The unpackaged-friendly equivalent is the classic
-/// per-user <c>Run</c> key: a named value whose data is the command Windows runs at
+/// The agent ships <em>unpackaged</em> via Velopack, which has no app manifest, so
+/// the packaged <c>windows.startupTask</c> mechanism isn't available. The
+/// unpackaged-friendly equivalent is the classic per-user <c>Run</c> key: a named
+/// value whose data is the command Windows runs at
 /// each sign-in. It needs no admin (HKCU, not HKLM) and no MDM — exactly what an
 /// unmanaged BYOD box needs.
 ///
