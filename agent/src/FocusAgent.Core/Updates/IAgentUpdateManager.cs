@@ -16,8 +16,8 @@ public interface IAgentUpdateManager
 {
     /// <summary>
     /// True only when this agent is a real Velopack install (it was set up via the
-    /// Setup.exe / update feed). A <c>dotnet run</c>, an MSIX build, or any
-    /// self-test launch is <em>not</em> installed, so the auto-update check must
+    /// Setup.exe / update feed). A <c>dotnet run</c> or any self-test launch is
+    /// <em>not</em> installed, so the auto-update check must
     /// no-op there rather than fight the dev/build environment (#224 scope:
     /// "respect the unpackaged (no-admin) install").
     /// </summary>

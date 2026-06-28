@@ -9,24 +9,11 @@
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>
-    <EnableMsixTooling>true</EnableMsixTooling>
-    <!-- Default unpackaged so `dotnet run` works for dev. Override with
-         /p:WindowsPackageType=MSIX (see agent/README.md) to build the .msix. -->
-    <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-  </PropertyGroup>
-
-  <PropertyGroup Condition="'$(WindowsPackageType)' == 'MSIX'">
-    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
-    <AppxPackageDir>$(MSBuildThisFileDirectory)..\..\artifacts\</AppxPackageDir>
-    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
-    <AppxBundle>Never</AppxBundle>
-    <AppxBundlePlatforms>x64</AppxBundlePlatforms>
-    <AppxAutoIncrementPackageRevision>False</AppxAutoIncrementPackageRevision>
   </PropertyGroup>
 
   <ItemGroup>
@@ -87,29 +74,11 @@
     <None Update="appsettings.Production.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <!-- Tray icon ships in both builds: copied next to the exe so ms-appx:///
-         resolves it in the unpackaged dev run, and packaged as Content in the
-         MSIX build. (The tile/splash PNGs below are MSIX-only — they're never
-         loaded by the unpackaged dev build.) -->
+    <!-- Tray icon: copied next to the exe so ms-appx:/// resolves it in the
+         unpackaged run (the agent ships unpackaged via Velopack). -->
     <Content Include="Assets\TrayIcon.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-  </ItemGroup>
-
-  <!-- The AppxManifest and packaged-build assets are only honoured by the
-       Windows App SDK targets when WindowsPackageType=MSIX. Including them in
-       the unpackaged build trips an "AppxManifest specified but
-       WindowsPackageType=None" error from Microsoft.Build.Msix.Packaging. -->
-  <ItemGroup Condition="'$(WindowsPackageType)' == 'MSIX'">
-    <AppxManifest Include="Package.appxmanifest">
-      <SubType>Designer</SubType>
-    </AppxManifest>
-    <Content Include="Assets\Square44x44Logo.png" />
-    <Content Include="Assets\Square150x150Logo.png" />
-    <Content Include="Assets\Square310x310Logo.png" />
-    <Content Include="Assets\Wide310x150Logo.png" />
-    <Content Include="Assets\SplashScreen.png" />
-    <Content Include="Assets\StoreLogo.png" />
   </ItemGroup>
 
 </Project>
