@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
@@ -24,8 +26,14 @@ ApiClient _dummyClient() => ApiClient(
 );
 
 // Returns a real account on sign-in so tapping the primary action drives the
-// router redirect from /login into the shell, the way a real login does.
+// router redirect from /login into the shell, the way a real login does. When
+// [hangAcquire] is set, the silent token step never completes — the day-old
+// cached-session stall behind #303.
 class _FakeAuth implements MsalAuthService {
+  _FakeAuth({this.hangAcquire = false});
+
+  final bool hangAcquire;
+
   @override
   Future<void> initialize() async {}
   @override
@@ -38,7 +46,10 @@ class _FakeAuth implements MsalAuthService {
   @override
   Future<void> signOut() async {}
   @override
-  Future<String> acquireToken() async => 'fake-token';
+  Future<String> acquireToken() {
+    if (hangAcquire) return Completer<String>().future; // never completes
+    return Future<String>.value('fake-token');
+  }
   @override
   AccountInfo? currentAccount() => null;
 }
@@ -123,6 +134,49 @@ void main() {
       expect(find.byKey(const Key('sign-in')), findsNothing);
 
       // No RenderFlex overflow or other exception across the whole flow.
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a stalled silent token step settles into a retryable error, not a spinner '
+    '(#303)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        AnchorDashboard(
+          tokens: AuthTokenStore(), // no session → redirect to /login
+          auth: _FakeAuth(hangAcquire: true),
+          api: _dummyClient(),
+          sessions: _FakeSessions(),
+          bundles: _FakeBundles(),
+          classes: _FakeClasses(),
+          apiBaseUrl: Uri.parse('http://localhost'),
+          // Short bound so the stalled silent step times out promptly here
+          // instead of after the production 30s.
+          loginSilentTimeout: const Duration(milliseconds: 200),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Drive the primary action. signIn resolves, but the silent token step
+      // hangs — the real-world day-old-cache symptom.
+      await tester.tap(find.byKey(const Key('sign-in')));
+      await tester.pump();
+
+      // Let the silent-timeout elapse and the error settle.
+      await tester.pumpAndSettle(const Duration(milliseconds: 100));
+
+      // We never reached the shell; we're still on login with a clear error and
+      // no lingering spinner — sign-in is retryable, not stuck forever.
+      expect(find.byKey(const Key('login-error')), findsOneWidget);
+      expect(find.byKey(const Key('sign-in')), findsOneWidget);
+      expect(find.text('01 · HOME'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

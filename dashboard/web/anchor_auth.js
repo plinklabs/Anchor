@@ -5,6 +5,19 @@
   let pca = null;
   let apiScope = null;
 
+  // A stale, day-old cached session can leave acquireTokenSilent stalled on a
+  // hidden-iframe renewal that never resolves. Bound the silent path so we fall
+  // back to a visible interactive popup promptly instead of hanging (#303).
+  const SILENT_TIMEOUT_MS = 8000;
+
+  function withTimeout(promise, ms, message) {
+    let timer;
+    const timeout = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   async function init(config) {
     if (pca) return;
     if (!window.msal || !window.msal.PublicClientApplication) {
@@ -62,20 +75,22 @@
     const account = currentAccount();
     if (!account) throw new Error('no account');
     try {
-      const result = await pca.acquireTokenSilent({
+      const result = await withTimeout(
+        pca.acquireTokenSilent({ scopes: [apiScope], account: account }),
+        SILENT_TIMEOUT_MS,
+        'silent token acquisition timed out',
+      );
+      return result.accessToken;
+    } catch (_silentError) {
+      // Any silent failure — interaction required, an expired SSO session, or a
+      // timed-out/stalled hidden-iframe renewal — falls back to a visible
+      // interactive popup rather than surfacing as a hang. If the popup itself
+      // fails, that error propagates to the caller for a clear message.
+      const result = await pca.acquireTokenPopup({
         scopes: [apiScope],
         account: account,
       });
       return result.accessToken;
-    } catch (e) {
-      if (e && e.name === 'InteractionRequiredAuthError') {
-        const result = await pca.acquireTokenPopup({
-          scopes: [apiScope],
-          account: account,
-        });
-        return result.accessToken;
-      }
-      throw e;
     }
   }
 
