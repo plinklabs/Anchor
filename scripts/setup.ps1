@@ -152,6 +152,17 @@
     Display name of the deploy app registration. Default: "Anchor Deploy
     (<suffix>)".
 
+.PARAMETER SeedBundles
+    After provisioning, seed the curated example bundles (Microsoft 365 /
+    Smartschool / Bingel) into the database by invoking scripts/seed-bundles.ps1
+    (#292), so a fresh fork's bundle picker isn't empty. Off by default. Best
+    effort: the `Bundles` table is only created by the backend's startup
+    migrations on its first deploy, and setup.ps1 wires GitHub but does not
+    itself deploy — so on an initial provisioning run (before any push to `main`)
+    the schema usually isn't there yet and the step prints a note telling you to
+    run scripts/seed-bundles.ps1 once the backend has deployed. Re-running setup
+    with -SeedBundles against an already-deployed environment seeds for real.
+
 .PARAMETER TeacherUpn
     UPN of the user to bootstrap as a teacher — assigned the API app's `Teacher`
     app role so their access token carries roles:["Teacher"] and the dashboard's
@@ -200,6 +211,7 @@ param(
     [string]$AgentAppName,
     [string]$DeployAppName,
     [string]$TeacherUpn,
+    [switch]$SeedBundles,
     [string]$BicepFile,
     [switch]$SkipGitHub,
     [switch]$SkipEntra,
@@ -1481,6 +1493,40 @@ else {
     Grant-AdminConsent -AppId $apiClientId -Label 'API'
     Grant-AdminConsent -AppId $spaClientId -Label 'dashboard SPA'
     Grant-AdminConsent -AppId $agentClientId -Label 'agent'
+}
+
+# ── Step 9: seed example bundles (opt-in) ────────────────────────────────────
+# A fresh production DB starts with zero bundles (DevDataSeeder is dev-only), so
+# the bundle picker is empty until an admin recreates them by hand (#292). When
+# -SeedBundles is set, invoke the companion seed-bundles.ps1 to insert the real
+# example catalogue. Best-effort: the schema is created by the backend's startup
+# migrations on its FIRST deploy, which setup.ps1 does not perform — so on an
+# initial run (before any push to main) the tables aren't there yet and the
+# script stops with a clear note. We downgrade that to a [MANUAL] reminder so the
+# overall provisioning still reports success; the operator re-runs the seed (or
+# setup -SeedBundles) once the backend has deployed.
+
+if ($SeedBundles) {
+    Write-Step 'Seed example bundles'
+    $seedScript = Join-Path $PSScriptRoot 'seed-bundles.ps1'
+    if (-not (Test-Path -LiteralPath $seedScript)) {
+        Write-Manual "seed-bundles.ps1 not found next to setup.ps1 — skipping bundle seed. Seed manually once the backend has deployed."
+    }
+    elseif ($WhatIfPreference) {
+        Write-Host "    DRYRUN  & $seedScript -ResourceGroup $ResourceGroup (-SeedBundles)" -ForegroundColor DarkGray
+    }
+    else {
+        $seedArgs = @{ ResourceGroup = $ResourceGroup }
+        if ($resolvedSqlLogin) { $seedArgs['SqlAdminLogin'] = $resolvedSqlLogin }
+        if ($SqlAdminPassword) { $seedArgs['SqlAdminPassword'] = $SqlAdminPassword }
+        try {
+            & $seedScript @seedArgs
+        }
+        catch {
+            Write-Manual "Could not seed example bundles: $($_.Exception.Message)"
+            Write-Host "    Re-run after the backend's first deploy:  ./scripts/seed-bundles.ps1" -ForegroundColor Yellow
+        }
+    }
 }
 
 Write-Host ''
