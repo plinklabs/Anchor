@@ -90,10 +90,12 @@ class _ClassesPageState extends State<ClassesPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not load classes. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Could not load classes. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loadingClasses = false);
     }
@@ -138,10 +140,12 @@ class _ClassesPageState extends State<ClassesPage> {
       setState(() => _roster = roster);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not load roster. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Could not load roster. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loadingRoster = false);
     }
@@ -232,8 +236,12 @@ class _ClassesPageState extends State<ClassesPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error =
-          describeApiError(e, generic: 'Could not delete class. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Could not delete class. Please try again.',
+        ),
+      );
     }
   }
 
@@ -263,10 +271,12 @@ class _ClassesPageState extends State<ClassesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not save school + code. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Could not save school + code. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _savingCodes = false);
     }
@@ -284,8 +294,12 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error =
-          describeApiError(e, generic: 'Failed to add member. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Failed to add member. Please try again.',
+        ),
+      );
     }
   }
 
@@ -321,8 +335,12 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error =
-          describeApiError(e, generic: 'Failed to remove member. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Failed to remove member. Please try again.',
+        ),
+      );
     }
   }
 
@@ -337,8 +355,9 @@ class _ClassesPageState extends State<ClassesPage> {
 
     final parsed = parseRosterCsv(pasted);
     if (parsed.rows.isEmpty) {
-      setState(() =>
-          _error = ApiErrorMessage(parsed.error ?? 'No valid rows in CSV.'));
+      setState(
+        () => _error = ApiErrorMessage(parsed.error ?? 'No valid rows in CSV.'),
+      );
       return;
     }
     try {
@@ -348,8 +367,12 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() =>
-          _error = describeApiError(e, generic: 'Import failed. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Import failed. Please try again.',
+        ),
+      );
     }
   }
 
@@ -367,10 +390,12 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Populate from Graph failed. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Populate from Graph failed. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _bulkImporting = false);
     }
@@ -444,8 +469,7 @@ class _ClassesPageState extends State<ClassesPage> {
                     codesDirty: _codesDirty,
                     editSchoolTag: _editSchoolTag,
                     classCodeController: _classCodeController,
-                    onSchoolChanged: (v) =>
-                        setState(() => _editSchoolTag = v),
+                    onSchoolChanged: (v) => setState(() => _editSchoolTag = v),
                     onClassCodeChanged: (_) => setState(() {}),
                     onSaveCodes: _saveCodes,
                     onBulkImport: _bulkImportFromGraph,
@@ -594,12 +618,15 @@ class _ClassRow extends StatelessWidget {
                       summary.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: PlinkColors.ink,
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodyLarge?.copyWith(color: PlinkColors.ink),
                     ),
                     const SizedBox(height: 2),
-                    Text(summary.schoolYear, style: monoSpec(PlinkColors.ink60)),
+                    Text(
+                      summary.schoolYear,
+                      style: monoSpec(PlinkColors.ink60),
+                    ),
                   ],
                 ),
               ),
@@ -681,9 +708,9 @@ class _RosterPane extends StatelessWidget {
               Expanded(
                 child: Text(
                   '${klass.name} (${klass.schoolYear})',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: PlinkColors.ink,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(color: PlinkColors.ink),
                 ),
               ),
               // Calm ink — the destructive action never wears the spark.
@@ -741,7 +768,9 @@ class _RosterPane extends StatelessWidget {
                         )
                       : const Icon(Icons.cloud_download, size: 18),
                   label: const Text('Populate from Graph'),
-                  onPressed: (scopeReady && !bulkImporting) ? onBulkImport : null,
+                  onPressed: (scopeReady && !bulkImporting)
+                      ? onBulkImport
+                      : null,
                 ),
               ),
             ],
@@ -1042,7 +1071,10 @@ class _ImportResultsBar extends StatelessWidget {
         if (wrongSchool.isNotEmpty)
           Tooltip(
             message: wrongSchool
-                .map((r) => '${r.upn ?? r.entraOid ?? '(blank)'} — ${r.detail ?? ''}')
+                .map(
+                  (r) =>
+                      '${r.upn ?? r.entraOid ?? '(blank)'} — ${r.detail ?? ''}',
+                )
                 .join('\n'),
             child: PlinkBadge('${wrongSchool.length} wrong school'),
           ),
@@ -1168,9 +1200,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
             const SizedBox(height: PlinkSpacing.s3),
             DropdownButtonFormField<String?>(
               initialValue: _schoolTag,
-              decoration: const InputDecoration(
-                labelText: 'School (optional)',
-              ),
+              decoration: const InputDecoration(labelText: 'School (optional)'),
               items: [
                 const DropdownMenuItem<String?>(
                   value: null,
@@ -1179,9 +1209,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
                 for (final s in widget.schools)
                   DropdownMenuItem<String?>(value: s, child: Text(s)),
               ],
-              onChanged: _saving
-                  ? null
-                  : (v) => setState(() => _schoolTag = v),
+              onChanged: _saving ? null : (v) => setState(() => _schoolTag = v),
             ),
             const SizedBox(height: PlinkSpacing.s3),
             TextField(
@@ -1299,7 +1327,8 @@ class _Hairline extends StatelessWidget {
 /// A space-mono label style (sentence-case microcopy / specs) — the quiet
 /// headers and counts that read like an instrument, never shouting. Mirrors the
 /// live-session and bundles treatment.
-TextStyle monoLabel(Color color) => const TextStyle(
+TextStyle monoLabel(Color color) =>
+    const TextStyle(
       fontFamily: PlinkType.monoFamily,
       package: PlinkType.fontPackage,
       fontFamilyFallback: PlinkType.monoFallback,
@@ -1315,14 +1344,14 @@ TextStyle monoLabel(Color color) => const TextStyle(
 
 /// Tabular-figure mono for values that read as a spec (the school year).
 TextStyle monoSpec(Color color) => TextStyle(
-      fontFamily: PlinkType.monoFamily,
-      package: PlinkType.fontPackage,
-      fontFamilyFallback: PlinkType.monoFallback,
-      fontSize: PlinkType.textSm,
-      color: color,
-      height: 1.4,
-      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-    );
+  fontFamily: PlinkType.monoFamily,
+  package: PlinkType.fontPackage,
+  fontFamilyFallback: PlinkType.monoFallback,
+  fontSize: PlinkType.textSm,
+  color: color,
+  height: 1.4,
+  fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+);
 
 class CsvParseResult {
   CsvParseResult({required this.rows, this.error});
@@ -1342,7 +1371,9 @@ CsvParseResult parseRosterCsv(String csv) {
   if (lines.isEmpty) {
     return CsvParseResult(rows: const [], error: 'CSV is empty.');
   }
-  final header = _splitCsvLine(lines.first).map((s) => s.toLowerCase()).toList();
+  final header = _splitCsvLine(
+    lines.first,
+  ).map((s) => s.toLowerCase()).toList();
   final upnIdx = header.indexOf('upn');
   if (upnIdx < 0) {
     return CsvParseResult(rows: const [], error: 'Header must include upn.');

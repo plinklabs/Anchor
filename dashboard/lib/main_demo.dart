@@ -183,7 +183,11 @@ class _DemoHub extends SessionHubClient {
       if (_ctrl.isClosed) return;
       for (final e in demoLiveEvents()) {
         _ctrl.add(
-          SessionEvent(kind: e.kind, payload: e.payload, at: demoSessionStartedAt),
+          SessionEvent(
+            kind: e.kind,
+            payload: e.payload,
+            at: demoSessionStartedAt,
+          ),
         );
       }
     });

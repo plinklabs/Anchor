@@ -131,7 +131,11 @@ void main() {
       // Real navigation: the admin-only Admin slot in the shared app-bar
       // (AD1, #166) opens the admin area, whose first sub-tab is Bundles (#299).
       final adminNav = find.byKey(const Key('nav-admin'));
-      expect(adminNav, findsOneWidget, reason: 'admin should see the Admin nav');
+      expect(
+        adminNav,
+        findsOneWidget,
+        reason: 'admin should see the Admin nav',
+      );
       await tester.tap(adminNav);
       await tester.pumpAndSettle();
 

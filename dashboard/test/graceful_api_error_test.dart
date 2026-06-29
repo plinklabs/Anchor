@@ -46,8 +46,10 @@ class _ThrowingHistorySessions extends SessionsApi {
   final Object error;
 
   @override
-  Future<List<SessionHistoryEntry>> history({int limit = 50, int offset = 0}) async =>
-      throw error;
+  Future<List<SessionHistoryEntry>> history({
+    int limit = 50,
+    int offset = 0,
+  }) async => throw error;
 }
 
 class _ThrowingClassesSessions extends SessionsApi {
@@ -71,7 +73,8 @@ Widget _homeHost(SessionsApi sessions) {
     routes: <RouteBase>[
       GoRoute(
         path: '/',
-        builder: (_, _) => HomePage(tokens: AuthTokenStore(), sessions: sessions),
+        builder: (_, _) =>
+            HomePage(tokens: AuthTokenStore(), sessions: sessions),
       ),
       GoRoute(
         path: '/session/:id',
@@ -85,7 +88,12 @@ Widget _homeHost(SessionsApi sessions) {
 
 Widget _historyHost(SessionsApi sessions) {
   final router = GoRouter(
-    routes: [GoRoute(path: '/', builder: (_, _) => HistoryPage(sessions: sessions))],
+    routes: [
+      GoRoute(
+        path: '/',
+        builder: (_, _) => HistoryPage(sessions: sessions),
+      ),
+    ],
   );
   return MaterialApp.router(theme: PlinkTheme.paper, routerConfig: router);
 }
@@ -113,7 +121,10 @@ void main() {
     });
 
     test('falls back to the generic message for a non-403 ApiException', () {
-      final msg = describeApiError(ApiException(500, 'stacktrace'), generic: 'boom');
+      final msg = describeApiError(
+        ApiException(500, 'stacktrace'),
+        generic: 'boom',
+      );
       expect(msg.isAuthorization, isFalse);
       expect(msg.text, 'boom');
     });
@@ -128,7 +139,9 @@ void main() {
   testWidgets('Home: a 403 shows the not-authorized notice, not the raw '
       'exception nor the empty state', (tester) async {
     _bigWindow(tester);
-    await tester.pumpWidget(_homeHost(_ThrowingHomeSessions(ApiException(403, ''))));
+    await tester.pumpWidget(
+      _homeHost(_ThrowingHomeSessions(ApiException(403, ''))),
+    );
     await tester.pumpAndSettle();
 
     expect(find.textContaining(_notAuthorizedFragment), findsOneWidget);
@@ -137,30 +150,35 @@ void main() {
     expect(find.text('No classes assigned to you yet.'), findsNothing);
 
     // The notice reads as calm ink, not the red error colour.
-    final notice = tester.widget<Text>(find.textContaining(_notAuthorizedFragment));
+    final notice = tester.widget<Text>(
+      find.textContaining(_notAuthorizedFragment),
+    );
     expect(notice.style?.color, PlinkColors.ink60);
   });
 
-  testWidgets('Home: a non-403 failure shows the human generic message in error '
-      'colour, never the raw exception', (tester) async {
-    _bigWindow(tester);
-    await tester.pumpWidget(
-      _homeHost(_ThrowingHomeSessions(ApiException(500, 'kaboom'))),
-    );
-    await tester.pumpAndSettle();
+  testWidgets(
+    'Home: a non-403 failure shows the human generic message in error '
+    'colour, never the raw exception',
+    (tester) async {
+      _bigWindow(tester);
+      await tester.pumpWidget(
+        _homeHost(_ThrowingHomeSessions(ApiException(500, 'kaboom'))),
+      );
+      await tester.pumpAndSettle();
 
-    expect(
-      find.text('Could not load start-session data. Please try again.'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('ApiException'), findsNothing);
-    expect(find.textContaining('kaboom'), findsNothing);
+      expect(
+        find.text('Could not load start-session data. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('ApiException'), findsNothing);
+      expect(find.textContaining('kaboom'), findsNothing);
 
-    final err = tester.widget<Text>(
-      find.text('Could not load start-session data. Please try again.'),
-    );
-    expect(err.style?.color, PlinkTheme.paper.colorScheme.error);
-  });
+      final err = tester.widget<Text>(
+        find.text('Could not load start-session data. Please try again.'),
+      );
+      expect(err.style?.color, PlinkTheme.paper.colorScheme.error);
+    },
+  );
 
   testWidgets('History: a 403 shows the not-authorized notice, not the raw '
       'exception', (tester) async {
@@ -178,7 +196,10 @@ void main() {
       '"Pick a class", not the raw exception', (tester) async {
     _bigWindow(tester);
     await tester.pumpWidget(
-      _classesHost(_ThrowingClassesSessions(ApiException(403, '')), _FakeClassesApi()),
+      _classesHost(
+        _ThrowingClassesSessions(ApiException(403, '')),
+        _FakeClassesApi(),
+      ),
     );
     await tester.pumpAndSettle();
 

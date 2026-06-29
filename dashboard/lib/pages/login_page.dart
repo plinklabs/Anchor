@@ -55,13 +55,16 @@ class _LoginPageState extends State<LoginPage> {
       if (account == null) {
         throw StateError('Sign-in returned no account');
       }
-      final token =
-          await widget.auth.acquireToken().timeout(widget.silentTimeout);
+      final token = await widget.auth.acquireToken().timeout(
+        widget.silentTimeout,
+      );
       widget.tokens.setSession(token: token, account: account);
     } on TimeoutException {
       if (!mounted) return;
-      setState(() => _error =
-          'Signing in is taking longer than expected. Please try again.');
+      setState(
+        () => _error =
+            'Signing in is taking longer than expected. Please try again.',
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());

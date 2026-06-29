@@ -97,13 +97,15 @@ void main() {
     String? navigatedTo;
     var signedOut = false;
 
-    await tester.pumpWidget(_host(
-      section: AppSection.home,
-      isAdmin: true,
-      accountName: 'Ms Teacher',
-      onNavigate: (location) => navigatedTo = location,
-      onSignOut: () => signedOut = true,
-    ));
+    await tester.pumpWidget(
+      _host(
+        section: AppSection.home,
+        isAdmin: true,
+        accountName: 'Ms Teacher',
+        onNavigate: (location) => navigatedTo = location,
+        onSignOut: () => signedOut = true,
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Ms Teacher'), findsOneWidget);

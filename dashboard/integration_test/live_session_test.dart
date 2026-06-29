@@ -42,16 +42,15 @@ SessionParticipantInfo _participant(
   String name,
   ParticipantLiveState state, {
   bool tampered = false,
-}) =>
-    SessionParticipantInfo(
-      userId: name,
-      displayName: name,
-      joinedAt: null,
-      declinedAt: null,
-      leftAt: null,
-      state: state,
-      tampered: tampered,
-    );
+}) => SessionParticipantInfo(
+  userId: name,
+  displayName: name,
+  joinedAt: null,
+  declinedAt: null,
+  leftAt: null,
+  state: state,
+  tampered: tampered,
+);
 
 /// Past the /login redirect without MSAL: the router only checks
 /// `tokens.isAuthenticated`, and nothing in the faked flow calls back into the
@@ -155,7 +154,11 @@ class _FakeSessions extends SessionsApi {
       pending;
 
   @override
-  Future<void> approveUnblock(String sessionId, String userId, String host) async {
+  Future<void> approveUnblock(
+    String sessionId,
+    String userId,
+    String host,
+  ) async {
     perStudentApprovals.add((userId, host));
   }
 
@@ -195,7 +198,11 @@ class _FakeBundles extends BundlesApi {
   ];
 }
 
-typedef _Harness = ({_StubHub hub, _FakeSessions sessions, _FakeBundles bundles});
+typedef _Harness = ({
+  _StubHub hub,
+  _FakeSessions sessions,
+  _FakeBundles bundles,
+});
 
 /// Boots the real app authenticated, then drives the real Home → Start-session
 /// navigation to land on the live session view. Returns the fakes so the test
@@ -325,64 +332,66 @@ void main() {
     expect(find.text('Approve'), findsOneWidget);
   });
 
-  testWidgets('approving a request for the whole class issues a class grant (#101)', (
-    tester,
-  ) async {
-    final h = await _bootToLiveSession(tester);
+  testWidgets(
+    'approving a request for the whole class issues a class grant (#101)',
+    (tester) async {
+      final h = await _bootToLiveSession(tester);
 
-    final now = DateTime(2026, 6, 12, 9, 20);
-    h.sessions.pending = [
-      UnblockRequestSummary(
-        host: 'chat.example.com',
-        count: 1,
-        firstRequestedAt: now,
-        latestRequestedAt: now,
-        requesters: [
-          UnblockRequestRequester(
-            userId: 'Ada',
-            displayName: 'Ada',
-            requestedAt: now,
-          ),
-        ],
-      ),
-    ];
-    h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
-    await tester.pumpAndSettle();
-    expect(find.text('chat.example.com'), findsOneWidget);
+      final now = DateTime(2026, 6, 12, 9, 20);
+      h.sessions.pending = [
+        UnblockRequestSummary(
+          host: 'chat.example.com',
+          count: 1,
+          firstRequestedAt: now,
+          latestRequestedAt: now,
+          requesters: [
+            UnblockRequestRequester(
+              userId: 'Ada',
+              displayName: 'Ada',
+              requestedAt: now,
+            ),
+          ],
+        ),
+      ];
+      h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+      await tester.pumpAndSettle();
+      expect(find.text('chat.example.com'), findsOneWidget);
 
-    // The whole-class scope is behind the kebab — the safer per-student action
-    // stays the primary button (#101).
-    await tester.tap(find.byIcon(Icons.more_vert));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Approve for whole class'));
-    await tester.pumpAndSettle();
+      // The whole-class scope is behind the kebab — the safer per-student action
+      // stays the primary button (#101).
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Approve for whole class'));
+      await tester.pumpAndSettle();
 
-    // The UI chose the class scope, not a per-student grant, and the now-granted
-    // host has dropped off the pending panel.
-    expect(h.sessions.classApprovals, ['chat.example.com']);
-    expect(h.sessions.perStudentApprovals, isEmpty);
-    expect(find.text('Pending requests'), findsNothing);
-  });
+      // The UI chose the class scope, not a per-student grant, and the now-granted
+      // host has dropped off the pending panel.
+      expect(h.sessions.classApprovals, ['chat.example.com']);
+      expect(h.sessions.perStudentApprovals, isEmpty);
+      expect(find.text('Pending requests'), findsNothing);
+    },
+  );
 
-  testWidgets('toggling a bundle chip issues PUT /sessions/{id}/bundles (#132)', (
-    tester,
-  ) async {
-    final h = await _bootToLiveSession(tester);
+  testWidgets(
+    'toggling a bundle chip issues PUT /sessions/{id}/bundles (#132)',
+    (tester) async {
+      final h = await _bootToLiveSession(tester);
 
-    final chip = find.widgetWithText(FilterChip, 'Math');
-    expect(chip, findsOneWidget);
+      final chip = find.widgetWithText(FilterChip, 'Math');
+      expect(chip, findsOneWidget);
 
-    await tester.tap(chip);
-    await tester.pumpAndSettle();
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
 
-    // The UI toggle drove SessionsApi.updateBundles, which is the PUT call.
-    expect(h.sessions.updateBundlesCalls, [
-      ['b1'],
-    ]);
-    // And the chip reflects the new source-of-truth selection.
-    final selected = tester.widget<FilterChip>(chip);
-    expect(selected.selected, isTrue);
-  });
+      // The UI toggle drove SessionsApi.updateBundles, which is the PUT call.
+      expect(h.sessions.updateBundlesCalls, [
+        ['b1'],
+      ]);
+      // And the chip reflects the new source-of-truth selection.
+      final selected = tester.widget<FilterChip>(chip);
+      expect(selected.selected, isTrue);
+    },
+  );
 
   testWidgets('pushed events render in the live event feed (#132)', (
     tester,

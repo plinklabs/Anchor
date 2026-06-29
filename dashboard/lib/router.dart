@@ -60,10 +60,8 @@ GoRouter buildRouter({
         routes: [
           GoRoute(
             path: '/',
-            builder: (context, state) => HomePage(
-              tokens: tokens,
-              sessions: sessions,
-            ),
+            builder: (context, state) =>
+                HomePage(tokens: tokens, sessions: sessions),
           ),
           GoRoute(
             path: '/session/:id',
@@ -78,10 +76,8 @@ GoRouter buildRouter({
           ),
           GoRoute(
             path: '/classes',
-            builder: (context, state) => ClassesPage(
-              sessions: sessions,
-              classes: classes,
-            ),
+            builder: (context, state) =>
+                ClassesPage(sessions: sessions, classes: classes),
           ),
           // Old standalone Bundles location — kept as a redirect so existing
           // links/bookmarks land on its new home under the Admin area (#299).
@@ -107,10 +103,8 @@ GoRouter buildRouter({
             routes: [
               GoRoute(
                 path: '/admin/bundles',
-                builder: (context, state) => BundlesPage(
-                  bundles: bundles,
-                  sessions: sessions,
-                ),
+                builder: (context, state) =>
+                    BundlesPage(bundles: bundles, sessions: sessions),
               ),
             ],
           ),

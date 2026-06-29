@@ -23,16 +23,15 @@ SessionParticipantInfo _participant(
   String name,
   ParticipantLiveState state, {
   bool tampered = false,
-}) =>
-    SessionParticipantInfo(
-      userId: name,
-      displayName: name,
-      joinedAt: null,
-      declinedAt: null,
-      leftAt: null,
-      state: state,
-      tampered: tampered,
-    );
+}) => SessionParticipantInfo(
+  userId: name,
+  displayName: name,
+  joinedAt: null,
+  declinedAt: null,
+  leftAt: null,
+  state: state,
+  tampered: tampered,
+);
 
 class _FakeSessions extends SessionsApi {
   _FakeSessions({required this.participants}) : super(_dummyClient());
@@ -82,8 +81,9 @@ Future<void> _pumpSession(
 }
 
 void main() {
-  testWidgets('roster renders every member with its per-state label (#100)',
-      (tester) async {
+  testWidgets('roster renders every member with its per-state label (#100)', (
+    tester,
+  ) async {
     await _pumpSession(tester, [
       _participant('Ada', ParticipantLiveState.joined),
       _participant('Bo', ParticipantLiveState.heartbeatStale),
@@ -101,8 +101,9 @@ void main() {
     expect(find.text('Students (1/5 in session)'), findsOneWidget);
   });
 
-  testWidgets('roster sorts attention-first: stale above joined (#100)',
-      (tester) async {
+  testWidgets('roster sorts attention-first: stale above joined (#100)', (
+    tester,
+  ) async {
     await _pumpSession(tester, [
       _participant('Ada', ParticipantLiveState.joined),
       _participant('Zoe', ParticipantLiveState.heartbeatStale),
@@ -115,8 +116,9 @@ void main() {
     expect(staleY, lessThan(joinedY));
   });
 
-  testWidgets('roster flags only tampered students, on the right row (#105)',
-      (tester) async {
+  testWidgets('roster flags only tampered students, on the right row (#105)', (
+    tester,
+  ) async {
     await _pumpSession(tester, [
       _participant('Ada', ParticipantLiveState.joined, tampered: true),
       _participant('Bo', ParticipantLiveState.joined),

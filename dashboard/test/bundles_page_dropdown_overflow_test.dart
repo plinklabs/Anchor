@@ -69,10 +69,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: BundlesPage(
-            bundles: _FakeBundles(),
-            sessions: _FakeSessions(),
-          ),
+          home: BundlesPage(bundles: _FakeBundles(), sessions: _FakeSessions()),
         ),
       );
       await tester.pumpAndSettle();

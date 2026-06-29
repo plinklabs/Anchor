@@ -24,7 +24,7 @@ final _endedAt = DateTime(2026, 6, 12, 10, 5);
 
 class _FakeSessions extends SessionsApi {
   _FakeSessions({required this.detail, this.unapproved = const []})
-      : super(_dummyClient());
+    : super(_dummyClient());
 
   final SessionDetail detail;
   final List<UnblockRequestSummary> unapproved;
@@ -130,8 +130,9 @@ void main() {
     },
   );
 
-  testWidgets('an unapproved request renders in its own audit-trail panel',
-      (tester) async {
+  testWidgets('an unapproved request renders in its own audit-trail panel', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -139,24 +140,26 @@ void main() {
 
     final now = DateTime(2026, 6, 12, 9, 50);
     await tester.pumpWidget(
-      host(_FakeSessions(
-        detail: _detail(),
-        unapproved: [
-          UnblockRequestSummary(
-            host: 'youtube.com',
-            count: 1,
-            firstRequestedAt: now,
-            latestRequestedAt: now,
-            requesters: [
-              UnblockRequestRequester(
-                userId: 'u1',
-                displayName: 'Ada Lovelace',
-                requestedAt: now,
-              ),
-            ],
-          ),
-        ],
-      )),
+      host(
+        _FakeSessions(
+          detail: _detail(),
+          unapproved: [
+            UnblockRequestSummary(
+              host: 'youtube.com',
+              count: 1,
+              firstRequestedAt: now,
+              latestRequestedAt: now,
+              requesters: [
+                UnblockRequestRequester(
+                  userId: 'u1',
+                  displayName: 'Ada Lovelace',
+                  requestedAt: now,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
     await tester.pumpAndSettle();
 

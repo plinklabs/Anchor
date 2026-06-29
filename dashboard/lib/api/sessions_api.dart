@@ -63,11 +63,7 @@ class StartSessionResponse {
 }
 
 class MeResponse {
-  MeResponse({
-    required this.id,
-    required this.displayName,
-    required this.role,
-  });
+  MeResponse({required this.id, required this.displayName, required this.role});
   final String id;
   final String displayName;
   final String role;
@@ -119,12 +115,16 @@ class SessionDetail {
     summaries: ((json['summaries'] as List<dynamic>?) ?? const <dynamic>[])
         .map((e) => SessionEventSummary.fromJson(e as Map<String, dynamic>))
         .toList(growable: false),
-    recentEvents: ((json['recentEvents'] as List<dynamic>?) ?? const <dynamic>[])
-        .map((e) => SessionRecentEvent.fromJson(e as Map<String, dynamic>))
-        .toList(growable: false),
-    participants: ((json['participants'] as List<dynamic>?) ?? const <dynamic>[])
-        .map((e) => SessionParticipantInfo.fromJson(e as Map<String, dynamic>))
-        .toList(growable: false),
+    recentEvents:
+        ((json['recentEvents'] as List<dynamic>?) ?? const <dynamic>[])
+            .map((e) => SessionRecentEvent.fromJson(e as Map<String, dynamic>))
+            .toList(growable: false),
+    participants:
+        ((json['participants'] as List<dynamic>?) ?? const <dynamic>[])
+            .map(
+              (e) => SessionParticipantInfo.fromJson(e as Map<String, dynamic>),
+            )
+            .toList(growable: false),
     bundles: ((json['bundles'] as List<dynamic>?) ?? const <dynamic>[])
         .map((e) => SessionBundleInfo.fromJson(e as Map<String, dynamic>))
         .toList(growable: false),
@@ -233,10 +233,7 @@ class SessionBundleInfo {
   final String name;
 
   factory SessionBundleInfo.fromJson(Map<String, dynamic> json) =>
-      SessionBundleInfo(
-        id: json['id'] as String,
-        name: json['name'] as String,
-      );
+      SessionBundleInfo(id: json['id'] as String, name: json['name'] as String);
 }
 
 class SessionUnblockGrantInfo {
@@ -343,8 +340,13 @@ class SessionsApi {
     return MeResponse.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
-  Future<List<SessionHistoryEntry>> history({int limit = 50, int offset = 0}) async {
-    final res = await _client.get('sessions/history?limit=$limit&offset=$offset');
+  Future<List<SessionHistoryEntry>> history({
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final res = await _client.get(
+      'sessions/history?limit=$limit&offset=$offset',
+    );
     _ensureOk(res);
     final list = jsonDecode(res.body) as List<dynamic>;
     return list
@@ -367,9 +369,7 @@ class SessionsApi {
   Future<SessionDetail> getSession(String sessionId) async {
     final res = await _client.get('sessions/$sessionId');
     _ensureOk(res);
-    return SessionDetail.fromJson(
-      jsonDecode(res.body) as Map<String, dynamic>,
-    );
+    return SessionDetail.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
   Future<List<ClassSummary>> classes() async {
@@ -388,10 +388,7 @@ class SessionsApi {
     final res = await _client.post(
       'sessions',
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'classId': classId,
-        'bundleIds': bundleIds,
-      }),
+      body: jsonEncode({'classId': classId, 'bundleIds': bundleIds}),
     );
     _ensureOk(res);
     return StartSessionResponse.fromJson(
@@ -434,7 +431,11 @@ class SessionsApi {
 
   /// Approve a pending request for the requesting student only (#73) — the
   /// safer default scope. The backend treats a missing scope as per-student.
-  Future<void> approveUnblock(String sessionId, String userId, String host) async {
+  Future<void> approveUnblock(
+    String sessionId,
+    String userId,
+    String host,
+  ) async {
     final res = await _client.post(
       'sessions/$sessionId/unblock',
       headers: {'Content-Type': 'application/json'},
@@ -501,7 +502,10 @@ class UnblockRequestSummary {
         firstRequestedAt: DateTime.parse(json['firstRequestedAt'] as String),
         latestRequestedAt: DateTime.parse(json['latestRequestedAt'] as String),
         requesters: (json['requesters'] as List<dynamic>)
-            .map((e) => UnblockRequestRequester.fromJson(e as Map<String, dynamic>))
+            .map(
+              (e) =>
+                  UnblockRequestRequester.fromJson(e as Map<String, dynamic>),
+            )
             .toList(growable: false),
       );
 }

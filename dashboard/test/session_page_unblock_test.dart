@@ -24,7 +24,11 @@ UnblockRequestSummary _pending() => UnblockRequestSummary(
   firstRequestedAt: _now,
   latestRequestedAt: _now,
   requesters: [
-    UnblockRequestRequester(userId: 'u1', displayName: 'Ada', requestedAt: _now),
+    UnblockRequestRequester(
+      userId: 'u1',
+      displayName: 'Ada',
+      requestedAt: _now,
+    ),
     UnblockRequestRequester(userId: 'u2', displayName: 'Bo', requestedAt: _now),
   ],
 );
@@ -59,7 +63,11 @@ class _FakeSessions extends SessionsApi {
       pending;
 
   @override
-  Future<void> approveUnblock(String sessionId, String userId, String host) async {
+  Future<void> approveUnblock(
+    String sessionId,
+    String userId,
+    String host,
+  ) async {
     perStudentCalls.add((userId, host));
   }
 
@@ -73,7 +81,8 @@ class _FakeBundles extends BundlesApi {
   _FakeBundles() : super(_dummyClient());
 
   @override
-  Future<List<BundleSummary>> list({bool includeArchived = false}) async => const [];
+  Future<List<BundleSummary>> list({bool includeArchived = false}) async =>
+      const [];
 }
 
 Future<void> _pumpPage(WidgetTester tester, _FakeSessions sessions) async {
@@ -98,7 +107,9 @@ Future<void> _pumpPage(WidgetTester tester, _FakeSessions sessions) async {
 }
 
 void main() {
-  testWidgets('primary Approve grants per requesting student (#101)', (tester) async {
+  testWidgets('primary Approve grants per requesting student (#101)', (
+    tester,
+  ) async {
     final sessions = _FakeSessions();
     await _pumpPage(tester, sessions);
 

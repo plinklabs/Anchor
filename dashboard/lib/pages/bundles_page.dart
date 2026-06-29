@@ -149,13 +149,15 @@ class _BundlesPageState extends State<BundlesPage> {
 
   void _addEntry(BundleEntryKind kind) {
     setState(() {
-      _entries.add(_EntryRow(
-        kind: kind,
-        matchType: kind == BundleEntryKind.domain
-            ? BundleEntryMatchType.wildcard
-            : BundleEntryMatchType.exact,
-        value: '',
-      ));
+      _entries.add(
+        _EntryRow(
+          kind: kind,
+          matchType: kind == BundleEntryKind.domain
+              ? BundleEntryMatchType.wildcard
+              : BundleEntryMatchType.exact,
+          value: '',
+        ),
+      );
     });
   }
 
@@ -181,7 +183,9 @@ class _BundlesPageState extends State<BundlesPage> {
         setState(() => _error = validation);
         return;
       }
-      entries.add(BundleEntry(kind: row.kind, value: value, matchType: row.matchType));
+      entries.add(
+        BundleEntry(kind: row.kind, value: value, matchType: row.matchType),
+      );
     }
     if (entries.isEmpty) {
       setState(() => _error = 'At least one entry is required.');
@@ -227,7 +231,10 @@ class _BundlesPageState extends State<BundlesPage> {
           'Past sessions referencing it stay intact. You can restore it later by editing.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Archive'),
@@ -265,7 +272,10 @@ class _BundlesPageState extends State<BundlesPage> {
           'This cannot be undone. Available because no session has ever used this bundle.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
@@ -323,9 +333,7 @@ class _BundlesPageState extends State<BundlesPage> {
     if (_denied) {
       return const Scaffold(
         backgroundColor: PlinkColors.paper,
-        body: Center(
-          child: Text('Admin access required.'),
-        ),
+        body: Center(child: Text('Admin access required.')),
       );
     }
 
@@ -408,25 +416,25 @@ class _BundlesPageState extends State<BundlesPage> {
           child: _loading && list == null
               ? const Center(child: CircularProgressIndicator())
               : list == null || list.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No bundles.',
-                        style: _monoLabel(PlinkColors.muted),
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: EdgeInsets.zero,
-                      itemCount: list.length,
-                      separatorBuilder: (_, _) => const _Hairline(),
-                      itemBuilder: (context, i) {
-                        final b = list[i];
-                        return _BundleRow(
-                          summary: b,
-                          selected: _selected?.id == b.id,
-                          onTap: () => _openBundle(b),
-                        );
-                      },
-                    ),
+              ? Center(
+                  child: Text(
+                    'No bundles.',
+                    style: _monoLabel(PlinkColors.muted),
+                  ),
+                )
+              : ListView.separated(
+                  padding: EdgeInsets.zero,
+                  itemCount: list.length,
+                  separatorBuilder: (_, _) => const _Hairline(),
+                  itemBuilder: (context, i) {
+                    final b = list[i];
+                    return _BundleRow(
+                      summary: b,
+                      selected: _selected?.id == b.id,
+                      onTap: () => _openBundle(b),
+                    );
+                  },
+                ),
         ),
       ],
     );
@@ -446,7 +454,9 @@ class _BundlesPageState extends State<BundlesPage> {
       );
     }
     final selected = _selected;
-    final domains = _entries.where((e) => e.kind == BundleEntryKind.domain).toList();
+    final domains = _entries
+        .where((e) => e.kind == BundleEntryKind.domain)
+        .toList();
     final apps = _entries.where((e) => e.kind == BundleEntryKind.app).toList();
 
     return SingleChildScrollView(
@@ -515,8 +525,8 @@ class _BundlesPageState extends State<BundlesPage> {
                 Text(
                   _error!,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+                    color: Theme.of(context).colorScheme.error,
+                  ),
                 ),
                 const SizedBox(height: PlinkSpacing.s4),
               ],
@@ -564,7 +574,8 @@ class _BundlesPageState extends State<BundlesPage> {
 
     if (!selected.hasBeenUsed) {
       return Tooltip(
-        message: 'Permanently delete — this bundle has never been used in a session.',
+        message:
+            'Permanently delete — this bundle has never been used in a session.',
         child: OutlinedButton.icon(
           icon: const Icon(Icons.delete_outline, size: 18),
           label: const Text('Delete'),
@@ -575,7 +586,8 @@ class _BundlesPageState extends State<BundlesPage> {
 
     if (!selected.isArchived) {
       return Tooltip(
-        message: 'Hide from the picker. Hard delete is not possible because this bundle has been used in past sessions.',
+        message:
+            'Hide from the picker. Hard delete is not possible because this bundle has been used in past sessions.',
         child: OutlinedButton.icon(
           icon: const Icon(Icons.archive_outlined, size: 18),
           label: const Text('Archive'),
@@ -606,9 +618,9 @@ class _BundlesPageState extends State<BundlesPage> {
           const SizedBox(height: PlinkSpacing.s2),
           Text(
             'Paste a URL or process name to see whether the current draft matches.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: PlinkColors.ink60,
-                ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: PlinkColors.ink60),
           ),
           const SizedBox(height: PlinkSpacing.s3),
           Row(
@@ -641,7 +653,11 @@ class _BundlesPageState extends State<BundlesPage> {
 
   // ---- validation + match preview (kept in sync with backend rules) ----
 
-  static String? _validateEntry(BundleEntryKind kind, BundleEntryMatchType matchType, String value) {
+  static String? _validateEntry(
+    BundleEntryKind kind,
+    BundleEntryMatchType matchType,
+    String value,
+  ) {
     switch (kind) {
       case BundleEntryKind.domain:
         if (matchType == BundleEntryMatchType.signedPublisher) {
@@ -736,7 +752,8 @@ class _Hairline extends StatelessWidget {
 /// A space-mono label style (sentence-case microcopy / specs) — the quiet
 /// headers and counts that read like an instrument, never shouting. Mirrors the
 /// live-session page treatment.
-TextStyle _monoLabel(Color color) => const TextStyle(
+TextStyle _monoLabel(Color color) =>
+    const TextStyle(
       fontFamily: PlinkType.monoFamily,
       package: PlinkType.fontPackage,
       fontFamilyFallback: PlinkType.monoFallback,
@@ -752,14 +769,14 @@ TextStyle _monoLabel(Color color) => const TextStyle(
 
 /// Tabular-figure mono for values that read as a spec (the match result).
 TextStyle _monoSpec(Color color, double size) => TextStyle(
-      fontFamily: PlinkType.monoFamily,
-      package: PlinkType.fontPackage,
-      fontFamilyFallback: PlinkType.monoFallback,
-      fontSize: size,
-      color: color,
-      height: 1.4,
-      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-    );
+  fontFamily: PlinkType.monoFamily,
+  package: PlinkType.fontPackage,
+  fontFamilyFallback: PlinkType.monoFallback,
+  fontSize: size,
+  color: color,
+  height: 1.4,
+  fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+);
 
 /// One catalogue row — a hairline instrument line. The bundle name reads first;
 /// its version is a mono spec chip and an archived bundle wears a muted badge.
@@ -807,9 +824,9 @@ class _BundleRow extends StatelessWidget {
                         summary.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                              color: PlinkColors.ink,
-                            ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodyLarge?.copyWith(color: PlinkColors.ink),
                       ),
                     ),
                     if (summary.isArchived) ...[
@@ -863,9 +880,7 @@ class _EntrySection extends StatelessWidget {
       children: [
         Row(
           children: [
-            Expanded(
-              child: Text(title, style: _monoLabel(PlinkColors.ink60)),
-            ),
+            Expanded(child: Text(title, style: _monoLabel(PlinkColors.ink60))),
             // Calm ink affordance — only the Save commit wears the spark.
             TextButton.icon(
               icon: const Icon(Icons.add, size: 18),
@@ -955,10 +970,10 @@ class _EntryRow {
   }) : controller = TextEditingController(text: value);
 
   factory _EntryRow.fromEntry(BundleEntry entry) => _EntryRow(
-        kind: entry.kind,
-        matchType: entry.matchType,
-        value: entry.value,
-      );
+    kind: entry.kind,
+    matchType: entry.matchType,
+    value: entry.value,
+  );
 
   BundleEntryKind kind;
   BundleEntryMatchType matchType;

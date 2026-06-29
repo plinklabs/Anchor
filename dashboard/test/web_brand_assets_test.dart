@@ -15,13 +15,15 @@ void main() {
   /// Width/height from a PNG's IHDR chunk (bytes 16-23, big-endian).
   ({int width, int height}) pngSize(File f) {
     final b = f.readAsBytesSync();
-    int be32(int o) => (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3];
+    int be32(int o) =>
+        (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3];
     return (width: be32(16), height: be32(20));
   }
 
   test('manifest carries the Anchor identity and paper colours', () {
     final manifest =
-        jsonDecode(File('${web.path}/manifest.json').readAsStringSync()) as Map<String, dynamic>;
+        jsonDecode(File('${web.path}/manifest.json').readAsStringSync())
+            as Map<String, dynamic>;
 
     expect(manifest['name'], 'Anchor');
     expect(manifest['short_name'], 'Anchor');
