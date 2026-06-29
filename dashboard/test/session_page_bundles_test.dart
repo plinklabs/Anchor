@@ -69,38 +69,40 @@ class _FakeBundles extends BundlesApi {
 }
 
 void main() {
-  testWidgets('Toggling a bundle chip in the live view calls updateBundles (#93)',
-      (tester) async {
-    final sessions = _FakeSessions();
+  testWidgets(
+    'Toggling a bundle chip in the live view calls updateBundles (#93)',
+    (tester) async {
+      final sessions = _FakeSessions();
 
-    await tester.pumpWidget(
-      MaterialApp(
-        // NoSplash avoids loading the ink_sparkle fragment shader, which fails
-        // to decode under the test engine when a tap triggers a ripple.
-        theme: ThemeData(splashFactory: NoSplash.splashFactory),
-        home: SessionPage(
-          sessionId: '11111111-2222-3333-4444-555555555555',
-          tokens: AuthTokenStore(),
-          sessions: sessions,
-          bundles: _FakeBundles(),
-          apiBaseUrl: Uri.parse('http://localhost'),
+      await tester.pumpWidget(
+        MaterialApp(
+          // NoSplash avoids loading the ink_sparkle fragment shader, which fails
+          // to decode under the test engine when a tap triggers a ripple.
+          theme: ThemeData(splashFactory: NoSplash.splashFactory),
+          home: SessionPage(
+            sessionId: '11111111-2222-3333-4444-555555555555',
+            tokens: AuthTokenStore(),
+            sessions: sessions,
+            bundles: _FakeBundles(),
+            apiBaseUrl: Uri.parse('http://localhost'),
+          ),
         ),
-      ),
-    );
-    // Settle initState's getSession + bundles.list microtasks. Avoid
-    // pumpAndSettle: the real hub client keeps retrying localhost and stalls.
-    await tester.pump();
-    await tester.pump();
+      );
+      // Settle initState's getSession + bundles.list microtasks. Avoid
+      // pumpAndSettle: the real hub client keeps retrying localhost and stalls.
+      await tester.pump();
+      await tester.pump();
 
-    final chip = find.widgetWithText(FilterChip, 'Math');
-    expect(chip, findsOneWidget);
+      final chip = find.widgetWithText(FilterChip, 'Math');
+      expect(chip, findsOneWidget);
 
-    await tester.tap(chip);
-    await tester.pump();
-    await tester.pump();
+      await tester.tap(chip);
+      await tester.pump();
+      await tester.pump();
 
-    expect(sessions.updateCalls, [
-      ['b1'],
-    ]);
-  });
+      expect(sessions.updateCalls, [
+        ['b1'],
+      ]);
+    },
+  );
 }

@@ -50,7 +50,8 @@ class _UnprovisionedSessions extends SessionsApi {
   Future<List<ClassSummary>> classes() async => throw ApiException(403, '');
 
   @override
-  Future<List<ActiveSession>> activeSessions() async => throw ApiException(403, '');
+  Future<List<ActiveSession>> activeSessions() async =>
+      throw ApiException(403, '');
 
   @override
   Future<List<SessionHistoryEntry>> history({

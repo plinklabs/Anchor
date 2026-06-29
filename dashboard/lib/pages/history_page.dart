@@ -57,10 +57,12 @@ class _HistoryPageState extends State<HistoryPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not load past sessions. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Could not load past sessions. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -68,10 +70,7 @@ class _HistoryPageState extends State<HistoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: PlinkColors.paper,
-      body: _buildBody(),
-    );
+    return Scaffold(backgroundColor: PlinkColors.paper, body: _buildBody());
   }
 
   Widget _buildBody() {
@@ -148,10 +147,7 @@ class _HistoryPageState extends State<HistoryPage> {
             ApiErrorText(_error!, textAlign: TextAlign.center),
             const SizedBox(height: PlinkSpacing.s3),
             // Calm ink — retrying a fetch is never the magenta spark.
-            OutlinedButton(
-              onPressed: _loadMore,
-              child: const Text('Retry'),
-            ),
+            OutlinedButton(onPressed: _loadMore, child: const Text('Retry')),
           ],
         ),
       );

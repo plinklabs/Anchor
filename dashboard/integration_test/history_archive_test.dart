@@ -64,7 +64,10 @@ class _FakeSessions extends SessionsApi {
   Future<List<ActiveSession>> activeSessions() async => const [];
 
   @override
-  Future<List<SessionHistoryEntry>> history({int limit = 50, int offset = 0}) async {
+  Future<List<SessionHistoryEntry>> history({
+    int limit = 50,
+    int offset = 0,
+  }) async {
     if (offset > 0) return const <SessionHistoryEntry>[];
     return [
       SessionHistoryEntry(

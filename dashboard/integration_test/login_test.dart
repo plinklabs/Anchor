@@ -50,6 +50,7 @@ class _FakeAuth implements MsalAuthService {
     if (hangAcquire) return Completer<String>().future; // never completes
     return Future<String>.value('fake-token');
   }
+
   @override
   AccountInfo? currentAccount() => null;
 }

@@ -38,7 +38,7 @@ class _FakeBundles extends BundlesApi {
 
 class _FakeSessions extends SessionsApi {
   _FakeSessions({required this.active, this.classesList = const []})
-      : super(_dummyClient());
+    : super(_dummyClient());
 
   final List<ActiveSession> active;
   final List<ClassSummary> classesList;
@@ -77,19 +77,15 @@ void main() {
         ],
       );
 
-      final home = HomePage(
-        tokens: AuthTokenStore(),
-        sessions: sessions,
-      );
+      final home = HomePage(tokens: AuthTokenStore(), sessions: sessions);
       final router = GoRouter(
         initialLocation: '/',
         routes: [
           GoRoute(path: '/', builder: (_, _) => home),
           GoRoute(
             path: '/session/:id',
-            builder: (_, state) => Scaffold(
-              body: Text('SESSION ${state.pathParameters['id']}'),
-            ),
+            builder: (_, state) =>
+                Scaffold(body: Text('SESSION ${state.pathParameters['id']}')),
           ),
         ],
       );
@@ -138,10 +134,7 @@ void main() {
         MaterialApp(
           // NoSplash dodges the undecodable InkSparkle shader on tap (see above).
           theme: ThemeData(splashFactory: NoSplash.splashFactory),
-          home: HomePage(
-            tokens: AuthTokenStore(),
-            sessions: sessions,
-          ),
+          home: HomePage(tokens: AuthTokenStore(), sessions: sessions),
         ),
       );
       await tester.pumpAndSettle();

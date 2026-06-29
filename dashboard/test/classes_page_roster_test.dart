@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
-ApiClient _dummyClient() =>
-    ApiClient(baseUrl: Uri.parse('http://localhost'), tokenProvider: () async => null);
+ApiClient _dummyClient() => ApiClient(
+  baseUrl: Uri.parse('http://localhost'),
+  tokenProvider: () async => null,
+);
 
 class _FakeSessions extends SessionsApi {
   _FakeSessions(this._classes) : super(_dummyClient());
@@ -28,7 +30,8 @@ class _FakeClasses extends ClassesApi {
 
   final ClassMembersResponse _roster;
   final List<String> _schools;
-  final Future<List<ClassMembershipImportResult>> Function(String classId)? onBulkImport;
+  final Future<List<ClassMembershipImportResult>> Function(String classId)?
+  onBulkImport;
   final ClassSummary Function(String name, String schoolYear)? onCreate;
   int updateCodesCalls = 0;
   int bulkImportCalls = 0;
@@ -248,10 +251,7 @@ void main() {
       await tester.pump();
 
       // Now dirty — Save enabled.
-      expect(
-        tester.widget<ButtonStyleButton>(saveBtn()).onPressed,
-        isNotNull,
-      );
+      expect(tester.widget<ButtonStyleButton>(saveBtn()).onPressed, isNotNull);
 
       await tester.tap(saveBtn());
       await tester.pumpAndSettle();

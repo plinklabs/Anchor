@@ -43,10 +43,10 @@ class _FakeSessions extends SessionsApi {
 
   @override
   Future<MeResponse> me() async => MeResponse(
-        id: 'u1',
-        displayName: admin ? 'Admin' : 'Teacher',
-        role: admin ? 'Admin' : 'Teacher',
-      );
+    id: 'u1',
+    displayName: admin ? 'Admin' : 'Teacher',
+    role: admin ? 'Admin' : 'Teacher',
+  );
 
   @override
   Future<List<ClassSummary>> classes() async => const [];
@@ -129,30 +129,29 @@ void main() {
     },
   );
 
-  testWidgets(
-    'non-admin: no Admin tab and /admin/* is redirected away',
-    (tester) async {
-      tester.view.physicalSize = const Size(1400, 1000);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('non-admin: no Admin tab and /admin/* is redirected away', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(_app(admin: false));
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(_app(admin: false));
+    await tester.pumpAndSettle();
 
-      // No admin tab for a non-admin teacher.
-      expect(find.byKey(const Key('nav-admin')), findsNothing);
+    // No admin tab for a non-admin teacher.
+    expect(find.byKey(const Key('nav-admin')), findsNothing);
 
-      // Forcing the URL to an admin sub-page redirects back to Home — the
-      // route-level half of the gating, so the area is never reachable.
-      final ctx = tester.element(find.byType(AnchorLockup));
-      GoRouter.of(ctx).go('/admin/bundles');
-      await tester.pumpAndSettle();
-      expect(find.text('01 · HOME'), findsOneWidget);
-      expect(find.byKey(const Key('admin-nav-bundles')), findsNothing);
-      expect(find.byKey(const Key('bundles-new-button')), findsNothing);
+    // Forcing the URL to an admin sub-page redirects back to Home — the
+    // route-level half of the gating, so the area is never reachable.
+    final ctx = tester.element(find.byType(AnchorLockup));
+    GoRouter.of(ctx).go('/admin/bundles');
+    await tester.pumpAndSettle();
+    expect(find.text('01 · HOME'), findsOneWidget);
+    expect(find.byKey(const Key('admin-nav-bundles')), findsNothing);
+    expect(find.byKey(const Key('bundles-new-button')), findsNothing);
 
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -13,10 +13,11 @@ class SessionEvent {
 /// (the real SignalR client); an integration test injects a factory that
 /// returns a stubbed feed it can push events through, since the dashboard is
 /// MSAL-only and can't be dev-impersonated to drive a real hub (#132).
-typedef SessionHubClientFactory = SessionHubClient Function({
-  required Uri apiBaseUrl,
-  required Future<String?> Function() tokenProvider,
-});
+typedef SessionHubClientFactory =
+    SessionHubClient Function({
+      required Uri apiBaseUrl,
+      required Future<String?> Function() tokenProvider,
+    });
 
 class SessionHubClient {
   SessionHubClient({
@@ -47,18 +48,22 @@ class SessionHubClient {
         .build();
 
     connection.on('SessionStarted', (args) {
-      final payload =
-          args != null && args.isNotEmpty && args.first is Map
-              ? Map<String, dynamic>.from(args.first as Map)
-              : <String, dynamic>{};
+      final payload = args != null && args.isNotEmpty && args.first is Map
+          ? Map<String, dynamic>.from(args.first as Map)
+          : <String, dynamic>{};
       _events.add(
-        SessionEvent(kind: 'SessionStarted', payload: payload, at: DateTime.now()),
+        SessionEvent(
+          kind: 'SessionStarted',
+          payload: payload,
+          at: DateTime.now(),
+        ),
       );
     });
 
     connection.on('SessionEnded', (args) {
-      final sessionId =
-          args != null && args.isNotEmpty ? args.first?.toString() ?? '' : '';
+      final sessionId = args != null && args.isNotEmpty
+          ? args.first?.toString() ?? ''
+          : '';
       _events.add(
         SessionEvent(
           kind: 'SessionEnded',
@@ -69,12 +74,15 @@ class SessionHubClient {
     });
 
     connection.on('UnblockRequested', (args) {
-      final payload =
-          args != null && args.isNotEmpty && args.first is Map
-              ? Map<String, dynamic>.from(args.first as Map)
-              : <String, dynamic>{};
+      final payload = args != null && args.isNotEmpty && args.first is Map
+          ? Map<String, dynamic>.from(args.first as Map)
+          : <String, dynamic>{};
       _events.add(
-        SessionEvent(kind: 'UnblockRequested', payload: payload, at: DateTime.now()),
+        SessionEvent(
+          kind: 'UnblockRequested',
+          payload: payload,
+          at: DateTime.now(),
+        ),
       );
     });
 
@@ -89,10 +97,9 @@ class SessionHubClient {
       'TamperDetected',
     ]) {
       connection.on(kind, (args) {
-        final payload =
-            args != null && args.isNotEmpty && args.first is Map
-                ? Map<String, dynamic>.from(args.first as Map)
-                : <String, dynamic>{};
+        final payload = args != null && args.isNotEmpty && args.first is Map
+            ? Map<String, dynamic>.from(args.first as Map)
+            : <String, dynamic>{};
         _events.add(
           SessionEvent(kind: kind, payload: payload, at: DateTime.now()),
         );

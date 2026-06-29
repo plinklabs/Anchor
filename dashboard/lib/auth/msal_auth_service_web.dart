@@ -63,11 +63,13 @@ class MsalAuthServiceImpl implements MsalAuthService {
   Future<void> initialize() async {
     if (_initialized) return;
     await _js
-        .init(_InitConfig(
-          clientId: config.clientId,
-          tenantId: config.tenantId,
-          apiScope: config.apiScope,
-        ))
+        .init(
+          _InitConfig(
+            clientId: config.clientId,
+            tenantId: config.tenantId,
+            apiScope: config.apiScope,
+          ),
+        )
         .toDart;
     _initialized = true;
   }

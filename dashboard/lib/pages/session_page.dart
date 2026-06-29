@@ -80,8 +80,9 @@ class _SessionPageState extends State<SessionPage> {
     await Future.wait([_connect(), _loadPendingRequests(), _loadBundles()]);
   }
 
-  Set<String> get _selectedBundleIds =>
-      {for (final b in _detail?.bundles ?? const <SessionBundleInfo>[]) b.id};
+  Set<String> get _selectedBundleIds => {
+    for (final b in _detail?.bundles ?? const <SessionBundleInfo>[]) b.id,
+  };
 
   Future<void> _loadBundles() async {
     try {
@@ -178,7 +179,10 @@ class _SessionPageState extends State<SessionPage> {
       _unblockError = null;
     });
     try {
-      await widget.sessions.approveUnblockForClass(widget.sessionId, summary.host);
+      await widget.sessions.approveUnblockForClass(
+        widget.sessionId,
+        summary.host,
+      );
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
@@ -192,7 +196,10 @@ class _SessionPageState extends State<SessionPage> {
     await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Copied $code'), duration: const Duration(seconds: 2)),
+      SnackBar(
+        content: Text('Copied $code'),
+        duration: const Duration(seconds: 2),
+      ),
     );
   }
 
@@ -279,11 +286,13 @@ class _SessionPageState extends State<SessionPage> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, _ExitChoice.leaveRunning),
+            onPressed: () =>
+                Navigator.pop(dialogContext, _ExitChoice.leaveRunning),
             child: const Text('Leave running'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, _ExitChoice.endSession),
+            onPressed: () =>
+                Navigator.pop(dialogContext, _ExitChoice.endSession),
             child: const Text('End session'),
           ),
         ],
@@ -448,7 +457,8 @@ class _PanelLabel extends StatelessWidget {
 }
 
 /// Space Mono label style — labels, specs, counts.
-TextStyle _monoLabel(Color color) => const TextStyle(
+TextStyle _monoLabel(Color color) =>
+    const TextStyle(
       fontFamily: PlinkType.monoFamily,
       package: PlinkType.fontPackage,
       fontFamilyFallback: PlinkType.monoFallback,
@@ -464,14 +474,14 @@ TextStyle _monoLabel(Color color) => const TextStyle(
 
 /// A tabular-figure mono style for timestamps and codes — columns line up.
 TextStyle _monoSpec(Color color, double size) => TextStyle(
-      fontFamily: PlinkType.monoFamily,
-      package: PlinkType.fontPackage,
-      fontFamilyFallback: PlinkType.monoFallback,
-      fontSize: size,
-      color: color,
-      height: 1.3,
-      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-    );
+  fontFamily: PlinkType.monoFamily,
+  package: PlinkType.fontPackage,
+  fontFamilyFallback: PlinkType.monoFallback,
+  fontSize: size,
+  color: color,
+  height: 1.3,
+  fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+);
 
 /// The header: leave-affordance, the session identity (class name + the
 /// date/time spec), the liveness mark, and End session. The shell already
@@ -640,9 +650,9 @@ class _EndedBanner extends StatelessWidget {
       ),
       child: Text(
         'Session ended — event stream stopped.',
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: PlinkColors.ink60,
-            ),
+        style: Theme.of(
+          context,
+        ).textTheme.bodyMedium?.copyWith(color: PlinkColors.ink60),
       ),
     );
   }
@@ -682,10 +692,7 @@ class _Feed extends StatelessWidget {
 
 /// The event kinds that warrant a stronger (but small, never alarming) marker —
 /// the ones a teacher might act on.
-const Set<String> _attentionKinds = <String>{
-  'HeartbeatLost',
-  'TamperDetected',
-};
+const Set<String> _attentionKinds = <String>{'HeartbeatLost', 'TamperDetected'};
 
 class _EventRow extends StatelessWidget {
   const _EventRow({required this.event});
@@ -701,16 +708,15 @@ class _EventRow extends StatelessWidget {
 
   String _payloadSummary() {
     if (event.payload.isEmpty) return '';
-    return event.payload.entries
-        .map((e) => '${e.key}=${e.value}')
-        .join('  ');
+    return event.payload.entries.map((e) => '${e.key}=${e.value}').join('  ');
   }
 
   @override
   Widget build(BuildContext context) {
     final bool attention = _attentionKinds.contains(event.kind);
-    final Color dot =
-        attention ? Theme.of(context).colorScheme.error : PlinkColors.muted;
+    final Color dot = attention
+        ? Theme.of(context).colorScheme.error
+        : PlinkColors.muted;
     final String payload = _payloadSummary();
 
     return Padding(
@@ -721,7 +727,10 @@ class _EventRow extends StatelessWidget {
           // Mono tabular timestamp — the columns line up like a log.
           SizedBox(
             width: 76,
-            child: Text(_time(event.at), style: _monoSpec(PlinkColors.ink60, 12)),
+            child: Text(
+              _time(event.at),
+              style: _monoSpec(PlinkColors.ink60, 12),
+            ),
           ),
           // A small status dot — paired with the label, never colour alone.
           Padding(
@@ -771,13 +780,21 @@ class _RosterStateStyle {
   static _RosterStateStyle of(ParticipantLiveState state) {
     switch (state) {
       case ParticipantLiveState.heartbeatStale:
-        return const _RosterStateStyle('Agent stopped reporting', Icons.sensors_off, 0);
+        return const _RosterStateStyle(
+          'Agent stopped reporting',
+          Icons.sensors_off,
+          0,
+        );
       case ParticipantLiveState.left:
         return const _RosterStateStyle('Left', Icons.logout, 1);
       case ParticipantLiveState.declined:
         return const _RosterStateStyle('Declined', Icons.cancel_outlined, 2);
       case ParticipantLiveState.neverJoined:
-        return const _RosterStateStyle('Not joined', Icons.radio_button_unchecked, 3);
+        return const _RosterStateStyle(
+          'Not joined',
+          Icons.radio_button_unchecked,
+          3,
+        );
       case ParticipantLiveState.joined:
         return const _RosterStateStyle('In session', Icons.check_circle, 4);
       case ParticipantLiveState.unknown:
@@ -808,11 +825,15 @@ class _RosterPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Sort by state (attention-first) then name — the acceptance criterion.
-    final sorted = [...participants]..sort((a, b) {
-        final byState = _RosterStateStyle.of(a.state).sortRank
-            .compareTo(_RosterStateStyle.of(b.state).sortRank);
+    final sorted = [...participants]
+      ..sort((a, b) {
+        final byState = _RosterStateStyle.of(
+          a.state,
+        ).sortRank.compareTo(_RosterStateStyle.of(b.state).sortRank);
         if (byState != 0) return byState;
-        return a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase());
+        return a.displayName.toLowerCase().compareTo(
+          b.displayName.toLowerCase(),
+        );
       });
 
     final joinedCount = participants
@@ -887,10 +908,7 @@ class _RosterRow extends StatelessWidget {
             ),
             const SizedBox(width: PlinkSpacing.s2),
           ],
-          Text(
-            style.label,
-            style: _monoLabel(color),
-          ),
+          Text(style.label, style: _monoLabel(color)),
         ],
       ),
     );
@@ -979,7 +997,10 @@ class _PendingRequestRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // The host is technical — set it in mono, like a spec.
-              Text(summary.host, style: _monoSpec(PlinkColors.ink, PlinkType.textSm)),
+              Text(
+                summary.host,
+                style: _monoSpec(PlinkColors.ink, PlinkType.textSm),
+              ),
               const SizedBox(height: 2),
               Text(
                 summary.count == 1
@@ -1103,10 +1124,7 @@ class _LiveBundlePanel extends StatelessWidget {
           ],
           const SizedBox(height: PlinkSpacing.s3),
           if (available.isEmpty)
-            Text(
-              'No bundles available yet.',
-              style: theme.textTheme.bodySmall,
-            )
+            Text('No bundles available yet.', style: theme.textTheme.bodySmall)
           else
             Wrap(
               spacing: PlinkSpacing.s2,
@@ -1132,8 +1150,9 @@ class _LiveBundlePanel extends StatelessWidget {
                     labelStyle: theme.textTheme.bodySmall?.copyWith(
                       color: PlinkColors.ink,
                     ),
-                    onSelected:
-                        busy ? null : (selected) => onToggle(b.id, selected),
+                    onSelected: busy
+                        ? null
+                        : (selected) => onToggle(b.id, selected),
                   ),
               ],
             ),
@@ -1172,10 +1191,10 @@ class _JoinCodePanel extends StatelessWidget {
                   // (substitute, transferred class, etc). Mono tabular so the
                   // glyphs sit on an even grid.
                   code,
-                  style: _monoSpec(PlinkColors.ink, PlinkType.display3).copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 8,
-                  ),
+                  style: _monoSpec(
+                    PlinkColors.ink,
+                    PlinkType.display3,
+                  ).copyWith(fontWeight: FontWeight.w700, letterSpacing: 8),
                 ),
               ],
             ),

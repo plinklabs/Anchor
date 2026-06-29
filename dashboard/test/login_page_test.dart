@@ -69,9 +69,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(
-      _host(auth: _FakeAuth(), tokens: AuthTokenStore()),
-    );
+    await tester.pumpWidget(_host(auth: _FakeAuth(), tokens: AuthTokenStore()));
     await tester.pumpAndSettle();
 
     // Identity rule + lockup carry the brand; the eyebrow is mono/uppercased.
@@ -81,17 +79,17 @@ void main() {
 
     // The one oversized Fraunces line, and the single primary action.
     expect(find.byKey(const Key('login-headline')), findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, 'Sign in with Microsoft'),
-        findsOneWidget);
+    expect(
+      find.widgetWithText(ElevatedButton, 'Sign in with Microsoft'),
+      findsOneWidget,
+    );
 
     // No overflow with the real fonts at this size.
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('the primary action is the magenta spark', (tester) async {
-    await tester.pumpWidget(
-      _host(auth: _FakeAuth(), tokens: AuthTokenStore()),
-    );
+    await tester.pumpWidget(_host(auth: _FakeAuth(), tokens: AuthTokenStore()));
     await tester.pumpAndSettle();
 
     final ButtonStyle? style = tester
@@ -128,9 +126,7 @@ void main() {
     tester,
   ) async {
     final tokens = AuthTokenStore();
-    await tester.pumpWidget(
-      _host(auth: _FakeAuth(fail: true), tokens: tokens),
-    );
+    await tester.pumpWidget(_host(auth: _FakeAuth(fail: true), tokens: tokens));
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('sign-in')));
@@ -181,8 +177,9 @@ void main() {
       // The spinner is gone and the button is re-enabled, so sign-in is
       // retryable rather than stuck.
       expect(find.byType(CircularProgressIndicator), findsNothing);
-      final ElevatedButton button =
-          tester.widget<ElevatedButton>(find.byKey(const Key('sign-in')));
+      final ElevatedButton button = tester.widget<ElevatedButton>(
+        find.byKey(const Key('sign-in')),
+      );
       expect(button.onPressed, isNotNull);
     },
   );

@@ -161,8 +161,8 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
         child: Text(
           _error!,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.error,
-              ),
+            color: Theme.of(context).colorScheme.error,
+          ),
         ),
       );
     }
@@ -217,9 +217,9 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
                       u.displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: PlinkColors.ink,
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodyMedium?.copyWith(color: PlinkColors.ink),
                     ),
                     if (hasUpn) ...[
                       const SizedBox(height: 2),
@@ -243,7 +243,8 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
 
 /// A space-mono label style (sentence-case microcopy / specs) — mirrors the
 /// classes page treatment so the typeahead reads in the same instrument voice.
-TextStyle _monoLabel(Color color) => const TextStyle(
+TextStyle _monoLabel(Color color) =>
+    const TextStyle(
       fontFamily: PlinkType.monoFamily,
       package: PlinkType.fontPackage,
       fontFamilyFallback: PlinkType.monoFallback,

@@ -37,17 +37,21 @@ void main() {
     expect(find.byKey(const Key('admin-page-body')), findsOneWidget);
   });
 
-  testWidgets('sub-nav taps fire onNavigate with the sub-route', (tester) async {
+  testWidgets('sub-nav taps fire onNavigate with the sub-route', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
     String? navigatedTo;
-    await tester.pumpWidget(_host(
-      section: AdminSection.bundles,
-      onNavigate: (location) => navigatedTo = location,
-    ));
+    await tester.pumpWidget(
+      _host(
+        section: AdminSection.bundles,
+        onNavigate: (location) => navigatedTo = location,
+      ),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('admin-nav-bundles')));

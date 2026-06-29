@@ -56,7 +56,9 @@ class _PastSessionPageState extends State<PastSessionPage> {
       // received a grant, so on an ended session it returns exactly the
       // requests the teacher never acted on.
       final detailFuture = widget.sessions.getSession(widget.sessionId);
-      final unapprovedFuture = widget.sessions.unblockRequests(widget.sessionId);
+      final unapprovedFuture = widget.sessions.unblockRequests(
+        widget.sessionId,
+      );
       final detail = await detailFuture;
       final unapproved = await unapprovedFuture;
       if (!mounted) return;
@@ -81,10 +83,7 @@ class _PastSessionPageState extends State<PastSessionPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: PlinkColors.paper,
-      body: _buildBody(),
-    );
+    return Scaffold(backgroundColor: PlinkColors.paper, body: _buildBody());
   }
 
   Widget _buildBody() {
@@ -98,8 +97,8 @@ class _PastSessionPageState extends State<PastSessionPage> {
           child: Text(
             _error ?? 'Session not available.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.error,
-                ),
+              color: Theme.of(context).colorScheme.error,
+            ),
             textAlign: TextAlign.center,
           ),
         ),
@@ -342,9 +341,7 @@ class _SummaryList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final nameById = {
-      for (final p in participants) p.userId: p.displayName,
-    };
+    final nameById = {for (final p in participants) p.userId: p.displayName};
     // Group per student so a row reads "Alice — 12 ForegroundChange, 3 BlockedUrl"
     // rather than one row per (student, kind). Easier to scan at a glance.
     final byUser = <String, List<SessionEventSummary>>{};
@@ -484,9 +481,7 @@ class _EventLog extends StatelessWidget {
         ),
       );
     }
-    final nameById = {
-      for (final p in participants) p.userId: p.displayName,
-    };
+    final nameById = {for (final p in participants) p.userId: p.displayName};
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         _gutter,
@@ -551,7 +546,10 @@ class _EventRow extends StatelessWidget {
                   ),
                   const SizedBox(width: PlinkSpacing.s2),
                   Expanded(
-                    child: Text(event.kind, style: pastMonoLabel(PlinkColors.ink)),
+                    child: Text(
+                      event.kind,
+                      style: pastMonoLabel(PlinkColors.ink),
+                    ),
                   ),
                 ],
               ),

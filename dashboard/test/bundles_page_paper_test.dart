@@ -63,12 +63,9 @@ class _FakeBundles extends BundlesApi {
 
 void main() {
   Widget host() => MaterialApp(
-        theme: PlinkTheme.paper,
-        home: BundlesPage(
-          bundles: _FakeBundles(),
-          sessions: _FakeSessions(),
-        ),
-      );
+    theme: PlinkTheme.paper,
+    home: BundlesPage(bundles: _FakeBundles(), sessions: _FakeSessions()),
+  );
 
   testWidgets(
     'the list pane shows the version as a mono spec chip, not a ListTile subtitle',
@@ -85,10 +82,7 @@ void main() {
       expect(find.widgetWithText(PlinkBadge, 'V3'), findsOneWidget);
 
       // "New bundle" is a calm ink action — never the spark.
-      expect(
-        find.widgetWithText(OutlinedButton, 'New bundle'),
-        findsOneWidget,
-      );
+      expect(find.widgetWithText(OutlinedButton, 'New bundle'), findsOneWidget);
     },
   );
 

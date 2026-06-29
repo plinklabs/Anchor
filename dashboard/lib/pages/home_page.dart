@@ -15,11 +15,7 @@ import '../widgets/api_error_text.dart';
 /// then the start-session composer — one oversized Fraunces line, the class
 /// picker, and the single magenta spark on the page: the Start button.
 class HomePage extends StatefulWidget {
-  const HomePage({
-    super.key,
-    required this.tokens,
-    required this.sessions,
-  });
+  const HomePage({super.key, required this.tokens, required this.sessions});
 
   final AuthTokenStore tokens;
   final SessionsApi sessions;
@@ -73,10 +69,12 @@ class _HomePageState extends State<HomePage> {
       await _loadActiveSessions();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not load start-session data. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Could not load start-session data. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -110,8 +108,12 @@ class _HomePageState extends State<HomePage> {
       context.go('/session/${session.id}');
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error =
-          describeApiError(e, generic: 'Failed to start session. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Failed to start session. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -135,8 +137,12 @@ class _HomePageState extends State<HomePage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error =
-          describeApiError(e, generic: 'Failed to end session. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: 'Failed to end session. Please try again.',
+        ),
+      );
     } finally {
       if (mounted) setState(() => _endingSessions.remove(sessionId));
     }
@@ -232,7 +238,9 @@ class _HomePageState extends State<HomePage> {
                   if (department != null && department.isNotEmpty) ...<Widget>[
                     Text(
                       'YOUR DEPARTMENT · ${department.toUpperCase()}',
-                      style: text.labelSmall?.copyWith(color: PlinkColors.muted),
+                      style: text.labelSmall?.copyWith(
+                        color: PlinkColors.muted,
+                      ),
                     ),
                     const SizedBox(height: PlinkSpacing.s3),
                   ],
@@ -252,7 +260,7 @@ class _HomePageState extends State<HomePage> {
                       onChanged: _busy
                           ? null
                           : (ClassSummary? value) =>
-                              setState(() => _selected = value),
+                                setState(() => _selected = value),
                     ),
                   ),
                   const SizedBox(height: PlinkSpacing.s5),
@@ -260,7 +268,9 @@ class _HomePageState extends State<HomePage> {
                   // page. The DS theme paints ElevatedButton in the spark.
                   ElevatedButton(
                     key: const Key('start-session'),
-                    onPressed: _busy || _selected == null ? null : _startSession,
+                    onPressed: _busy || _selected == null
+                        ? null
+                        : _startSession,
                     child: _busy
                         ? const SizedBox(
                             width: 16,
@@ -379,10 +389,7 @@ class _ActiveSessionCard extends StatelessWidget {
                   ),
                 )
               else
-                OutlinedButton(
-                  onPressed: onEnd,
-                  child: const Text('End'),
-                ),
+                OutlinedButton(onPressed: onEnd, child: const Text('End')),
             ],
           ),
         ],

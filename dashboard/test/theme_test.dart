@@ -59,17 +59,21 @@ void main() {
     expect(app.darkTheme, isNull);
   });
 
-  testWidgets('layers the Anchor deep-indigo product accent on the foundations', (
-    tester,
-  ) async {
-    await tester.pumpWidget(_app());
+  testWidgets(
+    'layers the Anchor deep-indigo product accent on the foundations',
+    (tester) async {
+      await tester.pumpWidget(_app());
 
-    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
-    final accent = app.theme!.extension<PlinkProductAccent>();
+      final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      final accent = app.theme!.extension<PlinkProductAccent>();
 
-    expect(accent, isNotNull);
-    expect(accent!.accent, const Color(0xFF34357A)); // ANCHOR_BRAND.md §2 paper
-    // The accent is the brand's, not the spark's — magenta stays primary.
-    expect(app.theme!.colorScheme.primary, PlinkColors.magenta);
-  });
+      expect(accent, isNotNull);
+      expect(
+        accent!.accent,
+        const Color(0xFF34357A),
+      ); // ANCHOR_BRAND.md §2 paper
+      // The accent is the brand's, not the spark's — magenta stays primary.
+      expect(app.theme!.colorScheme.primary, PlinkColors.magenta);
+    },
+  );
 }

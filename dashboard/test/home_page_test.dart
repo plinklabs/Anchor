@@ -19,10 +19,8 @@ ApiClient _dummyClient() => ApiClient(
 );
 
 class _FakeSessions extends SessionsApi {
-  _FakeSessions({
-    this.classesList = const [],
-    this.startId = 'new-session',
-  }) : super(_dummyClient());
+  _FakeSessions({this.classesList = const [], this.startId = 'new-session'})
+    : super(_dummyClient());
 
   final List<ClassSummary> classesList;
   final String startId;
@@ -54,19 +52,15 @@ class _FakeSessions extends SessionsApi {
 }
 
 Widget _host({required _FakeSessions sessions, AuthTokenStore? tokens}) {
-  final home = HomePage(
-    tokens: tokens ?? AuthTokenStore(),
-    sessions: sessions,
-  );
+  final home = HomePage(tokens: tokens ?? AuthTokenStore(), sessions: sessions);
   final router = GoRouter(
     initialLocation: '/',
     routes: <RouteBase>[
       GoRoute(path: '/', builder: (_, _) => home),
       GoRoute(
         path: '/session/:id',
-        builder: (_, GoRouterState state) => Scaffold(
-          body: Text('SESSION ${state.pathParameters['id']}'),
-        ),
+        builder: (_, GoRouterState state) =>
+            Scaffold(body: Text('SESSION ${state.pathParameters['id']}')),
       ),
     ],
   );

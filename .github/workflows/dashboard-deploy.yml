@@ -29,6 +29,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # Pinned to the same flutter-version above, so the bundled `dart format`
+      # matches the formatter the tree is committed with (Dart 3.12.0). Keeps
+      # local == CI deterministic and blocks unformatted code from landing (#310).
+      - name: Format check
+        run: dart format --output=none --set-exit-if-changed .
+
       - name: Analyze
         run: flutter analyze
 
