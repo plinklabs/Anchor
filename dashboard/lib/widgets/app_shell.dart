@@ -5,8 +5,9 @@ import 'anchor_mark.dart';
 
 /// The dashboard surfaces that share the chrome. The first four are the
 /// standing nav destinations; [session]/[pastSession] are detail pages reached
-/// from them (no nav slot of their own).
-enum AppSection { home, classes, history, bundles, session, pastSession }
+/// from them (no nav slot of their own). [admin] is the admin-only area whose
+/// own sub-pages (Bundles, …) live behind a left vertical sub-nav.
+enum AppSection { home, classes, history, admin, session, pastSession }
 
 /// A top-level nav destination in the app-bar.
 class _Destination {
@@ -22,7 +23,7 @@ const List<_Destination> _destinations = <_Destination>[
   _Destination(AppSection.home, 'Home', '/', '01'),
   _Destination(AppSection.classes, 'Classes', '/classes', '02'),
   _Destination(AppSection.history, 'History', '/history', '03'),
-  _Destination(AppSection.bundles, 'Bundles', '/bundles', '04'),
+  _Destination(AppSection.admin, 'Admin', '/admin', '04'),
 ];
 
 /// Horizontal page gutter — keeps the lockup, nav, and page eyebrow on one
@@ -58,7 +59,7 @@ class AppShell extends StatelessWidget {
   /// above it.
   final Widget child;
 
-  /// Whether the signed-in teacher is an admin — gates the Bundles nav slot.
+  /// Whether the signed-in teacher is an admin — gates the Admin nav slot.
   final bool isAdmin;
 
   /// Display name shown on the right of the bar; hidden when null.
@@ -118,7 +119,7 @@ class AppShell extends StatelessWidget {
       AppSection.home => (number: '01', label: 'Home'),
       AppSection.classes => (number: '02', label: 'Classes'),
       AppSection.history => (number: '03', label: 'Past sessions'),
-      AppSection.bundles => (number: '04', label: 'Bundles'),
+      AppSection.admin => (number: '04', label: 'Admin'),
       AppSection.session => (number: '', label: 'Live session'),
       AppSection.pastSession => (number: '', label: 'Past session'),
     };
@@ -143,7 +144,7 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final List<_Destination> items = _destinations
-        .where((_Destination d) => d.section != AppSection.bundles || isAdmin)
+        .where((_Destination d) => d.section != AppSection.admin || isAdmin)
         .toList(growable: false);
 
     return Padding(
