@@ -34,7 +34,7 @@ class _FakeAuth implements MsalAuthService {
   AccountInfo? currentAccount() => null;
 }
 
-// Admin so the chrome shows every standing nav slot, including Bundles.
+// Admin so the chrome shows every standing nav slot, including Admin.
 class _FakeSessions extends SessionsApi {
   _FakeSessions() : super(_dummyClient());
 
@@ -105,13 +105,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Home: the lockup + the standing nav (Bundles included, admin) all
+      // Home: the lockup + the standing nav (Admin included, admin) all
       // render, and the page eyebrow shows the section.
       expect(find.byType(AnchorLockup), findsOneWidget);
       expect(find.byKey(const Key('nav-home')), findsOneWidget);
       expect(find.byKey(const Key('nav-classes')), findsOneWidget);
       expect(find.byKey(const Key('nav-history')), findsOneWidget);
-      expect(find.byKey(const Key('nav-bundles')), findsOneWidget);
+      expect(find.byKey(const Key('nav-admin')), findsOneWidget);
       expect(find.text('01 · HOME'), findsOneWidget);
       expect(find.text('Admin'), findsOneWidget);
 
