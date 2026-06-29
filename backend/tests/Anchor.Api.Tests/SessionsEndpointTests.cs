@@ -654,6 +654,40 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task GET_session_serializes_event_kind_as_a_string_name_on_the_wire()
+    {
+        // Regression for #306: EventKind must serialize as its name
+        // ("ForegroundChange"), not its numeric ordinal. The dashboard reads
+        // recentEvents[].kind / summaries[].kind as strings — a numeric value
+        // crashes the past-session page with a deserialization TypeError.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        var student = scenario.Students[0];
+        await SeedEventsAsync(session.Id, new[]
+        {
+            (student.Id, EventKind.ForegroundChange, new DateTimeOffset(2026, 1, 1, 9, 0, 0, TimeSpan.Zero)),
+        });
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        // End the session so an event summary is aggregated alongside the raw event.
+        await client.PostAsync($"/sessions/{session.Id}/end", null);
+
+        var json = await client.GetStringAsync($"/sessions/{session.Id}");
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var recentKind = root.GetProperty("recentEvents")[0].GetProperty("kind");
+        Assert.Equal(System.Text.Json.JsonValueKind.String, recentKind.ValueKind);
+        Assert.Equal(nameof(EventKind.ForegroundChange), recentKind.GetString());
+
+        var summaryKind = root.GetProperty("summaries")[0].GetProperty("kind");
+        Assert.Equal(System.Text.Json.JsonValueKind.String, summaryKind.ValueKind);
+        Assert.Equal(nameof(EventKind.ForegroundChange), summaryKind.GetString());
+    }
+
+    [Fact]
     public async Task GET_session_returns_detail_for_participating_student()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);

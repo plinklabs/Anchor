@@ -1,5 +1,11 @@
+using System.Text.Json.Serialization;
+
 namespace Anchor.Domain.Events;
 
+// Serialized by name on the wire so the dashboard reads readable kinds
+// (e.g. "ForegroundChange") rather than the default numeric ordinal (#306).
+// Mirrors the other wire enums (BundleEntryKind, BundleEntryMatchType, UserRole).
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum EventKind
 {
     ForegroundChange,
