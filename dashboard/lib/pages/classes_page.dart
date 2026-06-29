@@ -45,6 +45,11 @@ class _ClassesPageState extends State<ClassesPage> {
   bool _savingCodes = false;
   bool _bulkImporting = false;
   ApiErrorMessage? _error;
+  // Kept separate from [_error] (which carries class/roster failures): a failed
+  // school-tag load is non-blocking, so it surfaces inline next to the School
+  // selector with a Retry rather than taking over the page. Without this a
+  // consent/502 gap (#281) rendered as a silently empty dropdown.
+  ApiErrorMessage? _schoolsError;
   List<ClassMembershipImportResult>? _lastImportResults;
 
   // Editable copies of the selected class's schoolTag / classCode. Sit
@@ -95,17 +100,27 @@ class _ClassesPageState extends State<ClassesPage> {
   }
 
   Future<void> _loadSchools() async {
-    setState(() => _loadingSchools = true);
+    setState(() {
+      _loadingSchools = true;
+      _schoolsError = null;
+    });
     try {
       final schools = await widget.classes.schools();
       if (!mounted) return;
       setState(() => _schools = schools);
-    } catch (_) {
-      // Non-fatal — the selector will fall back to a free-text affordance
-      // and the page surfaces other errors via [_error]. Listing the school
-      // tags is a discovery convenience, not a gate.
+    } catch (e) {
+      // Non-blocking — listing school tags is a discovery convenience, not a
+      // gate (a class's existing binding is still editable). But don't swallow
+      // it: surface an inline hint + Retry next to the selector so a consent/502
+      // gap can't masquerade as "this tenant has no schools" (#281).
       if (!mounted) return;
-      setState(() => _schools = const <String>[]);
+      setState(() {
+        _schools = const <String>[];
+        _schoolsError = describeApiError(
+          e,
+          generic: "Couldn't load schools. The selector may be incomplete.",
+        );
+      });
     } finally {
       if (mounted) setState(() => _loadingSchools = false);
     }
@@ -421,6 +436,8 @@ class _ClassesPageState extends State<ClassesPage> {
                     roster: _roster,
                     schools: _schools,
                     loadingSchools: _loadingSchools,
+                    schoolsError: _schoolsError,
+                    onReloadSchools: _loadSchools,
                     loadingRoster: _loadingRoster,
                     savingCodes: _savingCodes,
                     bulkImporting: _bulkImporting,
@@ -601,6 +618,8 @@ class _RosterPane extends StatelessWidget {
     required this.roster,
     required this.schools,
     required this.loadingSchools,
+    required this.schoolsError,
+    required this.onReloadSchools,
     required this.loadingRoster,
     required this.savingCodes,
     required this.bulkImporting,
@@ -624,6 +643,8 @@ class _RosterPane extends StatelessWidget {
   final ClassMembersResponse? roster;
   final List<String>? schools;
   final bool loadingSchools;
+  final ApiErrorMessage? schoolsError;
+  final Future<void> Function() onReloadSchools;
   final bool loadingRoster;
   final bool savingCodes;
   final bool bulkImporting;
@@ -677,6 +698,8 @@ class _RosterPane extends StatelessWidget {
           _ScopeRow(
             schools: schools,
             loadingSchools: loadingSchools,
+            schoolsError: schoolsError,
+            onReloadSchools: onReloadSchools,
             saving: savingCodes,
             dirty: codesDirty,
             editSchoolTag: editSchoolTag,
@@ -749,6 +772,8 @@ class _ScopeRow extends StatelessWidget {
   const _ScopeRow({
     required this.schools,
     required this.loadingSchools,
+    required this.schoolsError,
+    required this.onReloadSchools,
     required this.saving,
     required this.dirty,
     required this.editSchoolTag,
@@ -760,6 +785,8 @@ class _ScopeRow extends StatelessWidget {
 
   final List<String>? schools;
   final bool loadingSchools;
+  final ApiErrorMessage? schoolsError;
+  final Future<void> Function() onReloadSchools;
   final bool saving;
   final bool dirty;
   final String? editSchoolTag;
@@ -777,6 +804,35 @@ class _ScopeRow extends StatelessWidget {
       ...options,
       if (editSchoolTag != null && editSchoolTag!.isNotEmpty) editSchoolTag!,
     }.toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildRow(entries),
+        // A failed school-tag load is non-blocking (the binding stays editable),
+        // but surface it inline with a Retry so a consent/502 gap can't read as
+        // an empty directory (#281).
+        if (schoolsError != null && !loadingSchools)
+          Padding(
+            padding: const EdgeInsets.only(top: PlinkSpacing.s2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(child: ApiErrorText(schoolsError!)),
+                const SizedBox(width: PlinkSpacing.s2),
+                TextButton(
+                  key: const Key('classes-schools-retry-button'),
+                  onPressed: onReloadSchools,
+                  child: const Text('Retry'),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildRow(List<String> entries) {
     return Wrap(
       spacing: PlinkSpacing.s3,
       runSpacing: PlinkSpacing.s3,
