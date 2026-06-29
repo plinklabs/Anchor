@@ -224,10 +224,12 @@ if (-not $BicepFile) {
 }
 $BicepFile = (Resolve-Path -LiteralPath $BicepFile -ErrorAction Stop).Path
 
-# Microsoft Graph well-known app id + the User.Read delegated permission id,
-# used to grant the SPA the baseline sign-in/profile scope.
+# Microsoft Graph well-known app id + the delegated permission ids we grant:
+# User.Read for the SPA (baseline sign-in/profile) and User.Read.All for the API
+# app (the OBO user-directory search that backs the Classes -> School selector).
 $GraphAppId = '00000003-0000-0000-c000-000000000000'
 $GraphUserRead = 'e1fe6dd8-ba31-4d61-89e7-88639da4683d'  # User.Read (delegated)
+$GraphUserReadAll = 'a154be20-db9c-4678-8ab7-66f6cc099a59'  # User.Read.All (delegated)
 
 # ── Small helpers ────────────────────────────────────────────────────────────
 
@@ -885,6 +887,11 @@ elseif ($apiAppAdopted) {
     if (-not $scopeId) {
         Write-Manual "Could not read an access_as_user scope on $apiClientId; skipping SPA API pre-authorization. Verify the API app exposes that scope."
     }
+    # Don't mutate a registration we don't own, but flag the User.Read.All gap that
+    # silently empties the Classes -> School selector (#281) so an operator can fix it.
+    if (-not (Test-PermissionGranted -AppId $apiClientId -ResourceAppId $GraphAppId -PermissionId $GraphUserReadAll)) {
+        Write-Manual "API app $apiClientId is missing the delegated Graph User.Read.All scope; the Classes -> School selector will be empty until you grant + admin-consent it: az ad app permission add --id $apiClientId --api $GraphAppId --api-permissions $GraphUserReadAll=Scope ; az ad app permission admin-consent --id $apiClientId"
+    }
     # Adopt the SPA app too when not explicitly provided (lookup by display name).
     if (-not $spaClientId) {
         $spaClientId = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'list', '--display-name', $SpaAppName, '--query', '[0].appId', '-o', 'tsv') -Capture -ReadOnly
@@ -987,6 +994,21 @@ else {
             Write-Host "    API client secret 'anchor-obo' created — will be applied to the App Service after the deploy."
             Write-Host "    (Record it now; it cannot be re-displayed) AzureAd__ClientCredentials secret: $apiSecret" -ForegroundColor DarkYellow
         }
+    }
+
+    # The OBO user-directory search behind Classes -> School (GraphUserDirectory-
+    # Search -> Graph /users?$select=companyName) needs the delegated User.Read.All
+    # scope on THIS (API) app; the basic profile isn't enough. Without it every OBO
+    # exchange fails and /directory/schools returns 502, so the selector is empty in
+    # a fresh environment (#281). Grant it here (admin consent is the consolidated
+    # Step 8 below); idempotent — skip when already present.
+    if (Test-PermissionGranted -AppId $apiClientId -ResourceAppId $GraphAppId -PermissionId $GraphUserReadAll) {
+        Write-Host "    API app already has Graph User.Read.All — skipping."
+    }
+    else {
+        Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'permission', 'add', '--id', $apiClientId,
+            '--api', $GraphAppId, '--api-permissions', "$GraphUserReadAll=Scope", '-o', 'none') `
+            -Target $apiClientId -Action 'grant Graph User.Read.All to API app'
     }
 
     # ── Dashboard SPA app registration ───────────────────────────────────────
