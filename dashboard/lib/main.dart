@@ -56,6 +56,7 @@ class AnchorDashboard extends StatefulWidget {
     required this.classes,
     required this.apiBaseUrl,
     this.hubClientFactory,
+    this.loginSilentTimeout = const Duration(seconds: 30),
   });
 
   final AuthTokenStore tokens;
@@ -71,6 +72,11 @@ class AnchorDashboard extends StatefulWidget {
   /// app without a real SignalR hub.
   final SessionHubClientFactory? hubClientFactory;
 
+  /// Upper bound on the non-interactive steps of sign-in, forwarded to
+  /// [LoginPage.silentTimeout] (#303). Defaults to the production value; an
+  /// integration test shortens it to drive the timeout without a real wait.
+  final Duration loginSilentTimeout;
+
   @override
   State<AnchorDashboard> createState() => _AnchorDashboardState();
 }
@@ -84,6 +90,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     classes: widget.classes,
     apiBaseUrl: widget.apiBaseUrl,
     hubClientFactory: widget.hubClientFactory,
+    loginSilentTimeout: widget.loginSilentTimeout,
   );
 
   @override

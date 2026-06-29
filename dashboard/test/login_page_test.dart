@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/pages/login_page.dart';
@@ -12,10 +14,14 @@ import 'package:plink_design_system/plink_design_system.dart';
 // busy state, and the error path when sign-in fails.
 
 class _FakeAuth implements MsalAuthService {
-  _FakeAuth({this.account, this.fail = false});
+  _FakeAuth({this.account, this.fail = false, this.hangAcquire = false});
 
   final AccountInfo? account;
   final bool fail;
+
+  /// When true, [acquireToken] never completes — simulating the stalled
+  /// silent-token path a day-old cached session can trigger (#303).
+  final bool hangAcquire;
 
   @override
   Future<void> initialize() async {}
@@ -30,20 +36,27 @@ class _FakeAuth implements MsalAuthService {
   Future<void> signOut() async {}
 
   @override
-  Future<String> acquireToken() async => 'fake-token';
+  Future<String> acquireToken() {
+    if (hangAcquire) return Completer<String>().future; // never completes
+    return Future<String>.value('fake-token');
+  }
 
   @override
   AccountInfo? currentAccount() => account;
 }
 
-Widget _host({required MsalAuthService auth, required AuthTokenStore tokens}) {
+Widget _host({
+  required MsalAuthService auth,
+  required AuthTokenStore tokens,
+  Duration silentTimeout = const Duration(seconds: 30),
+}) {
   return MaterialApp(
     theme: PlinkTheme.paper.copyWith(
       extensions: const <ThemeExtension<dynamic>>[
         PlinkProductAccent(Color(0xFF34357A)),
       ],
     ),
-    home: LoginPage(tokens: tokens, auth: auth),
+    home: LoginPage(tokens: tokens, auth: auth, silentTimeout: silentTimeout),
   );
 }
 
@@ -126,4 +139,51 @@ void main() {
     expect(find.byKey(const Key('login-error')), findsOneWidget);
     expect(tokens.isAuthenticated, isFalse);
   });
+
+  testWidgets(
+    'a stalled silent acquisition times out into a retryable error (#303)',
+    (tester) async {
+      final tokens = AuthTokenStore();
+      // signIn returns an account, but the silent token step never completes —
+      // the day-old-cache hang. Without the timeout the button would spin
+      // forever; with it, the page must settle into a clear, retryable error.
+      final auth = _FakeAuth(
+        account: const AccountInfo(
+          homeAccountId: 'home-1',
+          username: 'teacher@school.example',
+          displayName: 'Ms Teacher',
+          department: null,
+        ),
+        hangAcquire: true,
+      );
+
+      await tester.pumpWidget(
+        _host(
+          auth: auth,
+          tokens: tokens,
+          silentTimeout: const Duration(milliseconds: 200),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('sign-in')));
+      // While the silent step hangs, the button shows the busy spinner.
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byKey(const Key('login-error')), findsNothing);
+
+      // Advance past the bound: the stalled step times out into an error.
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('login-error')), findsOneWidget);
+      expect(tokens.isAuthenticated, isFalse);
+      // The spinner is gone and the button is re-enabled, so sign-in is
+      // retryable rather than stuck.
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      final ElevatedButton button =
+          tester.widget<ElevatedButton>(find.byKey(const Key('sign-in')));
+      expect(button.onPressed, isNotNull);
+    },
+  );
 }

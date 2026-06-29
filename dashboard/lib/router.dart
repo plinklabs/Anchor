@@ -26,6 +26,7 @@ GoRouter buildRouter({
   required ClassesApi classes,
   required Uri apiBaseUrl,
   SessionHubClientFactory? hubClientFactory,
+  Duration loginSilentTimeout = const Duration(seconds: 30),
 }) {
   return GoRouter(
     refreshListenable: tokens,
@@ -41,8 +42,11 @@ GoRouter buildRouter({
       // Login sits outside the shell — it has no nav and its own (AD2) chrome.
       GoRoute(
         path: '/login',
-        builder: (context, state) =>
-            LoginPage(tokens: tokens, auth: auth),
+        builder: (context, state) => LoginPage(
+          tokens: tokens,
+          auth: auth,
+          silentTimeout: loginSilentTimeout,
+        ),
       ),
       // Every authenticated page shares the app scaffold / nav / app-bar (AD1).
       ShellRoute(

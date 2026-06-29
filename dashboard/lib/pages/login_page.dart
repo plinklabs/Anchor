@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -14,10 +16,24 @@ import '../widgets/anchor_mark.dart';
 /// Microsoft sign-in. Everything reads on the warm paper surface the teacher
 /// dashboard wears for its whole life (ANCHOR_BRAND.md §6).
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, required this.tokens, required this.auth});
+  const LoginPage({
+    super.key,
+    required this.tokens,
+    required this.auth,
+    this.silentTimeout = const Duration(seconds: 30),
+  });
 
   final AuthTokenStore tokens;
   final MsalAuthService auth;
+
+  /// Upper bound on the *non-interactive* steps of sign-in: MSAL init and the
+  /// silent token acquisition. A day-old cached session can leave the silent
+  /// path stalled on a hidden-iframe renewal that never resolves (#303); this
+  /// bound turns that infinite spinner into a clear, retryable error. The
+  /// interactive popup ([MsalAuthService.signIn]) is deliberately *not* bounded
+  /// — a user may legitimately take a while picking an account or completing
+  /// MFA. Overridable so tests can drive the timeout without a real wait.
+  final Duration silentTimeout;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -33,13 +49,19 @@ class _LoginPageState extends State<LoginPage> {
       _error = null;
     });
     try {
-      await widget.auth.initialize();
+      await widget.auth.initialize().timeout(widget.silentTimeout);
+      // Interactive: unbounded on purpose — the popup waits on the user.
       final account = await widget.auth.signIn();
       if (account == null) {
         throw StateError('Sign-in returned no account');
       }
-      final token = await widget.auth.acquireToken();
+      final token =
+          await widget.auth.acquireToken().timeout(widget.silentTimeout);
       widget.tokens.setSession(token: token, account: account);
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() => _error =
+          'Signing in is taking longer than expected. Please try again.');
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
