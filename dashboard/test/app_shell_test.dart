@@ -6,7 +6,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 // AD1 (#166): the shared dashboard chrome — app scaffold, nav, app-bar. These
 // guard the presentational shell in isolation (no router/network): the lockup,
-// the nav destinations (with the admin-gated Bundles slot), the per-section
+// the nav destinations (with the admin-gated Admin slot), the per-section
 // mono eyebrow, and the navigate/sign-out wiring.
 
 Widget _host({
@@ -55,7 +55,7 @@ void main() {
     expect(find.byKey(const Key('page-body')), findsOneWidget);
   });
 
-  testWidgets('hides the Bundles slot unless the teacher is an admin', (
+  testWidgets('hides the Admin slot unless the teacher is an admin', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1400, 900);
@@ -65,11 +65,11 @@ void main() {
 
     await tester.pumpWidget(_host(section: AppSection.home));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('nav-bundles')), findsNothing);
+    expect(find.byKey(const Key('nav-admin')), findsNothing);
 
     await tester.pumpWidget(_host(section: AppSection.home, isAdmin: true));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('nav-bundles')), findsOneWidget);
+    expect(find.byKey(const Key('nav-admin')), findsOneWidget);
   });
 
   testWidgets('eyebrow tracks the active section', (tester) async {
@@ -111,8 +111,8 @@ void main() {
     await tester.tap(find.byKey(const Key('nav-classes')));
     expect(navigatedTo, '/classes');
 
-    await tester.tap(find.byKey(const Key('nav-bundles')));
-    expect(navigatedTo, '/bundles');
+    await tester.tap(find.byKey(const Key('nav-admin')));
+    expect(navigatedTo, '/admin');
 
     // The lockup doubles as the home affordance.
     await tester.tap(find.byKey(const Key('lockup-home')));

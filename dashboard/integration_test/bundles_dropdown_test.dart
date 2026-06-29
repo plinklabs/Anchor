@@ -128,11 +128,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Real navigation: the admin-only Bundles slot in the shared app-bar
-      // (AD1, #166) routes to /bundles.
-      final bundlesNav = find.byKey(const Key('nav-bundles'));
-      expect(bundlesNav, findsOneWidget, reason: 'admin should see the Bundles nav');
-      await tester.tap(bundlesNav);
+      // Real navigation: the admin-only Admin slot in the shared app-bar
+      // (AD1, #166) opens the admin area, whose first sub-tab is Bundles (#299).
+      final adminNav = find.byKey(const Key('nav-admin'));
+      expect(adminNav, findsOneWidget, reason: 'admin should see the Admin nav');
+      await tester.tap(adminNav);
       await tester.pumpAndSettle();
 
       // Open the seeded bundle, which renders the editor and the Apps entry
