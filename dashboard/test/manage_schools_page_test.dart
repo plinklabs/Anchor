@@ -1,6 +1,7 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/schools_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart' show ApiException;
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/manage_schools_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -44,8 +45,11 @@ class _FakeSchools extends SchoolsApi {
   }
 }
 
-Widget _host(SchoolsApi schools) =>
-    MaterialApp(home: ManageSchoolsPage(schools: schools));
+Widget _host(SchoolsApi schools) => MaterialApp(
+  localizationsDelegates: AppLocalizations.localizationsDelegates,
+  supportedLocales: AppLocalizations.supportedLocales,
+  home: ManageSchoolsPage(schools: schools),
+);
 
 void _bigWindow(WidgetTester tester) {
   tester.view.physicalSize = const Size(1400, 1000);

@@ -1,6 +1,7 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/classes_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/classes_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -135,6 +136,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: PlinkTheme.paper,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: ClassesPage(
           sessions: _FakeSessions([klass]),
           classes: _FakeClasses(roster),
@@ -178,6 +181,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: _FakeClasses(roster, schools: const ['SSM', 'SJI']),
@@ -227,6 +232,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: fakeClasses,
@@ -281,6 +288,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: fakeClasses,
@@ -340,6 +349,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: _FakeClasses(roster, schools: const ['SSM', 'SJI']),
@@ -395,6 +406,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: fakeClasses,
@@ -443,6 +456,8 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: ClassesPage(
           sessions: _FakeSessions([klass]),
           classes: fakeClasses,
@@ -486,6 +501,8 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: ClassesPage(
           sessions: _FakeSessions([klass]),
           classes: fakeClasses,

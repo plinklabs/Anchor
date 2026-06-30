@@ -5,6 +5,7 @@ import 'package:anchor_dashboard/api/classes_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/auth/msal_config.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/main.dart';
 import 'package:anchor_dashboard/pages/home_page.dart';
 import 'package:flutter/material.dart';
@@ -92,6 +93,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp.router(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           // NoSplash keeps the tap below from loading Material's InkSparkle
           // fragment shader, which this Flutter SDK's test harness can't decode.
           theme: ThemeData(splashFactory: NoSplash.splashFactory),
@@ -132,6 +135,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           // NoSplash dodges the undecodable InkSparkle shader on tap (see above).
           theme: ThemeData(splashFactory: NoSplash.splashFactory),
           home: HomePage(tokens: AuthTokenStore(), sessions: sessions),

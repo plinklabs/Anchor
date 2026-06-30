@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/schools_api.dart';
+import '../l10n/app_localizations.dart';
 
 /// Admin-only "Schools" sub-tab (#301), in the paper treatment.
 ///
@@ -31,10 +32,15 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
   @override
   void initState() {
     super.initState();
-    _loadSchools();
+    // Defer the first load until after the first frame, so inherited widgets
+    // (Localizations) are available when _loadSchools reads them.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadSchools();
+    });
   }
 
   Future<void> _loadSchools() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _loading = true;
       _error = null;
@@ -45,13 +51,14 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
       setState(() => _schools = list);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load schools: $e');
+      setState(() => _error = l10n.schoolsLoadError('$e'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _setActive(School school, bool isActive) async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _busy.add(school.name);
       _error = null;
@@ -68,7 +75,7 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not update ${school.name}: $e');
+      setState(() => _error = l10n.schoolsUpdateError(school.name, '$e'));
     } finally {
       if (mounted) setState(() => _busy.remove(school.name));
     }
@@ -92,11 +99,13 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('Schools', style: _monoLabel(PlinkColors.ink60)),
+                Text(
+                  AppLocalizations.of(context).schoolsHeader,
+                  style: _monoLabel(PlinkColors.ink60),
+                ),
                 const SizedBox(height: PlinkSpacing.s2),
                 Text(
-                  'Active schools appear in the Classes school selector for '
-                  'teachers. Deactivate the ones your teachers don’t need.',
+                  AppLocalizations.of(context).schoolsIntro,
                   style: Theme.of(
                     context,
                   ).textTheme.bodySmall?.copyWith(color: PlinkColors.ink60),
@@ -131,8 +140,7 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
     }
     if (schools == null || schools.isEmpty) {
       return Text(
-        'No schools found. Schools come from your directory; once teachers '
-        'belong to one, it will appear here.',
+        AppLocalizations.of(context).schoolsEmpty,
         key: const Key('manage-schools-empty'),
         style: _monoLabel(PlinkColors.muted),
       );
@@ -199,7 +207,9 @@ class _SchoolRow extends StatelessWidget {
                   ).textTheme.bodyLarge?.copyWith(color: PlinkColors.ink),
                 ),
                 Text(
-                  school.isActive ? 'Active' : 'Inactive',
+                  school.isActive
+                      ? AppLocalizations.of(context).statusActive
+                      : AppLocalizations.of(context).statusInactive,
                   style: _monoSpec(
                     school.isActive ? PlinkColors.ink60 : PlinkColors.muted,
                     PlinkType.textSm,

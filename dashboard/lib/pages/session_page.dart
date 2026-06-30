@@ -8,6 +8,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 import '../api/auth_token_store.dart';
 import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
+import '../l10n/app_localizations.dart';
 import '../realtime/session_hub_client.dart';
 
 class SessionPage extends StatefulWidget {
@@ -96,6 +97,7 @@ class _SessionPageState extends State<SessionPage> {
   }
 
   Future<void> _updateBundles(Set<String> bundleIds) async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _updatingBundles = true;
       _bundleError = null;
@@ -110,7 +112,7 @@ class _SessionPageState extends State<SessionPage> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _bundleError = 'Failed to update bundles: $e');
+      setState(() => _bundleError = l10n.sessionUpdateBundlesError('$e'));
     } finally {
       if (mounted) setState(() => _updatingBundles = false);
     }
@@ -145,6 +147,7 @@ class _SessionPageState extends State<SessionPage> {
   }
 
   Future<void> _approveHost(UnblockRequestSummary summary) async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _approving.add(summary.host);
       _unblockError = null;
@@ -165,7 +168,7 @@ class _SessionPageState extends State<SessionPage> {
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _unblockError = 'Approve failed: $e');
+      setState(() => _unblockError = l10n.sessionApproveError('$e'));
     } finally {
       if (mounted) setState(() => _approving.remove(summary.host));
     }
@@ -174,6 +177,7 @@ class _SessionPageState extends State<SessionPage> {
   /// Whole-class approval (#101): one POST that adds the host to the live
   /// session allowlist for everyone, rather than a grant per requesting student.
   Future<void> _approveHostForClass(UnblockRequestSummary summary) async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _approving.add(summary.host);
       _unblockError = null;
@@ -186,24 +190,26 @@ class _SessionPageState extends State<SessionPage> {
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _unblockError = 'Approve failed: $e');
+      setState(() => _unblockError = l10n.sessionApproveError('$e'));
     } finally {
       if (mounted) setState(() => _approving.remove(summary.host));
     }
   }
 
   Future<void> _copyJoinCode(String code) async {
+    final l10n = AppLocalizations.of(context);
     await Clipboard.setData(ClipboardData(text: code));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Copied $code'),
+        content: Text(l10n.sessionCopiedCode(code)),
         duration: const Duration(seconds: 2),
       ),
     );
   }
 
   Future<void> _connect() async {
+    final l10n = AppLocalizations.of(context);
     try {
       await _hub.connect();
       await _hub.joinSession(widget.sessionId);
@@ -237,13 +243,14 @@ class _SessionPageState extends State<SessionPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not connect to live stream: $e');
+      setState(() => _error = l10n.sessionConnectError('$e'));
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
   }
 
   Future<void> _endSession() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _ending = true;
       _error = null;
@@ -255,7 +262,7 @@ class _SessionPageState extends State<SessionPage> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to end session: $e');
+      setState(() => _error = l10n.sessionEndError('$e'));
     } finally {
       if (mounted) setState(() => _ending = false);
     }
@@ -271,29 +278,26 @@ class _SessionPageState extends State<SessionPage> {
       return;
     }
 
+    final l10n = AppLocalizations.of(context);
     final choice = await showDialog<_ExitChoice>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Leave this session?'),
-        content: const Text(
-          'This session is still running and students stay enforced. End it for '
-          'everyone, or leave it running and come back to it later from the home '
-          'screen?',
-        ),
+        title: Text(l10n.sessionLeaveTitle),
+        content: Text(l10n.sessionLeaveBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, _ExitChoice.cancel),
-            child: const Text('Cancel'),
+            child: Text(l10n.actionCancel),
           ),
           TextButton(
             onPressed: () =>
                 Navigator.pop(dialogContext, _ExitChoice.leaveRunning),
-            child: const Text('Leave running'),
+            child: Text(l10n.sessionLeaveRunning),
           ),
           FilledButton(
             onPressed: () =>
                 Navigator.pop(dialogContext, _ExitChoice.endSession),
-            child: const Text('End session'),
+            child: Text(l10n.sessionEndSession),
           ),
         ],
       ),
@@ -318,7 +322,7 @@ class _SessionPageState extends State<SessionPage> {
       context.go('/');
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to end session: $e');
+      setState(() => _error = l10n.sessionEndError('$e'));
     } finally {
       if (mounted) setState(() => _ending = false);
     }
@@ -331,22 +335,25 @@ class _SessionPageState extends State<SessionPage> {
     super.dispose();
   }
 
-  String _titleText() {
+  String _titleText(AppLocalizations l10n) {
     final started = _detail?.startedAt.toLocal();
-    if (started == null) return 'Session';
+    if (started == null) return l10n.sessionTitleFallback;
     final y = started.year.toString().padLeft(4, '0');
     final mo = started.month.toString().padLeft(2, '0');
     final d = started.day.toString().padLeft(2, '0');
     final h = started.hour.toString().padLeft(2, '0');
     final mi = started.minute.toString().padLeft(2, '0');
-    return 'Session $y-$mo-$d $h:$mi';
+    final datetime = '$y-$mo-$d $h:$mi';
+    return l10n.sessionTitleSpec(datetime);
   }
 
   @override
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final String className = _detail?.className ?? '';
-    final String headline = className.isEmpty ? 'Live session' : className;
+    final String headline = className.isEmpty
+        ? AppLocalizations.of(context).sessionHeadlineFallback
+        : className;
 
     // The instrument panels above the feed — only what applies to the session's
     // current state. The feed itself is the hero and fills the rest below.
@@ -394,7 +401,7 @@ class _SessionPageState extends State<SessionPage> {
         children: <Widget>[
           _SessionHeader(
             headline: headline,
-            spec: _titleText(),
+            spec: _titleText(AppLocalizations.of(context)),
             ended: _ended,
             ending: _ending,
             onLeave: _confirmExit,
@@ -402,14 +409,15 @@ class _SessionPageState extends State<SessionPage> {
             headlineStyle: text.displaySmall,
           ),
           const _Hairline(),
-          if (_connecting) const _StatusLine('Connecting to the live feed…'),
+          if (_connecting)
+            _StatusLine(AppLocalizations.of(context).sessionConnecting),
           if (_error != null) _ErrorBanner(_error!),
           for (final Widget panel in panels) ...<Widget>[
             panel,
             const _Hairline(),
           ],
           // The live feed — the instrument's read-out, filling the rest.
-          const _PanelLabel('Activity'),
+          _PanelLabel(AppLocalizations.of(context).sessionActivity),
           Expanded(child: _Feed(events: _events)),
         ],
       ),
@@ -521,7 +529,7 @@ class _SessionHeader extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.arrow_back),
             color: PlinkColors.ink,
-            tooltip: 'Leave session',
+            tooltip: AppLocalizations.of(context).sessionLeaveTooltip,
             onPressed: onLeave,
           ),
           const SizedBox(width: PlinkSpacing.s2),
@@ -539,9 +547,15 @@ class _SessionHeader extends StatelessWidget {
                       // the magenta badge carries the live signal (matches AD3).
                       const Ping(size: 16, mode: PingMode.static),
                       const SizedBox(width: PlinkSpacing.s2),
-                      const PlinkBadge('Live', variant: BadgeVariant.spark),
+                      PlinkBadge(
+                        AppLocalizations.of(context).badgeLive,
+                        variant: BadgeVariant.spark,
+                      ),
                     ] else
-                      const PlinkBadge('Ended', variant: BadgeVariant.outline),
+                      PlinkBadge(
+                        AppLocalizations.of(context).badgeEnded,
+                        variant: BadgeVariant.outline,
+                      ),
                     const SizedBox(width: PlinkSpacing.s3),
                     Flexible(
                       child: Text(
@@ -574,7 +588,7 @@ class _SessionHeader extends StatelessWidget {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Text('End session'),
+                  : Text(AppLocalizations.of(context).sessionEndSession),
             ),
           ],
         ],
@@ -649,7 +663,7 @@ class _EndedBanner extends StatelessWidget {
         PlinkSpacing.s4,
       ),
       child: Text(
-        'Session ended — event stream stopped.',
+        AppLocalizations.of(context).sessionEndedBanner,
         style: Theme.of(
           context,
         ).textTheme.bodyMedium?.copyWith(color: PlinkColors.ink60),
@@ -671,7 +685,7 @@ class _Feed extends StatelessWidget {
     if (events.isEmpty) {
       return Center(
         child: Text(
-          'Waiting for events…',
+          AppLocalizations.of(context).sessionWaitingEvents,
           style: _monoLabel(PlinkColors.muted),
         ),
       );
@@ -769,8 +783,7 @@ class _EventRow extends StatelessWidget {
 /// the loudest — per design §5.4 it's "agent stopped reporting", the signal
 /// teachers actually act on.
 class _RosterStateStyle {
-  const _RosterStateStyle(this.label, this.icon, this.sortRank);
-  final String label;
+  const _RosterStateStyle(this.icon, this.sortRank);
   final IconData icon;
 
   /// Lower sorts higher. Attention-needing states cluster at the top; the bulk
@@ -780,25 +793,17 @@ class _RosterStateStyle {
   static _RosterStateStyle of(ParticipantLiveState state) {
     switch (state) {
       case ParticipantLiveState.heartbeatStale:
-        return const _RosterStateStyle(
-          'Agent stopped reporting',
-          Icons.sensors_off,
-          0,
-        );
+        return const _RosterStateStyle(Icons.sensors_off, 0);
       case ParticipantLiveState.left:
-        return const _RosterStateStyle('Left', Icons.logout, 1);
+        return const _RosterStateStyle(Icons.logout, 1);
       case ParticipantLiveState.declined:
-        return const _RosterStateStyle('Declined', Icons.cancel_outlined, 2);
+        return const _RosterStateStyle(Icons.cancel_outlined, 2);
       case ParticipantLiveState.neverJoined:
-        return const _RosterStateStyle(
-          'Not joined',
-          Icons.radio_button_unchecked,
-          3,
-        );
+        return const _RosterStateStyle(Icons.radio_button_unchecked, 3);
       case ParticipantLiveState.joined:
-        return const _RosterStateStyle('In session', Icons.check_circle, 4);
+        return const _RosterStateStyle(Icons.check_circle, 4);
       case ParticipantLiveState.unknown:
-        return const _RosterStateStyle('Unknown', Icons.help_outline, 5);
+        return const _RosterStateStyle(Icons.help_outline, 5);
     }
   }
 
@@ -814,6 +819,24 @@ class _RosterStateStyle {
       default:
         return PlinkColors.muted;
     }
+  }
+}
+
+/// The localized label for one live participant state (#100).
+String _rosterStateLabel(AppLocalizations l10n, ParticipantLiveState s) {
+  switch (s) {
+    case ParticipantLiveState.heartbeatStale:
+      return l10n.sessionStateStale;
+    case ParticipantLiveState.left:
+      return l10n.sessionStateLeft;
+    case ParticipantLiveState.declined:
+      return l10n.sessionStateDeclined;
+    case ParticipantLiveState.neverJoined:
+      return l10n.sessionStateNotJoined;
+    case ParticipantLiveState.joined:
+      return l10n.sessionStateInSession;
+    case ParticipantLiveState.unknown:
+      return l10n.sessionStateUnknown;
   }
 }
 
@@ -851,7 +874,9 @@ class _RosterPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            'Students ($joinedCount/${participants.length} in session)',
+            AppLocalizations.of(
+              context,
+            ).sessionStudentsCount(joinedCount, participants.length),
             style: _monoLabel(PlinkColors.ink60),
           ),
           const SizedBox(height: PlinkSpacing.s3),
@@ -899,7 +924,7 @@ class _RosterRow extends StatelessWidget {
           // Orthogonal to live state — a tampered student may still be "joined".
           if (participant.tampered) ...[
             Tooltip(
-              message: 'Tampering detected',
+              message: AppLocalizations.of(context).sessionTamperTooltip,
               child: Icon(
                 Icons.gpp_maybe,
                 size: 18,
@@ -908,7 +933,10 @@ class _RosterRow extends StatelessWidget {
             ),
             const SizedBox(width: PlinkSpacing.s2),
           ],
-          Text(style.label, style: _monoLabel(color)),
+          Text(
+            _rosterStateLabel(AppLocalizations.of(context), participant.state),
+            style: _monoLabel(color),
+          ),
         ],
       ),
     );
@@ -943,7 +971,10 @@ class _PendingRequestsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text('Pending requests', style: _monoLabel(PlinkColors.ink60)),
+          Text(
+            AppLocalizations.of(context).sessionPendingRequests,
+            style: _monoLabel(PlinkColors.ink60),
+          ),
           if (error != null) ...[
             const SizedBox(height: PlinkSpacing.s2),
             Text(error!, style: TextStyle(color: theme.colorScheme.error)),
@@ -1003,9 +1034,9 @@ class _PendingRequestRow extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                summary.count == 1
-                    ? '1 student — $names'
-                    : '${summary.count} students — $names',
+                AppLocalizations.of(
+                  context,
+                ).sessionRequesters(summary.count, names),
                 style: theme.textTheme.bodySmall,
               ),
             ],
@@ -1023,18 +1054,20 @@ class _PendingRequestRow extends StatelessWidget {
                   height: 14,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Approve'),
+              : Text(AppLocalizations.of(context).actionApprove),
         ),
         PopupMenuButton<String>(
-          tooltip: 'More approval options',
+          tooltip: AppLocalizations.of(context).sessionMoreApprovalOptions,
           enabled: !isApproving,
           onSelected: (value) {
             if (value == 'class') onApproveClass();
           },
-          itemBuilder: (context) => const [
+          itemBuilder: (context) => [
             PopupMenuItem<String>(
               value: 'class',
-              child: Text('Approve for whole class'),
+              child: Text(
+                AppLocalizations.of(context).sessionApproveWholeClass,
+              ),
             ),
           ],
         ),
@@ -1068,7 +1101,10 @@ class _SessionSummaryPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text('Session summary', style: _monoLabel(PlinkColors.ink60)),
+          Text(
+            AppLocalizations.of(context).sessionSummary,
+            style: _monoLabel(PlinkColors.ink60),
+          ),
           const SizedBox(height: PlinkSpacing.s2),
           Text(lines.join('  ·  '), style: theme.textTheme.bodyMedium),
         ],
@@ -1107,7 +1143,10 @@ class _LiveBundlePanel extends StatelessWidget {
         children: <Widget>[
           Row(
             children: <Widget>[
-              Text('Allowed bundles', style: _monoLabel(PlinkColors.ink60)),
+              Text(
+                AppLocalizations.of(context).sessionAllowedBundles,
+                style: _monoLabel(PlinkColors.ink60),
+              ),
               if (busy) ...<Widget>[
                 const SizedBox(width: PlinkSpacing.s3),
                 const SizedBox(
@@ -1124,7 +1163,10 @@ class _LiveBundlePanel extends StatelessWidget {
           ],
           const SizedBox(height: PlinkSpacing.s3),
           if (available.isEmpty)
-            Text('No bundles available yet.', style: theme.textTheme.bodySmall)
+            Text(
+              AppLocalizations.of(context).sessionNoBundles,
+              style: theme.textTheme.bodySmall,
+            )
           else
             Wrap(
               spacing: PlinkSpacing.s2,
@@ -1183,7 +1225,10 @@ class _JoinCodePanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Join code', style: _monoLabel(PlinkColors.ink60)),
+                Text(
+                  AppLocalizations.of(context).sessionJoinCode,
+                  style: _monoLabel(PlinkColors.ink60),
+                ),
                 const SizedBox(height: PlinkSpacing.s2),
                 Text(
                   // Big enough to be legible across a classroom — the fallback
@@ -1200,7 +1245,7 @@ class _JoinCodePanel extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: 'Copy code',
+            tooltip: AppLocalizations.of(context).sessionCopyCode,
             color: PlinkColors.ink,
             icon: const Icon(Icons.copy),
             onPressed: onCopy,

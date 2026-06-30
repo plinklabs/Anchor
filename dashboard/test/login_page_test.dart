@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/login_page.dart';
 import 'package:anchor_dashboard/widgets/anchor_mark.dart';
 import 'package:flutter/material.dart';
@@ -62,6 +63,8 @@ Widget _host({
         PlinkProductAccent(Color(0xFF34357A)),
       ],
     ),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: LoginPage(tokens: tokens, auth: auth, silentTimeout: silentTimeout),
   );
 }

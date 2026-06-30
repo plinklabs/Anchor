@@ -1,6 +1,7 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/classes_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/add_student_search.dart';
 import 'package:anchor_dashboard/pages/classes_page.dart';
 import 'package:flutter/material.dart';
@@ -56,6 +57,8 @@ ClassMember _member(String name, String role, String id) => ClassMember(
 void main() {
   Widget host(SessionsApi sessions, ClassesApi classes) => MaterialApp(
     theme: PlinkTheme.paper,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: ClassesPage(sessions: sessions, classes: classes),
   );
 
@@ -174,6 +177,8 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: PlinkTheme.paper,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
             backgroundColor: PlinkColors.paper,
             body: AddStudentSearch(

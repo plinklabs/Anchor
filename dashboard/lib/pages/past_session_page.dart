@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/sessions_api.dart';
+import '../l10n/app_localizations.dart';
 import 'past_session_shared.dart';
 
 /// Read-only review of an ended session (AD7, #172), redesigned to the paper
@@ -40,13 +41,19 @@ class _PastSessionPageState extends State<PastSessionPage> {
   bool _loading = true;
   String? _error;
 
+  bool _didInitialLoad = false;
+
   @override
-  void initState() {
-    super.initState();
-    _load();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_didInitialLoad) {
+      _didInitialLoad = true;
+      _load();
+    }
   }
 
   Future<void> _load() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _loading = true;
       _error = null;
@@ -75,7 +82,7 @@ class _PastSessionPageState extends State<PastSessionPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load past session: $e');
+      setState(() => _error = l10n.pastLoadError('$e'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -95,7 +102,7 @@ class _PastSessionPageState extends State<PastSessionPage> {
         child: Padding(
           padding: const EdgeInsets.all(PlinkSpacing.s6),
           child: Text(
-            _error ?? 'Session not available.',
+            _error ?? AppLocalizations.of(context).pastNotAvailable,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
               color: Theme.of(context).colorScheme.error,
             ),
@@ -115,17 +122,17 @@ class _PastSessionPageState extends State<PastSessionPage> {
             _Header(detail: detail),
             const PastHairline(),
             if (detail.bundles.isNotEmpty) ...<Widget>[
-              const _PanelLabel('Bundles used'),
+              _PanelLabel(AppLocalizations.of(context).pastBundlesUsed),
               _BundlesChips(bundles: detail.bundles),
               const PastHairline(),
             ],
             if (detail.participants.isNotEmpty) ...<Widget>[
-              const _PanelLabel('Participants'),
+              _PanelLabel(AppLocalizations.of(context).pastParticipants),
               _ParticipantsList(participants: detail.participants),
               const PastHairline(),
             ],
             if (detail.summaries.isNotEmpty) ...<Widget>[
-              const _PanelLabel('Activity summary'),
+              _PanelLabel(AppLocalizations.of(context).pastActivitySummary),
               _SummaryList(
                 summaries: detail.summaries,
                 participants: detail.participants,
@@ -133,16 +140,16 @@ class _PastSessionPageState extends State<PastSessionPage> {
               const PastHairline(),
             ],
             if (detail.grants.isNotEmpty) ...<Widget>[
-              const _PanelLabel('Approved exceptions'),
+              _PanelLabel(AppLocalizations.of(context).pastApprovedExceptions),
               _GrantsList(grants: detail.grants),
               const PastHairline(),
             ],
             if (_unapprovedRequests.isNotEmpty) ...<Widget>[
-              const _PanelLabel('Unapproved requests'),
+              _PanelLabel(AppLocalizations.of(context).pastUnapprovedRequests),
               _UnapprovedList(requests: _unapprovedRequests),
               const PastHairline(),
             ],
-            const _PanelLabel('Event log'),
+            _PanelLabel(AppLocalizations.of(context).pastEventLog),
             _EventLog(
               events: detail.recentEvents,
               participants: detail.participants,
@@ -184,10 +191,15 @@ class _Header extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           // The archived marker — an outline badge, never the magenta spark.
-          const PlinkBadge('Ended', variant: BadgeVariant.outline),
+          PlinkBadge(
+            AppLocalizations.of(context).badgeEnded,
+            variant: BadgeVariant.outline,
+          ),
           const SizedBox(height: PlinkSpacing.s3),
           Text(
-            detail.className.isEmpty ? 'Session' : detail.className,
+            detail.className.isEmpty
+                ? AppLocalizations.of(context).pastSessionFallback
+                : detail.className,
             style: theme.textTheme.headlineSmall?.copyWith(
               color: PlinkColors.ink,
             ),
@@ -290,6 +302,7 @@ class _ParticipantsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     return _PanelRows(
       rows: <Widget>[
         for (final p in participants)
@@ -308,7 +321,7 @@ class _ParticipantsList extends StatelessWidget {
               Expanded(
                 flex: 5,
                 child: Text(
-                  _participantStatus(p),
+                  _participantStatus(l10n, p),
                   style: pastMonoSpec(PlinkColors.ink60, PlinkType.labelSm),
                 ),
               ),
@@ -318,18 +331,20 @@ class _ParticipantsList extends StatelessWidget {
     );
   }
 
-  String _participantStatus(SessionParticipantInfo p) {
+  String _participantStatus(AppLocalizations l10n, SessionParticipantInfo p) {
     if (p.declinedAt != null) {
-      return 'declined at ${pastFormatTime(p.declinedAt!.toLocal())}';
+      return l10n.pastStatusDeclinedAt(pastFormatTime(p.declinedAt!.toLocal()));
     }
     if (p.joinedAt == null) {
-      return 'never joined';
+      return l10n.pastStatusNeverJoined;
     }
-    final joined = 'joined ${pastFormatTime(p.joinedAt!.toLocal())}';
     if (p.leftAt != null) {
-      return '$joined  ·  left ${pastFormatTime(p.leftAt!.toLocal())}';
+      return l10n.pastStatusJoinedLeft(
+        pastFormatTime(p.joinedAt!.toLocal()),
+        pastFormatTime(p.leftAt!.toLocal()),
+      );
     }
-    return joined;
+    return l10n.pastStatusJoinedAt(pastFormatTime(p.joinedAt!.toLocal()));
   }
 }
 
@@ -476,7 +491,7 @@ class _EventLog extends StatelessWidget {
           PlinkSpacing.s6,
         ),
         child: Text(
-          'No event detail retained for this session.',
+          AppLocalizations.of(context).pastNoEventDetail,
           style: pastMonoLabel(PlinkColors.muted),
         ),
       );

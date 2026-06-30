@@ -5,6 +5,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/auth_token_store.dart';
 import '../auth/msal_auth_service.dart';
+import '../l10n/app_localizations.dart';
 import '../widgets/anchor_mark.dart';
 
 /// The dashboard sign-in page (AD2, #167) — paper treatment + brand voice.
@@ -44,6 +45,7 @@ class _LoginPageState extends State<LoginPage> {
   String? _error;
 
   Future<void> _signIn() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _busy = true;
       _error = null;
@@ -61,10 +63,7 @@ class _LoginPageState extends State<LoginPage> {
       widget.tokens.setSession(token: token, account: account);
     } on TimeoutException {
       if (!mounted) return;
-      setState(
-        () => _error =
-            'Signing in is taking longer than expected. Please try again.',
-      );
+      setState(() => _error = l10n.loginTimeoutError);
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
@@ -104,18 +103,17 @@ class _LoginPageState extends State<LoginPage> {
                       children: <Widget>[
                         const AnchorLockup(height: 30),
                         const SizedBox(height: PlinkSpacing.s8),
-                        const Eyebrow('Anchor for teachers'),
+                        Eyebrow(AppLocalizations.of(context).loginEyebrow),
                         const SizedBox(height: PlinkSpacing.s4),
                         // The one oversized Fraunces line, flush-left.
                         Text(
-                          'Ready when your class is.',
+                          AppLocalizations.of(context).loginHeadline,
                           key: const Key('login-headline'),
                           style: text.displayMedium,
                         ),
                         const SizedBox(height: PlinkSpacing.s5),
                         Text(
-                          'Sign in with your school account to start a focus '
-                          'session for a class.',
+                          AppLocalizations.of(context).loginSubtitle,
                           style: text.bodyLarge?.copyWith(
                             color: PlinkColors.ink60,
                           ),
@@ -136,7 +134,11 @@ class _LoginPageState extends State<LoginPage> {
                                     color: PlinkColors.onInk,
                                   ),
                                 )
-                              : const Text('Sign in with Microsoft'),
+                              : Text(
+                                  AppLocalizations.of(
+                                    context,
+                                  ).loginSignInButton,
+                                ),
                         ),
                         if (_error != null) ...<Widget>[
                           const SizedBox(height: PlinkSpacing.s4),

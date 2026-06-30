@@ -38,6 +38,33 @@ The Entra app registration must include `http://localhost:5173` as an SPA redire
 2. `lib/auth/msal_auth_service.dart` is a Dart-side facade with conditional imports — the real JS-interop implementation only loads on Web; non-web builds (e.g. `flutter test`) get a stub.
 3. After sign-in the access token is held in `AuthTokenStore` and attached as `Authorization: Bearer …` by `ApiClient`. The SignalR client passes it via the `access_token` query parameter (the backend `JwtBearerEvents` honors that for the hub path).
 
+## Localization (i18n)
+
+The dashboard is localized with Flutter's standard `gen-l10n` stack (#321). User-facing copy lives in ARB catalogues under [`lib/l10n/`](lib/l10n/), and widgets resolve strings through the generated `AppLocalizations` lookup:
+
+```dart
+import '../l10n/app_localizations.dart';
+// ...
+Text(AppLocalizations.of(context).homeHeadline)
+```
+
+- **Source + fallback locale:** English (`app_en.arb`) is the template. Any missing key falls back to English, and any unsupported browser/OS language falls back to English too (`localeResolutionCallback` in [`lib/main.dart`](lib/main.dart) matches on language code, e.g. `nl-BE` → `nl`, else `en`).
+- **Active language = the browser/OS language**, chosen at startup. There is no in-app language picker (out of scope for now).
+- **Locales shipped:** English (`en`) and Dutch (`nl`, proof of concept).
+
+### Add a locale
+
+1. Copy `lib/l10n/app_en.arb` to `lib/l10n/app_<code>.arb` (e.g. `app_fr.arb`), set `"@@locale": "<code>"`, and translate every value. Only the template (`app_en.arb`) carries the `@key` metadata (placeholders/plurals); translation files hold just `"key": "value"` pairs.
+2. Regenerate the typed lookup:
+
+   ```bash
+   flutter gen-l10n
+   ```
+
+   It also runs automatically on `flutter pub get` and on build (`generate: true` in [`pubspec.yaml`](pubspec.yaml); config in [`l10n.yaml`](../dashboard/l10n.yaml)). The new locale is picked up by `AppLocalizations.supportedLocales` with no further wiring.
+
+The generated files (`lib/l10n/app_localizations*.dart`) are committed so a fresh checkout analyzes/tests without a build step; they are deterministic, so regenerating produces no diff unless an ARB changed.
+
 ## Deployment
 
 `.github/workflows/dashboard-deploy.yml` builds the web bundle on every PR and pushes to Azure Static Web Apps on merges to `main`. The workflow needs the repo secret `AZURE_STATIC_WEB_APPS_API_TOKEN` — grab it from the Azure portal under the `anchor-dashboard` SWA → *Manage deployment token*.

@@ -3,6 +3,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/admins_api.dart';
 import '../api/sessions_api.dart' show ApiException;
+import '../l10n/app_localizations.dart';
 
 /// Admin-only "Manage admins" sub-tab (#300), in the paper treatment (AD5).
 ///
@@ -36,9 +37,11 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
   final Set<String> _busy = <String>{};
 
   @override
-  void initState() {
-    super.initState();
-    _loadAdmins();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_admins == null && !_loading && _error == null) {
+      _loadAdmins();
+    }
   }
 
   @override
@@ -48,6 +51,7 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
   }
 
   Future<void> _loadAdmins() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _loading = true;
       _error = null;
@@ -58,13 +62,14 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
       setState(() => _admins = list);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load admins: $e');
+      setState(() => _error = l10n.adminsLoadError('$e'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _onSearchChanged(String raw) async {
+    final l10n = AppLocalizations.of(context);
     final query = raw.trim();
     final seq = ++_searchSeq;
     if (query.isEmpty) {
@@ -85,13 +90,14 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
     } catch (e) {
       if (!mounted || seq != _searchSeq) return;
       setState(() {
-        _error = 'Search failed: $e';
+        _error = l10n.adminsSearchError('$e');
         _searching = false;
       });
     }
   }
 
   Future<void> _promote(AdminUser candidate) async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _busy.add(candidate.id);
       _error = null;
@@ -109,33 +115,32 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
       await _loadAdmins();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not promote ${candidate.displayName}: $e');
+      setState(
+        () => _error = l10n.adminsPromoteError(candidate.displayName, '$e'),
+      );
     } finally {
       if (mounted) setState(() => _busy.remove(candidate.id));
     }
   }
 
   Future<void> _remove(AdminUser admin) async {
+    final l10n = AppLocalizations.of(context);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Remove admin?'),
-        content: Text(
-          '"${admin.displayName}" will lose admin access and return to a '
-          'regular teacher/student role. They keep their account; you can '
-          'promote them again later.',
-        ),
+        title: Text(l10n.adminsRemoveTitle),
+        content: Text(l10n.adminsRemoveBody(admin.displayName)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text(l10n.actionCancel),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove'),
+            child: Text(l10n.actionRemove),
           ),
         ],
       ),
@@ -155,8 +160,8 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
       // The last-admin guard (409) is the expected, explainable failure here —
       // give it a human message rather than echoing the raw exception.
       final message = e is ApiException && e.statusCode == 409
-          ? 'Can’t remove the last admin. Promote another user first.'
-          : 'Could not remove ${admin.displayName}: $e';
+          ? l10n.adminsLastAdminError
+          : l10n.adminsRemoveError(admin.displayName, '$e');
       setState(() => _error = message);
     } finally {
       if (mounted) setState(() => _busy.remove(admin.id));
@@ -193,7 +198,10 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
                   ),
                   const SizedBox(height: PlinkSpacing.s4),
                 ],
-                Text('Current admins', style: _monoLabel(PlinkColors.ink60)),
+                Text(
+                  AppLocalizations.of(context).adminsCurrentAdmins,
+                  style: _monoLabel(PlinkColors.ink60),
+                ),
                 const SizedBox(height: PlinkSpacing.s3),
                 _buildAdminList(),
               ],
@@ -208,10 +216,13 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Add admin', style: _monoLabel(PlinkColors.ink60)),
+        Text(
+          AppLocalizations.of(context).adminsAddAdmin,
+          style: _monoLabel(PlinkColors.ink60),
+        ),
         const SizedBox(height: PlinkSpacing.s2),
         Text(
-          'Search a user who has signed in to the dashboard, then promote them.',
+          AppLocalizations.of(context).adminsAddHint,
           style: Theme.of(
             context,
           ).textTheme.bodySmall?.copyWith(color: PlinkColors.ink60),
@@ -220,10 +231,10 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
         TextField(
           key: const Key('manage-admins-search'),
           controller: _searchController,
-          decoration: const InputDecoration(
-            hintText: 'Search by name',
+          decoration: InputDecoration(
+            hintText: AppLocalizations.of(context).adminsSearchByName,
             isDense: true,
-            prefixIcon: Icon(Icons.search, size: 18),
+            prefixIcon: const Icon(Icons.search, size: 18),
           ),
           onChanged: _onSearchChanged,
         ),
@@ -240,15 +251,17 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
     if (_searching) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
-        child: Text('Searching…', style: _monoLabel(PlinkColors.muted)),
+        child: Text(
+          AppLocalizations.of(context).adminsSearching,
+          style: _monoLabel(PlinkColors.muted),
+        ),
       );
     }
     if (_candidates.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
         child: Text(
-          'No signed-in user matches. They must sign in to the dashboard at '
-          'least once before they can be promoted.',
+          AppLocalizations.of(context).adminsNoCandidates,
           key: const Key('manage-admins-no-candidates'),
           style: _monoLabel(PlinkColors.muted),
         ),
@@ -287,7 +300,10 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
       );
     }
     if (admins == null || admins.isEmpty) {
-      return Text('No admins.', style: _monoLabel(PlinkColors.muted));
+      return Text(
+        AppLocalizations.of(context).adminsNoAdmins,
+        style: _monoLabel(PlinkColors.muted),
+      );
     }
     return Container(
       decoration: BoxDecoration(
@@ -341,7 +357,7 @@ class _CandidateRow extends StatelessWidget {
           OutlinedButton.icon(
             key: Key('admin-add-${candidate.id}'),
             icon: const Icon(Icons.add, size: 18),
-            label: const Text('Add'),
+            label: Text(AppLocalizations.of(context).actionAdd),
             onPressed: busy ? null : onAdd,
           ),
         ],
@@ -385,7 +401,7 @@ class _AdminRow extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.person_remove_outlined, size: 18),
-            label: const Text('Remove'),
+            label: Text(AppLocalizations.of(context).actionRemove),
             onPressed: busy ? null : onRemove,
           ),
         ],
