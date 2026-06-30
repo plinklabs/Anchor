@@ -21,5 +21,8 @@ class MsalAuthServiceImpl implements MsalAuthService {
   Future<String> acquireToken() async => _unsupported();
 
   @override
+  Future<String> acquireTokenSilent() async => _unsupported();
+
+  @override
   AccountInfo? currentAccount() => null;
 }

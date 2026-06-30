@@ -41,6 +41,8 @@ class _FakeAuth implements MsalAuthService {
   @override
   Future<String> acquireToken() async => 'fake-token';
   @override
+  Future<String> acquireTokenSilent() async => 'fake-token';
+  @override
   AccountInfo? currentAccount() => null;
 }
 

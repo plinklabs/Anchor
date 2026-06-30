@@ -42,6 +42,12 @@ class _FakeAuth implements MsalAuthService {
   }
 
   @override
+  Future<String> acquireTokenSilent() {
+    if (hangAcquire) return Completer<String>().future; // never completes
+    return Future<String>.value('fake-token');
+  }
+
+  @override
   AccountInfo? currentAccount() => account;
 }
 
