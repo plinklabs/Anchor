@@ -98,3 +98,15 @@ jobs:
             -d web-server \
             --browser-name=chrome \
             --headless
+
+      # Boots the real app as an admin and drives Admin → Bundles import/export:
+      # import a JSON file (fake file-IO seam), see the new bundle listed, then
+      # export it back to JSON (#304).
+      - name: Run bundles import/export e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/bundles_import_export_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
