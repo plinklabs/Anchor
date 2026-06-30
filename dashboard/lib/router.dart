@@ -6,6 +6,7 @@ import 'api/admins_api.dart';
 import 'api/auth_token_store.dart';
 import 'api/bundles_api.dart';
 import 'api/classes_api.dart';
+import 'api/schools_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
 import 'realtime/session_hub_client.dart';
@@ -15,6 +16,7 @@ import 'pages/history_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 import 'pages/manage_admins_page.dart';
+import 'pages/manage_schools_page.dart';
 import 'pages/past_session_page.dart';
 import 'pages/session_page.dart';
 import 'widgets/admin_shell.dart';
@@ -27,6 +29,7 @@ GoRouter buildRouter({
   required BundlesApi bundles,
   required ClassesApi classes,
   required AdminsApi admins,
+  required SchoolsApi schools,
   required Uri apiBaseUrl,
   SessionHubClientFactory? hubClientFactory,
   Duration loginSilentTimeout = const Duration(seconds: 30),
@@ -113,6 +116,11 @@ GoRouter buildRouter({
                 path: '/admin/admins',
                 builder: (context, state) => ManageAdminsPage(admins: admins),
               ),
+              GoRoute(
+                path: '/admin/schools',
+                builder: (context, state) =>
+                    ManageSchoolsPage(schools: schools),
+              ),
             ],
           ),
           GoRoute(
@@ -148,6 +156,7 @@ AppSection _sectionFor(String location) {
 /// Maps an `/admin/...` location to its sub-page for the [AdminShell] rail.
 AdminSection _adminSectionFor(String location) {
   if (location.startsWith('/admin/admins')) return AdminSection.admins;
+  if (location.startsWith('/admin/schools')) return AdminSection.schools;
   // Bundles is the default landing sub-page (bare `/admin` redirects here).
   return AdminSection.bundles;
 }

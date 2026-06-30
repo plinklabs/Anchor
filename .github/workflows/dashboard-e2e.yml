@@ -87,3 +87,14 @@ jobs:
             -d web-server \
             --browser-name=chrome \
             --headless
+
+      # Boots the real app as an admin and drives the Admin → Schools sub-tab:
+      # render the schools list and deactivate one via its toggle (#301).
+      - name: Run manage-schools e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/manage_schools_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless

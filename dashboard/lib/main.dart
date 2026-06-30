@@ -6,6 +6,7 @@ import 'api/api_client.dart';
 import 'api/auth_token_store.dart';
 import 'api/bundles_api.dart';
 import 'api/classes_api.dart';
+import 'api/schools_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
 import 'auth/msal_config.dart';
@@ -33,6 +34,7 @@ void main() {
   final bundles = BundlesApi(api);
   final classes = ClassesApi(api);
   final admins = AdminsApi(api);
+  final schools = SchoolsApi(api);
 
   runApp(
     AnchorDashboard(
@@ -43,6 +45,7 @@ void main() {
       bundles: bundles,
       classes: classes,
       admins: admins,
+      schools: schools,
       apiBaseUrl: Uri.parse(apiBase),
     ),
   );
@@ -59,6 +62,7 @@ class AnchorDashboard extends StatefulWidget {
     required this.classes,
     required this.apiBaseUrl,
     this.admins,
+    this.schools,
     this.hubClientFactory,
     this.loginSilentTimeout = const Duration(seconds: 30),
   });
@@ -74,6 +78,10 @@ class AnchorDashboard extends StatefulWidget {
   /// Client for the admin-management surface (#300). Optional so existing call
   /// sites (tests) need not supply it — defaults to one built from [api].
   final AdminsApi? admins;
+
+  /// Client for the admin schools surface (#301). Optional so existing call
+  /// sites (tests) need not supply it — defaults to one built from [api].
+  final SchoolsApi? schools;
 
   /// Overrides the live-feed builder for the session view (#132). Null in
   /// production; an integration test injects a stubbed feed to drive the real
@@ -97,6 +105,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     bundles: widget.bundles,
     classes: widget.classes,
     admins: widget.admins ?? AdminsApi(widget.api),
+    schools: widget.schools ?? SchoolsApi(widget.api),
     apiBaseUrl: widget.apiBaseUrl,
     hubClientFactory: widget.hubClientFactory,
     loginSilentTimeout: widget.loginSilentTimeout,

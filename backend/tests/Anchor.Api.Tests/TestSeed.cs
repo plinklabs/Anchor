@@ -1,5 +1,6 @@
 using Anchor.Domain.Bundles;
 using Anchor.Domain.Classes;
+using Anchor.Domain.Schools;
 using Anchor.Domain.Sessions;
 using Anchor.Domain.Users;
 using Anchor.Infrastructure.Persistence;
@@ -75,6 +76,27 @@ internal static class TestSeed
         db.Users.Add(user);
         await db.SaveChangesAsync();
         return user;
+    }
+
+    public static async Task<School> AddSchoolAsync(AnchorApiFactory factory, string name, bool isActive)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var school = new School { Name = name, IsActive = isActive };
+        db.Schools.Add(school);
+        await db.SaveChangesAsync();
+        return school;
+    }
+
+    /// Empties the persisted Schools table so a test can exercise the
+    /// "not configured yet" path (the teacher selector's Graph fallback) on the
+    /// shared per-class fixture DB regardless of what other tests left behind.
+    public static async Task ClearSchoolsAsync(AnchorApiFactory factory)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        db.Schools.RemoveRange(db.Schools);
+        await db.SaveChangesAsync();
     }
 
     public static async Task<Bundle> AddBundleAsync(AnchorApiFactory factory, string name, bool isArchived = false)
