@@ -118,8 +118,58 @@ public sealed class MeController : ControllerBase
 
         return new MeResponse(target.Id, target.EntraOid, target.DisplayName, target.Role);
     }
+
+    /// <summary>
+    /// Admin-only: demote another admin (referenced by their internal user id)
+    /// back to a non-admin role (#300). Refuses to demote the last remaining
+    /// admin so an admin can't lock everyone out of the admin area.
+    /// </summary>
+    /// <remarks>
+    /// Demotes to <see cref="UserRole.Teacher"/> rather than the user's true
+    /// underlying identity, which we no longer know once the DB row was raised
+    /// to Admin. This is self-healing: the next time the user signs in, the
+    /// <c>/me</c> upsert overwrites the (non-Admin) role with whatever the
+    /// Teacher/Student claim on their JWT actually carries.
+    /// </remarks>
+    [HttpPost("demote")]
+    [Authorize(Policy = AuthorizationPolicies.Admin)]
+    [ProducesResponseType(typeof(MeResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<MeResponse>> DemoteFromAdmin(
+        [FromBody] DemoteFromAdminRequest request,
+        CancellationToken cancellationToken)
+    {
+        var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == request.UserId, cancellationToken);
+        if (target is null)
+            return NotFound();
+
+        if (target.Role == UserRole.Admin)
+        {
+            // Never remove the final admin — that would leave the admin area
+            // (and any future admin-only governance) unreachable without SQL.
+            var adminCount = await _db.Users.CountAsync(u => u.Role == UserRole.Admin, cancellationToken);
+            if (adminCount <= 1)
+            {
+                return Conflict(new ProblemDetails
+                {
+                    Title = "Cannot remove the last admin.",
+                    Detail = "Promote another user to admin before demoting this one.",
+                });
+            }
+
+            target.Role = UserRole.Teacher;
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+
+        return new MeResponse(target.Id, target.EntraOid, target.DisplayName, target.Role);
+    }
 }
 
 public sealed record MeResponse(Guid Id, Guid EntraOid, string DisplayName, UserRole Role);
 
 public sealed record PromoteToAdminRequest(Guid UserId);
+
+public sealed record DemoteFromAdminRequest(Guid UserId);

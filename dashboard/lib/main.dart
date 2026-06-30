@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import 'api/admins_api.dart';
 import 'api/api_client.dart';
 import 'api/auth_token_store.dart';
 import 'api/bundles_api.dart';
@@ -31,6 +32,7 @@ void main() {
   final sessions = SessionsApi(api);
   final bundles = BundlesApi(api);
   final classes = ClassesApi(api);
+  final admins = AdminsApi(api);
 
   runApp(
     AnchorDashboard(
@@ -40,6 +42,7 @@ void main() {
       sessions: sessions,
       bundles: bundles,
       classes: classes,
+      admins: admins,
       apiBaseUrl: Uri.parse(apiBase),
     ),
   );
@@ -55,6 +58,7 @@ class AnchorDashboard extends StatefulWidget {
     required this.bundles,
     required this.classes,
     required this.apiBaseUrl,
+    this.admins,
     this.hubClientFactory,
     this.loginSilentTimeout = const Duration(seconds: 30),
   });
@@ -66,6 +70,10 @@ class AnchorDashboard extends StatefulWidget {
   final BundlesApi bundles;
   final ClassesApi classes;
   final Uri apiBaseUrl;
+
+  /// Client for the admin-management surface (#300). Optional so existing call
+  /// sites (tests) need not supply it — defaults to one built from [api].
+  final AdminsApi? admins;
 
   /// Overrides the live-feed builder for the session view (#132). Null in
   /// production; an integration test injects a stubbed feed to drive the real
@@ -88,6 +96,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     sessions: widget.sessions,
     bundles: widget.bundles,
     classes: widget.classes,
+    admins: widget.admins ?? AdminsApi(widget.api),
     apiBaseUrl: widget.apiBaseUrl,
     hubClientFactory: widget.hubClientFactory,
     loginSilentTimeout: widget.loginSilentTimeout,
