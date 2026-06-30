@@ -2,6 +2,7 @@ using Anchor.Api;
 using Anchor.Api.Auth;
 using Anchor.Api.Events;
 using Anchor.Api.Realtime;
+using Anchor.Api.Schools;
 using Anchor.Api.Sessions;
 using Anchor.Api.Persistence;
 using Anchor.Infrastructure;
@@ -27,6 +28,7 @@ builder.Services
     .AddInMemoryTokenCaches();
 
 builder.Services.AddScoped<IUserDirectorySearch, GraphUserDirectorySearch>();
+builder.Services.AddScoped<ISchoolDirectory, SchoolDirectory>();
 
 builder.Services.Configure<JwtBearerOptions>(
     JwtBearerDefaults.AuthenticationScheme,
