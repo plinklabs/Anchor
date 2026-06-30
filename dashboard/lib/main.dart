@@ -111,12 +111,12 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     loginSilentTimeout: widget.loginSilentTimeout,
   );
 
-  // Rehydrate the session from MSAL before the router runs, so a page reload
-  // with a still-valid cached session lands straight on the app instead of
-  // forcing a re-login (#302). The router only knows you're signed in via the
-  // in-memory [AuthTokenStore], which starts empty on every fresh page load —
-  // but MSAL still holds the session in sessionStorage. The build gates on this
-  // future so we never flash /login before the check resolves.
+  // Rehydrate the session from MSAL before the router runs, so a reload (or a
+  // reopened tab) with a still-valid cached session lands straight on the app
+  // instead of forcing a re-login (#302). The router only knows you're signed
+  // in via the in-memory [AuthTokenStore], which starts empty on every fresh
+  // page load — but MSAL still holds the session in localStorage. The build
+  // gates on this future so we never flash /login before the check resolves.
   late final Future<void> _restored = _restoreSession();
 
   Future<void> _restoreSession() async {

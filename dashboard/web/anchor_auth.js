@@ -31,7 +31,11 @@
         redirectUri: window.location.origin,
         postLogoutRedirectUri: window.location.origin,
       },
-      cache: { cacheLocation: 'sessionStorage' },
+      // localStorage, not sessionStorage: Anchor is BYOD (personal devices),
+      // so the session should survive a full tab/browser close, not just a
+      // reload — there's no shared-machine risk of the next user inheriting it
+      // (#302).
+      cache: { cacheLocation: 'localStorage' },
     });
     await pca.initialize();
     // Drain any redirect response (we use popup, but this is harmless).
