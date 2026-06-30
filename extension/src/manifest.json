@@ -2,7 +2,8 @@
   "manifest_version": 3,
   "name": "Anchor",
   "version": "0.3.0",
-  "description": "Anchor focus-session enforcement — URL filter and friendly block page.",
+  "default_locale": "en",
+  "description": "__MSG_extDescription__",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsHE5oof5UlWSkNDPFJwWMxEtF/Ca0brkjzZ2v8GhXhpQ1VUs3pbTP3KUD68bEByPrvbm8CQkr+RdVHGjVMPgAR2YKwzoSlXp69+BGVQuPo6W06MvbnVyjNE/OQc8lhaIK9iAlALdppCaQjjRJIVEHqx3DBGzG6eeNr/NKQ1IzNeayC2B2mFWz2DyeEmGj+G0l0b1AiE3i7pMxEgRgerUwO93/DXvddEZxd95t9MLnHc0rdSUP1Q9/yLocvyuanuascN8X941qkJbmoUT5NH5duGmnto+5CIQo9KGZF07ajl7VlNPsCUFZ7hvCn3v3IEYzB23LPMN2VSetgFFL313HQIDAQAB",
   "icons": {
     "16": "icons/icon-16.png",

@@ -52,7 +52,7 @@ describe('block page — calm student-facing redesign (AE1 / #177)', () => {
   });
 
   it('uses a calm, reassuring headline rather than a punitive one', () => {
-    expect(html).toMatch(/<h1>Let's stay on track<\/h1>/);
+    expect(html).toMatch(/<h1[^>]*>Let's stay on track<\/h1>/);
   });
 });
 

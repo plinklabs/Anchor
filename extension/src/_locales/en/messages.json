@@ -1,0 +1,107 @@
+{
+  "extDescription": {
+    "message": "Anchor focus-session enforcement — URL filter and friendly block page.",
+    "description": "Extension description shown in the browser's extensions page and store listing."
+  },
+
+  "focusSession": {
+    "message": "Focus session",
+    "description": "Eyebrow label marking an active focus session (block page + popup)."
+  },
+  "requestAccess": {
+    "message": "Request access",
+    "description": "Button: ask the teacher to allow the blocked site."
+  },
+  "focusEnforcement": {
+    "message": "Anchor focus enforcement",
+    "description": "Footnote shown at the bottom of the block page and popup."
+  },
+
+  "blockPageTitle": {
+    "message": "Blocked by Anchor",
+    "description": "Browser tab title for the block page."
+  },
+  "blockHeadline": {
+    "message": "Let's stay on track",
+    "description": "Calm, reassuring block-page headline."
+  },
+  "blockBody": {
+    "message": "You're in an active focus session, so this site is paused for now. Nothing's wrong — it just isn't on the allowlist yet.",
+    "description": "Block-page explanation of why the site is paused."
+  },
+  "blockAskTeacher": {
+    "message": "Need this site for your work? Ask your teacher and they can add it from the dashboard — the page will open on its own once they do.",
+    "description": "Block-page hint about requesting access from the teacher."
+  },
+  "goBack": {
+    "message": "Go back",
+    "description": "Button: return to the previous page."
+  },
+  "blockUnknownUrl": {
+    "message": "(unknown)",
+    "description": "Shown in place of the blocked URL when none was provided."
+  },
+  "blockNoSession": {
+    "message": "No active session — reload the page.",
+    "description": "Status shown when the block page has no session to attach a request to."
+  },
+  "blockSendingRequest": {
+    "message": "Sending request to your teacher…",
+    "description": "Status while an unblock request is being sent."
+  },
+  "blockRequested": {
+    "message": "Requested — waiting for teacher.",
+    "description": "Status after an unblock request was sent successfully."
+  },
+  "blockReachTeacherFailed": {
+    "message": "Couldn't reach teacher: $reason$",
+    "description": "Error status when an unblock request could not be delivered.",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "hub unavailable"
+      }
+    }
+  },
+  "blockApproved": {
+    "message": "Approved — opening the page…",
+    "description": "Status when the teacher approved access and the page is reopening."
+  },
+  "blockReasonUnknown": {
+    "message": "Unknown error",
+    "description": "Fallback reason embedded in blockReachTeacherFailed when the background reports none."
+  },
+
+  "popupActiveTitle": {
+    "message": "You're in focus",
+    "description": "Popup headline while a focus session is active."
+  },
+  "popupActiveBody": {
+    "message": "Anchor is keeping you on the sites your teacher allowed. Everything else is paused until the session ends.",
+    "description": "Popup body while a focus session is active."
+  },
+  "popupClassCode": {
+    "message": "Class code",
+    "description": "Label before the class join code in the popup."
+  },
+  "popupAllowedSites": {
+    "message": "Allowed sites",
+    "description": "Label above the list of allowed sites in the popup."
+  },
+  "popupAllowlistEmpty": {
+    "message": "Only your school's baseline sites are allowed right now.",
+    "description": "Shown when the active session's allowlist adds no sites beyond the baseline."
+  },
+  "popupIdleTitle": {
+    "message": "No active session",
+    "description": "Popup headline when no focus session is running."
+  },
+  "popupIdleBody": {
+    "message": "You're free to browse. Anchor only steps in once your teacher starts a focus session for your class.",
+    "description": "Popup body when no focus session is running."
+  },
+  "popupEyebrowIdle": {
+    "message": "Idle",
+    "description": "Eyebrow label shown in the popup when no session is active."
+  }
+}
