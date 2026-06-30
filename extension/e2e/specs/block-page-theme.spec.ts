@@ -57,6 +57,13 @@ test('the block page renders on the DS ink theme with the bundled fonts', async 
     'rgb(126, 128, 210)',
   );
 
+  // #318: the blocked URL must be legible, not white-on-white. With the ink
+  // tokens resolved it renders as on-ink text (#FAF7F2) on the inset panel
+  // (paper-3 #2B2B38) — a clear light-on-dark pair, not inherited-and-hoped-for.
+  const blockedUrl = page.locator('[data-blocked-url]');
+  await expect(blockedUrl).toHaveCSS('color', 'rgb(250, 247, 242)');
+  await expect(blockedUrl).toHaveCSS('background-color', 'rgb(43, 43, 56)');
+
   // AE1 (#177): the calm focus-session mark is the signature concentric-ring
   // ping (not the old static dot). It renders, in the on-ink magenta, and is
   // actually animating — the real-browser proof the living mark is wired, not
