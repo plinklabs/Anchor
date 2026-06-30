@@ -62,6 +62,12 @@ export interface LoadedExtension {
   /** Write settings, cold-restart the SW, and wait for the hub to connect.
    *  Returns the post-restart service worker. */
   configure(settings?: ExtensionSettings): Promise<Worker>;
+  /** Read chrome.storage.local restart-safe (#313): re-acquires the live
+   *  service worker on every attempt and retries if the MV3 worker idle-
+   *  terminates mid-`evaluate` (Playwright throws "Service worker restarted"
+   *  on the stale handle). Use this for every storage read instead of capturing
+   *  `serviceWorkers()[0]` and awaiting `evaluate` on it. */
+  getStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T>;
   close(): Promise<void>;
 }
 
@@ -140,6 +146,9 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     logs,
     waitForLog,
     configure,
+    getStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T> {
+      return readStorage<T>(context, keys);
+    },
     async close() {
       await context.close();
       if (witnessHost) {
@@ -157,6 +166,37 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
 /** First service worker, waiting for it to register if it hasn't yet. */
 async function getServiceWorker(context: BrowserContext): Promise<Worker> {
   return context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+}
+
+/** Read chrome.storage.local in a way that survives an MV3 idle-restart (#313).
+ *  An idle service worker can be torn down between the moment we grab its handle
+ *  and the moment `evaluate` runs, at which point Playwright throws "Service
+ *  worker restarted". We re-acquire the live worker on each attempt — the
+ *  `evaluate` itself wakes a terminated worker — and retry a couple of times
+ *  before giving up. */
+async function readStorage<T = Record<string, unknown>>(
+  context: BrowserContext,
+  keys: string | string[],
+): Promise<T> {
+  const keyList = Array.isArray(keys) ? keys : [keys];
+  const MAX_ATTEMPTS = 3;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const sw = await getServiceWorker(context);
+    try {
+      return (await sw.evaluate(
+        (k) => chrome.storage.local.get<{ [key: string]: unknown }>(k),
+        keyList,
+      )) as T;
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('Service worker restarted')) {
+        lastError = err;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 }
 
 /** Collect every console line from the context (pages + service workers) and

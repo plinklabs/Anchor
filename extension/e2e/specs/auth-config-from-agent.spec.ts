@@ -54,8 +54,7 @@ test.describe('auth config handed down by the agent (#289)', () => {
       );
 
       // The stored config is exactly what the agent (host) handed down.
-      const sw = ext.context.serviceWorkers()[0]!;
-      const stored = await sw.evaluate(() => chrome.storage.local.get('authConfig'));
+      const stored = await ext.getStorage('authConfig');
       expect(stored.authConfig).toEqual(AUTH);
     } finally {
       await ext.close();
