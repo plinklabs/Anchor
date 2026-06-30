@@ -32,10 +32,14 @@ extension/
 ├── src/
 │   ├── manifest.json         — MV3 manifest (permissions, background SW)
 │   ├── background.ts         — service worker; navigation filter + hub client
+│   ├── _locales/             — chrome.i18n catalogues (en source + nl)
+│   │   ├── en/messages.json
+│   │   └── nl/messages.json
 │   ├── content/
 │   │   ├── block-page.html   — friendly block page
 │   │   └── block-page.ts     — block-page script (Go back / Request access)
 │   └── shared/
+│       ├── i18n.ts           — chrome.i18n seam (t() + localizeDocument)
 │       ├── host-matcher.ts   — pure URL/host allowlist matcher
 │       ├── host-matcher.test.ts — vitest unit tests for the matcher
 │       ├── hub-client.ts     — @microsoft/signalr wrapper
@@ -181,6 +185,44 @@ npm run watch
 
 Rollup rebuilds on file change. Edge picks up changes after clicking **Reload**
 on the extension card at `edge://extensions`.
+
+## Localization (i18n)
+
+The extension is localized with Chrome's native **`chrome.i18n`** (#322, part of
+the cross-surface effort #320). Catalogues live in
+[`src/_locales/<lang>/messages.json`](src/_locales); rollup copies `_locales/`
+to `dist/` so they ship at the extension root, and `manifest.json` declares
+`"default_locale": "en"`.
+
+- **Locale resolution** is the browser's UI language, chosen automatically by
+  the browser. **English (`en`) is the source and fallback**: a key missing from
+  the active locale (or an unsupported language) renders the `en` message — never
+  a blank or a raw key. `nl` (Dutch) ships as the proof-of-concept locale.
+- **How strings resolve.** Static page copy carries a `data-i18n="<key>"`
+  attribute and is filled by [`localizeDocument()`](src/shared/i18n.ts) on load;
+  dynamic strings (status messages, the idle eyebrow) go through `t('<key>')`.
+  Both live in [`src/shared/i18n.ts`](src/shared/i18n.ts), the only seam that
+  touches `chrome.i18n`. The inline English text in the HTML mirrors the `en`
+  catalogue (so the page reads correctly before scripting runs);
+  [`i18n.test.ts`](src/shared/i18n.test.ts) locks the two together so they can't
+  drift — the same idea as the manifest/package.json version lock.
+
+### Adding a new locale
+
+1. Copy [`src/_locales/en/messages.json`](src/_locales/en/messages.json) to
+   `src/_locales/<lang>/messages.json` (e.g. `de`, `fr-CA`) and translate each
+   `message`. Keep the keys and any `placeholders` identical to `en` — leave the
+   key out only if there is genuinely nothing to translate (it then falls back to
+   English).
+2. `npm test` — [`i18n.test.ts`](src/shared/i18n.test.ts) checks the new
+   catalogue carries exactly the `en` keys (and matching placeholders), so a
+   missing or stray key fails fast.
+3. Optionally add an e2e check modelled on
+   [`e2e/specs/i18n-dutch.spec.ts`](e2e/specs/i18n-dutch.spec.ts) (launch the
+   extension with `loadExtension({ locale: '<lang>' })` and assert the rendered
+   copy).
+
+No build wiring changes are needed — rollup copies the whole `_locales/` tree.
 
 ## Test
 

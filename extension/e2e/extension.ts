@@ -41,6 +41,12 @@ export interface LoadExtensionOptions {
    * sign-in itself can't be driven without a real tenant, so it's out of scope).
    */
   witnessAuth?: { tenantId: string; clientId: string; scope: string };
+  /**
+   * BCP-47 UI language to launch the browser in (e.g. `nl`). Passed as Chromium's
+   * `--lang`, which is what `chrome.i18n` selects its `_locales/<lang>` catalogue
+   * from (#322). Omit for the host default (en on the CI runners).
+   */
+  locale?: string;
 }
 
 export interface ExtensionSettings {
@@ -99,12 +105,16 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: BROWSER_CHANNEL,
     headless: HEADLESS,
+    // `--lang` sets the browser UI language chrome.i18n reads (#322); `locale`
+    // keeps navigator.language/Accept-Language consistent with it.
+    ...(options.locale ? { locale: options.locale } : {}),
     args: [
       `--disable-extensions-except=${DIST_PATH}`,
       `--load-extension=${DIST_PATH}`,
       // Resolve the synthetic test hosts to the local static server so specs
       // never hit the public internet (config.MAPPED_HOSTS).
       `--host-resolver-rules=${hostRule}`,
+      ...(options.locale ? [`--lang=${options.locale}`] : []),
     ],
   });
 
