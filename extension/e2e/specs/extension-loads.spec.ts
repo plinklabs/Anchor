@@ -30,10 +30,7 @@ test('configure() points the SW at the backend and connects the hub', async ({ e
   await ext.configure({ backendUrl: BACKEND_URL, devImpersonateOid: STUDENT_OID });
 
   // The settings round-tripped through chrome.storage.local…
-  const sw = ext.context.serviceWorkers()[0]!;
-  const stored = await sw.evaluate(() =>
-    chrome.storage.local.get(['backendUrl', 'devImpersonateOid']),
-  );
+  const stored = await ext.getStorage(['backendUrl', 'devImpersonateOid']);
   expect(stored.backendUrl).toBe(BACKEND_URL);
   expect(stored.devImpersonateOid).toBe(STUDENT_OID);
 

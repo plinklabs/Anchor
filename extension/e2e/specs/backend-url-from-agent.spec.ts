@@ -45,8 +45,7 @@ test.describe('backend URL handed down by the agent (#204)', () => {
 
       // The stored value is exactly what the agent (host) handed down — proving
       // it was not a baked-in default.
-      const sw = ext.context.serviceWorkers()[0]!;
-      const stored = await sw.evaluate(() => chrome.storage.local.get('backendUrl'));
+      const stored = await ext.getStorage('backendUrl');
       expect(stored.backendUrl).toBe(BACKEND_URL);
     } finally {
       await ext.close();
