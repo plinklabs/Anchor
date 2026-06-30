@@ -390,10 +390,14 @@ automates steps 1–4 below end to end (resource group, Entra app registrations,
 Bicep deploy, and writing the GitHub secrets/variables). It is idempotent and
 resumable — safe to re-run after a partial/timed-out run, and safe to point at
 an environment that already exists (it adopts existing resource regions and the
-live Entra client id rather than recreating or moving them). Pick a fork suffix
-and your region(s):
+live Entra client id rather than recreating or moving them). Run it from
+**PowerShell 7+** (`pwsh`) — the guided UX uses PwshSpectreConsole, which the
+script bootstrap-installs on first run. A bare run prompts for everything; pass
+the parameters and `-NonInteractive` for CI. Pick a fork suffix and your
+region(s):
 
 ```powershell
+./scripts/setup.ps1                                     # guided: prompts for everything
 ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf   # dry-run plan, no changes
 ./scripts/setup.ps1 -UniqueSuffix lincolnhigh           # provision + wire GitHub
 ```
