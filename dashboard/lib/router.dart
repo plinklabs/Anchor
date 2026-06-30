@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import 'api/admins_api.dart';
 import 'api/auth_token_store.dart';
 import 'api/bundles_api.dart';
 import 'api/classes_api.dart';
@@ -13,6 +14,7 @@ import 'pages/classes_page.dart';
 import 'pages/history_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
+import 'pages/manage_admins_page.dart';
 import 'pages/past_session_page.dart';
 import 'pages/session_page.dart';
 import 'widgets/admin_shell.dart';
@@ -24,6 +26,7 @@ GoRouter buildRouter({
   required SessionsApi sessions,
   required BundlesApi bundles,
   required ClassesApi classes,
+  required AdminsApi admins,
   required Uri apiBaseUrl,
   SessionHubClientFactory? hubClientFactory,
   Duration loginSilentTimeout = const Duration(seconds: 30),
@@ -106,6 +109,10 @@ GoRouter buildRouter({
                 builder: (context, state) =>
                     BundlesPage(bundles: bundles, sessions: sessions),
               ),
+              GoRoute(
+                path: '/admin/admins',
+                builder: (context, state) => ManageAdminsPage(admins: admins),
+              ),
             ],
           ),
           GoRoute(
@@ -140,7 +147,8 @@ AppSection _sectionFor(String location) {
 
 /// Maps an `/admin/...` location to its sub-page for the [AdminShell] rail.
 AdminSection _adminSectionFor(String location) {
-  // Only Bundles today; new admin sub-pages add their own branch here.
+  if (location.startsWith('/admin/admins')) return AdminSection.admins;
+  // Bundles is the default landing sub-page (bare `/admin` redirects here).
   return AdminSection.bundles;
 }
 

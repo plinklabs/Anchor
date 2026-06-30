@@ -4,7 +4,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 /// The admin-area sub-pages, each reached from the left vertical sub-nav. New
 /// admin features (manage admins, schools) slot in here as further values — the
 /// sub-nav is the extension point so they never clutter the primary app-bar.
-enum AdminSection { bundles }
+enum AdminSection { bundles, admins }
 
 /// Chrome for the admin area (#299): a left vertical sub-navigation beside the
 /// routed sub-page [child]. Sits *inside* the shared [AppShell] (which still
@@ -56,6 +56,7 @@ class AdminShell extends StatelessWidget {
 /// entry here plus its route.
 const List<({AdminSection section, String label, String location})> _items = [
   (section: AdminSection.bundles, label: 'Bundles', location: '/admin/bundles'),
+  (section: AdminSection.admins, label: 'Admins', location: '/admin/admins'),
 ];
 
 class _SubNav extends StatelessWidget {
