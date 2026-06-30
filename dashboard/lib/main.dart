@@ -10,6 +10,7 @@ import 'api/schools_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
 import 'auth/msal_config.dart';
+import 'bundles/bundle_file_io.dart';
 import 'realtime/session_hub_client.dart';
 import 'router.dart';
 
@@ -64,6 +65,7 @@ class AnchorDashboard extends StatefulWidget {
     this.admins,
     this.schools,
     this.hubClientFactory,
+    this.bundleFileIo,
     this.loginSilentTimeout = const Duration(seconds: 30),
   });
 
@@ -88,6 +90,12 @@ class AnchorDashboard extends StatefulWidget {
   /// app without a real SignalR hub.
   final SessionHubClientFactory? hubClientFactory;
 
+  /// Overrides the bundle import/export file-IO seam (#304). Null in
+  /// production (the real `package:web` implementation is built on demand); an
+  /// integration test injects a fake so the flow runs without an OS file
+  /// dialog.
+  final BundleFileIo? bundleFileIo;
+
   /// Upper bound on the non-interactive steps of sign-in, forwarded to
   /// [LoginPage.silentTimeout] (#303). Defaults to the production value; an
   /// integration test shortens it to drive the timeout without a real wait.
@@ -108,6 +116,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     schools: widget.schools ?? SchoolsApi(widget.api),
     apiBaseUrl: widget.apiBaseUrl,
     hubClientFactory: widget.hubClientFactory,
+    bundleFileIo: widget.bundleFileIo,
     loginSilentTimeout: widget.loginSilentTimeout,
   );
 

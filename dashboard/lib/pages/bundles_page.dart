@@ -3,6 +3,8 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
+import '../bundles/bundle_file_io.dart';
+import '../bundles/bundle_format.dart';
 
 /// Admin-only catalogue editor for bundles (#75), redesigned to the paper
 /// treatment (AD5, #170).
@@ -19,10 +21,20 @@ import '../api/sessions_api.dart';
 /// instrument, not a console of buttons. Edits take effect at the next session
 /// start (footer); live updates to active sessions are out of scope.
 class BundlesPage extends StatefulWidget {
-  const BundlesPage({super.key, required this.bundles, required this.sessions});
+  const BundlesPage({
+    super.key,
+    required this.bundles,
+    required this.sessions,
+    this.fileIo,
+  });
 
   final BundlesApi bundles;
   final SessionsApi sessions;
+
+  /// Browser file-IO seam for import/export (#304). Null in production — the
+  /// page lazily builds the real `package:web` implementation; an integration
+  /// test injects a fake so the flow runs without an OS file dialog.
+  final BundleFileIo? fileIo;
 
   @override
   State<BundlesPage> createState() => _BundlesPageState();
@@ -43,6 +55,11 @@ class _BundlesPageState extends State<BundlesPage> {
   final TextEditingController _testController = TextEditingController();
   String? _testResult;
   bool _saving = false;
+  bool _porting = false;
+
+  // Built lazily so production uses the real package:web seam while tests that
+  // never touch import/export don't have to supply one.
+  late final BundleFileIo _fileIo = widget.fileIo ?? createBundleFileIo();
 
   @override
   void initState() {
@@ -328,6 +345,177 @@ class _BundlesPageState extends State<BundlesPage> {
     });
   }
 
+  // ---- import / export (#304) ----
+
+  /// Downloads the selected bundle as a single bare-object JSON file.
+  Future<void> _exportSelected() async {
+    final selected = _selected;
+    if (selected == null) return;
+    final data = BundleData(
+      name: selected.name,
+      entries: selected.entries
+          .map(
+            (e) => BundleEntry(
+              kind: e.kind,
+              value: e.value,
+              matchType: e.matchType,
+            ),
+          )
+          .toList(),
+    );
+    _fileIo.downloadJson(
+      '${bundleFileNameStem(selected.name)}.json',
+      exportBundleToJson(data),
+    );
+  }
+
+  /// Downloads every bundle in the current view as one envelope JSON file. The
+  /// list only carries summaries, so this fetches each bundle's entries (N+1,
+  /// fine for an admin catalogue of a handful of bundles).
+  Future<void> _exportAll() async {
+    final list = _list;
+    if (list == null || list.isEmpty) {
+      _snack('Nothing to export — the catalogue is empty.');
+      return;
+    }
+    setState(() {
+      _porting = true;
+      _error = null;
+    });
+    try {
+      final data = <BundleData>[];
+      for (final summary in list) {
+        final detail = await widget.bundles.get(summary.id);
+        data.add(
+          BundleData(
+            name: detail.name,
+            entries: detail.entries
+                .map(
+                  (e) => BundleEntry(
+                    kind: e.kind,
+                    value: e.value,
+                    matchType: e.matchType,
+                  ),
+                )
+                .toList(),
+          ),
+        );
+      }
+      _fileIo.downloadJson('bundles.json', exportBundlesToJson(data));
+      _snack('Exported ${data.length} bundle${data.length == 1 ? '' : 's'}.');
+    } catch (e) {
+      _snack('Export failed: $e');
+    } finally {
+      if (mounted) setState(() => _porting = false);
+    }
+  }
+
+  /// Picks a JSON file, validates it, and upserts each bundle by name: an
+  /// existing name (archived or not) is updated, a new one is created.
+  Future<void> _import() async {
+    final raw = await _fileIo.pickJsonFile();
+    if (raw == null) return; // No file chosen.
+
+    final parsed = parseBundlesJson(raw);
+    if (!parsed.ok) {
+      await _showImportErrors(parsed.errors);
+      return;
+    }
+
+    setState(() {
+      _porting = true;
+      _error = null;
+    });
+    try {
+      // Match by name across the whole catalogue (including archived) so an
+      // archived bundle is updated/un-archived in place rather than duplicated —
+      // create only guards name uniqueness among non-archived bundles.
+      final existing = await widget.bundles.list(includeArchived: true);
+      final idByName = {for (final b in existing) b.name.toLowerCase(): b.id};
+
+      var created = 0;
+      var updated = 0;
+      final failures = <String>[];
+      for (final bundle in parsed.bundles) {
+        try {
+          final id = idByName[bundle.name.toLowerCase()];
+          if (id == null) {
+            await widget.bundles.create(bundle.name, bundle.entries);
+            created++;
+          } else {
+            await widget.bundles.update(id, bundle.name, bundle.entries);
+            updated++;
+          }
+        } catch (e) {
+          failures.add('"${bundle.name}": $e');
+        }
+      }
+
+      await _refreshList();
+      if (failures.isEmpty) {
+        _snack(
+          'Imported ${parsed.bundles.length} bundle'
+          '${parsed.bundles.length == 1 ? '' : 's'} '
+          '($created created, $updated updated).',
+        );
+      } else {
+        await _showImportErrors(
+          failures,
+          title:
+              'Imported with ${failures.length} failure'
+              '${failures.length == 1 ? '' : 's'} '
+              '($created created, $updated updated)',
+        );
+      }
+    } catch (e) {
+      _snack('Import failed: $e');
+    } finally {
+      if (mounted) setState(() => _porting = false);
+    }
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _showImportErrors(
+    List<String> errors, {
+    String title = 'Import rejected',
+  }) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 460,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final e in errors)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+                    child: Text('• $e'),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_denied) {
@@ -399,16 +587,41 @@ class _BundlesPageState extends State<BundlesPage> {
             PlinkSpacing.s4,
             PlinkSpacing.s4,
           ),
-          child: SizedBox(
-            width: double.infinity,
-            // Calm ink action — creating a draft is navigation, not the
-            // constructive commit. The magenta spark is reserved for Save.
-            child: OutlinedButton.icon(
-              key: const Key('bundles-new-button'),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('New bundle'),
-              onPressed: _startNew,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Calm ink action — creating a draft is navigation, not the
+              // constructive commit. The magenta spark is reserved for Save.
+              OutlinedButton.icon(
+                key: const Key('bundles-new-button'),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('New bundle'),
+                onPressed: _startNew,
+              ),
+              const SizedBox(height: PlinkSpacing.s1),
+              // Import / export sit a tier quieter than New bundle — backup and
+              // bulk-authoring affordances, not the primary create path (#304).
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton.icon(
+                      key: const Key('bundles-import-button'),
+                      icon: const Icon(Icons.upload_file, size: 18),
+                      label: const Text('Import'),
+                      onPressed: _porting ? null : _import,
+                    ),
+                  ),
+                  Expanded(
+                    child: TextButton.icon(
+                      key: const Key('bundles-export-all-button'),
+                      icon: const Icon(Icons.download, size: 18),
+                      label: const Text('Export all'),
+                      onPressed: _porting ? null : _exportAll,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
         const _Hairline(),
@@ -533,7 +746,28 @@ class _BundlesPageState extends State<BundlesPage> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _buildDestructiveAction(),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildDestructiveAction(),
+                      // Export the saved bundle as a JSON file (#304). Only the
+                      // persisted version is exportable — an unsaved draft has
+                      // no stable shape to round-trip, so this hides for a new
+                      // draft.
+                      if (selected != null) ...[
+                        const SizedBox(width: PlinkSpacing.s2),
+                        Tooltip(
+                          message: 'Download this bundle as a JSON file.',
+                          child: OutlinedButton.icon(
+                            key: const Key('bundles-export-button'),
+                            icon: const Icon(Icons.download, size: 18),
+                            label: const Text('Export'),
+                            onPressed: _porting ? null : _exportSelected,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                   // The one magenta spark on the page: the constructive commit.
                   // The DS theme paints ElevatedButton in the spark.
                   ElevatedButton(

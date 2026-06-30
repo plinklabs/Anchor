@@ -9,6 +9,7 @@ import 'api/classes_api.dart';
 import 'api/schools_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
+import 'bundles/bundle_file_io.dart';
 import 'realtime/session_hub_client.dart';
 import 'pages/bundles_page.dart';
 import 'pages/classes_page.dart';
@@ -32,6 +33,7 @@ GoRouter buildRouter({
   required SchoolsApi schools,
   required Uri apiBaseUrl,
   SessionHubClientFactory? hubClientFactory,
+  BundleFileIo? bundleFileIo,
   Duration loginSilentTimeout = const Duration(seconds: 30),
 }) {
   return GoRouter(
@@ -109,8 +111,11 @@ GoRouter buildRouter({
             routes: [
               GoRoute(
                 path: '/admin/bundles',
-                builder: (context, state) =>
-                    BundlesPage(bundles: bundles, sessions: sessions),
+                builder: (context, state) => BundlesPage(
+                  bundles: bundles,
+                  sessions: sessions,
+                  fileIo: bundleFileIo,
+                ),
               ),
               GoRoute(
                 path: '/admin/admins',

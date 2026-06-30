@@ -38,6 +38,11 @@ dependencies:
   http: ^1.6.0
   signalr_core: ^1.1.2
 
+  # Browser APIs (anchor download + file input) for bundle import/export
+  # (#304). The dashboard is web-only, so the concrete file-IO seam targets
+  # package:web behind a conditional import; non-web builds use a stub.
+  web: ^0.5.1
+
   # Plink Labs design system — Flutter binding (PlinkTheme + brand widgets +
   # bundled fonts). Not on pub.dev; consumed as a git dependency (AF3, #164).
   # Pinned to the upstream develop commit where the DS-2 binding lives until it
