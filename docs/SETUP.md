@@ -138,6 +138,12 @@ the two that used to be manual:
 
 ## Prerequisites
 
+- [PowerShell 7+](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows)
+  (`pwsh`) — the script's guided UX uses
+  [PwshSpectreConsole](https://github.com/ShaunLawrie/PwshSpectreConsole), which
+  needs PowerShell 7. The script bootstrap-installs that module for the current
+  user on first run, so you don't have to. (Windows PowerShell 5.1 is no longer
+  enough.)
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (`az`)
   — and `az login`.
 - [GitHub CLI](https://cli.github.com/) (`gh`) — and `gh auth status` logged in —

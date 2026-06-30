@@ -12,7 +12,13 @@ workflows consume → grant Entra admin consent. This is the **only path you nee
 for an automated install** — the alternatives further down are not extra steps
 to run on top of it.
 
+Run it from **PowerShell 7+** (`pwsh`): the guided UX uses PwshSpectreConsole,
+which the script bootstrap-installs on first run. A bare `./scripts/setup.ps1`
+is interactive (it asks for the suffix, region, repo, etc.); pass the parameters
+and `-NonInteractive` for CI.
+
 ```powershell
+./scripts/setup.ps1                                     # guided: prompts for everything
 ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf   # dry-run: prints the full plan, changes nothing
 ./scripts/setup.ps1 -UniqueSuffix lincolnhigh           # provision + wire GitHub
 ```
