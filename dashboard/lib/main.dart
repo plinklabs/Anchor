@@ -111,20 +111,68 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     loginSilentTimeout: widget.loginSilentTimeout,
   );
 
+  // Rehydrate the session from MSAL before the router runs, so a reload (or a
+  // reopened tab) with a still-valid cached session lands straight on the app
+  // instead of forcing a re-login (#302). The router only knows you're signed
+  // in via the in-memory [AuthTokenStore], which starts empty on every fresh
+  // page load — but MSAL still holds the session in localStorage. The build
+  // gates on this future so we never flash /login before the check resolves.
+  late final Future<void> _restored = _restoreSession();
+
+  Future<void> _restoreSession() async {
+    try {
+      await widget.auth.initialize().timeout(widget.loginSilentTimeout);
+      final account = widget.auth.currentAccount();
+      // No cached account → genuinely signed out; let the router go to /login.
+      if (account == null) return;
+      // Silent only: a boot-time interactive popup would be jarring (and is
+      // blocked without a user gesture). If it can't be acquired silently, we
+      // fall through to /login for an explicit sign-in.
+      final token = await widget.auth.acquireTokenSilent().timeout(
+        widget.loginSilentTimeout,
+      );
+      widget.tokens.setSession(token: token, account: account);
+    } catch (_) {
+      // No MSAL on this platform, no restorable account, an expired session
+      // that needs interaction, or a stalled silent renewal — all mean "not
+      // restorable". Leave the store empty; the router sends the user to
+      // /login.
+    }
+  }
+
+  // Teacher-facing surface: paper (light) only — never the ink theme
+  // (ANCHOR_BRAND.md §3). The one Anchor identity layered on the Plink
+  // foundations is the deep-indigo product accent (#34357A on paper),
+  // reserved for the mark/identity rule; magenta stays the spark.
+  ThemeData get _theme => PlinkTheme.paper.copyWith(
+    extensions: const <ThemeExtension<dynamic>>[
+      PlinkProductAccent(Color(0xFF34357A)),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp.router(
-      title: 'Anchor',
-      // Teacher-facing surface: paper (light) only — never the ink theme
-      // (ANCHOR_BRAND.md §3). The one Anchor identity layered on the Plink
-      // foundations is the deep-indigo product accent (#34357A on paper),
-      // reserved for the mark/identity rule; magenta stays the spark.
-      theme: PlinkTheme.paper.copyWith(
-        extensions: const <ThemeExtension<dynamic>>[
-          PlinkProductAccent(Color(0xFF34357A)),
-        ],
-      ),
-      routerConfig: _router,
+    return FutureBuilder<void>(
+      future: _restored,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          // Quiet boot gate while we check for a restorable session, so a
+          // reload never flashes the login page before rehydration resolves.
+          return MaterialApp(
+            title: 'Anchor',
+            theme: _theme,
+            home: const Scaffold(
+              backgroundColor: PlinkColors.paper,
+              body: Center(child: CircularProgressIndicator()),
+            ),
+          );
+        }
+        return MaterialApp.router(
+          title: 'Anchor',
+          theme: _theme,
+          routerConfig: _router,
+        );
+      },
     );
   }
 }

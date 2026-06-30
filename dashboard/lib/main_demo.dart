@@ -49,6 +49,8 @@ class _DemoAuth implements MsalAuthService {
   @override
   Future<String> acquireToken() async => 'demo-token';
   @override
+  Future<String> acquireTokenSilent() async => 'demo-token';
+  @override
   AccountInfo? currentAccount() => null;
 }
 

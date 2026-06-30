@@ -12,6 +12,7 @@ extension type _AnchorAuthJs._(JSObject _) implements JSObject {
   external JSPromise<JSAny?> signIn();
   external JSPromise<JSAny?> signOut();
   external JSPromise<JSString> acquireToken();
+  external JSPromise<JSString> acquireTokenSilent();
   external JSAny? getAccount();
 }
 
@@ -88,6 +89,12 @@ class MsalAuthServiceImpl implements MsalAuthService {
   @override
   Future<String> acquireToken() async {
     final result = await _js.acquireToken().toDart;
+    return result.toDart;
+  }
+
+  @override
+  Future<String> acquireTokenSilent() async {
+    final result = await _js.acquireTokenSilent().toDart;
     return result.toDart;
   }
 
