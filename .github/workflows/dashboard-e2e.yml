@@ -39,13 +39,25 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Boots AnchorDashboard in headless Chrome and drives the live-session view:
-      # a SignalR roster transition, an unblock-request push, a UI bundle PUT, and
-      # the event feed. chromedriver is started in-step so it outlives into the
-      # drive; $CHROMEWEBDRIVER is preset on the GitHub-hosted ubuntu image.
-      - name: Run live-session e2e (web, headless Chrome)
+      # Boots the real app from an unauthenticated state and drives the sign-in
+      # flow, including the #303 stalled-silent-step → retryable-error path
+      # (#308). chromedriver is started in-step so it outlives into the drive;
+      # $CHROMEWEBDRIVER is preset on the GitHub-hosted ubuntu image.
+      - name: Run login e2e (web, headless Chrome)
         run: |
           "$CHROMEWEBDRIVER/chromedriver" --port=4444 &
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/login_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
+
+      # Boots AnchorDashboard in headless Chrome and drives the live-session view:
+      # a SignalR roster transition, an unblock-request push, a UI bundle PUT, and
+      # the event feed. A fresh `flutter drive` reuses the chromedriver started above.
+      - name: Run live-session e2e (web, headless Chrome)
+        run: |
           flutter drive \
             --driver=test_driver/integration_test.dart \
             --target=integration_test/live_session_test.dart \
