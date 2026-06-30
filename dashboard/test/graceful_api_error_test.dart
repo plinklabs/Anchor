@@ -5,6 +5,7 @@ import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/pages/classes_page.dart';
 import 'package:anchor_dashboard/pages/history_page.dart';
 import 'package:anchor_dashboard/pages/home_page.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/widgets/api_error_text.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -20,6 +21,13 @@ import 'package:plink_design_system/plink_design_system.dart';
 // Classes) end-to-end against a 403.
 
 const String _notAuthorizedFragment = "isn't set up as a teacher yet";
+
+// The localized not-authorized copy is supplied by the caller (#321); the
+// helper itself no longer hard-codes it. These unit tests pass the English
+// value directly so the 403 assertion still sees the fragment.
+const String _notAuthorizedMessage =
+    "Your account isn't set up as a teacher yet. "
+    'Ask an administrator to grant access.';
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -83,7 +91,12 @@ Widget _homeHost(SessionsApi sessions) {
       ),
     ],
   );
-  return MaterialApp.router(theme: PlinkTheme.paper, routerConfig: router);
+  return MaterialApp.router(
+    theme: PlinkTheme.paper,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    routerConfig: router,
+  );
 }
 
 Widget _historyHost(SessionsApi sessions) {
@@ -95,11 +108,18 @@ Widget _historyHost(SessionsApi sessions) {
       ),
     ],
   );
-  return MaterialApp.router(theme: PlinkTheme.paper, routerConfig: router);
+  return MaterialApp.router(
+    theme: PlinkTheme.paper,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    routerConfig: router,
+  );
 }
 
 Widget _classesHost(SessionsApi sessions, ClassesApi classes) => MaterialApp(
   theme: PlinkTheme.paper,
+  localizationsDelegates: AppLocalizations.localizationsDelegates,
+  supportedLocales: AppLocalizations.supportedLocales,
   home: ClassesPage(sessions: sessions, classes: classes),
 );
 
@@ -113,7 +133,11 @@ void _bigWindow(WidgetTester tester) {
 void main() {
   group('describeApiError', () {
     test('maps a 403 to the calm not-authorized notice', () {
-      final msg = describeApiError(ApiException(403, ''), generic: 'boom');
+      final msg = describeApiError(
+        ApiException(403, ''),
+        generic: 'boom',
+        notAuthorized: _notAuthorizedMessage,
+      );
       expect(msg.isAuthorization, isTrue);
       expect(msg.text, contains(_notAuthorizedFragment));
       // Never leaks the raw exception toString().
@@ -124,13 +148,18 @@ void main() {
       final msg = describeApiError(
         ApiException(500, 'stacktrace'),
         generic: 'boom',
+        notAuthorized: _notAuthorizedMessage,
       );
       expect(msg.isAuthorization, isFalse);
       expect(msg.text, 'boom');
     });
 
     test('falls back to the generic message for a non-API error', () {
-      final msg = describeApiError(Exception('socket'), generic: 'boom');
+      final msg = describeApiError(
+        Exception('socket'),
+        generic: 'boom',
+        notAuthorized: _notAuthorizedMessage,
+      );
       expect(msg.isAuthorization, isFalse);
       expect(msg.text, 'boom');
     });

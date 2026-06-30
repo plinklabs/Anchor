@@ -1,5 +1,6 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/history_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -60,7 +61,12 @@ void main() {
         ),
       ],
     );
-    return MaterialApp.router(theme: PlinkTheme.paper, routerConfig: router);
+    return MaterialApp.router(
+      theme: PlinkTheme.paper,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      routerConfig: router,
+    );
   }
 
   testWidgets(

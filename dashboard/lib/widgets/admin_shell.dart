@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../l10n/app_localizations.dart';
+
 /// The admin-area sub-pages, each reached from the left vertical sub-nav. New
 /// admin features (manage admins, schools) slot in here as further values — the
 /// sub-nav is the extension point so they never clutter the primary app-bar.
@@ -54,11 +56,21 @@ class AdminShell extends StatelessWidget {
 
 /// The admin sub-pages, in rail order. Adding a new admin feature is a single
 /// entry here plus its route.
-const List<({AdminSection section, String label, String location})> _items = [
-  (section: AdminSection.bundles, label: 'Bundles', location: '/admin/bundles'),
-  (section: AdminSection.admins, label: 'Admins', location: '/admin/admins'),
-  (section: AdminSection.schools, label: 'Schools', location: '/admin/schools'),
+const List<({AdminSection section, String location})> _items = [
+  (section: AdminSection.bundles, location: '/admin/bundles'),
+  (section: AdminSection.admins, location: '/admin/admins'),
+  (section: AdminSection.schools, location: '/admin/schools'),
 ];
+
+/// The localized display label for an admin sub-nav [section].
+String _adminNavLabel(BuildContext c, AdminSection s) {
+  final AppLocalizations l10n = AppLocalizations.of(c);
+  return switch (s) {
+    AdminSection.bundles => l10n.adminNavBundles,
+    AdminSection.admins => l10n.adminNavAdmins,
+    AdminSection.schools => l10n.adminNavSchools,
+  };
+}
 
 class _SubNav extends StatelessWidget {
   const _SubNav({required this.section, required this.onNavigate});
@@ -75,7 +87,7 @@ class _SubNav extends StatelessWidget {
         for (final item in _items)
           _SubNavItem(
             section: item.section,
-            label: item.label,
+            label: _adminNavLabel(context, item.section),
             active: item.section == section,
             onTap: () => onNavigate(item.location),
           ),

@@ -11,6 +11,7 @@ import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
 import 'auth/msal_config.dart';
 import 'bundles/bundle_file_io.dart';
+import 'l10n/app_localizations.dart';
 import 'realtime/session_hub_client.dart';
 import 'router.dart';
 
@@ -159,6 +160,26 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
     ],
   );
 
+  /// Resolve the active locale from the browser/OS language (#321), falling
+  /// back to English for any unsupported language. Match on the language code
+  /// alone (e.g. `nl-BE` → `nl`) so a regional variant still gets its language,
+  /// and default to `en` — the source + fallback locale — when nothing matches.
+  /// A missing *key* within a matched locale still falls back to English via
+  /// gen-l10n's per-message fallback; this only chooses the locale.
+  static Locale _resolveLocale(
+    Locale? deviceLocale,
+    Iterable<Locale> supported,
+  ) {
+    if (deviceLocale != null) {
+      for (final Locale candidate in supported) {
+        if (candidate.languageCode == deviceLocale.languageCode) {
+          return candidate;
+        }
+      }
+    }
+    return const Locale('en');
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<void>(
@@ -170,6 +191,9 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
           return MaterialApp(
             title: 'Anchor',
             theme: _theme,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            localeResolutionCallback: _resolveLocale,
             home: const Scaffold(
               backgroundColor: PlinkColors.paper,
               body: Center(child: CircularProgressIndicator()),
@@ -179,6 +203,9 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
         return MaterialApp.router(
           title: 'Anchor',
           theme: _theme,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          localeResolutionCallback: _resolveLocale,
           routerConfig: _router,
         );
       },

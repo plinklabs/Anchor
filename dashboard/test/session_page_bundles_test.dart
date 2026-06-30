@@ -2,6 +2,7 @@ import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -79,6 +80,8 @@ void main() {
           // NoSplash avoids loading the ink_sparkle fragment shader, which fails
           // to decode under the test engine when a tap triggers a ripple.
           theme: ThemeData(splashFactory: NoSplash.splashFactory),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: SessionPage(
             sessionId: '11111111-2222-3333-4444-555555555555',
             tokens: AuthTokenStore(),

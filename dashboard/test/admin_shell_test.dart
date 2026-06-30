@@ -1,3 +1,4 @@
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/widgets/admin_shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,8 @@ Widget _host({
   Widget? child,
 }) {
   return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
       body: AdminShell(
         section: section,

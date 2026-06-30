@@ -5,6 +5,7 @@ import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
 import '../bundles/bundle_file_io.dart';
 import '../bundles/bundle_format.dart';
+import '../l10n/app_localizations.dart';
 
 /// Admin-only catalogue editor for bundles (#75), redesigned to the paper
 /// treatment (AD5, #170).
@@ -85,11 +86,17 @@ class _BundlesPageState extends State<BundlesPage> {
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load: $e');
+      // Read l10n here (not before the first await): _bootstrap runs from
+      // initState, where depending on an inherited widget is illegal until the
+      // first frame. By the catch, the element is mounted and context is valid.
+      setState(
+        () => _error = AppLocalizations.of(context).bundlesLoadError('$e'),
+      );
     }
   }
 
   Future<void> _refreshList() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _loading = true;
       _error = null;
@@ -109,13 +116,14 @@ class _BundlesPageState extends State<BundlesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Could not load bundles: $e');
+      setState(() => _error = l10n.bundlesLoadListError('$e'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _openBundle(BundleSummary summary) async {
+    final l10n = AppLocalizations.of(context);
     setState(() => _loading = true);
     try {
       final detail = await widget.bundles.get(summary.id);
@@ -130,7 +138,7 @@ class _BundlesPageState extends State<BundlesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Failed to load bundle: $e');
+      setState(() => _error = l10n.bundlesLoadOneError('$e'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -183,19 +191,20 @@ class _BundlesPageState extends State<BundlesPage> {
   }
 
   Future<void> _save() async {
+    final l10n = AppLocalizations.of(context);
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = 'Name is required.');
+      setState(() => _error = l10n.bundlesNameRequired);
       return;
     }
     final entries = <BundleEntry>[];
     for (final row in _entries) {
       final value = row.controller.text.trim();
       if (value.isEmpty) {
-        setState(() => _error = 'Every entry must have a value.');
+        setState(() => _error = l10n.bundlesEntryValueRequired);
         return;
       }
-      final validation = _validateEntry(row.kind, row.matchType, value);
+      final validation = _validateEntry(l10n, row.kind, row.matchType, value);
       if (validation != null) {
         setState(() => _error = validation);
         return;
@@ -205,7 +214,7 @@ class _BundlesPageState extends State<BundlesPage> {
       );
     }
     if (entries.isEmpty) {
-      setState(() => _error = 'At least one entry is required.');
+      setState(() => _error = l10n.bundlesEntryAtLeastOne);
       return;
     }
 
@@ -230,31 +239,29 @@ class _BundlesPageState extends State<BundlesPage> {
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Save failed: $e');
+      setState(() => _error = l10n.bundlesSaveError('$e'));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _archive() async {
+    final l10n = AppLocalizations.of(context);
     final selected = _selected;
     if (selected == null) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Archive bundle?'),
-        content: Text(
-          '"${selected.name}" will be hidden from the picker. '
-          'Past sessions referencing it stay intact. You can restore it later by editing.',
-        ),
+        title: Text(l10n.bundlesArchiveTitle),
+        content: Text(l10n.bundlesArchiveBody(selected.name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text(l10n.actionCancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Archive'),
+            child: Text(l10n.bundlesArchive),
           ),
         ],
       ),
@@ -271,34 +278,32 @@ class _BundlesPageState extends State<BundlesPage> {
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Archive failed: $e');
+      setState(() => _error = l10n.bundlesArchiveError('$e'));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   Future<void> _delete() async {
+    final l10n = AppLocalizations.of(context);
     final selected = _selected;
     if (selected == null) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete bundle?'),
-        content: Text(
-          '"${selected.name}" will be permanently removed. '
-          'This cannot be undone. Available because no session has ever used this bundle.',
-        ),
+        title: Text(l10n.bundlesDeleteTitle),
+        content: Text(l10n.bundlesDeleteBody(selected.name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text(l10n.actionCancel),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(context).colorScheme.error,
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
+            child: Text(l10n.actionDelete),
           ),
         ],
       ),
@@ -315,13 +320,14 @@ class _BundlesPageState extends State<BundlesPage> {
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = 'Delete failed: $e');
+      setState(() => _error = l10n.bundlesDeleteError('$e'));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   void _runTest() {
+    final l10n = AppLocalizations.of(context);
     final probe = _testController.text.trim();
     if (probe.isEmpty) {
       setState(() => _testResult = null);
@@ -336,11 +342,13 @@ class _BundlesPageState extends State<BundlesPage> {
     }
     setState(() {
       if (hit == null) {
-        _testResult = 'No entry matches "$probe".';
+        _testResult = l10n.bundlesTestNoMatch(probe);
       } else {
-        _testResult =
-            'Matches "${hit.controller.text.trim()}" '
-            '(${_kindLabel(hit.kind)} / ${_matchTypeLabel(hit.matchType)}).';
+        _testResult = l10n.bundlesTestMatch(
+          hit.controller.text.trim(),
+          _kindLabel(l10n, hit.kind),
+          _matchTypeLabel(l10n, hit.matchType),
+        );
       }
     });
   }
@@ -373,9 +381,10 @@ class _BundlesPageState extends State<BundlesPage> {
   /// list only carries summaries, so this fetches each bundle's entries (N+1,
   /// fine for an admin catalogue of a handful of bundles).
   Future<void> _exportAll() async {
+    final l10n = AppLocalizations.of(context);
     final list = _list;
     if (list == null || list.isEmpty) {
-      _snack('Nothing to export — the catalogue is empty.');
+      _snack(l10n.bundlesNothingToExport);
       return;
     }
     setState(() {
@@ -402,9 +411,9 @@ class _BundlesPageState extends State<BundlesPage> {
         );
       }
       _fileIo.downloadJson('bundles.json', exportBundlesToJson(data));
-      _snack('Exported ${data.length} bundle${data.length == 1 ? '' : 's'}.');
+      _snack(l10n.bundlesExported(data.length));
     } catch (e) {
-      _snack('Export failed: $e');
+      _snack(l10n.bundlesExportError('$e'));
     } finally {
       if (mounted) setState(() => _porting = false);
     }
@@ -413,6 +422,7 @@ class _BundlesPageState extends State<BundlesPage> {
   /// Picks a JSON file, validates it, and upserts each bundle by name: an
   /// existing name (archived or not) is updated, a new one is created.
   Future<void> _import() async {
+    final l10n = AppLocalizations.of(context);
     final raw = await _fileIo.pickJsonFile();
     if (raw == null) return; // No file chosen.
 
@@ -453,22 +463,19 @@ class _BundlesPageState extends State<BundlesPage> {
 
       await _refreshList();
       if (failures.isEmpty) {
-        _snack(
-          'Imported ${parsed.bundles.length} bundle'
-          '${parsed.bundles.length == 1 ? '' : 's'} '
-          '($created created, $updated updated).',
-        );
+        _snack(l10n.bundlesImported(parsed.bundles.length, created, updated));
       } else {
         await _showImportErrors(
           failures,
-          title:
-              'Imported with ${failures.length} failure'
-              '${failures.length == 1 ? '' : 's'} '
-              '($created created, $updated updated)',
+          title: l10n.bundlesImportedWithFailures(
+            failures.length,
+            created,
+            updated,
+          ),
         );
       }
     } catch (e) {
-      _snack('Import failed: $e');
+      _snack(l10n.bundlesImportError('$e'));
     } finally {
       if (mounted) setState(() => _porting = false);
     }
@@ -481,15 +488,12 @@ class _BundlesPageState extends State<BundlesPage> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _showImportErrors(
-    List<String> errors, {
-    String title = 'Import rejected',
-  }) async {
+  Future<void> _showImportErrors(List<String> errors, {String? title}) async {
     if (!mounted) return;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
+        title: Text(title ?? AppLocalizations.of(ctx).bundlesImportRejected),
         content: SizedBox(
           width: 460,
           child: SingleChildScrollView(
@@ -509,7 +513,7 @@ class _BundlesPageState extends State<BundlesPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
+            child: Text(AppLocalizations.of(ctx).actionClose),
           ),
         ],
       ),
@@ -519,9 +523,11 @@ class _BundlesPageState extends State<BundlesPage> {
   @override
   Widget build(BuildContext context) {
     if (_denied) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: PlinkColors.paper,
-        body: Center(child: Text('Admin access required.')),
+        body: Center(
+          child: Text(AppLocalizations.of(context).bundlesAdminRequired),
+        ),
       );
     }
 
@@ -558,14 +564,20 @@ class _BundlesPageState extends State<BundlesPage> {
           child: Row(
             children: [
               Expanded(
-                child: Text('Catalogue', style: _monoLabel(PlinkColors.ink60)),
+                child: Text(
+                  AppLocalizations.of(context).bundlesCatalogue,
+                  style: _monoLabel(PlinkColors.ink60),
+                ),
               ),
-              Text('Archived', style: _monoLabel(PlinkColors.muted)),
+              Text(
+                AppLocalizations.of(context).badgeArchived,
+                style: _monoLabel(PlinkColors.muted),
+              ),
               const SizedBox(width: PlinkSpacing.s2),
               // Compact so the toggle sits on the label baseline rather than
               // eating the row height.
               Tooltip(
-                message: 'Show archived bundles',
+                message: AppLocalizations.of(context).bundlesShowArchived,
                 child: Transform.scale(
                   scale: 0.8,
                   child: Switch(
@@ -595,7 +607,7 @@ class _BundlesPageState extends State<BundlesPage> {
               OutlinedButton.icon(
                 key: const Key('bundles-new-button'),
                 icon: const Icon(Icons.add, size: 18),
-                label: const Text('New bundle'),
+                label: Text(AppLocalizations.of(context).bundlesNewBundle),
                 onPressed: _startNew,
               ),
               const SizedBox(height: PlinkSpacing.s1),
@@ -607,7 +619,7 @@ class _BundlesPageState extends State<BundlesPage> {
                     child: TextButton.icon(
                       key: const Key('bundles-import-button'),
                       icon: const Icon(Icons.upload_file, size: 18),
-                      label: const Text('Import'),
+                      label: Text(AppLocalizations.of(context).actionImport),
                       onPressed: _porting ? null : _import,
                     ),
                   ),
@@ -615,7 +627,9 @@ class _BundlesPageState extends State<BundlesPage> {
                     child: TextButton.icon(
                       key: const Key('bundles-export-all-button'),
                       icon: const Icon(Icons.download, size: 18),
-                      label: const Text('Export all'),
+                      label: Text(
+                        AppLocalizations.of(context).bundlesExportAll,
+                      ),
                       onPressed: _porting ? null : _exportAll,
                     ),
                   ),
@@ -631,7 +645,7 @@ class _BundlesPageState extends State<BundlesPage> {
               : list == null || list.isEmpty
               ? Center(
                   child: Text(
-                    'No bundles.',
+                    AppLocalizations.of(context).bundlesNoBundles,
                     style: _monoLabel(PlinkColors.muted),
                   ),
                 )
@@ -654,12 +668,13 @@ class _BundlesPageState extends State<BundlesPage> {
   }
 
   Widget _buildEditor() {
+    final l10n = AppLocalizations.of(context);
     if (_selected == null && !_isNewDraft) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(PlinkSpacing.s6),
           child: Text(
-            'Select a bundle, or start a new one.',
+            l10n.bundlesSelectOrNew,
             style: _monoLabel(PlinkColors.muted),
             textAlign: TextAlign.center,
           ),
@@ -695,8 +710,8 @@ class _BundlesPageState extends State<BundlesPage> {
                     child: TextField(
                       controller: _nameController,
                       style: Theme.of(context).textTheme.titleMedium,
-                      decoration: const InputDecoration(
-                        labelText: 'Name',
+                      decoration: InputDecoration(
+                        labelText: l10n.bundlesNameLabel,
                         isDense: true,
                       ),
                     ),
@@ -708,14 +723,14 @@ class _BundlesPageState extends State<BundlesPage> {
                     PlinkBadge('v${selected.version}'),
                     if (selected.isArchived) ...[
                       const SizedBox(width: PlinkSpacing.s2),
-                      const PlinkBadge('Archived'),
+                      PlinkBadge(l10n.badgeArchived),
                     ],
                   ],
                 ],
               ),
               const SizedBox(height: PlinkSpacing.s6),
               _EntrySection(
-                title: 'Domains',
+                title: AppLocalizations.of(context).bundlesDomains,
                 rows: domains,
                 kind: BundleEntryKind.domain,
                 onAdd: () => _addEntry(BundleEntryKind.domain),
@@ -724,7 +739,7 @@ class _BundlesPageState extends State<BundlesPage> {
               ),
               const SizedBox(height: PlinkSpacing.s6),
               _EntrySection(
-                title: 'Apps',
+                title: AppLocalizations.of(context).bundlesApps,
                 rows: apps,
                 kind: BundleEntryKind.app,
                 onAdd: () => _addEntry(BundleEntryKind.app),
@@ -757,11 +772,11 @@ class _BundlesPageState extends State<BundlesPage> {
                       if (selected != null) ...[
                         const SizedBox(width: PlinkSpacing.s2),
                         Tooltip(
-                          message: 'Download this bundle as a JSON file.',
+                          message: l10n.bundlesExportTooltip,
                           child: OutlinedButton.icon(
                             key: const Key('bundles-export-button'),
                             icon: const Icon(Icons.download, size: 18),
-                            label: const Text('Export'),
+                            label: Text(l10n.bundlesExport),
                             onPressed: _porting ? null : _exportSelected,
                           ),
                         ),
@@ -782,13 +797,15 @@ class _BundlesPageState extends State<BundlesPage> {
                               color: PlinkColors.onInk,
                             ),
                           )
-                        : Text(_isNewDraft ? 'Create' : 'Save'),
+                        : Text(
+                            _isNewDraft ? l10n.actionCreate : l10n.actionSave,
+                          ),
                   ),
                 ],
               ),
               const SizedBox(height: PlinkSpacing.s3),
               Text(
-                'Edits take effect at the next session start.',
+                l10n.bundlesEditsFooter,
                 style: _monoLabel(PlinkColors.muted),
               ),
             ],
@@ -808,11 +825,10 @@ class _BundlesPageState extends State<BundlesPage> {
 
     if (!selected.hasBeenUsed) {
       return Tooltip(
-        message:
-            'Permanently delete — this bundle has never been used in a session.',
+        message: AppLocalizations.of(context).bundlesDeleteTooltip,
         child: OutlinedButton.icon(
           icon: const Icon(Icons.delete_outline, size: 18),
-          label: const Text('Delete'),
+          label: Text(AppLocalizations.of(context).actionDelete),
           onPressed: _saving ? null : _delete,
         ),
       );
@@ -820,11 +836,10 @@ class _BundlesPageState extends State<BundlesPage> {
 
     if (!selected.isArchived) {
       return Tooltip(
-        message:
-            'Hide from the picker. Hard delete is not possible because this bundle has been used in past sessions.',
+        message: AppLocalizations.of(context).bundlesArchiveTooltip,
         child: OutlinedButton.icon(
           icon: const Icon(Icons.archive_outlined, size: 18),
-          label: const Text('Archive'),
+          label: Text(AppLocalizations.of(context).bundlesArchive),
           onPressed: _saving ? null : _archive,
         ),
       );
@@ -848,10 +863,13 @@ class _BundlesPageState extends State<BundlesPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Test', style: _monoLabel(PlinkColors.ink60)),
+          Text(
+            AppLocalizations.of(context).bundlesTest,
+            style: _monoLabel(PlinkColors.ink60),
+          ),
           const SizedBox(height: PlinkSpacing.s2),
           Text(
-            'Paste a URL or process name to see whether the current draft matches.',
+            AppLocalizations.of(context).bundlesTestHint,
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: PlinkColors.ink60),
@@ -862,15 +880,18 @@ class _BundlesPageState extends State<BundlesPage> {
               Expanded(
                 child: TextField(
                   controller: _testController,
-                  decoration: const InputDecoration(
-                    hintText: 'e.g. https://www.geogebra.org/calc',
+                  decoration: InputDecoration(
+                    hintText: AppLocalizations.of(context).bundlesTestFieldHint,
                     isDense: true,
                   ),
                   onSubmitted: (_) => _runTest(),
                 ),
               ),
               const SizedBox(width: PlinkSpacing.s3),
-              OutlinedButton(onPressed: _runTest, child: const Text('Check')),
+              OutlinedButton(
+                onPressed: _runTest,
+                child: Text(AppLocalizations.of(context).bundlesCheck),
+              ),
             ],
           ),
           if (_testResult != null) ...[
@@ -888,6 +909,7 @@ class _BundlesPageState extends State<BundlesPage> {
   // ---- validation + match preview (kept in sync with backend rules) ----
 
   static String? _validateEntry(
+    AppLocalizations l10n,
     BundleEntryKind kind,
     BundleEntryMatchType matchType,
     String value,
@@ -895,24 +917,24 @@ class _BundlesPageState extends State<BundlesPage> {
     switch (kind) {
       case BundleEntryKind.domain:
         if (matchType == BundleEntryMatchType.signedPublisher) {
-          return 'SignedPublisher is not valid for a domain.';
+          return l10n.bundlesValSignedPublisherDomain;
         }
         final ok = RegExp(
           r'^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$',
         ).hasMatch(value);
-        if (!ok) return '"$value" is not a valid domain.';
+        if (!ok) return l10n.bundlesValInvalidDomain(value);
         return null;
       case BundleEntryKind.app:
         if (matchType == BundleEntryMatchType.wildcard ||
             matchType == BundleEntryMatchType.suffix) {
-          return '${_matchTypeLabel(matchType)} is not valid for an app.';
+          return l10n.bundlesValMatchTypeApp(_matchTypeLabel(l10n, matchType));
         }
         if (matchType == BundleEntryMatchType.exact) {
           if (value.contains('\\') || value.contains('/')) {
-            return 'Process name "$value" must not include a path.';
+            return l10n.bundlesValProcessPath(value);
           }
           if (value.toLowerCase().endsWith('.exe')) {
-            return 'Process name "$value" must not include the .exe suffix.';
+            return l10n.bundlesValProcessExe(value);
           }
         }
         return null;
@@ -956,16 +978,20 @@ class _BundlesPageState extends State<BundlesPage> {
     }
   }
 
-  static String _kindLabel(BundleEntryKind kind) => switch (kind) {
-    BundleEntryKind.domain => 'Domain',
-    BundleEntryKind.app => 'App',
-  };
+  static String _kindLabel(AppLocalizations l10n, BundleEntryKind kind) =>
+      switch (kind) {
+        BundleEntryKind.domain => l10n.bundlesKindDomain,
+        BundleEntryKind.app => l10n.bundlesKindApp,
+      };
 
-  static String _matchTypeLabel(BundleEntryMatchType type) => switch (type) {
-    BundleEntryMatchType.exact => 'Exact',
-    BundleEntryMatchType.wildcard => 'Wildcard',
-    BundleEntryMatchType.suffix => 'Suffix',
-    BundleEntryMatchType.signedPublisher => 'SignedPublisher',
+  static String _matchTypeLabel(
+    AppLocalizations l10n,
+    BundleEntryMatchType type,
+  ) => switch (type) {
+    BundleEntryMatchType.exact => l10n.bundlesMatchExact,
+    BundleEntryMatchType.wildcard => l10n.bundlesMatchWildcard,
+    BundleEntryMatchType.suffix => l10n.bundlesMatchSuffix,
+    BundleEntryMatchType.signedPublisher => l10n.bundlesMatchSignedPublisher,
   };
 }
 
@@ -1064,7 +1090,7 @@ class _BundleRow extends StatelessWidget {
                       ),
                     ),
                     if (summary.isArchived) ...[
-                      const PlinkBadge('Archived'),
+                      PlinkBadge(AppLocalizations.of(context).badgeArchived),
                       const SizedBox(width: PlinkSpacing.s2),
                     ],
                     PlinkBadge('v${summary.version}'),
@@ -1118,7 +1144,7 @@ class _EntrySection extends StatelessWidget {
             // Calm ink affordance — only the Save commit wears the spark.
             TextButton.icon(
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add'),
+              label: Text(AppLocalizations.of(context).actionAdd),
               onPressed: onAdd,
             ),
           ],
@@ -1126,7 +1152,9 @@ class _EntrySection extends StatelessWidget {
         const SizedBox(height: PlinkSpacing.s2),
         if (rows.isEmpty)
           Text(
-            'No ${title.toLowerCase()} entries.',
+            kind == BundleEntryKind.domain
+                ? AppLocalizations.of(context).bundlesNoDomainEntries
+                : AppLocalizations.of(context).bundlesNoAppEntries,
             style: _monoLabel(PlinkColors.muted),
           )
         else
@@ -1153,7 +1181,9 @@ class _EntrySection extends StatelessWidget {
                         for (final t in allowedMatchTypes)
                           DropdownMenuItem(
                             value: t,
-                            child: Text(_matchTypeLabel(t)),
+                            child: Text(
+                              _matchTypeLabel(AppLocalizations.of(context), t),
+                            ),
                           ),
                       ],
                       onChanged: (v) {
@@ -1169,8 +1199,8 @@ class _EntrySection extends StatelessWidget {
                       controller: row.controller,
                       decoration: InputDecoration(
                         hintText: kind == BundleEntryKind.domain
-                            ? 'e.g. *.geogebra.org'
-                            : 'e.g. msedge',
+                            ? AppLocalizations.of(context).bundlesDomainHint
+                            : AppLocalizations.of(context).bundlesAppHint,
                         isDense: true,
                       ),
                     ),
@@ -1178,7 +1208,7 @@ class _EntrySection extends StatelessWidget {
                   IconButton(
                     icon: const Icon(Icons.remove_circle_outline),
                     color: PlinkColors.ink60,
-                    tooltip: 'Remove entry',
+                    tooltip: AppLocalizations.of(context).bundlesRemoveEntry,
                     onPressed: () => onRemove(row),
                   ),
                 ],
@@ -1188,11 +1218,14 @@ class _EntrySection extends StatelessWidget {
     );
   }
 
-  static String _matchTypeLabel(BundleEntryMatchType type) => switch (type) {
-    BundleEntryMatchType.exact => 'Exact',
-    BundleEntryMatchType.wildcard => 'Wildcard',
-    BundleEntryMatchType.suffix => 'Suffix',
-    BundleEntryMatchType.signedPublisher => 'SignedPublisher',
+  static String _matchTypeLabel(
+    AppLocalizations l10n,
+    BundleEntryMatchType type,
+  ) => switch (type) {
+    BundleEntryMatchType.exact => l10n.bundlesMatchExact,
+    BundleEntryMatchType.wildcard => l10n.bundlesMatchWildcard,
+    BundleEntryMatchType.suffix => l10n.bundlesMatchSuffix,
+    BundleEntryMatchType.signedPublisher => l10n.bundlesMatchSignedPublisher,
   };
 }
 

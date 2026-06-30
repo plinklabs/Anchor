@@ -4,6 +4,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/auth_token_store.dart';
 import '../api/sessions_api.dart';
+import '../l10n/app_localizations.dart';
 import '../widgets/api_error_text.dart';
 
 /// The dashboard home page (AD3, #168) — paper treatment + brand voice.
@@ -32,13 +33,22 @@ class _HomePageState extends State<HomePage> {
   List<ActiveSession> _activeSessions = const [];
   final Set<String> _endingSessions = {};
 
+  bool _didLoad = false;
+
   @override
-  void initState() {
-    super.initState();
-    _loadInitialData();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The initial load reads AppLocalizations (an inherited widget), so it must
+    // run here rather than in initState, where inherited-widget lookups aren't
+    // yet valid. Guard so it fires only once.
+    if (!_didLoad) {
+      _didLoad = true;
+      _loadInitialData();
+    }
   }
 
   Future<void> _loadInitialData() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _busy = true;
       _error = null;
@@ -72,7 +82,8 @@ class _HomePageState extends State<HomePage> {
       setState(
         () => _error = describeApiError(
           e,
-          generic: 'Could not load start-session data. Please try again.',
+          generic: l10n.homeLoadError,
+          notAuthorized: l10n.apiError403,
         ),
       );
     } finally {
@@ -94,6 +105,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _startSession() async {
+    final l10n = AppLocalizations.of(context);
     final klass = _selected;
     if (klass == null) return;
     setState(() {
@@ -111,7 +123,8 @@ class _HomePageState extends State<HomePage> {
       setState(
         () => _error = describeApiError(
           e,
-          generic: 'Failed to start session. Please try again.',
+          generic: l10n.homeStartError,
+          notAuthorized: l10n.apiError403,
         ),
       );
     } finally {
@@ -123,6 +136,7 @@ class _HomePageState extends State<HomePage> {
   /// doesn't have to resume into it just to stop it (#126). On success the card
   /// drops out; the running-now panel hides itself once none remain.
   Future<void> _endActiveSession(String sessionId) async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _endingSessions.add(sessionId);
       _error = null;
@@ -140,7 +154,8 @@ class _HomePageState extends State<HomePage> {
       setState(
         () => _error = describeApiError(
           e,
-          generic: 'Failed to end session. Please try again.',
+          generic: l10n.homeEndError,
+          notAuthorized: l10n.apiError403,
         ),
       );
     } finally {
@@ -148,17 +163,18 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  String _classNameFor(String classId) {
+  String _classNameFor(String classId, AppLocalizations l10n) {
     for (final c in _classes ?? const <ClassSummary>[]) {
       if (c.id == classId) return c.name;
     }
     // Teacher may no longer be listed on the class yet the session runs on —
     // still worth surfacing so it can be reached and ended.
-    return 'Active session';
+    return l10n.homeActiveSessionFallback;
   }
 
   @override
   Widget build(BuildContext context) {
+    final AppLocalizations l10n = AppLocalizations.of(context);
     final TextTheme text = Theme.of(context).textTheme;
     final String? department = widget.tokens.account?.department;
     final List<ClassSummary>? classes = _classes;
@@ -185,14 +201,14 @@ class _HomePageState extends State<HomePage> {
                 // cards a teacher can resume into or end in place (#126).
                 if (_activeSessions.isNotEmpty) ...<Widget>[
                   Eyebrow(
-                    _activeSessions.length == 1
-                        ? 'Still running'
-                        : 'Still running — ${_activeSessions.length} sessions',
+                    AppLocalizations.of(
+                      context,
+                    ).homeStillRunning(_activeSessions.length),
                   ),
                   const SizedBox(height: PlinkSpacing.s4),
                   for (final ActiveSession s in _activeSessions) ...<Widget>[
                     _ActiveSessionCard(
-                      className: _classNameFor(s.classId),
+                      className: _classNameFor(s.classId, l10n),
                       startedAt: s.startedAt,
                       ending: _endingSessions.contains(s.id),
                       onResume: () => context.go('/session/${s.id}'),
@@ -205,14 +221,13 @@ class _HomePageState extends State<HomePage> {
 
                 // The start-session composer — the hero of the page.
                 Text(
-                  'Start a focus session.',
+                  l10n.homeHeadline,
                   key: const Key('home-headline'),
                   style: text.displaySmall,
                 ),
                 const SizedBox(height: PlinkSpacing.s4),
                 Text(
-                  'Pick a class and start. Students join with the code shown '
-                  'on the session screen.',
+                  l10n.homeSubtitle,
                   style: text.bodyLarge?.copyWith(color: PlinkColors.ink60),
                 ),
                 const SizedBox(height: PlinkSpacing.s6),
@@ -231,13 +246,13 @@ class _HomePageState extends State<HomePage> {
                 // the error notice below, not dressed up as an empty roster.
                 else if ((classes == null || classes.isEmpty) && _error == null)
                   Text(
-                    'No classes assigned to you yet.',
+                    l10n.homeNoClasses,
                     style: text.bodyLarge?.copyWith(color: PlinkColors.ink60),
                   )
                 else if (classes != null && classes.isNotEmpty) ...<Widget>[
                   if (department != null && department.isNotEmpty) ...<Widget>[
                     Text(
-                      'YOUR DEPARTMENT · ${department.toUpperCase()}',
+                      l10n.homeYourDepartment(department.toUpperCase()),
                       style: text.labelSmall?.copyWith(
                         color: PlinkColors.muted,
                       ),
@@ -249,7 +264,9 @@ class _HomePageState extends State<HomePage> {
                     child: DropdownButtonFormField<ClassSummary>(
                       key: const Key('class-picker'),
                       initialValue: _selected,
-                      decoration: const InputDecoration(labelText: 'Class'),
+                      decoration: InputDecoration(
+                        labelText: l10n.homeClassLabel,
+                      ),
                       items: <DropdownMenuItem<ClassSummary>>[
                         for (final ClassSummary c in classes)
                           DropdownMenuItem<ClassSummary>(
@@ -282,8 +299,8 @@ class _HomePageState extends State<HomePage> {
                           )
                         : Text(
                             _selected == null
-                                ? 'Select a class'
-                                : 'Start session for ${_selected!.name}',
+                                ? l10n.homeSelectClass
+                                : l10n.homeStartSessionFor(_selected!.name),
                           ),
                   ),
                 ],
@@ -324,11 +341,11 @@ class _ActiveSessionCard extends StatelessWidget {
   final VoidCallback onResume;
   final VoidCallback onEnd;
 
-  static String _startedLabel(DateTime startedAt) {
+  static String _startedTime(DateTime startedAt) {
     final DateTime local = startedAt.toLocal();
     final String h = local.hour.toString().padLeft(2, '0');
     final String mi = local.minute.toString().padLeft(2, '0');
-    return 'STARTED $h:$mi';
+    return '$h:$mi';
   }
 
   @override
@@ -350,10 +367,16 @@ class _ActiveSessionCard extends StatelessWidget {
         children: <Widget>[
           Row(
             children: <Widget>[
-              const PlinkBadge('Live', variant: BadgeVariant.spark, dot: true),
+              PlinkBadge(
+                AppLocalizations.of(context).badgeLive,
+                variant: BadgeVariant.spark,
+                dot: true,
+              ),
               const SizedBox(width: PlinkSpacing.s3),
               Text(
-                _startedLabel(startedAt),
+                AppLocalizations.of(
+                  context,
+                ).homeStartedAt(_startedTime(startedAt)),
                 style: text.labelSmall?.copyWith(color: PlinkColors.muted),
               ),
             ],
@@ -374,7 +397,7 @@ class _ActiveSessionCard extends StatelessWidget {
             children: <Widget>[
               OutlinedButton(
                 onPressed: ending ? null : onResume,
-                child: const Text('Resume'),
+                child: Text(AppLocalizations.of(context).homeResume),
               ),
               if (ending)
                 const Padding(
@@ -389,7 +412,10 @@ class _ActiveSessionCard extends StatelessWidget {
                   ),
                 )
               else
-                OutlinedButton(onPressed: onEnd, child: const Text('End')),
+                OutlinedButton(
+                  onPressed: onEnd,
+                  child: Text(AppLocalizations.of(context).homeEnd),
+                ),
             ],
           ),
         ],

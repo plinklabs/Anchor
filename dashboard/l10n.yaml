@@ -1,0 +1,10 @@
+# Configuration for Flutter's gen-l10n tool (#321). Regenerate after editing
+# any ARB catalogue with `flutter gen-l10n` (also runs automatically on
+# `flutter pub get` / build because `generate: true` is set in pubspec.yaml).
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+output-class: AppLocalizations
+# Non-nullable `AppLocalizations.of(context)` so call sites read cleanly as
+# `AppLocalizations.of(context).key` without a `!`.
+nullable-getter: false

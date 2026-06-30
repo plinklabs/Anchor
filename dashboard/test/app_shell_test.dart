@@ -1,3 +1,4 @@
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/widgets/anchor_mark.dart';
 import 'package:anchor_dashboard/widgets/app_shell.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,8 @@ Widget _host({
   Widget? child,
 }) {
   return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     theme: PlinkTheme.paper.copyWith(
       extensions: const <ThemeExtension<dynamic>>[
         PlinkProductAccent(Color(0xFF34357A)),

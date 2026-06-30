@@ -1,6 +1,7 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/bundles_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -63,6 +64,8 @@ class _FakeBundles extends BundlesApi {
 
 void main() {
   Widget host() => MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     theme: PlinkTheme.paper,
     home: BundlesPage(bundles: _FakeBundles(), sessions: _FakeSessions()),
   );

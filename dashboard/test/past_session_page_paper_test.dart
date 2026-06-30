@@ -1,5 +1,6 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/past_session_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -86,6 +87,8 @@ SessionDetail _detail() => SessionDetail(
 void main() {
   Widget host(SessionsApi sessions) => MaterialApp(
     theme: PlinkTheme.paper,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: PastSessionPage(sessionId: 's1', sessions: sessions),
   );
 

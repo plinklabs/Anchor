@@ -2,6 +2,7 @@ import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -82,6 +83,8 @@ Future<_FakeSessions> _pumpSession(WidgetTester tester) async {
       // decode; bounded pumps (never pumpAndSettle) keep the real hub's retries
       // from stalling the test.
       theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       routerConfig: router,
     ),
   );
