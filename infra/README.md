@@ -12,7 +12,13 @@ workflows consume → grant Entra admin consent. This is the **only path you nee
 for an automated install** — the alternatives further down are not extra steps
 to run on top of it.
 
+Run it from **PowerShell 7+** (`pwsh`): the guided UX uses PwshSpectreConsole,
+which the script bootstrap-installs on first run. A bare `./scripts/setup.ps1`
+is interactive (it asks for the suffix, region, repo, etc.); pass the parameters
+and `-NonInteractive` for CI.
+
 ```powershell
+./scripts/setup.ps1                                     # guided: prompts for everything
 ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf   # dry-run: prints the full plan, changes nothing
 ./scripts/setup.ps1 -UniqueSuffix lincolnhigh           # provision + wire GitHub
 ```
@@ -29,6 +35,23 @@ also where every template parameter is documented.
 > Requires the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)
 > and the [GitHub CLI](https://cli.github.com/), both logged in (`az login`,
 > `gh auth login`).
+
+### Entra Graph permissions
+
+The script grants each app registration the **delegated Microsoft Graph** scopes
+it needs and then admin-consents them in Step 8 (best-effort — it prints the
+manual `az ad app permission admin-consent` command when the runner isn't a
+tenant admin):
+
+| App | Delegated scope | Why |
+|---|---|---|
+| Dashboard SPA | `User.Read` | baseline sign-in / profile so users can log in. |
+| API | `User.Read.All` | the on-behalf-of (OBO) user-directory search behind **Classes → School** calls Graph `/users?$select=companyName`, which the basic profile can't read. Without this scope the OBO exchange fails and `GET /directory/schools` returns **502**, leaving the School selector empty (#281). |
+
+Both grants are idempotent (skipped when already present). When the script
+**adopts** an API registration it doesn't own (`-EntraClientId`), it won't mutate
+it but flags a missing `User.Read.All` as a `[MANUAL]` line with the exact grant +
+consent commands.
 
 ### Regions
 

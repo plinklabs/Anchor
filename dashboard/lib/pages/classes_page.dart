@@ -3,6 +3,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/classes_api.dart';
 import '../api/sessions_api.dart';
+import '../l10n/app_localizations.dart';
 import '../widgets/api_error_text.dart';
 import 'add_student_search.dart';
 
@@ -45,6 +46,11 @@ class _ClassesPageState extends State<ClassesPage> {
   bool _savingCodes = false;
   bool _bulkImporting = false;
   ApiErrorMessage? _error;
+  // Kept separate from [_error] (which carries class/roster failures): a failed
+  // school-tag load is non-blocking, so it surfaces inline next to the School
+  // selector with a Retry rather than taking over the page. Without this a
+  // consent/502 gap (#281) rendered as a silently empty dropdown.
+  ApiErrorMessage? _schoolsError;
   List<ClassMembershipImportResult>? _lastImportResults;
 
   // Editable copies of the selected class's schoolTag / classCode. Sit
@@ -56,8 +62,14 @@ class _ClassesPageState extends State<ClassesPage> {
   @override
   void initState() {
     super.initState();
-    _loadClasses();
-    _loadSchools();
+    // Defer to the first frame: these loaders read AppLocalizations.of(context),
+    // which depends on an inherited widget and so can't be touched synchronously
+    // during initState.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadClasses();
+      _loadSchools();
+    });
   }
 
   @override
@@ -67,6 +79,7 @@ class _ClassesPageState extends State<ClassesPage> {
   }
 
   Future<void> _loadClasses() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _loadingClasses = true;
       _error = null;
@@ -85,33 +98,49 @@ class _ClassesPageState extends State<ClassesPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not load classes. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.classesLoadError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loadingClasses = false);
     }
   }
 
   Future<void> _loadSchools() async {
-    setState(() => _loadingSchools = true);
+    final l10n = AppLocalizations.of(context);
+    setState(() {
+      _loadingSchools = true;
+      _schoolsError = null;
+    });
     try {
       final schools = await widget.classes.schools();
       if (!mounted) return;
       setState(() => _schools = schools);
-    } catch (_) {
-      // Non-fatal — the selector will fall back to a free-text affordance
-      // and the page surfaces other errors via [_error]. Listing the school
-      // tags is a discovery convenience, not a gate.
+    } catch (e) {
+      // Non-blocking — listing school tags is a discovery convenience, not a
+      // gate (a class's existing binding is still editable). But don't swallow
+      // it: surface an inline hint + Retry next to the selector so a consent/502
+      // gap can't masquerade as "this tenant has no schools" (#281).
       if (!mounted) return;
-      setState(() => _schools = const <String>[]);
+      setState(() {
+        _schools = const <String>[];
+        _schoolsError = describeApiError(
+          e,
+          generic: l10n.classesLoadSchoolsError,
+          notAuthorized: l10n.apiError403,
+        );
+      });
     } finally {
       if (mounted) setState(() => _loadingSchools = false);
     }
   }
 
   Future<void> _loadRoster(ClassSummary klass) async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _loadingRoster = true;
       _error = null;
@@ -123,10 +152,13 @@ class _ClassesPageState extends State<ClassesPage> {
       setState(() => _roster = roster);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not load roster. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.classesLoadRosterError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loadingRoster = false);
     }
@@ -174,26 +206,25 @@ class _ClassesPageState extends State<ClassesPage> {
   Future<void> _deleteClass() async {
     final klass = _selected;
     if (klass == null) return;
+    final l10n = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete class'),
+        title: Text(l10n.classesDeleteClass),
         content: Text(
-          'Delete ${klass.name} (${klass.schoolYear})? '
-          'This removes the class and its roster. '
-          'Classes with past sessions cannot be deleted.',
+          l10n.classesDeleteClassBody(klass.name, klass.schoolYear),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
+            child: Text(l10n.actionCancel),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(ctx).colorScheme.error,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Delete'),
+            child: Text(l10n.actionDelete),
           ),
         ],
       ),
@@ -217,14 +248,20 @@ class _ClassesPageState extends State<ClassesPage> {
       }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error =
-          describeApiError(e, generic: 'Could not delete class. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.classesDeleteError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     }
   }
 
   Future<void> _saveCodes() async {
     final klass = _selected;
     if (klass == null) return;
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _savingCodes = true;
       _error = null;
@@ -248,10 +285,13 @@ class _ClassesPageState extends State<ClassesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not save school + code. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.classesSaveCodesError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _savingCodes = false);
     }
@@ -260,6 +300,7 @@ class _ClassesPageState extends State<ClassesPage> {
   Future<void> _addMember(String entraOid, String? displayName) async {
     final klass = _selected;
     if (klass == null) return;
+    final l10n = AppLocalizations.of(context);
     try {
       await widget.classes.addMember(
         klass.id,
@@ -269,33 +310,38 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error =
-          describeApiError(e, generic: 'Failed to add member. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.classesAddMemberError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     }
   }
 
   Future<void> _removeMember(ClassMember member) async {
     final klass = _selected;
     if (klass == null) return;
+    final l10n = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Remove member'),
+        title: Text(l10n.classesRemoveMemberTitle),
         content: Text(
-          'Remove ${member.displayName} from ${klass.name}? '
-          'They will stop receiving session broadcasts on the next session start.',
+          l10n.classesRemoveMemberBody(member.displayName, klass.name),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
+            child: Text(l10n.actionCancel),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
               backgroundColor: Theme.of(ctx).colorScheme.error,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Remove'),
+            child: Text(l10n.actionRemove),
           ),
         ],
       ),
@@ -306,24 +352,31 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error =
-          describeApiError(e, generic: 'Failed to remove member. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.classesRemoveMemberError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     }
   }
 
   Future<void> _importCsv() async {
     final klass = _selected;
     if (klass == null) return;
+    final l10n = AppLocalizations.of(context);
     final pasted = await showDialog<String>(
       context: context,
       builder: (_) => const _CsvPasteDialog(),
     );
     if (pasted == null || pasted.trim().isEmpty) return;
 
-    final parsed = parseRosterCsv(pasted);
+    final parsed = parseRosterCsv(pasted, l10n);
     if (parsed.rows.isEmpty) {
-      setState(() =>
-          _error = ApiErrorMessage(parsed.error ?? 'No valid rows in CSV.'));
+      setState(
+        () => _error = ApiErrorMessage(parsed.error ?? l10n.classesCsvNoRows),
+      );
       return;
     }
     try {
@@ -333,14 +386,20 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() =>
-          _error = describeApiError(e, generic: 'Import failed. Please try again.'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.classesImportError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     }
   }
 
   Future<void> _bulkImportFromGraph() async {
     final klass = _selected;
     if (klass == null) return;
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _bulkImporting = true;
       _error = null;
@@ -352,10 +411,13 @@ class _ClassesPageState extends State<ClassesPage> {
       await _loadRoster(klass);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Populate from Graph failed. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.classesGraphImportError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _bulkImporting = false);
     }
@@ -410,7 +472,7 @@ class _ClassesPageState extends State<ClassesPage> {
                       child: _error != null
                           ? ApiErrorText(_error!, textAlign: TextAlign.center)
                           : Text(
-                              'Pick a class on the left.',
+                              AppLocalizations.of(context).classesPickClass,
                               style: monoLabel(PlinkColors.muted),
                             ),
                     ),
@@ -421,14 +483,15 @@ class _ClassesPageState extends State<ClassesPage> {
                     roster: _roster,
                     schools: _schools,
                     loadingSchools: _loadingSchools,
+                    schoolsError: _schoolsError,
+                    onReloadSchools: _loadSchools,
                     loadingRoster: _loadingRoster,
                     savingCodes: _savingCodes,
                     bulkImporting: _bulkImporting,
                     codesDirty: _codesDirty,
                     editSchoolTag: _editSchoolTag,
                     classCodeController: _classCodeController,
-                    onSchoolChanged: (v) =>
-                        setState(() => _editSchoolTag = v),
+                    onSchoolChanged: (v) => setState(() => _editSchoolTag = v),
                     onClassCodeChanged: (_) => setState(() {}),
                     onSaveCodes: _saveCodes,
                     onBulkImport: _bulkImportFromGraph,
@@ -463,6 +526,7 @@ class _ClassList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final list = classes ?? const <ClassSummary>[];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -474,7 +538,10 @@ class _ClassList extends StatelessWidget {
             PlinkSpacing.s4,
             PlinkSpacing.s3,
           ),
-          child: Text('Classes', style: monoLabel(PlinkColors.ink60)),
+          child: Text(
+            l10n.classesListHeader,
+            style: monoLabel(PlinkColors.ink60),
+          ),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(
@@ -490,7 +557,7 @@ class _ClassList extends StatelessWidget {
             child: OutlinedButton.icon(
               key: const Key('classes-new-button'),
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('New class'),
+              label: Text(l10n.classesNewClass),
               onPressed: () => onCreate(),
             ),
           ),
@@ -507,7 +574,7 @@ class _ClassList extends StatelessWidget {
               ? Padding(
                   padding: const EdgeInsets.all(PlinkSpacing.s4),
                   child: Text(
-                    'No classes you teach. Create one with "New class".',
+                    l10n.classesEmpty,
                     style: monoLabel(PlinkColors.muted),
                   ),
                 )
@@ -577,12 +644,15 @@ class _ClassRow extends StatelessWidget {
                       summary.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: PlinkColors.ink,
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodyLarge?.copyWith(color: PlinkColors.ink),
                     ),
                     const SizedBox(height: 2),
-                    Text(summary.schoolYear, style: monoSpec(PlinkColors.ink60)),
+                    Text(
+                      summary.schoolYear,
+                      style: monoSpec(PlinkColors.ink60),
+                    ),
                   ],
                 ),
               ),
@@ -601,6 +671,8 @@ class _RosterPane extends StatelessWidget {
     required this.roster,
     required this.schools,
     required this.loadingSchools,
+    required this.schoolsError,
+    required this.onReloadSchools,
     required this.loadingRoster,
     required this.savingCodes,
     required this.bulkImporting,
@@ -624,6 +696,8 @@ class _RosterPane extends StatelessWidget {
   final ClassMembersResponse? roster;
   final List<String>? schools;
   final bool loadingSchools;
+  final ApiErrorMessage? schoolsError;
+  final Future<void> Function() onReloadSchools;
   final bool loadingRoster;
   final bool savingCodes;
   final bool bulkImporting;
@@ -643,6 +717,7 @@ class _RosterPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final scopeReady =
         klass.schoolTag != null && (klass.classCode ?? '').isNotEmpty;
     return Padding(
@@ -660,15 +735,15 @@ class _RosterPane extends StatelessWidget {
               Expanded(
                 child: Text(
                   '${klass.name} (${klass.schoolYear})',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: PlinkColors.ink,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(color: PlinkColors.ink),
                 ),
               ),
               // Calm ink — the destructive action never wears the spark.
               OutlinedButton.icon(
                 icon: const Icon(Icons.delete_outline, size: 18),
-                label: const Text('Delete class'),
+                label: Text(l10n.classesDeleteClass),
                 onPressed: () => onDeleteClass(),
               ),
             ],
@@ -677,6 +752,8 @@ class _RosterPane extends StatelessWidget {
           _ScopeRow(
             schools: schools,
             loadingSchools: loadingSchools,
+            schoolsError: schoolsError,
+            onReloadSchools: onReloadSchools,
             saving: savingCodes,
             dirty: codesDirty,
             editSchoolTag: editSchoolTag,
@@ -695,13 +772,13 @@ class _RosterPane extends StatelessWidget {
                 onSearch: onSearch,
                 onAdd: onAdd,
                 disabled: !scopeReady,
-                disabledReason: 'Set school + code first',
+                disabledReason: l10n.classesSetScopeFirst,
               ),
               Padding(
                 padding: const EdgeInsets.only(top: PlinkSpacing.s2),
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.upload_file, size: 18),
-                  label: const Text('Import CSV'),
+                  label: Text(l10n.classesImportCsv),
                   onPressed: scopeReady ? onImport : null,
                 ),
               ),
@@ -717,8 +794,10 @@ class _RosterPane extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.cloud_download, size: 18),
-                  label: const Text('Populate from Graph'),
-                  onPressed: (scopeReady && !bulkImporting) ? onBulkImport : null,
+                  label: Text(l10n.classesPopulateFromGraph),
+                  onPressed: (scopeReady && !bulkImporting)
+                      ? onBulkImport
+                      : null,
                 ),
               ),
             ],
@@ -749,6 +828,8 @@ class _ScopeRow extends StatelessWidget {
   const _ScopeRow({
     required this.schools,
     required this.loadingSchools,
+    required this.schoolsError,
+    required this.onReloadSchools,
     required this.saving,
     required this.dirty,
     required this.editSchoolTag,
@@ -760,6 +841,8 @@ class _ScopeRow extends StatelessWidget {
 
   final List<String>? schools;
   final bool loadingSchools;
+  final ApiErrorMessage? schoolsError;
+  final Future<void> Function() onReloadSchools;
   final bool saving;
   final bool dirty;
   final String? editSchoolTag;
@@ -770,6 +853,7 @@ class _ScopeRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final options = schools ?? const <String>[];
     // If the class is bound to a tag the directory no longer reports, keep
     // it in the dropdown so the teacher doesn't silently lose the binding.
@@ -777,6 +861,35 @@ class _ScopeRow extends StatelessWidget {
       ...options,
       if (editSchoolTag != null && editSchoolTag!.isNotEmpty) editSchoolTag!,
     }.toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildRow(entries, l10n),
+        // A failed school-tag load is non-blocking (the binding stays editable),
+        // but surface it inline with a Retry so a consent/502 gap can't read as
+        // an empty directory (#281).
+        if (schoolsError != null && !loadingSchools)
+          Padding(
+            padding: const EdgeInsets.only(top: PlinkSpacing.s2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(child: ApiErrorText(schoolsError!)),
+                const SizedBox(width: PlinkSpacing.s2),
+                TextButton(
+                  key: const Key('classes-schools-retry-button'),
+                  onPressed: onReloadSchools,
+                  child: Text(l10n.actionRetry),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildRow(List<String> entries, AppLocalizations l10n) {
     return Wrap(
       spacing: PlinkSpacing.s3,
       runSpacing: PlinkSpacing.s3,
@@ -788,14 +901,14 @@ class _ScopeRow extends StatelessWidget {
             initialValue: editSchoolTag,
             isDense: true,
             decoration: InputDecoration(
-              labelText: 'School',
+              labelText: l10n.classesSchoolLabel,
               isDense: true,
-              helperText: loadingSchools ? 'Loading…' : null,
+              helperText: loadingSchools ? l10n.commonLoading : null,
             ),
             items: [
-              const DropdownMenuItem<String?>(
+              DropdownMenuItem<String?>(
                 value: null,
-                child: Text('(none)'),
+                child: Text(l10n.commonNone),
               ),
               for (final s in entries)
                 DropdownMenuItem<String?>(value: s, child: Text(s)),
@@ -809,9 +922,9 @@ class _ScopeRow extends StatelessWidget {
             controller: classCodeController,
             enabled: !saving,
             onChanged: onClassCodeChanged,
-            decoration: const InputDecoration(
-              labelText: 'Class code',
-              hintText: 'e.g. 3A',
+            decoration: InputDecoration(
+              labelText: l10n.classesClassCodeLabel,
+              hintText: l10n.classesHint3A,
               isDense: true,
             ),
           ),
@@ -835,7 +948,7 @@ class _ScopeRow extends StatelessWidget {
                       color: PlinkColors.onInk,
                     ),
                   )
-                : const Text('Save'),
+                : Text(l10n.actionSave),
           ),
         ),
       ],
@@ -851,10 +964,11 @@ class _RosterTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     if (members.isEmpty) {
       return Align(
         alignment: Alignment.topLeft,
-        child: Text('No members yet.', style: monoLabel(PlinkColors.muted)),
+        child: Text(l10n.classesNoMembers, style: monoLabel(PlinkColors.muted)),
       );
     }
     // A hairline-bounded panel, not a raised card — the system uses borders,
@@ -882,13 +996,16 @@ class _RosterTable extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Display name',
+                    l10n.classesDisplayName,
                     style: monoLabel(PlinkColors.ink60),
                   ),
                 ),
                 ConstrainedBox(
                   constraints: const BoxConstraints(minWidth: 96),
-                  child: Text('Role', style: monoLabel(PlinkColors.ink60)),
+                  child: Text(
+                    l10n.classesRole,
+                    style: monoLabel(PlinkColors.ink60),
+                  ),
                 ),
                 const SizedBox(width: 40),
               ],
@@ -935,7 +1052,7 @@ class _RosterTable extends StatelessWidget {
                       IconButton(
                         icon: const Icon(Icons.close, size: 18),
                         color: PlinkColors.ink60,
-                        tooltip: 'Remove',
+                        tooltip: l10n.actionRemove,
                         onPressed: () => onRemove(m),
                       ),
                     ],
@@ -957,6 +1074,7 @@ class _ImportResultsBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final added = results
         .where((r) => r.status == ClassMembershipImportStatus.added)
         .length;
@@ -974,21 +1092,29 @@ class _ImportResultsBar extends StatelessWidget {
       runSpacing: PlinkSpacing.s2,
       children: [
         // The constructive result is the one spark; the rest are calm specs.
-        PlinkBadge('$added added', variant: BadgeVariant.accent),
-        PlinkBadge('$already already member'),
+        PlinkBadge(
+          l10n.classesImportAdded(added),
+          variant: BadgeVariant.accent,
+        ),
+        PlinkBadge(l10n.classesImportAlready(already)),
         if (unresolved.isNotEmpty)
           Tooltip(
             message: unresolved
-                .map((r) => r.upn ?? r.entraOid ?? '(blank)')
+                .map((r) => r.upn ?? r.entraOid ?? l10n.classesBlank)
                 .join('\n'),
-            child: PlinkBadge('${unresolved.length} unresolved'),
+            child: PlinkBadge(l10n.classesImportUnresolved(unresolved.length)),
           ),
         if (wrongSchool.isNotEmpty)
           Tooltip(
             message: wrongSchool
-                .map((r) => '${r.upn ?? r.entraOid ?? '(blank)'} — ${r.detail ?? ''}')
+                .map(
+                  (r) =>
+                      '${r.upn ?? r.entraOid ?? l10n.classesBlank} — ${r.detail ?? ''}',
+                )
                 .join('\n'),
-            child: PlinkBadge('${wrongSchool.length} wrong school'),
+            child: PlinkBadge(
+              l10n.classesImportWrongSchool(wrongSchool.length),
+            ),
           ),
       ],
     );
@@ -1052,6 +1178,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
 
   Future<void> _submit() async {
     if (!_valid) return;
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _saving = true;
       _error = null;
@@ -1073,7 +1200,8 @@ class _NewClassDialogState extends State<_NewClassDialog> {
         _saving = false;
         _error = describeApiError(
           e,
-          generic: 'Could not create class. Please try again.',
+          generic: l10n.classesCreateError,
+          notAuthorized: l10n.apiError403,
         );
       });
     }
@@ -1081,8 +1209,9 @@ class _NewClassDialogState extends State<_NewClassDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return AlertDialog(
-      title: const Text('New class'),
+      title: Text(l10n.classesNewClass),
       content: SizedBox(
         width: 420,
         child: Column(
@@ -1094,9 +1223,9 @@ class _NewClassDialogState extends State<_NewClassDialog> {
               autofocus: true,
               enabled: !_saving,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Name',
-                hintText: 'e.g. 3A',
+              decoration: InputDecoration(
+                labelText: l10n.classesNameLabel,
+                hintText: l10n.classesHint3A,
               ),
             ),
             const SizedBox(height: PlinkSpacing.s3),
@@ -1104,36 +1233,34 @@ class _NewClassDialogState extends State<_NewClassDialog> {
               controller: _schoolYear,
               enabled: !_saving,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'School year',
-                hintText: 'e.g. 2025-2026',
+              decoration: InputDecoration(
+                labelText: l10n.classesSchoolYearLabel,
+                hintText: l10n.classesSchoolYearHint,
               ),
             ),
             const SizedBox(height: PlinkSpacing.s3),
             DropdownButtonFormField<String?>(
               initialValue: _schoolTag,
-              decoration: const InputDecoration(
-                labelText: 'School (optional)',
+              decoration: InputDecoration(
+                labelText: l10n.classesSchoolOptionalLabel,
               ),
               items: [
-                const DropdownMenuItem<String?>(
+                DropdownMenuItem<String?>(
                   value: null,
-                  child: Text('(none)'),
+                  child: Text(l10n.commonNone),
                 ),
                 for (final s in widget.schools)
                   DropdownMenuItem<String?>(value: s, child: Text(s)),
               ],
-              onChanged: _saving
-                  ? null
-                  : (v) => setState(() => _schoolTag = v),
+              onChanged: _saving ? null : (v) => setState(() => _schoolTag = v),
             ),
             const SizedBox(height: PlinkSpacing.s3),
             TextField(
               controller: _classCode,
               enabled: !_saving,
-              decoration: const InputDecoration(
-                labelText: 'Class code (optional)',
-                hintText: 'e.g. 3A',
+              decoration: InputDecoration(
+                labelText: l10n.classesClassCodeOptionalLabel,
+                hintText: l10n.classesHint3A,
               ),
             ),
             if (_error != null) ...[
@@ -1146,7 +1273,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
       actions: [
         TextButton(
           onPressed: _saving ? null : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: Text(l10n.actionCancel),
         ),
         // The constructive commit wears the magenta spark.
         ElevatedButton(
@@ -1161,7 +1288,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
                     color: PlinkColors.onInk,
                   ),
                 )
-              : const Text('Create'),
+              : Text(l10n.actionCreate),
         ),
       ],
     );
@@ -1186,26 +1313,23 @@ class _CsvPasteDialogState extends State<_CsvPasteDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     return AlertDialog(
-      title: const Text('Import roster from CSV'),
+      title: Text(l10n.classesCsvDialogTitle),
       content: SizedBox(
         width: 560,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Paste a CSV with a header row. Required column: upn '
-              '(the user principal name, e.g. student@school.be). '
-              'Names are looked up in the directory automatically.',
-            ),
+            Text(l10n.classesCsvDialogBody),
             const SizedBox(height: PlinkSpacing.s3),
             TextField(
               controller: _controller,
               maxLines: 12,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'upn\nalice@school.be\nbob@school.be\n...',
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                hintText: l10n.classesCsvHint,
               ),
             ),
           ],
@@ -1214,12 +1338,12 @@ class _CsvPasteDialogState extends State<_CsvPasteDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(null),
-          child: const Text('Cancel'),
+          child: Text(l10n.actionCancel),
         ),
         // Committing the paste into an import is the constructive action.
         ElevatedButton(
           onPressed: () => Navigator.of(context).pop(_controller.text),
-          child: const Text('Import'),
+          child: Text(l10n.actionImport),
         ),
       ],
     );
@@ -1243,7 +1367,8 @@ class _Hairline extends StatelessWidget {
 /// A space-mono label style (sentence-case microcopy / specs) — the quiet
 /// headers and counts that read like an instrument, never shouting. Mirrors the
 /// live-session and bundles treatment.
-TextStyle monoLabel(Color color) => const TextStyle(
+TextStyle monoLabel(Color color) =>
+    const TextStyle(
       fontFamily: PlinkType.monoFamily,
       package: PlinkType.fontPackage,
       fontFamilyFallback: PlinkType.monoFallback,
@@ -1259,14 +1384,14 @@ TextStyle monoLabel(Color color) => const TextStyle(
 
 /// Tabular-figure mono for values that read as a spec (the school year).
 TextStyle monoSpec(Color color) => TextStyle(
-      fontFamily: PlinkType.monoFamily,
-      package: PlinkType.fontPackage,
-      fontFamilyFallback: PlinkType.monoFallback,
-      fontSize: PlinkType.textSm,
-      color: color,
-      height: 1.4,
-      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-    );
+  fontFamily: PlinkType.monoFamily,
+  package: PlinkType.fontPackage,
+  fontFamilyFallback: PlinkType.monoFallback,
+  fontSize: PlinkType.textSm,
+  color: color,
+  height: 1.4,
+  fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+);
 
 class CsvParseResult {
   CsvParseResult({required this.rows, this.error});
@@ -1278,18 +1403,20 @@ class CsvParseResult {
 /// Tolerates leading/trailing whitespace and quoted values, skips blank lines.
 /// The backend resolves each UPN to an Entra OID + display name at import time
 /// and reports any that don't resolve, so we don't validate UPN shape here.
-CsvParseResult parseRosterCsv(String csv) {
+CsvParseResult parseRosterCsv(String csv, AppLocalizations l10n) {
   final lines = csv
       .split(RegExp(r'\r?\n'))
       .where((l) => l.trim().isNotEmpty)
       .toList();
   if (lines.isEmpty) {
-    return CsvParseResult(rows: const [], error: 'CSV is empty.');
+    return CsvParseResult(rows: const [], error: l10n.classesCsvEmpty);
   }
-  final header = _splitCsvLine(lines.first).map((s) => s.toLowerCase()).toList();
+  final header = _splitCsvLine(
+    lines.first,
+  ).map((s) => s.toLowerCase()).toList();
   final upnIdx = header.indexOf('upn');
   if (upnIdx < 0) {
-    return CsvParseResult(rows: const [], error: 'Header must include upn.');
+    return CsvParseResult(rows: const [], error: l10n.classesCsvHeaderMissing);
   }
   final rows = <ImportRow>[];
   for (var i = 1; i < lines.length; i++) {

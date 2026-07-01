@@ -2,6 +2,7 @@ import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,7 +25,11 @@ UnblockRequestSummary _pending() => UnblockRequestSummary(
   firstRequestedAt: _now,
   latestRequestedAt: _now,
   requesters: [
-    UnblockRequestRequester(userId: 'u1', displayName: 'Ada', requestedAt: _now),
+    UnblockRequestRequester(
+      userId: 'u1',
+      displayName: 'Ada',
+      requestedAt: _now,
+    ),
     UnblockRequestRequester(userId: 'u2', displayName: 'Bo', requestedAt: _now),
   ],
 );
@@ -59,7 +64,11 @@ class _FakeSessions extends SessionsApi {
       pending;
 
   @override
-  Future<void> approveUnblock(String sessionId, String userId, String host) async {
+  Future<void> approveUnblock(
+    String sessionId,
+    String userId,
+    String host,
+  ) async {
     perStudentCalls.add((userId, host));
   }
 
@@ -73,7 +82,8 @@ class _FakeBundles extends BundlesApi {
   _FakeBundles() : super(_dummyClient());
 
   @override
-  Future<List<BundleSummary>> list({bool includeArchived = false}) async => const [];
+  Future<List<BundleSummary>> list({bool includeArchived = false}) async =>
+      const [];
 }
 
 Future<void> _pumpPage(WidgetTester tester, _FakeSessions sessions) async {
@@ -82,6 +92,8 @@ Future<void> _pumpPage(WidgetTester tester, _FakeSessions sessions) async {
       // NoSplash avoids the ink_sparkle fragment shader, which fails to decode
       // under the test engine when a tap triggers a ripple.
       theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: SessionPage(
         sessionId: '11111111-2222-3333-4444-555555555555',
         tokens: AuthTokenStore(),
@@ -98,7 +110,9 @@ Future<void> _pumpPage(WidgetTester tester, _FakeSessions sessions) async {
 }
 
 void main() {
-  testWidgets('primary Approve grants per requesting student (#101)', (tester) async {
+  testWidgets('primary Approve grants per requesting student (#101)', (
+    tester,
+  ) async {
     final sessions = _FakeSessions();
     await _pumpPage(tester, sessions);
 

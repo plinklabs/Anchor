@@ -2,6 +2,7 @@ import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -59,7 +60,10 @@ Future<_FakeSessions> _pumpSession(WidgetTester tester) async {
   final router = GoRouter(
     initialLocation: '/session/s1',
     routes: [
-      GoRoute(path: '/', builder: (_, _) => const Scaffold(body: Text('HOME'))),
+      GoRoute(
+        path: '/',
+        builder: (_, _) => const Scaffold(body: Text('HOME')),
+      ),
       GoRoute(
         path: '/session/:id',
         builder: (_, state) => SessionPage(
@@ -79,6 +83,8 @@ Future<_FakeSessions> _pumpSession(WidgetTester tester) async {
       // decode; bounded pumps (never pumpAndSettle) keep the real hub's retries
       // from stalling the test.
       theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       routerConfig: router,
     ),
   );
@@ -98,20 +104,23 @@ Finder _inDialog(String text) =>
     find.descendant(of: find.byType(AlertDialog), matching: find.text(text));
 
 void main() {
-  testWidgets('back arrow on an active session prompts end vs leave running (#126)',
-      (tester) async {
-    await _pumpSession(tester);
+  testWidgets(
+    'back arrow on an active session prompts end vs leave running (#126)',
+    (tester) async {
+      await _pumpSession(tester);
 
-    await _openExitDialog(tester);
+      await _openExitDialog(tester);
 
-    expect(find.byType(AlertDialog), findsOneWidget);
-    expect(_inDialog('End session'), findsOneWidget);
-    expect(_inDialog('Leave running'), findsOneWidget);
-    expect(_inDialog('Cancel'), findsOneWidget);
-  });
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(_inDialog('End session'), findsOneWidget);
+      expect(_inDialog('Leave running'), findsOneWidget);
+      expect(_inDialog('Cancel'), findsOneWidget);
+    },
+  );
 
-  testWidgets('choosing End session ends it and returns home (#126)',
-      (tester) async {
+  testWidgets('choosing End session ends it and returns home (#126)', (
+    tester,
+  ) async {
     final sessions = await _pumpSession(tester);
 
     await _openExitDialog(tester);
@@ -123,8 +132,9 @@ void main() {
     expect(find.text('HOME'), findsOneWidget);
   });
 
-  testWidgets('choosing Leave running goes home without ending (#126)',
-      (tester) async {
+  testWidgets('choosing Leave running goes home without ending (#126)', (
+    tester,
+  ) async {
     final sessions = await _pumpSession(tester);
 
     await _openExitDialog(tester);
@@ -136,8 +146,9 @@ void main() {
     expect(find.text('HOME'), findsOneWidget);
   });
 
-  testWidgets('Cancel keeps the teacher on the session, nothing ended (#126)',
-      (tester) async {
+  testWidgets('Cancel keeps the teacher on the session, nothing ended (#126)', (
+    tester,
+  ) async {
     final sessions = await _pumpSession(tester);
 
     await _openExitDialog(tester);

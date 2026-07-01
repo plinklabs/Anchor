@@ -101,6 +101,36 @@ public static class Program
     public const string ShowTestCrashArg = "--show-test-crash";
 
     /// <summary>
+    /// Dev flag (#323): force the agent's UI language to a BCP-47 tag (e.g.
+    /// <c>--ui-language nl-NL</c>) instead of following the Windows display
+    /// language. Lets the Dutch localization be exercised end-to-end on an
+    /// English box (a human running any surface, or a verify script) without
+    /// changing the machine's display language. Off by default — the real agent
+    /// passes nothing and follows the OS language with English fallback.
+    /// </summary>
+    public const string UiLanguageArg = "--ui-language";
+
+    /// <summary>
+    /// Dev-only flag (#323): resolve a representative set of localized strings for
+    /// the language that follows (<c>--verify-i18n nl-NL</c>) — through both the
+    /// real XAML <c>x:Uid</c> path (a live window) and the code-behind
+    /// <see cref="Localization.Loc"/> path — write them to the result file named by
+    /// <see cref="I18nResultPathEnvVar"/>, and exit. Drives the real resources.pri
+    /// pipeline in the built exe so the integration test can assert Dutch renders
+    /// and an unsupported language falls back to English. No WAM / hub / UI
+    /// bootstrap beyond the one probe window. Mirrors <c>--verify-ds-theme</c>.
+    /// </summary>
+    public const string VerifyI18nArg = "--verify-i18n";
+
+    /// <summary>
+    /// Dev-only env var (#323): absolute path the <see cref="VerifyI18nArg"/> mode
+    /// writes its <c>key=value</c> result lines to. The agent is a WinExe with no
+    /// console, so the integration test reads the resolved strings from this file
+    /// (same shape as the --verify-ds-theme / --check-update result files).
+    /// </summary>
+    public const string I18nResultPathEnvVar = "ANCHOR_I18N_RESULT_PATH";
+
+    /// <summary>
     /// Dev-only flag (#44): swap <c>WamTokenProvider</c> for
     /// <c>InjectedTokenProvider</c> so the agent skips interactive sign-in
     /// entirely and authenticates to the backend via the
@@ -297,6 +327,15 @@ public static class Program
     public static bool AutoJoin { get; private set; }
     public static bool SimulateInPrivate { get; private set; }
 
+    /// <summary>The BCP-47 tag from <c>--ui-language</c>, or null to follow the OS language.</summary>
+    public static string? UiLanguage { get; private set; }
+
+    /// <summary>The BCP-47 tag from <c>--verify-i18n</c>, or null for a normal launch.</summary>
+    public static string? VerifyI18nLanguage { get; private set; }
+
+    /// <summary>Whether this launch is the dev-only <c>--verify-i18n</c> result-file mode.</summary>
+    public static bool VerifyI18n => VerifyI18nLanguage is not null;
+
     /// <summary>
     /// Whether the last-resort crash dialog (#248) should be suppressed for this
     /// launch. A headless e2e / verify / dev self-test run intentionally exercises
@@ -307,7 +346,7 @@ public static class Program
     public static bool SuppressCrashDialog =>
         InjectToken || StatusEndpointPort is not null || AutoJoin || SimulateInPrivate ||
         ShowTestToast || ShowTestOverlay || ShowTestMainWindow || ShowTestJoinByCode ||
-        ShowTestTrayMenu || ShowTestGuidedInstall || VerifyDsTheme || ShowTestCrash;
+        ShowTestTrayMenu || ShowTestGuidedInstall || VerifyDsTheme || ShowTestCrash || VerifyI18n;
 
     [STAThread]
     public static int Main(string[] args)
@@ -388,12 +427,22 @@ public static class Program
         StatusEndpointPort = ParsePortAfter(args, StatusEndpointArg);
         AutoJoin = args.Any(a => string.Equals(a, AutoJoinArg, StringComparison.OrdinalIgnoreCase));
         SimulateInPrivate = args.Any(a => string.Equals(a, SimulateInPrivateArg, StringComparison.OrdinalIgnoreCase));
+        UiLanguage = ArgValueAfter(args, UiLanguageArg);
+        VerifyI18nLanguage = ArgValueAfter(args, VerifyI18nArg);
+
+        // #323: pin the UI language before any XAML is parsed so x:Uid resources and
+        // .NET formatting both resolve to it. --verify-i18n's language wins (that mode
+        // exists precisely to render one language); otherwise the --ui-language flag,
+        // else null → follow the Windows display language with English fallback. Set
+        // here (before Application.Start / the WinAppSDK bootstrap) via system APIs
+        // only; the MRT resource lookups happen later, once the runtime is up.
+        Localization.Loc.SetStartupLanguage(VerifyI18nLanguage ?? UiLanguage);
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme && !ShowTestCrash)
+        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme && !ShowTestCrash && !VerifyI18n)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)

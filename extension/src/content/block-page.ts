@@ -1,4 +1,5 @@
 import { logger } from '../shared/logger';
+import { localizeDocument, t } from '../shared/i18n';
 import type { ExtensionRuntimeMessage, UnblockRequestPayload } from '../shared/types';
 
 const log = logger('block-page');
@@ -18,7 +19,7 @@ function readParams(): BlockParams {
 
 function render(params: BlockParams): void {
   const urlEl = document.querySelector<HTMLElement>('[data-blocked-url]');
-  if (urlEl) urlEl.textContent = params.blockedUrl || '(unknown)';
+  if (urlEl) urlEl.textContent = params.blockedUrl || t('blockUnknownUrl');
 }
 
 function setStatus(text: string, kind: 'info' | 'error' = 'info'): void {
@@ -70,13 +71,13 @@ function wireButtons(params: BlockParams): void {
   // a disabled state rather than sending a request the backend would reject.
   if (!params.sessionId) {
     requestBtn.disabled = true;
-    setStatus('No active session — reload the page.', 'error');
+    setStatus(t('blockNoSession'), 'error');
     return;
   }
 
   requestBtn.addEventListener('click', async () => {
     requestBtn.disabled = true;
-    setStatus('Sending request to your teacher…');
+    setStatus(t('blockSendingRequest'));
 
     const host = extractHost(params.blockedUrl) ?? '';
     const payload: UnblockRequestPayload = {
@@ -92,14 +93,14 @@ function wireButtons(params: BlockParams): void {
     try {
       const response = await chrome.runtime.sendMessage(message);
       if (response?.ok) {
-        setStatus('Requested — waiting for teacher.');
+        setStatus(t('blockRequested'));
         log.info('UnblockRequest sent', { host });
       } else {
         // Background ran but the relay failed (hub down, no active session
         // cached, etc.). Surface the actual reason so the student can tell
         // whether to wait or to flag the teacher manually.
-        const reason = response?.error ?? 'Unknown error';
-        setStatus(`Couldn't reach teacher: ${reason}`, 'error');
+        const reason = response?.error ?? t('blockReasonUnknown');
+        setStatus(t('blockReachTeacherFailed', reason), 'error');
         requestBtn.disabled = false;
         log.warn('UnblockRequest rejected by background', { reason });
       }
@@ -108,7 +109,7 @@ function wireButtons(params: BlockParams): void {
       // hibernated and didn't wake in time, or has no listener registered.
       // Surface the underlying message so it isn't an opaque "try again".
       const detail = err instanceof Error ? err.message : String(err);
-      setStatus(`Couldn't reach teacher: ${detail}`, 'error');
+      setStatus(t('blockReachTeacherFailed', detail), 'error');
       requestBtn.disabled = false;
       log.error('sendMessage(unblock-request) failed', err);
     }
@@ -129,7 +130,7 @@ function wireAllowlistAmendedListener(params: BlockParams): void {
       blockedHost,
       addedHosts: message.addedHosts,
     });
-    setStatus('Approved — opening the page…');
+    setStatus(t('blockApproved'));
     // Replace rather than assign so the block page doesn't sit in history,
     // and the back button doesn't bring it right back.
     globalThis.location.replace(params.blockedUrl);
@@ -138,6 +139,9 @@ function wireAllowlistAmendedListener(params: BlockParams): void {
 
 const params = readParams();
 log.info('block page loaded', { blockedUrl: params.blockedUrl, sessionId: params.sessionId });
+// Localize the static copy first, then paint the dynamic bits over it so the
+// translated page never flashes its English source.
+localizeDocument();
 render(params);
 wireButtons(params);
 wireAllowlistAmendedListener(params);

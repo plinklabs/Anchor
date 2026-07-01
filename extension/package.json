@@ -1,6 +1,6 @@
 {
   "name": "anchor-extension",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Anchor Edge MV3 extension — URL filter and friendly block page.",

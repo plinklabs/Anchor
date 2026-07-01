@@ -198,6 +198,28 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                     b.ToTable("SessionEventSummaries", (string)null);
                 });
 
+            modelBuilder.Entity("Anchor.Domain.Schools.School", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("Schools", (string)null);
+                });
+
             modelBuilder.Entity("Anchor.Domain.Sessions.Session", b =>
                 {
                     b.Property<Guid>("Id")

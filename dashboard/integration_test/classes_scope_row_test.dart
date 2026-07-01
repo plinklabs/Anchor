@@ -40,6 +40,8 @@ class _FakeAuth implements MsalAuthService {
   @override
   Future<String> acquireToken() async => 'fake-token';
   @override
+  Future<String> acquireTokenSilent() async => 'fake-token';
+  @override
   AccountInfo? currentAccount() => null;
 }
 
@@ -81,6 +83,34 @@ class _FakeClasses extends ClassesApi {
 
   @override
   Future<List<String>> schools() async => const ['SSM', 'SJI'];
+}
+
+/// Like [_FakeClasses] but its directory search fails until [failSchools] is
+/// cleared — mirrors a missing Graph consent / 502 from `/directory/schools`
+/// (#281). Counts calls so the test can prove Retry re-fetches.
+class _FailingSchoolsClasses extends ClassesApi {
+  _FailingSchoolsClasses() : super(_dummyClient());
+
+  bool failSchools = true;
+  int schoolsCalls = 0;
+
+  @override
+  Future<ClassMembersResponse> members(String classId) async =>
+      ClassMembersResponse(
+        id: 'c1',
+        name: '3A',
+        schoolYear: '2025-2026',
+        schoolTag: 'SSM',
+        classCode: '3A',
+        members: const [],
+      );
+
+  @override
+  Future<List<String>> schools() async {
+    schoolsCalls++;
+    if (failSchools) throw ApiException(502, 'directory unavailable');
+    return const ['SSM', 'SJI'];
+  }
 }
 
 void main() {
@@ -138,6 +168,68 @@ void main() {
       expect(find.text('Populate from Graph'), findsOneWidget);
 
       // ...and no RenderFlex overflowed during layout.
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a failed school-tag load surfaces an inline error + Retry next to the '
+    'School selector, and Retry recovers it (#281)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final tokens = AuthTokenStore()
+        ..setSession(
+          token: 'fake-token',
+          account: const AccountInfo(
+            homeAccountId: 'home-1',
+            username: 'teacher@school.example',
+            displayName: 'Teacher',
+            department: null,
+          ),
+        );
+
+      final classes = _FailingSchoolsClasses();
+
+      await tester.pumpWidget(
+        AnchorDashboard(
+          tokens: tokens,
+          auth: _FakeAuth(),
+          api: _dummyClient(),
+          sessions: _FakeSessions(),
+          bundles: BundlesApi(_dummyClient()),
+          classes: classes,
+          apiBaseUrl: Uri.parse('http://localhost'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('nav-classes')));
+      await tester.pumpAndSettle();
+
+      // The selector renders, but the directory failure is surfaced inline with
+      // a Retry — not swallowed into a silently empty dropdown (pre-#281).
+      expect(find.text('School'), findsOneWidget);
+      expect(find.textContaining("Couldn't load schools"), findsOneWidget);
+      final retry = find.byKey(const Key('classes-schools-retry-button'));
+      expect(retry, findsOneWidget);
+      expect(find.textContaining('ApiException'), findsNothing);
+
+      // Recover the backend, tap Retry — it re-fetches and clears the notice.
+      final callsBefore = classes.schoolsCalls;
+      classes.failSchools = false;
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(classes.schoolsCalls, greaterThan(callsBefore));
+      expect(find.textContaining("Couldn't load schools"), findsNothing);
+      expect(
+        find.byKey(const Key('classes-schools-retry-button')),
+        findsNothing,
+      );
       expect(tester.takeException(), isNull);
     },
   );

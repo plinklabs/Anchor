@@ -39,13 +39,25 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Boots AnchorDashboard in headless Chrome and drives the live-session view:
-      # a SignalR roster transition, an unblock-request push, a UI bundle PUT, and
-      # the event feed. chromedriver is started in-step so it outlives into the
-      # drive; $CHROMEWEBDRIVER is preset on the GitHub-hosted ubuntu image.
-      - name: Run live-session e2e (web, headless Chrome)
+      # Boots the real app from an unauthenticated state and drives the sign-in
+      # flow, including the #303 stalled-silent-step → retryable-error path
+      # (#308). chromedriver is started in-step so it outlives into the drive;
+      # $CHROMEWEBDRIVER is preset on the GitHub-hosted ubuntu image.
+      - name: Run login e2e (web, headless Chrome)
         run: |
           "$CHROMEWEBDRIVER/chromedriver" --port=4444 &
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/login_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
+
+      # Boots AnchorDashboard in headless Chrome and drives the live-session view:
+      # a SignalR roster transition, an unblock-request push, a UI bundle PUT, and
+      # the event feed. A fresh `flutter drive` reuses the chromedriver started above.
+      - name: Run live-session e2e (web, headless Chrome)
+        run: |
           flutter drive \
             --driver=test_driver/integration_test.dart \
             --target=integration_test/live_session_test.dart \
@@ -73,6 +85,40 @@ jobs:
           flutter drive \
             --driver=test_driver/integration_test.dart \
             --target=integration_test/graceful_403_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
+
+      # Boots the real app as an admin and drives the Admin → Admins sub-tab:
+      # search a signed-in user, promote them, then remove an admin (#300).
+      - name: Run manage-admins e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/manage_admins_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
+
+      # Boots the real app as an admin and drives the Admin → Schools sub-tab:
+      # render the schools list and deactivate one via its toggle (#301).
+      - name: Run manage-schools e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/manage_schools_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
+
+      # Boots the real app as an admin and drives Admin → Bundles import/export:
+      # import a JSON file (fake file-IO seam), see the new bundle listed, then
+      # export it back to JSON (#304).
+      - name: Run bundles import/export e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/bundles_import_export_test.dart \
             -d web-server \
             --browser-name=chrome \
             --headless

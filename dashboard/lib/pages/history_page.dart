@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/sessions_api.dart';
+import '../l10n/app_localizations.dart';
 import '../widgets/api_error_text.dart';
 import 'past_session_shared.dart';
 
@@ -33,14 +34,20 @@ class _HistoryPageState extends State<HistoryPage> {
   bool _exhausted = false;
   ApiErrorMessage? _error;
 
+  bool _didInitialLoad = false;
+
   @override
-  void initState() {
-    super.initState();
-    _loadMore();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_didInitialLoad) {
+      _didInitialLoad = true;
+      _loadMore();
+    }
   }
 
   Future<void> _loadMore() async {
     if (_loading || _exhausted) return;
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _loading = true;
       _error = null;
@@ -57,10 +64,13 @@ class _HistoryPageState extends State<HistoryPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = describeApiError(
-            e,
-            generic: 'Could not load past sessions. Please try again.',
-          ));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.historyLoadError,
+          notAuthorized: l10n.apiError403,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -68,10 +78,7 @@ class _HistoryPageState extends State<HistoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: PlinkColors.paper,
-      body: _buildBody(),
-    );
+    return Scaffold(backgroundColor: PlinkColors.paper, body: _buildBody());
   }
 
   Widget _buildBody() {
@@ -91,7 +98,7 @@ class _HistoryPageState extends State<HistoryPage> {
         child: Padding(
           padding: const EdgeInsets.all(PlinkSpacing.s6),
           child: Text(
-            'No past sessions yet. Sessions appear here after you end them.',
+            AppLocalizations.of(context).historyEmpty,
             style: pastMonoLabel(PlinkColors.muted),
             textAlign: TextAlign.center,
           ),
@@ -150,7 +157,7 @@ class _HistoryPageState extends State<HistoryPage> {
             // Calm ink — retrying a fetch is never the magenta spark.
             OutlinedButton(
               onPressed: _loadMore,
-              child: const Text('Retry'),
+              child: Text(AppLocalizations.of(context).actionRetry),
             ),
           ],
         ),
@@ -168,7 +175,7 @@ class _HistoryPageState extends State<HistoryPage> {
             // constructive commit. The magenta spark never appears here.
             : OutlinedButton(
                 onPressed: _loadMore,
-                child: const Text('Load more'),
+                child: Text(AppLocalizations.of(context).actionLoadMore),
               ),
       ),
     );
@@ -182,7 +189,10 @@ class _ArchiveLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text('Past sessions', style: pastMonoLabel(PlinkColors.ink60));
+    return Text(
+      AppLocalizations.of(context).historyPastSessions,
+      style: pastMonoLabel(PlinkColors.ink60),
+    );
   }
 }
 
@@ -218,7 +228,9 @@ class _HistoryRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    entry.className.isEmpty ? 'Session' : entry.className,
+                    entry.className.isEmpty
+                        ? AppLocalizations.of(context).historySessionFallback
+                        : entry.className,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodyLarge?.copyWith(
@@ -237,7 +249,10 @@ class _HistoryRow extends StatelessWidget {
             const SizedBox(width: PlinkSpacing.s3),
             // The archived marker — an outline badge, the muted counterpart to
             // the live page's magenta LIVE spark. Never the spark itself.
-            const PlinkBadge('Ended', variant: BadgeVariant.outline),
+            PlinkBadge(
+              AppLocalizations.of(context).badgeEnded,
+              variant: BadgeVariant.outline,
+            ),
             const SizedBox(width: PlinkSpacing.s2),
             const Icon(Icons.chevron_right, color: PlinkColors.muted),
           ],

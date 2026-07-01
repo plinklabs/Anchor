@@ -45,25 +45,25 @@
                        Text="ANCHOR" />
         </StackPanel>
 
-        <!-- headline: in Fraunces display. -->
-        <TextBlock Grid.Row="1"
+        <!-- headline: in Fraunces display. Copy localized in code (Localize()). -->
+        <TextBlock x:Name="HeadlineText"
+                   Grid.Row="1"
                    Style="{StaticResource PlinkDisplaySmallTextStyle}"
-                   Foreground="{StaticResource PlinkOnInkBrush}"
-                   Text="One quick step" />
+                   Foreground="{StaticResource PlinkOnInkBrush}" />
 
         <!-- supporting line: plain Hanken on ink. -->
-        <TextBlock Grid.Row="2"
+        <TextBlock x:Name="BodyText"
+                   Grid.Row="2"
                    Style="{StaticResource PlinkBodyLargeTextStyle}"
                    Foreground="{StaticResource PlinkOnInkMutedBrush}"
-                   TextWrapping="Wrap"
-                   Text="Anchor needs its Edge extension to keep your focus sessions on track. We'll open the store — click Get, then Add to Edge." />
+                   TextWrapping="Wrap" />
 
         <!-- the spelled-out two-tap instruction, in quiet mono microcopy. -->
-        <TextBlock Grid.Row="3"
+        <TextBlock x:Name="StepsText"
+                   Grid.Row="3"
                    Style="{StaticResource PlinkLabelTextStyle}"
                    Foreground="{StaticResource PlinkOnInkMutedBrush}"
-                   TextWrapping="Wrap"
-                   Text="In the page that opens:  GET  →  ADD EXTENSION" />
+                   TextWrapping="Wrap" />
 
         <StackPanel Grid.Row="4"
                     Orientation="Horizontal"
@@ -71,12 +71,10 @@
                     Spacing="10">
             <Button x:Name="LaterButton"
                     Style="{StaticResource PlinkOnInkSecondaryButtonStyle}"
-                    Content="LATER"
                     Click="OnLaterClicked" />
             <!-- OPEN STORE: the single magenta spark — the one primary action. -->
             <Button x:Name="OpenStoreButton"
                     Style="{StaticResource PlinkPrimaryButtonStyle}"
-                    Content="OPEN STORE"
                     Click="OnOpenStoreClicked" />
         </StackPanel>
     </Grid>

@@ -130,29 +130,29 @@
           <span class="pl-ping__ring b"></span>
           <span class="pl-ping__core"></span>
         </span>
-        <span data-eyebrow-label>Focus session</span>
+        <span data-eyebrow-label data-i18n="focusSession">Focus session</span>
       </p>
 
       <!-- Active session -->
       <div data-when="active">
-        <h1>You're in focus</h1>
-        <p class="muted">Anchor is keeping you on the sites your teacher allowed. Everything else is paused until the session ends.</p>
+        <h1 data-i18n="popupActiveTitle">You're in focus</h1>
+        <p class="muted" data-i18n="popupActiveBody">Anchor is keeping you on the sites your teacher allowed. Everything else is paused until the session ends.</p>
         <p class="joincode" data-joincode hidden>
-          <span>Class code</span>
+          <span data-i18n="popupClassCode">Class code</span>
           <span class="joincode__value" data-joincode-value>—</span>
         </p>
-        <p class="allowlist__label">Allowed sites</p>
+        <p class="allowlist__label" data-i18n="popupAllowedSites">Allowed sites</p>
         <ul class="allowlist" data-allowlist hidden></ul>
-        <p class="allowlist__empty" data-allowlist-empty hidden>Only your school's baseline sites are allowed right now.</p>
+        <p class="allowlist__empty" data-allowlist-empty hidden data-i18n="popupAllowlistEmpty">Only your school's baseline sites are allowed right now.</p>
       </div>
 
       <!-- Idle (no active session) -->
       <div data-when="idle">
-        <h1>No active session</h1>
-        <p class="muted">You're free to browse. Anchor only steps in once your teacher starts a focus session for your class.</p>
+        <h1 data-i18n="popupIdleTitle">No active session</h1>
+        <p class="muted" data-i18n="popupIdleBody">You're free to browse. Anchor only steps in once your teacher starts a focus session for your class.</p>
       </div>
 
-      <p class="footnote">Anchor focus enforcement</p>
+      <p class="footnote" data-i18n="focusEnforcement">Anchor focus enforcement</p>
     </main>
     <script src="popup.js"></script>
   </body>

@@ -1,6 +1,7 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/home_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,10 +20,8 @@ ApiClient _dummyClient() => ApiClient(
 );
 
 class _FakeSessions extends SessionsApi {
-  _FakeSessions({
-    this.classesList = const [],
-    this.startId = 'new-session',
-  }) : super(_dummyClient());
+  _FakeSessions({this.classesList = const [], this.startId = 'new-session'})
+    : super(_dummyClient());
 
   final List<ClassSummary> classesList;
   final String startId;
@@ -54,23 +53,21 @@ class _FakeSessions extends SessionsApi {
 }
 
 Widget _host({required _FakeSessions sessions, AuthTokenStore? tokens}) {
-  final home = HomePage(
-    tokens: tokens ?? AuthTokenStore(),
-    sessions: sessions,
-  );
+  final home = HomePage(tokens: tokens ?? AuthTokenStore(), sessions: sessions);
   final router = GoRouter(
     initialLocation: '/',
     routes: <RouteBase>[
       GoRoute(path: '/', builder: (_, _) => home),
       GoRoute(
         path: '/session/:id',
-        builder: (_, GoRouterState state) => Scaffold(
-          body: Text('SESSION ${state.pathParameters['id']}'),
-        ),
+        builder: (_, GoRouterState state) =>
+            Scaffold(body: Text('SESSION ${state.pathParameters['id']}')),
       ),
     ],
   );
   return MaterialApp.router(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     theme: PlinkTheme.paper.copyWith(
       extensions: const <ThemeExtension<dynamic>>[
         PlinkProductAccent(Color(0xFF34357A)),

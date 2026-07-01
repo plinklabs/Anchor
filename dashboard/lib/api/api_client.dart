@@ -34,8 +34,7 @@ class ApiClient {
 
   Uri get baseUrl => _baseUrl;
 
-  Future<http.Response> get(String path) =>
-      _http.get(_baseUrl.resolve(path));
+  Future<http.Response> get(String path) => _http.get(_baseUrl.resolve(path));
 
   Future<http.Response> post(
     String path, {

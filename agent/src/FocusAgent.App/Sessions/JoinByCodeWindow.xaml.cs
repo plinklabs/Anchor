@@ -1,3 +1,4 @@
+using FocusAgent.App.Localization;
 using FocusAgent.Core.Sessions;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -21,7 +22,11 @@ public sealed partial class JoinByCodeWindow : Window
         InitializeComponent();
         _client = client;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
-        Title = "Anchor — Join by code";
+        Title = Loc.Get("Title_JoinByCode");
+        HeadlineText.Text = Loc.Get("JoinHeadline");
+        BodyText.Text = Loc.Get("JoinBody");
+        CancelButton.Content = Loc.Get("JoinCancel");
+        JoinButton.Content = Loc.Get("Join_Button_Join");
 
         Closed += OnClosed;
         Activated += OnFirstActivated;
@@ -137,7 +142,7 @@ public sealed partial class JoinByCodeWindow : Window
         CodeBox.IsEnabled = !busy;
         CancelButton.IsEnabled = !busy;
         JoinButton.IsEnabled = !busy && CodeBox.Text.Length == 6;
-        JoinButton.Content = busy ? "JOINING…" : "JOIN";
+        JoinButton.Content = busy ? Loc.Get("Join_Button_Joining") : Loc.Get("Join_Button_Join");
     }
 
     private void ShowMessage(string text)

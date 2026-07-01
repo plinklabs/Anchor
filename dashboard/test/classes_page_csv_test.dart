@@ -1,7 +1,10 @@
+import 'package:anchor_dashboard/l10n/app_localizations_en.dart';
 import 'package:anchor_dashboard/pages/classes_page.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  final l10n = AppLocalizationsEn();
+
   group('parseRosterCsv', () {
     test('reads upn rows, tolerating quotes and blank lines', () {
       const csv = '''
@@ -11,7 +14,7 @@ alice@school.be
 
 charlie@school.be
 ''';
-      final result = parseRosterCsv(csv);
+      final result = parseRosterCsv(csv, l10n);
       expect(result.error, isNull);
       expect(result.rows, hasLength(3));
       expect(result.rows[0].upn, 'alice@school.be');
@@ -24,7 +27,7 @@ charlie@school.be
 display_name,upn
 Alice,alice@school.be
 ''';
-      final result = parseRosterCsv(csv);
+      final result = parseRosterCsv(csv, l10n);
       expect(result.rows, hasLength(1));
       expect(result.rows.first.upn, 'alice@school.be');
     });
@@ -35,7 +38,7 @@ display_name,upn
 Alice,
 Bob,bob@school.be
 ''';
-      final result = parseRosterCsv(csv);
+      final result = parseRosterCsv(csv, l10n);
       expect(result.rows, hasLength(1));
       expect(result.rows.first.upn, 'bob@school.be');
     });
@@ -45,13 +48,13 @@ Bob,bob@school.be
 display_name,entra_oid
 Alice,00000000-0000-0000-0000-000000000001
 ''';
-      final result = parseRosterCsv(csv);
+      final result = parseRosterCsv(csv, l10n);
       expect(result.rows, isEmpty);
       expect(result.error, contains('upn'));
     });
 
     test('treats empty input as error', () {
-      final result = parseRosterCsv('   \n  \n');
+      final result = parseRosterCsv('   \n  \n', l10n);
       expect(result.rows, isEmpty);
       expect(result.error, isNotNull);
     });

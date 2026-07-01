@@ -58,11 +58,11 @@
                            Text="ANCHOR" />
             </StackPanel>
 
-            <!-- headline: the connection status, in Fraunces display -->
+            <!-- headline: the connection status, in Fraunces display. Text is set
+                 (localized) in code on every render — ApplyConnectionSnapshot. -->
             <TextBlock x:Name="StatusText"
                        Style="{StaticResource PlinkDisplaySmallTextStyle}"
-                       Foreground="{StaticResource PlinkOnInkBrush}"
-                       Text="Starting…" />
+                       Foreground="{StaticResource PlinkOnInkBrush}" />
 
             <!-- supporting detail / next action, in Hanken body on ink -->
             <TextBlock x:Name="DetailText"
@@ -76,9 +76,9 @@
                     Style="{StaticResource PlinkInkCardStyle}"
                     Visibility="Collapsed">
                 <StackPanel Spacing="12">
-                    <TextBlock Style="{StaticResource PlinkLabelStrongTextStyle}"
-                               Foreground="{StaticResource PlinkOnInkBrush}"
-                               Text="FOCUS SESSION" />
+                    <TextBlock x:Name="SessionLabelText"
+                               Style="{StaticResource PlinkLabelStrongTextStyle}"
+                               Foreground="{StaticResource PlinkOnInkBrush}" />
                     <TextBlock x:Name="SessionStatusText"
                                Style="{StaticResource PlinkTitleMediumTextStyle}"
                                Foreground="{StaticResource PlinkOnInkBrush}"
@@ -106,19 +106,18 @@
               Padding="40,0,40,32">
             <Button x:Name="LeaveButton"
                     Style="{StaticResource PlinkOnInkSecondaryButtonStyle}"
-                    Content="LEAVE SESSION"
                     Click="OnLeaveClicked"
                     HorizontalAlignment="Left"
                     Visibility="Collapsed" />
             <StackPanel Orientation="Horizontal"
                         Spacing="12"
                         HorizontalAlignment="Right">
+                <!-- PrimaryButton content is set (localized) in code on every render. -->
                 <Button x:Name="PrimaryButton"
                         Style="{StaticResource PlinkPrimaryButtonStyle}"
-                        Content="SIGN IN"
                         Click="OnPrimaryClicked" />
-                <Button Style="{StaticResource PlinkOnInkSecondaryButtonStyle}"
-                        Content="CLOSE"
+                <Button x:Name="CloseButton"
+                        Style="{StaticResource PlinkOnInkSecondaryButtonStyle}"
                         Click="OnCloseClicked" />
             </StackPanel>
         </Grid>

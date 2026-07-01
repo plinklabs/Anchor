@@ -27,13 +27,18 @@ class ApiErrorMessage {
 /// flagged [ApiErrorMessage.isAuthorization]; every other failure (transient
 /// network, 5xx, a 4xx with no special handling) falls back to [generic], a
 /// context-specific human sentence the caller supplies.
-ApiErrorMessage describeApiError(Object error, {required String generic}) {
+///
+/// Both messages are passed in already localized (#321): this helper runs
+/// outside a build (in catch blocks) so it can't resolve `AppLocalizations`
+/// itself — callers supply [generic] and [notAuthorized] from
+/// `AppLocalizations.of(context)`.
+ApiErrorMessage describeApiError(
+  Object error, {
+  required String generic,
+  required String notAuthorized,
+}) {
   if (error is ApiException && error.statusCode == 403) {
-    return const ApiErrorMessage(
-      "Your account isn't set up as a teacher yet. "
-      'Ask an administrator to grant access.',
-      isAuthorization: true,
-    );
+    return ApiErrorMessage(notAuthorized, isAuthorization: true);
   }
   return ApiErrorMessage(generic);
 }

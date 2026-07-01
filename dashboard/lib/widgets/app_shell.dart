@@ -1,29 +1,43 @@
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../l10n/app_localizations.dart';
 import 'anchor_mark.dart';
 
 /// The dashboard surfaces that share the chrome. The first four are the
 /// standing nav destinations; [session]/[pastSession] are detail pages reached
-/// from them (no nav slot of their own).
-enum AppSection { home, classes, history, bundles, session, pastSession }
+/// from them (no nav slot of their own). [admin] is the admin-only area whose
+/// own sub-pages (Bundles, …) live behind a left vertical sub-nav.
+enum AppSection { home, classes, history, admin, session, pastSession }
 
 /// A top-level nav destination in the app-bar.
 class _Destination {
-  const _Destination(this.section, this.label, this.location, this.number);
+  const _Destination(this.section, this.location, this.number);
 
   final AppSection section;
-  final String label;
   final String location;
   final String number;
 }
 
 const List<_Destination> _destinations = <_Destination>[
-  _Destination(AppSection.home, 'Home', '/', '01'),
-  _Destination(AppSection.classes, 'Classes', '/classes', '02'),
-  _Destination(AppSection.history, 'History', '/history', '03'),
-  _Destination(AppSection.bundles, 'Bundles', '/bundles', '04'),
+  _Destination(AppSection.home, '/', '01'),
+  _Destination(AppSection.classes, '/classes', '02'),
+  _Destination(AppSection.history, '/history', '03'),
+  _Destination(AppSection.admin, '/admin', '04'),
 ];
+
+/// The localized display label for a top-level nav [section].
+String _navLabel(BuildContext c, AppSection s) {
+  final AppLocalizations l10n = AppLocalizations.of(c);
+  return switch (s) {
+    AppSection.home => l10n.shellNavHome,
+    AppSection.classes => l10n.shellNavClasses,
+    AppSection.history => l10n.shellNavHistory,
+    AppSection.admin => l10n.shellNavAdmin,
+    AppSection.session => l10n.shellNavHome,
+    AppSection.pastSession => l10n.shellNavHome,
+  };
+}
 
 /// Horizontal page gutter — keeps the lockup, nav, and page eyebrow on one
 /// flush-left margin (the editorial column).
@@ -58,7 +72,7 @@ class AppShell extends StatelessWidget {
   /// above it.
   final Widget child;
 
-  /// Whether the signed-in teacher is an admin — gates the Bundles nav slot.
+  /// Whether the signed-in teacher is an admin — gates the Admin nav slot.
   final bool isAdmin;
 
   /// Display name shown on the right of the bar; hidden when null.
@@ -69,7 +83,10 @@ class AppShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ({String number, String label}) header = _headerFor(section);
+    final ({String number, String label}) header = _headerFor(
+      AppLocalizations.of(context),
+      section,
+    );
     final String eyebrow = header.number.isEmpty
         ? header.label
         : '${header.number} · ${header.label}';
@@ -113,14 +130,23 @@ class AppShell extends StatelessWidget {
     );
   }
 
-  static ({String number, String label}) _headerFor(AppSection section) {
+  static ({String number, String label}) _headerFor(
+    AppLocalizations l10n,
+    AppSection section,
+  ) {
     return switch (section) {
-      AppSection.home => (number: '01', label: 'Home'),
-      AppSection.classes => (number: '02', label: 'Classes'),
-      AppSection.history => (number: '03', label: 'Past sessions'),
-      AppSection.bundles => (number: '04', label: 'Bundles'),
-      AppSection.session => (number: '', label: 'Live session'),
-      AppSection.pastSession => (number: '', label: 'Past session'),
+      AppSection.home => (number: '01', label: l10n.shellNavHome),
+      AppSection.classes => (number: '02', label: l10n.shellNavClasses),
+      AppSection.history => (
+        number: '03',
+        label: l10n.shellSectionPastSessions,
+      ),
+      AppSection.admin => (number: '04', label: l10n.shellNavAdmin),
+      AppSection.session => (number: '', label: l10n.shellSectionLiveSession),
+      AppSection.pastSession => (
+        number: '',
+        label: l10n.shellSectionPastSession,
+      ),
     };
   }
 }
@@ -143,7 +169,7 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final List<_Destination> items = _destinations
-        .where((_Destination d) => d.section != AppSection.bundles || isAdmin)
+        .where((_Destination d) => d.section != AppSection.admin || isAdmin)
         .toList(growable: false);
 
     return Padding(
@@ -204,7 +230,7 @@ class _TopBar extends StatelessWidget {
                 foregroundColor: PlinkColors.ink,
               ),
               child: Text(
-                'SIGN OUT',
+                AppLocalizations.of(context).shellSignOut,
                 style: _navTextStyle(PlinkColors.ink, active: false),
               ),
             ),
@@ -240,7 +266,7 @@ class _NavItem extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
               Text(
-                dest.label.toUpperCase(),
+                _navLabel(context, dest.section).toUpperCase(),
                 style: _navTextStyle(color, active: active),
               ),
               const SizedBox(height: PlinkSpacing.s1 + 2), // 6

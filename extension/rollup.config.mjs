@@ -31,6 +31,10 @@ export default [
       copy({
         targets: [
           { src: 'src/manifest.json', dest: 'dist', transform: stampManifestVersion },
+          // i18n (#322): the chrome.i18n catalogues. `_locales/<lang>/messages.json`
+          // must sit at the extension root for the browser to find them, and
+          // manifest `default_locale: en` resolves any `__MSG_*__` / missing key.
+          { src: 'src/_locales', dest: 'dist' },
           { src: 'src/content/block-page.html', dest: 'dist' },
           // AE2 (#178): the toolbar-action status popup, served from dist root
           // (manifest action.default_popup) — same wiring as the block page.

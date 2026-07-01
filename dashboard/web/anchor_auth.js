@@ -5,6 +5,19 @@
   let pca = null;
   let apiScope = null;
 
+  // A stale, day-old cached session can leave acquireTokenSilent stalled on a
+  // hidden-iframe renewal that never resolves. Bound the silent path so we fall
+  // back to a visible interactive popup promptly instead of hanging (#303).
+  const SILENT_TIMEOUT_MS = 8000;
+
+  function withTimeout(promise, ms, message) {
+    let timer;
+    const timeout = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   async function init(config) {
     if (pca) return;
     if (!window.msal || !window.msal.PublicClientApplication) {
@@ -18,7 +31,11 @@
         redirectUri: window.location.origin,
         postLogoutRedirectUri: window.location.origin,
       },
-      cache: { cacheLocation: 'sessionStorage' },
+      // localStorage, not sessionStorage: Anchor is BYOD (personal devices),
+      // so the session should survive a full tab/browser close, not just a
+      // reload — there's no shared-machine risk of the next user inheriting it
+      // (#302).
+      cache: { cacheLocation: 'localStorage' },
     });
     await pca.initialize();
     // Drain any redirect response (we use popup, but this is harmless).
@@ -57,25 +74,37 @@
     await pca.logoutPopup({ account: account });
   }
 
-  async function acquireToken() {
+  // Silent-only acquisition: no interactive fallback. Used to rehydrate the
+  // session on app startup (#302), where a surprise popup would be jarring (and
+  // browsers block popups without a user gesture anyway). A failure here means
+  // "not silently restorable" — the caller falls back to the /login page.
+  async function acquireTokenSilent() {
     if (!pca) throw new Error('anchorAuth not initialized');
     const account = currentAccount();
     if (!account) throw new Error('no account');
+    const result = await withTimeout(
+      pca.acquireTokenSilent({ scopes: [apiScope], account: account }),
+      SILENT_TIMEOUT_MS,
+      'silent token acquisition timed out',
+    );
+    return result.accessToken;
+  }
+
+  async function acquireToken() {
     try {
-      const result = await pca.acquireTokenSilent({
+      return await acquireTokenSilent();
+    } catch (_silentError) {
+      // Any silent failure — interaction required, an expired SSO session, or a
+      // timed-out/stalled hidden-iframe renewal — falls back to a visible
+      // interactive popup rather than surfacing as a hang. If the popup itself
+      // fails, that error propagates to the caller for a clear message.
+      const account = currentAccount();
+      if (!account) throw new Error('no account');
+      const result = await pca.acquireTokenPopup({
         scopes: [apiScope],
         account: account,
       });
       return result.accessToken;
-    } catch (e) {
-      if (e && e.name === 'InteractionRequiredAuthError') {
-        const result = await pca.acquireTokenPopup({
-          scopes: [apiScope],
-          account: account,
-        });
-        return result.accessToken;
-      }
-      throw e;
     }
   }
 
@@ -83,5 +112,12 @@
     return accountToJson(currentAccount());
   }
 
-  window.anchorAuth = { init, signIn, signOut, acquireToken, getAccount };
+  window.anchorAuth = {
+    init,
+    signIn,
+    signOut,
+    acquireToken,
+    acquireTokenSilent,
+    getAccount,
+  };
 })();

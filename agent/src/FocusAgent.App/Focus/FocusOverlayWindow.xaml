@@ -57,16 +57,15 @@
             <!-- headline: calm, in Fraunces display. States the situation without
                  scolding — the student isn't in trouble, the session just has a
                  shape. -->
-            <TextBlock Style="{StaticResource PlinkDisplaySmallTextStyle}"
-                       Foreground="{StaticResource PlinkOnInkBrush}"
-                       Text="Let's stay with the session" />
+            <TextBlock x:Name="HeadlineText"
+                       Style="{StaticResource PlinkDisplaySmallTextStyle}"
+                       Foreground="{StaticResource PlinkOnInkBrush}" />
 
             <!-- supporting line: plain Hanken on ink — what's happening and why,
                  in one breath, then out of the way (§5). -->
             <TextBlock x:Name="MessageText"
                        Style="{StaticResource PlinkBodyLargeTextStyle}"
-                       Foreground="{StaticResource PlinkOnInkMutedBrush}"
-                       Text="Your teacher started a focus session, so this app is set aside for now. Pick one of these to carry on." />
+                       Foreground="{StaticResource PlinkOnInkMutedBrush}" />
 
             <!-- the just-blocked line: quiet mono microcopy, never an alarm. -->
             <TextBlock x:Name="BlockedText"

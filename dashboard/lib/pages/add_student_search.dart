@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/classes_api.dart';
+import '../l10n/app_localizations.dart';
 
 /// Typeahead that searches the directory (MS Graph) and adds the selected
 /// person to the class. The Entra OID travels with the selection but is never
@@ -76,6 +77,7 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
   }
 
   Future<void> _runSearch(String query) async {
+    final l10n = AppLocalizations.of(context);
     final seq = ++_searchSeq;
     try {
       final results = await widget.onSearch(query);
@@ -87,7 +89,7 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
     } catch (e) {
       if (!mounted || seq != _searchSeq) return;
       setState(() {
-        _error = 'Directory search unavailable.';
+        _error = l10n.addStudentSearchUnavailable;
         _results = const [];
         _searching = false;
       });
@@ -125,10 +127,11 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
             enabled: !_adding && !widget.disabled,
             onChanged: _onChanged,
             decoration: InputDecoration(
-              labelText: 'Add student',
+              labelText: AppLocalizations.of(context).addStudentLabel,
               hintText: widget.disabled
-                  ? (widget.disabledReason ?? 'Search disabled')
-                  : 'Search by name',
+                  ? (widget.disabledReason ??
+                        AppLocalizations.of(context).addStudentSearchDisabled)
+                  : AppLocalizations.of(context).addStudentSearchByName,
               prefixIcon: const Icon(Icons.search),
               suffixIcon: _searching
                   ? const Padding(
@@ -161,8 +164,8 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
         child: Text(
           _error!,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.error,
-              ),
+            color: Theme.of(context).colorScheme.error,
+          ),
         ),
       );
     }
@@ -175,7 +178,10 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
           vertical: PlinkSpacing.s2,
           horizontal: PlinkSpacing.s1,
         ),
-        child: Text('No matches.', style: _monoLabel(PlinkColors.muted)),
+        child: Text(
+          AppLocalizations.of(context).addStudentNoMatches,
+          style: _monoLabel(PlinkColors.muted),
+        ),
       );
     }
     // A hairline-bounded dropdown panel, not a raised card — the system uses
@@ -217,9 +223,9 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
                       u.displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: PlinkColors.ink,
-                          ),
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodyMedium?.copyWith(color: PlinkColors.ink),
                     ),
                     if (hasUpn) ...[
                       const SizedBox(height: 2),
@@ -243,7 +249,8 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
 
 /// A space-mono label style (sentence-case microcopy / specs) — mirrors the
 /// classes page treatment so the typeahead reads in the same instrument voice.
-TextStyle _monoLabel(Color color) => const TextStyle(
+TextStyle _monoLabel(Color color) =>
+    const TextStyle(
       fontFamily: PlinkType.monoFamily,
       package: PlinkType.fontPackage,
       fontFamilyFallback: PlinkType.monoFallback,

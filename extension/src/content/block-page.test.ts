@@ -52,6 +52,43 @@ describe('block page — calm student-facing redesign (AE1 / #177)', () => {
   });
 
   it('uses a calm, reassuring headline rather than a punitive one', () => {
-    expect(html).toMatch(/<h1>Let's stay on track<\/h1>/);
+    expect(html).toMatch(/<h1[^>]*>Let's stay on track<\/h1>/);
+  });
+});
+
+describe('block page — the blocked URL stays legible (#318)', () => {
+  // Pull the `.blocked-url` rule body out of the inline <style> so we assert on
+  // its own declarations, not an incidental match elsewhere in the document.
+  const blockedUrlRule = /\.blocked-url\s*\{([\s\S]*?)\}/.exec(html)?.[1] ?? '';
+
+  it('declares the rule', () => {
+    expect(blockedUrlRule).not.toBe('');
+  });
+
+  it('pins an explicit foreground colour instead of inheriting it', () => {
+    // The white-on-white bug was inheritance: with no `color`, the URL text
+    // colour depended entirely on the ink treatment resolving. Require an
+    // explicit `color` declaration on the element itself.
+    expect(blockedUrlRule).toMatch(/(^|[;{]|\s)color\s*:/);
+  });
+
+  it('gives both the foreground and inset background a literal fallback', () => {
+    // The fallbacks keep the URL legible even if plink.css / its DS tokens
+    // never resolve on the deployed page — a dark inset with light text rather
+    // than a collapse to white-on-white. The pair must contrast.
+    expect(blockedUrlRule).toMatch(/color\s*:\s*var\(--text,\s*#[0-9a-fA-F]{3,8}\s*\)/);
+    expect(blockedUrlRule).toMatch(
+      /background\s*:\s*var\(--surface-inset,\s*#[0-9a-fA-F]{3,8}\s*\)/,
+    );
+  });
+
+  it('re-derives --surface-inset in the ink scope so the inset tracks the ink palette', () => {
+    // Root cause: plink.css computes `--surface-inset: var(--paper-3)` once at
+    // :root off the light paper; `.plink-ink` remaps `--paper-3` to dark but
+    // never re-derives `--surface-inset`, so the inset stays light on this
+    // fixed-ink page. `.block-root` must re-derive it from the remapped paper,
+    // or the URL panel paints light and the on-ink text is invisible on it.
+    const blockRootRule = /\.block-root\s*\{([\s\S]*?)\}/.exec(html)?.[1] ?? '';
+    expect(blockRootRule).toMatch(/--surface-inset\s*:\s*var\(--paper-3/);
   });
 });

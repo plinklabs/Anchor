@@ -1,4 +1,5 @@
 import { logger } from '../shared/logger';
+import { localizeDocument, t } from '../shared/i18n';
 import { getActiveSession } from '../shared/session-state';
 import type { ActiveSessionState } from '../shared/types';
 
@@ -73,10 +74,14 @@ function renderIdle(): void {
   const ping = document.querySelector<HTMLElement>('[data-ping]');
   ping?.classList.remove('pl-ping--pulse');
   ping?.classList.add('pl-ping--static');
-  setText('[data-eyebrow-label]', 'Idle');
+  setText('[data-eyebrow-label]', t('popupEyebrowIdle'));
 }
 
 async function main(): Promise<void> {
+  // Translate the static copy up front; renderActive/renderIdle then paint the
+  // session-specific bits (and the idle eyebrow) over the localized page.
+  localizeDocument();
+
   let session: ActiveSessionState | null = null;
   try {
     session = await getActiveSession();

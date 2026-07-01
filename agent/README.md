@@ -206,6 +206,54 @@ start / amend / end a session and print the agent's live `/status`.
 ./scripts/dev/dev-agent.ps1
 ```
 
+## Localization (i18n)
+
+The agent is localized (#323, part of the cross-surface effort #320) with the
+standard WinUI/.NET resource pipeline: `.resw` catalogues under
+[`src/FocusAgent.App/Strings/<lang>/Resources.resw`](src/FocusAgent.App/Strings),
+compiled into `resources.pri` next to the exe by the Windows App SDK build.
+
+- **English (`en-US`) is the source + fallback locale** — set via
+  `<DefaultLanguage>` in the csproj. A key missing from the active language (or an
+  unsupported display language) resolves to the English value, never a blank or a
+  raw key. `nl-NL` (Dutch) ships as the proof-of-concept locale.
+- **Locale resolution** is the user's Windows display language, picked
+  automatically by MRT. The `--ui-language <bcp47>` dev flag forces a specific
+  language (e.g. `--ui-language nl-NL`) so Dutch can be exercised on an
+  English box without changing the machine's display language.
+- **How strings resolve.** Every user-facing string goes through the
+  [`Loc`](src/FocusAgent.App/Localization/Loc.cs) helper — static window copy is
+  set from each window's constructor, dynamic copy (tray, connection status,
+  toasts, join errors) at the point it's built. `Loc` is the only seam that
+  touches `ResourceLoader`/`ResourceManager`.
+
+  > **Why not `x:Uid`?** The agent ships **unpackaged** (via Velopack), where
+  > `ApplicationLanguages.PrimaryLanguageOverride` throws — so the framework's own
+  > `x:Uid` resolution can only ever follow the machine's language list and can't
+  > be pointed at a chosen language. Applying strings in code against an explicit
+  > MRT `ResourceContext` gives one uniform path that works both by OS language and
+  > forced. Diagnostic strings that embed HTTP codes, URLs, or MSAL/WAM error codes
+  > (the connection-failure detail lines, `AuthFailureMessage`) and the last-resort
+  > crash dialog stay English by design — the issue's back-end/log-string allowance.
+
+### Adding a new locale
+
+1. Copy [`Strings/en-US/Resources.resw`](src/FocusAgent.App/Strings/en-US/Resources.resw)
+   to `Strings/<lang>/Resources.resw` (e.g. `de-DE`, `fr-FR`) and translate each
+   `<value>`. Keep the `name` keys identical to `en-US` and reuse the same
+   `{0}`/`{1}` placeholders — leave a key out only if there is genuinely nothing to
+   translate (it then falls back to English).
+2. `dotnet test` — [`I18nCatalogueParityTests`](tests/FocusAgent.Core.Tests/I18nCatalogueParityTests.cs)
+   checks the new catalogue carries exactly the `en-US` keys (and matching
+   placeholders), so a missing/stray key or a dropped placeholder fails fast.
+3. Verify end-to-end against the real exe: the agent's `--verify-i18n <lang>` mode
+   resolves a representative set of strings for that language and writes them to
+   the file named by `ANCHOR_I18N_RESULT_PATH`;
+   [`I18nTests`](tests/FocusAgent.IntegrationTests/I18nTests.cs) drives it for
+   `en-US`, `nl-NL`, and an unsupported language to prove translation + fallback.
+   Or just eyeball a surface: launch any self-test with `--ui-language <lang>`
+   (e.g. `--show-test-traymenu --ui-language nl-NL`).
+
 ## Configuration
 
 `src/FocusAgent.App/appsettings.json` carries:

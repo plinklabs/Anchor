@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/auth_token_store.dart';
 import '../auth/msal_auth_service.dart';
+import '../l10n/app_localizations.dart';
 import '../widgets/anchor_mark.dart';
 
 /// The dashboard sign-in page (AD2, #167) — paper treatment + brand voice.
@@ -14,10 +17,24 @@ import '../widgets/anchor_mark.dart';
 /// Microsoft sign-in. Everything reads on the warm paper surface the teacher
 /// dashboard wears for its whole life (ANCHOR_BRAND.md §6).
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, required this.tokens, required this.auth});
+  const LoginPage({
+    super.key,
+    required this.tokens,
+    required this.auth,
+    this.silentTimeout = const Duration(seconds: 30),
+  });
 
   final AuthTokenStore tokens;
   final MsalAuthService auth;
+
+  /// Upper bound on the *non-interactive* steps of sign-in: MSAL init and the
+  /// silent token acquisition. A day-old cached session can leave the silent
+  /// path stalled on a hidden-iframe renewal that never resolves (#303); this
+  /// bound turns that infinite spinner into a clear, retryable error. The
+  /// interactive popup ([MsalAuthService.signIn]) is deliberately *not* bounded
+  /// — a user may legitimately take a while picking an account or completing
+  /// MFA. Overridable so tests can drive the timeout without a real wait.
+  final Duration silentTimeout;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -28,18 +45,25 @@ class _LoginPageState extends State<LoginPage> {
   String? _error;
 
   Future<void> _signIn() async {
+    final l10n = AppLocalizations.of(context);
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await widget.auth.initialize();
+      await widget.auth.initialize().timeout(widget.silentTimeout);
+      // Interactive: unbounded on purpose — the popup waits on the user.
       final account = await widget.auth.signIn();
       if (account == null) {
         throw StateError('Sign-in returned no account');
       }
-      final token = await widget.auth.acquireToken();
+      final token = await widget.auth.acquireToken().timeout(
+        widget.silentTimeout,
+      );
       widget.tokens.setSession(token: token, account: account);
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() => _error = l10n.loginTimeoutError);
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
@@ -79,18 +103,17 @@ class _LoginPageState extends State<LoginPage> {
                       children: <Widget>[
                         const AnchorLockup(height: 30),
                         const SizedBox(height: PlinkSpacing.s8),
-                        const Eyebrow('Anchor for teachers'),
+                        Eyebrow(AppLocalizations.of(context).loginEyebrow),
                         const SizedBox(height: PlinkSpacing.s4),
                         // The one oversized Fraunces line, flush-left.
                         Text(
-                          'Ready when your class is.',
+                          AppLocalizations.of(context).loginHeadline,
                           key: const Key('login-headline'),
                           style: text.displayMedium,
                         ),
                         const SizedBox(height: PlinkSpacing.s5),
                         Text(
-                          'Sign in with your school account to start a focus '
-                          'session for a class.',
+                          AppLocalizations.of(context).loginSubtitle,
                           style: text.bodyLarge?.copyWith(
                             color: PlinkColors.ink60,
                           ),
@@ -111,7 +134,11 @@ class _LoginPageState extends State<LoginPage> {
                                     color: PlinkColors.onInk,
                                   ),
                                 )
-                              : const Text('Sign in with Microsoft'),
+                              : Text(
+                                  AppLocalizations.of(
+                                    context,
+                                  ).loginSignInButton,
+                                ),
                         ),
                         if (_error != null) ...<Widget>[
                           const SizedBox(height: PlinkSpacing.s4),

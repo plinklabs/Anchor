@@ -34,6 +34,8 @@ class _FakeAuth implements MsalAuthService {
   @override
   Future<String> acquireToken() async => 'fake-token';
   @override
+  Future<String> acquireTokenSilent() async => 'fake-token';
+  @override
   AccountInfo? currentAccount() => null;
 }
 
@@ -50,7 +52,8 @@ class _UnprovisionedSessions extends SessionsApi {
   Future<List<ClassSummary>> classes() async => throw ApiException(403, '');
 
   @override
-  Future<List<ActiveSession>> activeSessions() async => throw ApiException(403, '');
+  Future<List<ActiveSession>> activeSessions() async =>
+      throw ApiException(403, '');
 
   @override
   Future<List<SessionHistoryEntry>> history({

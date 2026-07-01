@@ -1,19 +1,26 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
+import 'api/admins_api.dart';
 import 'api/auth_token_store.dart';
 import 'api/bundles_api.dart';
 import 'api/classes_api.dart';
+import 'api/schools_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
+import 'bundles/bundle_file_io.dart';
 import 'realtime/session_hub_client.dart';
 import 'pages/bundles_page.dart';
 import 'pages/classes_page.dart';
 import 'pages/history_page.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
+import 'pages/manage_admins_page.dart';
+import 'pages/manage_schools_page.dart';
 import 'pages/past_session_page.dart';
 import 'pages/session_page.dart';
+import 'widgets/admin_shell.dart';
 import 'widgets/app_shell.dart';
 
 GoRouter buildRouter({
@@ -22,8 +29,12 @@ GoRouter buildRouter({
   required SessionsApi sessions,
   required BundlesApi bundles,
   required ClassesApi classes,
+  required AdminsApi admins,
+  required SchoolsApi schools,
   required Uri apiBaseUrl,
   SessionHubClientFactory? hubClientFactory,
+  BundleFileIo? bundleFileIo,
+  Duration loginSilentTimeout = const Duration(seconds: 30),
 }) {
   return GoRouter(
     refreshListenable: tokens,
@@ -39,8 +50,11 @@ GoRouter buildRouter({
       // Login sits outside the shell — it has no nav and its own (AD2) chrome.
       GoRoute(
         path: '/login',
-        builder: (context, state) =>
-            LoginPage(tokens: tokens, auth: auth),
+        builder: (context, state) => LoginPage(
+          tokens: tokens,
+          auth: auth,
+          silentTimeout: loginSilentTimeout,
+        ),
       ),
       // Every authenticated page shares the app scaffold / nav / app-bar (AD1).
       ShellRoute(
@@ -54,10 +68,8 @@ GoRouter buildRouter({
         routes: [
           GoRoute(
             path: '/',
-            builder: (context, state) => HomePage(
-              tokens: tokens,
-              sessions: sessions,
-            ),
+            builder: (context, state) =>
+                HomePage(tokens: tokens, sessions: sessions),
           ),
           GoRoute(
             path: '/session/:id',
@@ -72,17 +84,49 @@ GoRouter buildRouter({
           ),
           GoRoute(
             path: '/classes',
-            builder: (context, state) => ClassesPage(
-              sessions: sessions,
-              classes: classes,
-            ),
+            builder: (context, state) =>
+                ClassesPage(sessions: sessions, classes: classes),
           ),
+          // Old standalone Bundles location — kept as a redirect so existing
+          // links/bookmarks land on its new home under the Admin area (#299).
           GoRoute(
             path: '/bundles',
-            builder: (context, state) => BundlesPage(
-              bundles: bundles,
+            redirect: (context, state) => '/admin/bundles',
+          ),
+          // Bare /admin has no page of its own — open the first sub-tab.
+          GoRoute(
+            path: '/admin',
+            redirect: (context, state) => '/admin/bundles',
+          ),
+          // The admin area: a left vertical sub-nav (AdminShell) wrapping each
+          // admin sub-page. Gated on `isAdmin` by _AdminShellHost, which
+          // redirects non-admins away (consistent with the hidden Admin tab).
+          ShellRoute(
+            builder: (context, state, child) => _AdminShellHost(
+              location: state.uri.path,
+              tokens: tokens,
               sessions: sessions,
+              child: child,
             ),
+            routes: [
+              GoRoute(
+                path: '/admin/bundles',
+                builder: (context, state) => BundlesPage(
+                  bundles: bundles,
+                  sessions: sessions,
+                  fileIo: bundleFileIo,
+                ),
+              ),
+              GoRoute(
+                path: '/admin/admins',
+                builder: (context, state) => ManageAdminsPage(admins: admins),
+              ),
+              GoRoute(
+                path: '/admin/schools',
+                builder: (context, state) =>
+                    ManageSchoolsPage(schools: schools),
+              ),
+            ],
           ),
           GoRoute(
             path: '/history',
@@ -103,15 +147,27 @@ GoRouter buildRouter({
 
 AppSection _sectionFor(String location) {
   if (location.startsWith('/classes')) return AppSection.classes;
-  if (location.startsWith('/bundles')) return AppSection.bundles;
+  // `/bundles` only exists as a redirect to `/admin/bundles`, but map it too so
+  // the Admin tab reads active during the redirect frame.
+  if (location.startsWith('/admin') || location.startsWith('/bundles')) {
+    return AppSection.admin;
+  }
   if (location.startsWith('/session')) return AppSection.session;
   if (location.startsWith('/history/')) return AppSection.pastSession;
   if (location.startsWith('/history')) return AppSection.history;
   return AppSection.home;
 }
 
+/// Maps an `/admin/...` location to its sub-page for the [AdminShell] rail.
+AdminSection _adminSectionFor(String location) {
+  if (location.startsWith('/admin/admins')) return AdminSection.admins;
+  if (location.startsWith('/admin/schools')) return AdminSection.schools;
+  // Bundles is the default landing sub-page (bare `/admin` redirects here).
+  return AdminSection.bundles;
+}
+
 /// Connects the presentational [AppShell] to app state: resolves the admin role
-/// (from `/me`, for the Bundles nav slot), surfaces the signed-in account, and
+/// (from `/me`, for the Admin nav slot), surfaces the signed-in account, and
 /// wires navigation + sign-out. Lives in the router so no page has to thread
 /// `auth`/role just to render the shared chrome.
 class _AppShellHost extends StatefulWidget {
@@ -148,7 +204,7 @@ class _AppShellHostState extends State<_AppShellHost> {
       if (!mounted || me.isAdmin == _isAdmin) return;
       setState(() => _isAdmin = me.isAdmin);
     } catch (_) {
-      // Non-fatal: without /me the Bundles slot simply stays hidden.
+      // Non-fatal: without /me the Admin slot simply stays hidden.
     }
   }
 
@@ -168,6 +224,70 @@ class _AppShellHostState extends State<_AppShellHost> {
       isAdmin: _isAdmin,
       accountName: widget.tokens.account?.displayName,
       onSignOut: _signOut,
+      onNavigate: (location) => context.go(location),
+      child: widget.child,
+    );
+  }
+}
+
+/// Gates and frames the admin area: resolves the admin role (from `/me`) and,
+/// once it knows, either wraps the routed admin sub-page in [AdminShell]'s
+/// left vertical sub-nav (admins) or redirects away to Home (non-admins) — the
+/// route-level half of the same gating that hides the Admin tab. Sits inside
+/// the [AppShell] shell route, so the app-bar/eyebrow chrome stays put.
+class _AdminShellHost extends StatefulWidget {
+  const _AdminShellHost({
+    required this.location,
+    required this.child,
+    required this.tokens,
+    required this.sessions,
+  });
+
+  final String location;
+  final Widget child;
+  final AuthTokenStore tokens;
+  final SessionsApi sessions;
+
+  @override
+  State<_AdminShellHost> createState() => _AdminShellHostState();
+}
+
+class _AdminShellHostState extends State<_AdminShellHost> {
+  // null while /me is in flight — we hold the content back until we know, so a
+  // non-admin never sees an admin page flash before the redirect.
+  bool? _isAdmin;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRole();
+  }
+
+  Future<void> _loadRole() async {
+    bool isAdmin = false;
+    try {
+      final me = await widget.sessions.me();
+      isAdmin = me.isAdmin;
+    } catch (_) {
+      // Treat an unresolvable role as non-admin: fail closed, redirect away.
+    }
+    if (!mounted) return;
+    setState(() => _isAdmin = isAdmin);
+    if (!isAdmin) context.go('/');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Still resolving, or a non-admin about to be redirected: show a quiet
+    // placeholder rather than the admin content.
+    if (_isAdmin != true) {
+      return const Scaffold(
+        backgroundColor: PlinkColors.paper,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    return AdminShell(
+      section: _adminSectionFor(widget.location),
       onNavigate: (location) => context.go(location),
       child: widget.child,
     );

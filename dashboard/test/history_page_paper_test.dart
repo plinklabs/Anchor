@@ -1,5 +1,6 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/history_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,7 +27,10 @@ class _FakeSessions extends SessionsApi {
   String? lastNavigatedId;
 
   @override
-  Future<List<SessionHistoryEntry>> history({int limit = 50, int offset = 0}) async {
+  Future<List<SessionHistoryEntry>> history({
+    int limit = 50,
+    int offset = 0,
+  }) async {
     if (offset > 0) return const <SessionHistoryEntry>[];
     return _entries;
   }
@@ -59,6 +63,8 @@ void main() {
     );
     return MaterialApp.router(
       theme: PlinkTheme.paper,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       routerConfig: router,
     );
   }
@@ -73,7 +79,9 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(
-        host(_FakeSessions([_entry('1', 'Math 101'), _entry('2', 'History 7')])),
+        host(
+          _FakeSessions([_entry('1', 'Math 101'), _entry('2', 'History 7')]),
+        ),
       );
       await tester.pumpAndSettle();
 
@@ -93,49 +101,56 @@ void main() {
     },
   );
 
-  testWidgets('the archive paints no magenta spark — "Load more" stays calm ink',
-      (tester) async {
-    tester.view.physicalSize = const Size(1200, 900);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'the archive paints no magenta spark — "Load more" stays calm ink',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    // 50 entries => the page is not exhausted, so the "Load more" affordance
-    // shows. It must be calm ink, never the magenta ElevatedButton spark.
-    final entries = [for (var i = 0; i < 50; i++) _entry('$i', 'Class $i')];
-    await tester.pumpWidget(host(_FakeSessions(entries)));
-    await tester.pumpAndSettle();
+      // 50 entries => the page is not exhausted, so the "Load more" affordance
+      // shows. It must be calm ink, never the magenta ElevatedButton spark.
+      final entries = [for (var i = 0; i < 50; i++) _entry('$i', 'Class $i')];
+      await tester.pumpWidget(host(_FakeSessions(entries)));
+      await tester.pumpAndSettle();
 
-    // The trailing affordance sits below the fold — scroll it into view.
-    await tester.scrollUntilVisible(
-      find.text('Load more'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
+      // The trailing affordance sits below the fold — scroll it into view.
+      await tester.scrollUntilVisible(
+        find.text('Load more'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.widgetWithText(OutlinedButton, 'Load more'), findsOneWidget);
-    // The constructive/magenta ElevatedButton never appears in the archive.
-    expect(find.byType(ElevatedButton), findsNothing);
+      expect(find.widgetWithText(OutlinedButton, 'Load more'), findsOneWidget);
+      // The constructive/magenta ElevatedButton never appears in the archive.
+      expect(find.byType(ElevatedButton), findsNothing);
 
-    expect(tester.takeException(), isNull);
-  });
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('the empty state reads as a quiet mono note, not a Material card',
-      (tester) async {
-    await tester.pumpWidget(host(_FakeSessions(const [])));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'the empty state reads as a quiet mono note, not a Material card',
+    (tester) async {
+      await tester.pumpWidget(host(_FakeSessions(const [])));
+      await tester.pumpAndSettle();
 
-    expect(
-      find.text('No past sessions yet. Sessions appear here after you end them.'),
-      findsOneWidget,
-    );
-    expect(find.byType(Card), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+      expect(
+        find.text(
+          'No past sessions yet. Sessions appear here after you end them.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(Card), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('tapping a row opens its read-only review at /history/:id',
-      (tester) async {
+  testWidgets('tapping a row opens its read-only review at /history/:id', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -143,7 +158,10 @@ void main() {
 
     String? tapped;
     await tester.pumpWidget(
-      host(_FakeSessions([_entry('abc', 'Math 101')]), onTap: (id) => tapped = id),
+      host(
+        _FakeSessions([_entry('abc', 'Math 101')]),
+        onTap: (id) => tapped = id,
+      ),
     );
     await tester.pumpAndSettle();
 

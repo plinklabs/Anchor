@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!--
+    en-US (English — source + fallback) string catalogue for the agent (i18n, #323 / part of #320).
+
+    English (en-US) is the source + fallback locale (see <DefaultLanguage> in
+    FocusAgent.App.csproj); nl-NL is the Dutch proof-of-concept. Keys must stay
+    identical across every locale — I18nCatalogueParityTests locks that. Every
+    key is looked up in code via the Loc helper (ResourceLoader over an explicit
+    MRT ResourceContext) — the agent ships unpackaged, where the framework's own
+    x:Uid resolution can't be pointed at a chosen language.
+
+    DO NOT hand-edit the resheader block below; it is the standard resx schema
+    Visual Studio's .resw editor expects.
+  -->
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="MainSessionLabel" xml:space="preserve">
+    <value>FOCUS SESSION</value>
+  </data>
+  <data name="MainLeaveButton" xml:space="preserve">
+    <value>LEAVE SESSION</value>
+  </data>
+  <data name="MainCloseButton" xml:space="preserve">
+    <value>CLOSE</value>
+  </data>
+  <data name="OverlayHeadline" xml:space="preserve">
+    <value>Let's stay with the session</value>
+  </data>
+  <data name="OverlayMessage" xml:space="preserve">
+    <value>Your teacher started a focus session, so this app is set aside for now. Pick one of these to carry on.</value>
+  </data>
+  <data name="GuidedHeadline" xml:space="preserve">
+    <value>One quick step</value>
+  </data>
+  <data name="GuidedBody" xml:space="preserve">
+    <value>Anchor needs its Edge extension to keep your focus sessions on track. We'll open the store — click Get, then Add to Edge.</value>
+  </data>
+  <data name="GuidedSteps" xml:space="preserve">
+    <value>In the page that opens:  GET  →  ADD EXTENSION</value>
+  </data>
+  <data name="GuidedLater" xml:space="preserve">
+    <value>LATER</value>
+  </data>
+  <data name="GuidedOpenStore" xml:space="preserve">
+    <value>OPEN STORE</value>
+  </data>
+  <data name="JoinHeadline" xml:space="preserve">
+    <value>Join by code</value>
+  </data>
+  <data name="JoinBody" xml:space="preserve">
+    <value>Enter the 6-digit code shown on your teacher's dashboard.</value>
+  </data>
+  <data name="JoinCancel" xml:space="preserve">
+    <value>CANCEL</value>
+  </data>
+  <data name="ConfirmTitle" xml:space="preserve">
+    <value>Focus session starting</value>
+  </data>
+  <data name="ConfirmCancel" xml:space="preserve">
+    <value>NOT NOW</value>
+  </data>
+  <data name="Main_Status_Starting" xml:space="preserve">
+    <value>Starting…</value>
+  </data>
+  <data name="Main_Status_SigningIn" xml:space="preserve">
+    <value>Signing in…</value>
+  </data>
+  <data name="Main_Detail_SigningIn" xml:space="preserve">
+    <value>If a Windows account picker appears, choose your school account.</value>
+  </data>
+  <data name="Main_Status_Connecting" xml:space="preserve">
+    <value>Connecting…</value>
+  </data>
+  <data name="Main_Status_Reconnecting" xml:space="preserve">
+    <value>Reconnecting…</value>
+  </data>
+  <data name="Main_Status_Connected" xml:space="preserve">
+    <value>Connected</value>
+  </data>
+  <data name="Main_Status_ConnectedAs" xml:space="preserve">
+    <value>Connected as {0}</value>
+  </data>
+  <data name="Main_Detail_Waiting" xml:space="preserve">
+    <value>Waiting for a focus session from your teacher.</value>
+  </data>
+  <data name="Main_Status_Disconnected" xml:space="preserve">
+    <value>Disconnected</value>
+  </data>
+  <data name="Main_Detail_Retrying" xml:space="preserve">
+    <value>Retrying automatically.</value>
+  </data>
+  <data name="Main_Status_NotSignedIn" xml:space="preserve">
+    <value>Not signed in</value>
+  </data>
+  <data name="Main_Detail_ClickSignIn" xml:space="preserve">
+    <value>Click Sign in to try again.</value>
+  </data>
+  <data name="Main_Button_SignIn" xml:space="preserve">
+    <value>SIGN IN</value>
+  </data>
+  <data name="Main_Button_Reconnect" xml:space="preserve">
+    <value>RECONNECT</value>
+  </data>
+  <data name="Main_Button_ReconnectNow" xml:space="preserve">
+    <value>RECONNECT NOW</value>
+  </data>
+  <data name="Main_Session_Since" xml:space="preserve">
+    <value>In session since {0}</value>
+  </data>
+  <data name="Main_Session_InSession" xml:space="preserve">
+    <value>In session</value>
+  </data>
+  <data name="Main_Heartbeat_WaitingFirst" xml:space="preserve">
+    <value>Waiting for first heartbeat…</value>
+  </data>
+  <data name="Main_Heartbeat_LastPing" xml:space="preserve">
+    <value>Last ping {0}</value>
+  </data>
+  <data name="Main_Heartbeat_Stale" xml:space="preserve">
+    <value>{0} (stale)</value>
+  </data>
+  <data name="Main_Leave_Title" xml:space="preserve">
+    <value>Leave session?</value>
+  </data>
+  <data name="Main_Leave_Content" xml:space="preserve">
+    <value>Leaving will tell your teacher you left the session. Continue?</value>
+  </data>
+  <data name="Main_Leave_Primary" xml:space="preserve">
+    <value>Leave session</value>
+  </data>
+  <data name="Main_Leave_Stay" xml:space="preserve">
+    <value>Stay</value>
+  </data>
+  <data name="Tray_Status_SignedOut" xml:space="preserve">
+    <value>SIGNED OUT</value>
+  </data>
+  <data name="Tray_OpenAnchor" xml:space="preserve">
+    <value>Open Anchor</value>
+  </data>
+  <data name="Tray_JoinSession" xml:space="preserve">
+    <value>Join a session…</value>
+  </data>
+  <data name="Tray_ExitAnchor" xml:space="preserve">
+    <value>Exit Anchor</value>
+  </data>
+  <data name="Tray_Status_Connected" xml:space="preserve">
+    <value>CONNECTED</value>
+  </data>
+  <data name="Tray_Status_ConnectedName" xml:space="preserve">
+    <value>CONNECTED — {0}</value>
+  </data>
+  <data name="Tray_Status_Connecting" xml:space="preserve">
+    <value>CONNECTING…</value>
+  </data>
+  <data name="Tray_Status_Reconnecting" xml:space="preserve">
+    <value>RECONNECTING…</value>
+  </data>
+  <data name="Tray_Status_Disconnected" xml:space="preserve">
+    <value>DISCONNECTED</value>
+  </data>
+  <data name="Tray_Tooltip_ConnectedAs" xml:space="preserve">
+    <value>Connected as {0}</value>
+  </data>
+  <data name="Tray_Tooltip_Connected" xml:space="preserve">
+    <value>Connected</value>
+  </data>
+  <data name="Tray_Tooltip_Connecting" xml:space="preserve">
+    <value>Connecting…</value>
+  </data>
+  <data name="Tray_Tooltip_Reconnecting" xml:space="preserve">
+    <value>Reconnecting…</value>
+  </data>
+  <data name="Tray_Tooltip_Disconnected" xml:space="preserve">
+    <value>Disconnected</value>
+  </data>
+  <data name="Tray_Tooltip_SignedOut" xml:space="preserve">
+    <value>Signed out</value>
+  </data>
+  <data name="Tray_Tooltip_Prefix" xml:space="preserve">
+    <value>Anchor — {0}</value>
+  </data>
+  <data name="Overlay_BlockedApp" xml:space="preserve">
+    <value>Set aside just now: {0}</value>
+  </data>
+  <data name="Overlay_NoApps" xml:space="preserve">
+    <value>No specific apps are set for this session — your teacher will guide what's next.</value>
+  </data>
+  <data name="Overlay_PublisherApps" xml:space="preserve">
+    <value>Apps from {0}</value>
+  </data>
+  <data name="Join_Button_Join" xml:space="preserve">
+    <value>JOIN</value>
+  </data>
+  <data name="Join_Button_Joining" xml:space="preserve">
+    <value>JOINING…</value>
+  </data>
+  <data name="JoinError_Network" xml:space="preserve">
+    <value>Couldn't reach the server. Check your connection and try again.</value>
+  </data>
+  <data name="JoinError_Unauthorized" xml:space="preserve">
+    <value>You're not signed in. Reopen the app and try again.</value>
+  </data>
+  <data name="JoinError_NotFound" xml:space="preserve">
+    <value>Code not found.</value>
+  </data>
+  <data name="JoinError_AlreadyInSession" xml:space="preserve">
+    <value>You're already in a focus session.</value>
+  </data>
+  <data name="JoinError_Expired" xml:space="preserve">
+    <value>Session has ended.</value>
+  </data>
+  <data name="JoinError_RateLimited" xml:space="preserve">
+    <value>Too many attempts, try again shortly.</value>
+  </data>
+  <data name="JoinError_Unexpected" xml:space="preserve">
+    <value>Unexpected server response ({0}). Try again.</value>
+  </data>
+  <data name="Confirm_Teacher" xml:space="preserve">
+    <value>{0} started a focus session. Joining automatically.</value>
+  </data>
+  <data name="Confirm_Countdown" xml:space="preserve">
+    <value>{0}s</value>
+  </data>
+  <data name="Title_FocusSession" xml:space="preserve">
+    <value>Anchor — Focus session</value>
+  </data>
+  <data name="Title_InstallExtension" xml:space="preserve">
+    <value>Anchor — Install the extension</value>
+  </data>
+  <data name="Title_JoinByCode" xml:space="preserve">
+    <value>Anchor — Join by code</value>
+  </data>
+</root>

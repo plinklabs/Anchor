@@ -1,6 +1,7 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/bundles_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,6 +42,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: BundlesPage(
             bundles: _FakeBundles(),
             sessions: _FakeSessions(admin: true),
@@ -50,10 +53,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Editor is hidden until you select or create.
-      expect(
-        find.text('Select a bundle, or start a new one.'),
-        findsOneWidget,
-      );
+      expect(find.text('Select a bundle, or start a new one.'), findsOneWidget);
 
       // The create affordance is in the list pane (#98), not buried in the
       // AppBar. We don't pump the editor state here because rendering the
@@ -63,7 +63,10 @@ void main() {
       // versions.
       final newBundleButton = find.byKey(const Key('bundles-new-button'));
       expect(newBundleButton, findsOneWidget);
-      expect(find.descendant(of: newBundleButton, matching: find.text('New bundle')), findsOneWidget);
+      expect(
+        find.descendant(of: newBundleButton, matching: find.text('New bundle')),
+        findsOneWidget,
+      );
       final button = tester.widget<ButtonStyleButton>(newBundleButton);
       expect(button.onPressed, isNotNull);
     },

@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+﻿#Requires -Version 7.0
 <#
 .SYNOPSIS
     One-command fork provisioning for an Anchor cloud environment (#213).
@@ -6,7 +6,26 @@
 .DESCRIPTION
     Stands up a fork's Azure + GitHub environment end to end so that a
     subsequent push to `main` deploys the backend and dashboard with no further
-    manual steps. It automates the operator checklist in docs/RELEASE.md:
+    manual steps. It automates the operator checklist in docs/RELEASE.md.
+
+    GUIDED, INTERACTIVE UX (#319). Run bare — `./scripts/setup.ps1` — and the
+    script is conversational: it asks for the resource group, region, target
+    repo and so on (each with a sensible default and a one-line explanation),
+    shows each provisioning phase as a labelled section with progress, and ends
+    with a tidy summary table of the resource names / URLs plus a clearly
+    flagged list of the manual steps it cannot perform itself (notably "Grant
+    admin consent"). The prompts, progress and tables are rendered with
+    PwshSpectreConsole, which needs PowerShell 7+ (this script therefore
+    requires 7.0); it is bootstrap-installed for the current user if missing so
+    the operator does not have to. The presentation layer is cosmetic only — the
+    underlying az / gh logic, idempotency and -WhatIf dry-run are unchanged.
+
+    NON-INTERACTIVE / CI. Every answer can still be supplied as a parameter, and
+    -NonInteractive suppresses all prompts (failing fast if a required value such
+    as -UniqueSuffix or, for a real deploy, -SqlAdminPassword is missing) so
+    scripted re-runs and CI work exactly as before.
+
+    The provisioning steps it automates:
 
       1. Preflight: confirm `az` and `gh` are installed, that you are logged in
          to both, and resolve the target GitHub repository.
@@ -124,6 +143,13 @@
     already exists. Use to resume after the infra is already deployed, or to
     re-wire GitHub for the live env without touching Azure.
 
+.PARAMETER NonInteractive
+    Suppress all interactive prompts. Use for CI / scripted re-runs: every answer
+    must then come from a parameter, and a missing required value (-UniqueSuffix,
+    or -SqlAdminPassword for a real deploy) fails fast instead of prompting. The
+    banner, section headers and summary table are still printed. Prompting is
+    also skipped automatically when the host is not interactive.
+
 .PARAMETER EntraTenantId
     Override the tenant ID instead of using the signed-in az account tenant.
 
@@ -152,6 +178,17 @@
     Display name of the deploy app registration. Default: "Anchor Deploy
     (<suffix>)".
 
+.PARAMETER SeedBundles
+    After provisioning, seed the curated example bundles (Microsoft 365 /
+    Smartschool / Bingel) into the database by invoking scripts/seed-bundles.ps1
+    (#292), so a fresh fork's bundle picker isn't empty. Off by default. Best
+    effort: the `Bundles` table is only created by the backend's startup
+    migrations on its first deploy, and setup.ps1 wires GitHub but does not
+    itself deploy — so on an initial provisioning run (before any push to `main`)
+    the schema usually isn't there yet and the step prints a note telling you to
+    run scripts/seed-bundles.ps1 once the backend has deployed. Re-running setup
+    with -SeedBundles against an already-deployed environment seeds for real.
+
 .PARAMETER TeacherUpn
     UPN of the user to bootstrap as a teacher — assigned the API app's `Teacher`
     app role so their access token carries roles:["Teacher"] and the dashboard's
@@ -164,6 +201,11 @@
     to appear in their token.
 
 .EXAMPLE
+    ./scripts/setup.ps1
+    # Fully guided: asks for the suffix, resource group, region, repo and SQL
+    # password, then provisions and prints the summary + manual steps.
+
+.EXAMPLE
     ./scripts/setup.ps1 -UniqueSuffix lincolnhigh -WhatIf
     # Dry run: prints the full provisioning plan for the lincolnhigh fork.
 
@@ -173,10 +215,11 @@
     # admin-consent command to run as a tenant admin.
 
 .NOTES
-    Verify (no Azure needed):
+    Requires PowerShell 7+ (the guided UX uses PwshSpectreConsole). Verify
+    (no Azure needed), from a pwsh 7 prompt:
         Invoke-ScriptAnalyzer scripts/setup.ps1
-        powershell -NoProfile -Command "[void][ScriptBlock]::Create((Get-Content -Raw scripts/setup.ps1))"
-        ./scripts/setup.ps1 -UniqueSuffix test -WhatIf
+        pwsh -NoProfile -Command "[void][ScriptBlock]::Create((Get-Content -Raw scripts/setup.ps1))"
+        ./scripts/setup.ps1 -UniqueSuffix test -WhatIf -NonInteractive
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 # This is an interactive operator script: coloured, host-facing progress output
@@ -190,7 +233,10 @@ param(
     [string]$AppServiceLocation,
     [string]$SignalRLocation,
     [string]$StaticWebAppLocation,
-    [Parameter(Mandatory)]
+    # Not [Parameter(Mandatory)] any more: a bare run prompts for it through the
+    # Spectre intake below, which would never get a turn if PowerShell's own
+    # mandatory-parameter prompt fired first. Required-ness is enforced after the
+    # prompt (and immediately under -NonInteractive).
     [string]$UniqueSuffix,
     [string]$SqlAdminLogin,
     [securestring]$SqlAdminPassword,
@@ -200,10 +246,12 @@ param(
     [string]$AgentAppName,
     [string]$DeployAppName,
     [string]$TeacherUpn,
+    [switch]$SeedBundles,
     [string]$BicepFile,
     [switch]$SkipGitHub,
     [switch]$SkipEntra,
     [switch]$SkipInfra,
+    [switch]$NonInteractive,
     [string]$EntraTenantId,
     [string]$EntraClientId,
     [string]$SpaClientId,
@@ -213,6 +261,208 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# ── Guided UX: PwshSpectreConsole bootstrap (#319) ───────────────────────────
+# The prompts, progress and summary tables are rendered with PwshSpectreConsole
+# (a PowerShell 7+ wrapper around Spectre.Console). Install it for the current
+# user if it's missing so the operator doesn't have to, then import it. This is
+# the only hard new prerequisite; everything below is cosmetic over the same
+# az / gh logic.
+if (-not (Get-Module -ListAvailable -Name PwshSpectreConsole)) {
+    Write-Host 'Installing PwshSpectreConsole (one-time, current user)...' -ForegroundColor Cyan
+    try {
+        if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force | Out-Null
+        }
+        if ((Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue).InstallationPolicy -ne 'Trusted') {
+            Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue
+        }
+        Install-Module -Name PwshSpectreConsole -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+    }
+    catch {
+        throw "Could not install PwshSpectreConsole automatically: $($_.Exception.Message). Install it by hand with 'Install-Module PwshSpectreConsole -Scope CurrentUser' and re-run."
+    }
+}
+Import-Module -Name PwshSpectreConsole -ErrorAction Stop
+
+# ── Presentation helpers (prompts, progress, summary) ────────────────────────
+# All output goes through these so the look is consistent and the underlying
+# provisioning code below stays untouched. Two collectors drive the end-of-run
+# summary: $script:Steps is the ordered ✓/✗ checklist (advanced by Write-Step),
+# and $script:ManualActions gathers everything the script could not do itself
+# (every Write-Manual call) so the operator sees them all in one place — most
+# importantly the manual "Grant admin consent" step.
+$script:ManualActions = [System.Collections.Generic.List[string]]::new()
+$script:Steps = [System.Collections.Generic.List[psobject]]::new()
+# Set just below, once -NonInteractive and the host's interactivity are known.
+$script:Interactive = $false
+
+# Double square brackets so dynamic text is shown literally in a Spectre markup
+# context (Spectre treats [..] as markup). Used only where we inject values into
+# a markup-parsed sink (panels, AllowMarkup tables, Write-SpectreHost).
+function ConvertTo-SpectreSafe {
+    param([string]$Text)
+    if ($null -eq $Text) { return '' }
+    return ($Text -replace '\[', '[[' -replace '\]', ']]')
+}
+
+# Start a new phase: close off the previous step (mark it done) and render a
+# section divider. The step list it maintains becomes the summary checklist.
+function Write-Step {
+    param([string]$Message)
+    if ($script:Steps.Count -gt 0) {
+        $prev = $script:Steps[$script:Steps.Count - 1]
+        if ($prev.Status -eq 'Current') { $prev.Status = 'Done' }
+    }
+    $script:Steps.Add([pscustomobject]@{ Title = $Message; Status = 'Current' })
+    Write-Host ''
+    Write-SpectreRule -Title $Message -Color Cyan
+}
+
+# A manual action the script can't perform (needs a tenant admin, a resource not
+# yet deployed, etc.). Printed inline AND collected for the final summary panel.
+function Write-Manual {
+    param([string]$Message)
+    Write-SpectreHost "  [yellow]MANUAL[/]  $(ConvertTo-SpectreSafe $Message)"
+    $script:ManualActions.Add($Message)
+}
+
+# Ask for a free-text value. Honours the supplied parameter / -NonInteractive:
+# returns the default (or throws for a missing required value) without prompting
+# when not interactive; otherwise prompts via Spectre with the default pre-filled.
+function Read-Answer {
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [string]$Default,
+        [switch]$Required
+    )
+    if (-not $script:Interactive) {
+        if ($Required -and [string]::IsNullOrWhiteSpace($Default)) {
+            throw "Missing required value: $Message. Supply the matching parameter, or run interactively (omit -NonInteractive)."
+        }
+        return $Default
+    }
+    $params = @{ Message = "  $Message" }
+    if (-not [string]::IsNullOrWhiteSpace($Default)) { $params['DefaultAnswer'] = $Default }
+    if (-not $Required) { $params['AllowEmpty'] = $true }
+    return Read-SpectreText @params
+}
+
+# Ask the operator to pick from a list (with the current default first and an
+# "Other" escape hatch that falls back to free text). Non-interactive: the default.
+function Read-AnswerSelection {
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [string]$Default,
+        [Parameter(Mandatory)][string[]]$Choices
+    )
+    if (-not $script:Interactive) { return $Default }
+    $custom = 'Other (type a custom value)'
+    $opts = [System.Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($Default)) { $opts.Add($Default) }
+    foreach ($c in $Choices) { if ($opts -notcontains $c) { $opts.Add($c) } }
+    $opts.Add($custom)
+    $sel = Read-SpectreSelection -Message "  $Message" -Choices $opts
+    if ($sel -eq $custom) {
+        return (Read-SpectreText -Message '  Enter a custom value' -DefaultAnswer $Default)
+    }
+    return $sel
+}
+
+# The opening banner.
+function Show-Banner {
+    Write-Host ''
+    Write-SpectreFigletText -Text 'Anchor' -Color Cyan
+    Format-SpectrePanel -Border Rounded -Color Cyan -Header 'Fork provisioning' -Data (
+        "Stands up your Azure + GitHub environment so a push to [bold]main[/] deploys the backend and dashboard.`n`n" +
+        "Answer a few questions (each has a sensible default), or pass parameters / [bold]-NonInteractive[/] for CI. " +
+        "Run with [bold]-WhatIf[/] for a full dry run that changes nothing."
+    )
+}
+
+# The closing summary: the per-step checklist, a table of resource names / URLs
+# (success path), and a yellow panel of the manual steps still required. Called
+# once on success with -Settings, and by the failure trap with -FailedReason.
+function Show-Summary {
+    param(
+        [System.Collections.IDictionary]$Settings,
+        [string]$FailedReason
+    )
+    Write-Host ''
+    if ($FailedReason) {
+        Write-SpectreRule -Title 'Setup did not complete' -Color Red
+    }
+    else {
+        Write-SpectreRule -Title 'Setup summary' -Color Green
+    }
+
+    if ($script:Steps.Count -gt 0) {
+        $stepRows = foreach ($s in $script:Steps) {
+            switch ($s.Status) {
+                'Done'    { $mark = '[green]✓ done[/]' }
+                'Failed'  { $mark = '[red]✗ FAILED[/]' }
+                'Current' { $mark = '[yellow]» in progress[/]' }
+                default   { $mark = '[grey]pending[/]' }
+            }
+            [pscustomobject]@{ Step = (ConvertTo-SpectreSafe $s.Title); Status = $mark }
+        }
+        $stepRows | Format-SpectreTable -Title 'Steps' -Color Grey -AllowMarkup
+    }
+
+    if ($Settings -and $Settings.Count -gt 0) {
+        $rows = foreach ($k in $Settings.Keys) {
+            [pscustomobject]@{ Setting = [string]$k; Value = [string]$Settings[$k] }
+        }
+        $rows | Format-SpectreTable -Title 'Environment' -Color Grey
+    }
+
+    if ($script:ManualActions.Count -gt 0) {
+        $body = ($script:ManualActions | ForEach-Object { "• $(ConvertTo-SpectreSafe $_)" }) -join "`n"
+        Format-SpectrePanel -Border Rounded -Color Yellow -Header 'Manual steps still required' -Data $body
+    }
+
+    if ($FailedReason) {
+        Write-Host ''
+        Write-SpectreHost "[red]Error:[/] $(ConvertTo-SpectreSafe $FailedReason)"
+    }
+}
+
+# Fail-safe: render a failure summary (marking the in-flight step ✗ and surfacing
+# the collected manual actions) before any terminating error propagates, then
+# re-throw via `break` so the non-zero exit and the real error are preserved.
+trap {
+    if ($script:Steps.Count -gt 0) {
+        $cur = $script:Steps[$script:Steps.Count - 1]
+        if ($cur.Status -eq 'Current') { $cur.Status = 'Failed' }
+    }
+    Show-Summary -FailedReason $_.Exception.Message
+    break
+}
+
+# ── Greeting + interactive intake ────────────────────────────────────────────
+# Prompt for the values a bare run needs, each defaulting to the parameter value.
+# A value passed on the command line is never prompted for; -NonInteractive (or a
+# non-interactive host) turns every prompt into "use the default / fail if
+# required". Repo and TeacherUpn are prompted later in preflight, once their
+# defaults (the gh repo / the signed-in operator) are known.
+Show-Banner
+$script:Interactive = (-not $NonInteractive) -and [Environment]::UserInteractive
+
+if (-not $PSBoundParameters.ContainsKey('UniqueSuffix') -or [string]::IsNullOrWhiteSpace($UniqueSuffix)) {
+    $UniqueSuffix = Read-Answer -Required `
+        -Message 'Unique suffix for globally-unique resource names (e.g. your school name)' `
+        -Default $UniqueSuffix
+}
+if ([string]::IsNullOrWhiteSpace($UniqueSuffix)) {
+    throw 'UniqueSuffix is required. Pass -UniqueSuffix <name>, or run interactively.'
+}
+if (-not $PSBoundParameters.ContainsKey('ResourceGroup')) {
+    $ResourceGroup = Read-Answer -Message 'Azure resource group to create / deploy into' -Default $ResourceGroup
+}
+if (-not $PSBoundParameters.ContainsKey('Location')) {
+    $Location = Read-AnswerSelection -Message 'Default Azure region' -Default $Location `
+        -Choices @('westeurope', 'belgiumcentral', 'northeurope', 'uksouth', 'eastus', 'westus2')
+}
 
 # ── Defaults derived from the suffix ─────────────────────────────────────────
 if (-not $ApiAppName) { $ApiAppName = "Anchor API ($UniqueSuffix)" }
@@ -224,23 +474,16 @@ if (-not $BicepFile) {
 }
 $BicepFile = (Resolve-Path -LiteralPath $BicepFile -ErrorAction Stop).Path
 
-# Microsoft Graph well-known app id + the User.Read delegated permission id,
-# used to grant the SPA the baseline sign-in/profile scope.
+# Microsoft Graph well-known app id + the delegated permission ids we grant:
+# User.Read for the SPA (baseline sign-in/profile) and User.Read.All for the API
+# app (the OBO user-directory search that backs the Classes -> School selector).
 $GraphAppId = '00000003-0000-0000-c000-000000000000'
 $GraphUserRead = 'e1fe6dd8-ba31-4d61-89e7-88639da4683d'  # User.Read (delegated)
+$GraphUserReadAll = 'a154be20-db9c-4678-8ab7-66f6cc099a59'  # User.Read.All (delegated)
 
 # ── Small helpers ────────────────────────────────────────────────────────────
-
-function Write-Step {
-    param([string]$Message)
-    Write-Host ''
-    Write-Host "==> $Message" -ForegroundColor Cyan
-}
-
-function Write-Manual {
-    param([string]$Message)
-    Write-Host "[MANUAL] $Message" -ForegroundColor Yellow
-}
+# (Write-Step / Write-Manual are defined above with the rest of the Spectre
+# presentation helpers, so they can drive the progress checklist and summary.)
 
 # Invoke a native command. Honours -WhatIf via ShouldProcess: in dry-run it
 # prints the command and returns $null instead of executing. $Capture returns
@@ -647,6 +890,9 @@ function Grant-AdminConsent {
     if (-not $AppId -or $AppId -match '<') { return }
     if ($WhatIfPreference) {
         Write-Host "    DRYRUN  az ad app permission admin-consent --id $AppId ($Label)" -ForegroundColor DarkGray
+        # Surface it in the dry-run summary too, so the plan shows the one step a
+        # real run still can't do for you.
+        Write-Manual "Grant admin consent for ${Label}: az ad app permission admin-consent --id $AppId"
         return
     }
     # Local 'Continue' so az's stderr under a native call doesn't throw a
@@ -658,9 +904,9 @@ function Grant-AdminConsent {
         Write-Host "    Admin consent granted for $Label ($AppId)." -ForegroundColor Green
     }
     else {
-        Write-Warning "Could not grant admin consent for $Label automatically — a tenant admin must do it (or the new app/scope has not replicated yet; retry in a minute)."
-        Write-Host "        az ad app permission admin-consent --id $AppId" -ForegroundColor Yellow
-        Write-Host "    Or: Entra portal -> App registrations -> $Label -> API permissions -> Grant admin consent." -ForegroundColor Yellow
+        # Best-effort failed: route it through Write-Manual so it lands in the
+        # end-of-run "Manual steps still required" panel, not just the scrollback.
+        Write-Manual "Grant admin consent for $Label (a tenant admin must do this, or the new app/scope has not replicated yet — retry in a minute): az ad app permission admin-consent --id $AppId  |  or Entra portal -> App registrations -> $Label -> API permissions -> Grant admin consent."
         if ($out) { Write-Host "    ($($out | Select-Object -First 1))" -ForegroundColor DarkGray }
     }
 }
@@ -700,8 +946,20 @@ if (-not $SkipGitHub) {
     if (-not $Repo) {
         $Repo = Invoke-Native -Exe 'gh' -ArgList @('repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner') -Capture -ReadOnly
     }
+    # Now that the git remote gives us a default, let the operator confirm / change
+    # which repo gets the secrets (skipped when -Repo was passed or non-interactive).
+    if (-not $PSBoundParameters.ContainsKey('Repo')) {
+        $Repo = Read-Answer -Message 'GitHub repository (OWNER/REPO) to write secrets / variables to' -Default $Repo
+    }
     if (-not $Repo) { throw 'Could not resolve the GitHub repository. Pass -Repo OWNER/REPO.' }
     Write-Host "    GitHub repo       : $Repo"
+}
+
+# Teacher to bootstrap with the API Teacher role (#280), defaulting to the
+# signed-in operator. Prompted here, where that default is known; skipped when
+# -TeacherUpn was passed, Entra is skipped, or we're non-interactive.
+if (-not $PSBoundParameters.ContainsKey('TeacherUpn') -and -not $SkipEntra) {
+    $TeacherUpn = Read-Answer -Message 'Teacher UPN to bootstrap with the Teacher role (blank = none)' -Default $operatorUpn
 }
 
 # SQL password is required for a real deploy (the deploy always passes it on
@@ -745,6 +1003,11 @@ if ($sqlPwPlain) {
     }
 }
 elseif (-not $WhatIfPreference -and -not $SkipInfra) {
+    # A real deploy needs the password. Non-interactive callers must supply it as
+    # -SqlAdminPassword rather than be left hanging on a hidden Read-Host prompt.
+    if (-not $script:Interactive) {
+        throw 'A SQL admin password is required for a real deploy. Pass -SqlAdminPassword (a SecureString) when running with -NonInteractive.'
+    }
     Write-Host ''
     Write-Host '  SQL admin password' -ForegroundColor Cyan
     Write-Host '    This SETS the password for the SQL admin login. If the SQL server'
@@ -885,6 +1148,11 @@ elseif ($apiAppAdopted) {
     if (-not $scopeId) {
         Write-Manual "Could not read an access_as_user scope on $apiClientId; skipping SPA API pre-authorization. Verify the API app exposes that scope."
     }
+    # Don't mutate a registration we don't own, but flag the User.Read.All gap that
+    # silently empties the Classes -> School selector (#281) so an operator can fix it.
+    if (-not (Test-PermissionGranted -AppId $apiClientId -ResourceAppId $GraphAppId -PermissionId $GraphUserReadAll)) {
+        Write-Manual "API app $apiClientId is missing the delegated Graph User.Read.All scope; the Classes -> School selector will be empty until you grant + admin-consent it: az ad app permission add --id $apiClientId --api $GraphAppId --api-permissions $GraphUserReadAll=Scope ; az ad app permission admin-consent --id $apiClientId"
+    }
     # Adopt the SPA app too when not explicitly provided (lookup by display name).
     if (-not $spaClientId) {
         $spaClientId = Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'list', '--display-name', $SpaAppName, '--query', '[0].appId', '-o', 'tsv') -Capture -ReadOnly
@@ -987,6 +1255,21 @@ else {
             Write-Host "    API client secret 'anchor-obo' created — will be applied to the App Service after the deploy."
             Write-Host "    (Record it now; it cannot be re-displayed) AzureAd__ClientCredentials secret: $apiSecret" -ForegroundColor DarkYellow
         }
+    }
+
+    # The OBO user-directory search behind Classes -> School (GraphUserDirectory-
+    # Search -> Graph /users?$select=companyName) needs the delegated User.Read.All
+    # scope on THIS (API) app; the basic profile isn't enough. Without it every OBO
+    # exchange fails and /directory/schools returns 502, so the selector is empty in
+    # a fresh environment (#281). Grant it here (admin consent is the consolidated
+    # Step 8 below); idempotent — skip when already present.
+    if (Test-PermissionGranted -AppId $apiClientId -ResourceAppId $GraphAppId -PermissionId $GraphUserReadAll) {
+        Write-Host "    API app already has Graph User.Read.All — skipping."
+    }
+    else {
+        Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'permission', 'add', '--id', $apiClientId,
+            '--api', $GraphAppId, '--api-permissions', "$GraphUserReadAll=Scope", '-o', 'none') `
+            -Target $apiClientId -Action 'grant Graph User.Read.All to API app'
     }
 
     # ── Dashboard SPA app registration ───────────────────────────────────────
@@ -1461,8 +1744,74 @@ else {
     Grant-AdminConsent -AppId $agentClientId -Label 'agent'
 }
 
+# ── Step 9: seed example bundles (opt-in) ────────────────────────────────────
+# A fresh production DB starts with zero bundles (DevDataSeeder is dev-only), so
+# the bundle picker is empty until an admin recreates them by hand (#292). When
+# -SeedBundles is set, invoke the companion seed-bundles.ps1 to insert the real
+# example catalogue. Best-effort: the schema is created by the backend's startup
+# migrations on its FIRST deploy, which setup.ps1 does not perform — so on an
+# initial run (before any push to main) the tables aren't there yet and the
+# script stops with a clear note. We downgrade that to a [MANUAL] reminder so the
+# overall provisioning still reports success; the operator re-runs the seed (or
+# setup -SeedBundles) once the backend has deployed.
+
+if ($SeedBundles) {
+    Write-Step 'Seed example bundles'
+    $seedScript = Join-Path $PSScriptRoot 'seed-bundles.ps1'
+    if (-not (Test-Path -LiteralPath $seedScript)) {
+        Write-Manual "seed-bundles.ps1 not found next to setup.ps1 — skipping bundle seed. Seed manually once the backend has deployed."
+    }
+    elseif ($WhatIfPreference) {
+        Write-Host "    DRYRUN  & $seedScript -ResourceGroup $ResourceGroup (-SeedBundles)" -ForegroundColor DarkGray
+    }
+    else {
+        $seedArgs = @{ ResourceGroup = $ResourceGroup }
+        if ($resolvedSqlLogin) { $seedArgs['SqlAdminLogin'] = $resolvedSqlLogin }
+        if ($SqlAdminPassword) { $seedArgs['SqlAdminPassword'] = $SqlAdminPassword }
+        try {
+            & $seedScript @seedArgs
+        }
+        catch {
+            Write-Manual "Could not seed example bundles: $($_.Exception.Message)"
+            Write-Host "    Re-run after the backend's first deploy:  ./scripts/seed-bundles.ps1" -ForegroundColor Yellow
+        }
+    }
+}
+
+# Mark the final step complete (Write-Step only closes off the *previous* step
+# when the next one starts, so the last one is still 'Current' here).
+if ($script:Steps.Count -gt 0) {
+    $last = $script:Steps[$script:Steps.Count - 1]
+    if ($last.Status -eq 'Current') { $last.Status = 'Done' }
+}
+
+# Tidy end-of-run summary: the resource names / URLs the operator will need, the
+# per-step checklist, and the yellow "Manual steps still required" panel (which
+# always carries the Grant-admin-consent reminder). Built as an ordered map so
+# the table reads top-to-bottom in a sensible order.
+$summary = [ordered]@{
+    'Resource group'    = $ResourceGroup
+    'App Service'       = $appServiceName
+    'API URL'           = $appServiceUrl
+    'Dashboard (SWA)'   = $swaUrl
+    'Tenant ID'         = $outEntraTenant
+    'API client ID'     = $outEntraClient
+    'API audience'      = $outEntraAudience
+}
+if ($spaClientId) { $summary['Dashboard client ID'] = $spaClientId }
+if ($agentClientId -and $agentClientId -notmatch '<') { $summary['Agent client ID'] = $agentClientId }
+if ($deployClientId -and $deployClientId -notmatch '<') { $summary['Deploy client ID'] = $deployClientId }
+if (-not $SkipGitHub -and $Repo) { $summary['GitHub repo'] = $Repo }
+
+Show-Summary -Settings $summary
+
 Write-Host ''
-Write-Host 'Provisioning complete. Push to `main` to trigger the deploy workflows.' -ForegroundColor Green
+if ($WhatIfPreference) {
+    Write-SpectreHost '[green]Dry run complete.[/] Re-run without [bold]-WhatIf[/] to apply the plan above.'
+}
+else {
+    Write-SpectreHost '[green]Provisioning complete.[/] Push to [bold]main[/] to trigger the deploy workflows.'
+}
 
 # Reaching here means success: every mutating step goes through Invoke-Native,
 # which throws (terminating, under $ErrorActionPreference='Stop') on failure. The

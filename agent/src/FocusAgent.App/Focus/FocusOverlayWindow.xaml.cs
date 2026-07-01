@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using FocusAgent.App.Localization;
 using FocusAgent.Core.Focus;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -16,7 +17,9 @@ public sealed partial class FocusOverlayWindow : Window
         InitializeComponent();
         _launcher = launcher;
         _onLaunched = onLaunched;
-        Title = "Anchor — Focus session";
+        Title = Loc.Get("Title_FocusSession");
+        HeadlineText.Text = Loc.Get("OverlayHeadline");
+        MessageText.Text = Loc.Get("OverlayMessage");
     }
 
     public void UpdateContent(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName)
@@ -30,7 +33,7 @@ public sealed partial class FocusOverlayWindow : Window
             // Calm, factual microcopy — say what stepped aside, not "you broke a
             // rule" (ANCHOR_BRAND.md §5). Sentence case; the mono style carries
             // the wide tracking.
-            BlockedText.Text = $"Set aside just now: {blockedAppName}";
+            BlockedText.Text = Loc.Format("Overlay_BlockedApp", blockedAppName);
             BlockedText.Visibility = Visibility.Visible;
         }
 
@@ -39,7 +42,7 @@ public sealed partial class FocusOverlayWindow : Window
         {
             AllowedAppsPanel.Children.Add(new TextBlock
             {
-                Text = "No specific apps are set for this session — your teacher will guide what's next.",
+                Text = Loc.Get("Overlay_NoApps"),
                 Style = (Style)Application.Current.Resources["PlinkBodyLargeTextStyle"],
                 Foreground = (Brush)Application.Current.Resources["PlinkOnInkMutedBrush"],
                 TextWrapping = TextWrapping.Wrap,
@@ -92,7 +95,7 @@ public sealed partial class FocusOverlayWindow : Window
     {
         AllowedAppMatchKind.ProcessName => rule.Value,
         AllowedAppMatchKind.ExecutablePath => Path.GetFileNameWithoutExtension(rule.Value),
-        AllowedAppMatchKind.Publisher => $"Apps from {rule.Value}",
+        AllowedAppMatchKind.Publisher => Loc.Format("Overlay_PublisherApps", rule.Value),
         _ => rule.Value,
     };
 }

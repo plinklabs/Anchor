@@ -130,9 +130,7 @@ class BundlesApi {
   final ApiClient _client;
 
   Future<List<BundleSummary>> list({bool includeArchived = false}) async {
-    final path = includeArchived
-        ? 'bundles?includeArchived=true'
-        : 'bundles';
+    final path = includeArchived ? 'bundles?includeArchived=true' : 'bundles';
     final res = await _client.get(path);
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw ApiException(res.statusCode, res.body);
@@ -146,9 +144,7 @@ class BundlesApi {
   Future<BundleDetail> get(String id) async {
     final res = await _client.get('bundles/$id');
     _ensureOk(res);
-    return BundleDetail.fromJson(
-      jsonDecode(res.body) as Map<String, dynamic>,
-    );
+    return BundleDetail.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
   Future<BundleDetail> create(String name, List<BundleEntry> entries) async {
@@ -161,9 +157,7 @@ class BundlesApi {
       }),
     );
     _ensureOk(res);
-    return BundleDetail.fromJson(
-      jsonDecode(res.body) as Map<String, dynamic>,
-    );
+    return BundleDetail.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
   Future<BundleDetail> update(
@@ -180,9 +174,7 @@ class BundlesApi {
       }),
     );
     _ensureOk(res);
-    return BundleDetail.fromJson(
-      jsonDecode(res.body) as Map<String, dynamic>,
-    );
+    return BundleDetail.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
   Future<void> archive(String id) async {

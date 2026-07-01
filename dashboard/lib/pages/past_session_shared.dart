@@ -23,7 +23,8 @@ class PastHairline extends StatelessWidget {
 
 /// A sentence-case Space Mono label — the quiet panel/section headers that read
 /// like specs on an instrument, never shouting.
-TextStyle pastMonoLabel(Color color) => const TextStyle(
+TextStyle pastMonoLabel(Color color) =>
+    const TextStyle(
       fontFamily: PlinkType.monoFamily,
       package: PlinkType.fontPackage,
       fontFamilyFallback: PlinkType.monoFallback,
@@ -40,14 +41,14 @@ TextStyle pastMonoLabel(Color color) => const TextStyle(
 /// A tabular-figure mono style for timestamps, durations and codes — the
 /// columns line up like a log.
 TextStyle pastMonoSpec(Color color, double size) => TextStyle(
-      fontFamily: PlinkType.monoFamily,
-      package: PlinkType.fontPackage,
-      fontFamilyFallback: PlinkType.monoFallback,
-      fontSize: size,
-      color: color,
-      height: 1.3,
-      fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
-    );
+  fontFamily: PlinkType.monoFamily,
+  package: PlinkType.fontPackage,
+  fontFamilyFallback: PlinkType.monoFallback,
+  fontSize: size,
+  color: color,
+  height: 1.3,
+  fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+);
 
 String pastFormatDate(DateTime dt) =>
     '${dt.year.toString().padLeft(4, '0')}-'

@@ -1,4 +1,5 @@
 using FocusAgent.App.Connectivity;
+using FocusAgent.App.Localization;
 using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
@@ -72,6 +73,12 @@ public sealed partial class MainWindow : Window
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         Title = "Anchor";
 
+        // Static window copy (the dynamic status/detail/button strings are set per
+        // render in ApplyConnectionSnapshot). "Anchor" stays the untranslated mark.
+        SessionLabelText.Text = Loc.Get("MainSessionLabel");
+        LeaveButton.Content = Loc.Get("MainLeaveButton");
+        CloseButton.Content = Loc.Get("MainCloseButton");
+
         // #102: closing the window only hides it to the tray — the agent keeps
         // running and the heartbeat continues. Intercept the title-bar X here
         // and route it through the same hide path as the Close button.
@@ -133,51 +140,53 @@ public sealed partial class MainWindow : Window
         switch (s.Status)
         {
             case ConnectionStatus.Idle:
-                StatusText.Text = "Starting…";
+                StatusText.Text = Loc.Get("Main_Status_Starting");
                 DetailText.Text = "";
-                PrimaryButton.Content = "SIGN IN";
+                PrimaryButton.Content = Loc.Get("Main_Button_SignIn");
                 PrimaryButton.IsEnabled = false;
                 break;
             case ConnectionStatus.SigningIn:
-                StatusText.Text = "Signing in…";
-                DetailText.Text = "If a Windows account picker appears, choose your school account.";
-                PrimaryButton.Content = "SIGN IN";
+                StatusText.Text = Loc.Get("Main_Status_SigningIn");
+                DetailText.Text = Loc.Get("Main_Detail_SigningIn");
+                PrimaryButton.Content = Loc.Get("Main_Button_SignIn");
                 PrimaryButton.IsEnabled = false;
                 break;
             case ConnectionStatus.Connecting:
-                StatusText.Text = "Connecting…";
+                StatusText.Text = Loc.Get("Main_Status_Connecting");
                 DetailText.Text = "";
-                PrimaryButton.Content = "RECONNECT";
+                PrimaryButton.Content = Loc.Get("Main_Button_Reconnect");
                 PrimaryButton.IsEnabled = false;
                 break;
             case ConnectionStatus.Reconnecting:
-                StatusText.Text = "Reconnecting…";
+                StatusText.Text = Loc.Get("Main_Status_Reconnecting");
+                // LastError is a diagnostic line (may carry HTTP codes / URLs) — left
+                // as-is per the issue's back-end/log-string allowance.
                 DetailText.Text = s.LastError ?? "";
-                PrimaryButton.Content = "RECONNECT";
+                PrimaryButton.Content = Loc.Get("Main_Button_Reconnect");
                 PrimaryButton.IsEnabled = false;
                 break;
             case ConnectionStatus.Connected:
                 StatusText.Text = string.IsNullOrWhiteSpace(s.DisplayName)
-                    ? "Connected"
-                    : $"Connected as {s.DisplayName}";
+                    ? Loc.Get("Main_Status_Connected")
+                    : Loc.Format("Main_Status_ConnectedAs", s.DisplayName);
                 // The "waiting for a session" line is misleading once we're
                 // actually in one — the session panel below carries the truth.
                 DetailText.Text = _joinedSessionId is null
-                    ? "Waiting for a focus session from your teacher."
+                    ? Loc.Get("Main_Detail_Waiting")
                     : "";
-                PrimaryButton.Content = "RECONNECT";
+                PrimaryButton.Content = Loc.Get("Main_Button_Reconnect");
                 PrimaryButton.IsEnabled = true;
                 break;
             case ConnectionStatus.Disconnected:
-                StatusText.Text = "Disconnected";
-                DetailText.Text = s.LastError ?? "Retrying automatically.";
-                PrimaryButton.Content = "RECONNECT NOW";
+                StatusText.Text = Loc.Get("Main_Status_Disconnected");
+                DetailText.Text = s.LastError ?? Loc.Get("Main_Detail_Retrying");
+                PrimaryButton.Content = Loc.Get("Main_Button_ReconnectNow");
                 PrimaryButton.IsEnabled = true;
                 break;
             case ConnectionStatus.SignInFailed:
-                StatusText.Text = "Not signed in";
-                DetailText.Text = s.LastError ?? "Click Sign in to try again.";
-                PrimaryButton.Content = "SIGN IN";
+                StatusText.Text = Loc.Get("Main_Status_NotSignedIn");
+                DetailText.Text = s.LastError ?? Loc.Get("Main_Detail_ClickSignIn");
+                PrimaryButton.Content = Loc.Get("Main_Button_SignIn");
                 PrimaryButton.IsEnabled = true;
                 break;
         }
@@ -202,8 +211,8 @@ public sealed partial class MainWindow : Window
         SessionPanel.Visibility = Visibility.Visible;
         LeaveButton.Visibility = Visibility.Visible;
         SessionStatusText.Text = _sessionStartedAt is { } started
-            ? $"In session since {started.ToLocalTime():HH:mm}"
-            : "In session";
+            ? Loc.Format("Main_Session_Since", started.ToLocalTime().ToString("HH:mm"))
+            : Loc.Get("Main_Session_InSession");
         UpdateFreshnessLabel();
     }
 
@@ -214,7 +223,7 @@ public sealed partial class MainWindow : Window
         {
             // No ping yet: a quiet, still ring while we wait for the first one.
             HeartbeatPing.Mode = PingMode.Static;
-            HeartbeatText.Text = "Waiting for first heartbeat…";
+            HeartbeatText.Text = Loc.Get("Main_Heartbeat_WaitingFirst");
             return;
         }
         // Backend's HeartbeatMonitor calls the agent stale at 2× the interval;
@@ -222,8 +231,8 @@ public sealed partial class MainWindow : Window
         // heartbeat pulses the ping (a live pulse); a stale one falls still.
         var stale = (DateTimeOffset.UtcNow - last) > TimeSpan.FromTicks(_heartbeatInterval.Ticks * 2);
         HeartbeatPing.Mode = stale ? PingMode.Static : PingMode.Pulse;
-        var label = $"Last ping {last.ToLocalTime():HH:mm:ss}";
-        HeartbeatText.Text = stale ? $"{label} (stale)" : label;
+        var label = Loc.Format("Main_Heartbeat_LastPing", last.ToLocalTime().ToString("HH:mm:ss"));
+        HeartbeatText.Text = stale ? Loc.Format("Main_Heartbeat_Stale", label) : label;
     }
 
     private async void OnPrimaryClicked(object sender, RoutedEventArgs e)
@@ -246,10 +255,10 @@ public sealed partial class MainWindow : Window
     {
         var dialog = new ContentDialog
         {
-            Title = "Leave session?",
-            Content = "Leaving will tell your teacher you left the session. Continue?",
-            PrimaryButtonText = "Leave session",
-            CloseButtonText = "Stay",
+            Title = Loc.Get("Main_Leave_Title"),
+            Content = Loc.Get("Main_Leave_Content"),
+            PrimaryButtonText = Loc.Get("Main_Leave_Primary"),
+            CloseButtonText = Loc.Get("Main_Leave_Stay"),
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = Content.XamlRoot,
         };

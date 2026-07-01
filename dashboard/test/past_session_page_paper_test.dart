@@ -1,5 +1,6 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/past_session_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,7 +25,7 @@ final _endedAt = DateTime(2026, 6, 12, 10, 5);
 
 class _FakeSessions extends SessionsApi {
   _FakeSessions({required this.detail, this.unapproved = const []})
-      : super(_dummyClient());
+    : super(_dummyClient());
 
   final SessionDetail detail;
   final List<UnblockRequestSummary> unapproved;
@@ -86,6 +87,8 @@ SessionDetail _detail() => SessionDetail(
 void main() {
   Widget host(SessionsApi sessions) => MaterialApp(
     theme: PlinkTheme.paper,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: PastSessionPage(sessionId: 's1', sessions: sessions),
   );
 
@@ -130,8 +133,9 @@ void main() {
     },
   );
 
-  testWidgets('an unapproved request renders in its own audit-trail panel',
-      (tester) async {
+  testWidgets('an unapproved request renders in its own audit-trail panel', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -139,24 +143,26 @@ void main() {
 
     final now = DateTime(2026, 6, 12, 9, 50);
     await tester.pumpWidget(
-      host(_FakeSessions(
-        detail: _detail(),
-        unapproved: [
-          UnblockRequestSummary(
-            host: 'youtube.com',
-            count: 1,
-            firstRequestedAt: now,
-            latestRequestedAt: now,
-            requesters: [
-              UnblockRequestRequester(
-                userId: 'u1',
-                displayName: 'Ada Lovelace',
-                requestedAt: now,
-              ),
-            ],
-          ),
-        ],
-      )),
+      host(
+        _FakeSessions(
+          detail: _detail(),
+          unapproved: [
+            UnblockRequestSummary(
+              host: 'youtube.com',
+              count: 1,
+              firstRequestedAt: now,
+              latestRequestedAt: now,
+              requesters: [
+                UnblockRequestRequester(
+                  userId: 'u1',
+                  displayName: 'Ada Lovelace',
+                  requestedAt: now,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
     await tester.pumpAndSettle();
 

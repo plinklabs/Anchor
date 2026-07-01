@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Blocked by Anchor</title>
+    <title data-i18n="blockPageTitle">Blocked by Anchor</title>
     <!-- Design-system vanilla binding (AF3, #164). The student-facing surfaces
          render on the DS ink treatment (ANCHOR_BRAND.md §3), so the page wears
          `.plink-ink` and composes from `.pl-*` classes + DS tokens. plink.css
@@ -27,6 +27,14 @@
            so native scrollbars/controls render dark too — and is deliberately
            NOT a prefers-color-scheme swap. Do not reintroduce one. */
         color-scheme: dark;
+        /* #318: the DS computes `--surface-inset: var(--paper-3)` once at
+           :root, off the *light* paper. The ink treatment remaps `--paper-3`
+           to its dark value but never re-derives `--surface-inset`, so on this
+           fixed-ink page the inset keeps the light :root value — which paints
+           the `.blocked-url` panel light and renders the on-ink URL text
+           invisible (the reported white-on-white). Re-derive it here from the
+           now-remapped ink paper so the inset tracks the ink palette. */
+        --surface-inset: var(--paper-3, #2b2b38);
         min-height: 100vh;
         margin: 0;
         font-family: var(--font-body);
@@ -58,7 +66,15 @@
         word-break: break-all;
         font-family: var(--font-mono);
         font-size: var(--text-sm);
-        background: var(--surface-inset);
+        /* #318: the URL must stay legible even if plink.css / its DS tokens
+           fail to load on the deployed page. Don't inherit the foreground —
+           pin an explicit inset background + on-ink text PAIR, each with a
+           literal fallback (the ink-treatment values: paper-3 / on-ink). When
+           tokens resolve this is the normal light-on-dark inset; when they
+           don't, the box still paints a dark panel with light text instead of
+           collapsing to white-on-white. */
+        background: var(--surface-inset, #2b2b38);
+        color: var(--text, #faf7f2);
         border: var(--border-width) solid var(--border);
         padding: var(--space-2) var(--space-3);
         border-radius: var(--radius);
@@ -103,18 +119,18 @@
           <span class="pl-ping__ring b"></span>
           <span class="pl-ping__core"></span>
         </span>
-        Focus session
+        <span data-i18n="focusSession">Focus session</span>
       </p>
-      <h1>Let's stay on track</h1>
-      <p>You're in an active focus session<span data-session-suffix></span>, so this site is paused for now. Nothing's wrong — it just isn't on the allowlist yet.</p>
+      <h1 data-i18n="blockHeadline">Let's stay on track</h1>
+      <p data-i18n="blockBody">You're in an active focus session, so this site is paused for now. Nothing's wrong — it just isn't on the allowlist yet.</p>
       <div class="blocked-url" data-blocked-url>—</div>
-      <p class="muted">Need this site for your work? Ask your teacher and they can add it from the dashboard — the page will open on its own once they do.</p>
+      <p class="muted" data-i18n="blockAskTeacher">Need this site for your work? Ask your teacher and they can add it from the dashboard — the page will open on its own once they do.</p>
       <div class="actions">
-        <button class="pl-btn pl-btn--primary" type="button" data-action="back">Go back</button>
-        <button class="pl-btn pl-btn--outline" type="button" data-action="request">Request access</button>
+        <button class="pl-btn pl-btn--primary" type="button" data-action="back" data-i18n="goBack">Go back</button>
+        <button class="pl-btn pl-btn--outline" type="button" data-action="request" data-i18n="requestAccess">Request access</button>
       </div>
       <output class="status" data-status aria-live="polite"></output>
-      <p class="footnote">Anchor focus enforcement</p>
+      <p class="footnote" data-i18n="focusEnforcement">Anchor focus enforcement</p>
     </main>
     <script src="block-page.js"></script>
   </body>

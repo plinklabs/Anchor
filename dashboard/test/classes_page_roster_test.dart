@@ -1,13 +1,16 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/classes_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/classes_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
-ApiClient _dummyClient() =>
-    ApiClient(baseUrl: Uri.parse('http://localhost'), tokenProvider: () async => null);
+ApiClient _dummyClient() => ApiClient(
+  baseUrl: Uri.parse('http://localhost'),
+  tokenProvider: () async => null,
+);
 
 class _FakeSessions extends SessionsApi {
   _FakeSessions(this._classes) : super(_dummyClient());
@@ -28,18 +31,25 @@ class _FakeClasses extends ClassesApi {
 
   final ClassMembersResponse _roster;
   final List<String> _schools;
-  final Future<List<ClassMembershipImportResult>> Function(String classId)? onBulkImport;
+  final Future<List<ClassMembershipImportResult>> Function(String classId)?
+  onBulkImport;
   final ClassSummary Function(String name, String schoolYear)? onCreate;
   int updateCodesCalls = 0;
   int bulkImportCalls = 0;
   int createCalls = 0;
+  int schoolsCalls = 0;
+  bool failSchools = false;
   final List<String> deletedClassIds = [];
 
   @override
   Future<ClassMembersResponse> members(String classId) async => _roster;
 
   @override
-  Future<List<String>> schools() async => _schools;
+  Future<List<String>> schools() async {
+    schoolsCalls++;
+    if (failSchools) throw ApiException(502, 'directory unavailable');
+    return _schools;
+  }
 
   @override
   Future<ClassSummary> createClass({
@@ -126,6 +136,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: PlinkTheme.paper,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: ClassesPage(
           sessions: _FakeSessions([klass]),
           classes: _FakeClasses(roster),
@@ -169,6 +181,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: _FakeClasses(roster, schools: const ['SSM', 'SJI']),
@@ -218,6 +232,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: fakeClasses,
@@ -242,15 +258,63 @@ void main() {
       await tester.pump();
 
       // Now dirty — Save enabled.
-      expect(
-        tester.widget<ButtonStyleButton>(saveBtn()).onPressed,
-        isNotNull,
-      );
+      expect(tester.widget<ButtonStyleButton>(saveBtn()).onPressed, isNotNull);
 
       await tester.tap(saveBtn());
       await tester.pumpAndSettle();
 
       expect(fakeClasses.updateCodesCalls, 1);
+    },
+  );
+
+  testWidgets(
+    'scope row: a failed schools() load surfaces an inline error + Retry instead '
+    'of an empty dropdown, and Retry re-fetches (#281)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1600, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final klass = ClassSummary(id: 'c1', name: '3A', schoolYear: '2025-2026');
+      final roster = ClassMembersResponse(
+        id: 'c1',
+        name: '3A',
+        schoolYear: '2025-2026',
+        members: const [],
+      );
+      final fakeClasses = _FakeClasses(roster, schools: const ['SSM'])
+        ..failSchools = true;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ClassesPage(
+            sessions: _FakeSessions([klass]),
+            classes: fakeClasses,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The scope row still renders, but the failure is surfaced inline — not
+      // swallowed into a silently empty dropdown (the pre-#281 behaviour).
+      expect(find.text('School'), findsOneWidget);
+      expect(find.textContaining("Couldn't load schools"), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
+      // Never leaks the raw exception toString().
+      expect(find.textContaining('ApiException'), findsNothing);
+
+      // Recover the backend and retry: it re-fetches and clears the notice.
+      final callsBefore = fakeClasses.schoolsCalls;
+      fakeClasses.failSchools = false;
+      await tester.tap(find.widgetWithText(TextButton, 'Retry'));
+      await tester.pumpAndSettle();
+
+      expect(fakeClasses.schoolsCalls, greaterThan(callsBefore));
+      expect(find.textContaining("Couldn't load schools"), findsNothing);
+      expect(find.widgetWithText(TextButton, 'Retry'), findsNothing);
     },
   );
 
@@ -285,6 +349,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: _FakeClasses(roster, schools: const ['SSM', 'SJI']),
@@ -340,6 +406,8 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: ClassesPage(
             sessions: _FakeSessions([klass]),
             classes: fakeClasses,
@@ -388,6 +456,8 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: ClassesPage(
           sessions: _FakeSessions([klass]),
           classes: fakeClasses,
@@ -431,6 +501,8 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: ClassesPage(
           sessions: _FakeSessions([klass]),
           classes: fakeClasses,

@@ -276,7 +276,8 @@ class ClassesApi {
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return (body['results'] as List<dynamic>)
         .map(
-          (e) => ClassMembershipImportResult.fromJson(e as Map<String, dynamic>),
+          (e) =>
+              ClassMembershipImportResult.fromJson(e as Map<String, dynamic>),
         )
         .toList(growable: false);
   }
@@ -293,7 +294,8 @@ class ClassesApi {
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return (body['results'] as List<dynamic>)
         .map(
-          (e) => ClassMembershipImportResult.fromJson(e as Map<String, dynamic>),
+          (e) =>
+              ClassMembershipImportResult.fromJson(e as Map<String, dynamic>),
         )
         .toList(growable: false);
   }

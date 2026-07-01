@@ -1,0 +1,107 @@
+{
+  "extDescription": {
+    "message": "Anchor focussessie-handhaving — URL-filter en vriendelijke blokkeerpagina.",
+    "description": "Extension description shown in the browser's extensions page and store listing."
+  },
+
+  "focusSession": {
+    "message": "Focussessie",
+    "description": "Eyebrow label marking an active focus session (block page + popup)."
+  },
+  "requestAccess": {
+    "message": "Toegang vragen",
+    "description": "Button: ask the teacher to allow the blocked site."
+  },
+  "focusEnforcement": {
+    "message": "Anchor focusbewaking",
+    "description": "Footnote shown at the bottom of the block page and popup."
+  },
+
+  "blockPageTitle": {
+    "message": "Geblokkeerd door Anchor",
+    "description": "Browser tab title for the block page."
+  },
+  "blockHeadline": {
+    "message": "Even gefocust blijven",
+    "description": "Calm, reassuring block-page headline."
+  },
+  "blockBody": {
+    "message": "Je zit in een actieve focussessie, dus deze site is nu even gepauzeerd. Er is niets mis — hij staat alleen nog niet op de lijst met toegestane sites.",
+    "description": "Block-page explanation of why the site is paused."
+  },
+  "blockAskTeacher": {
+    "message": "Heb je deze site nodig voor je werk? Vraag het je leerkracht; die kan hem vanuit het dashboard toevoegen — de pagina opent dan vanzelf.",
+    "description": "Block-page hint about requesting access from the teacher."
+  },
+  "goBack": {
+    "message": "Terug",
+    "description": "Button: return to the previous page."
+  },
+  "blockUnknownUrl": {
+    "message": "(onbekend)",
+    "description": "Shown in place of the blocked URL when none was provided."
+  },
+  "blockNoSession": {
+    "message": "Geen actieve sessie — herlaad de pagina.",
+    "description": "Status shown when the block page has no session to attach a request to."
+  },
+  "blockSendingRequest": {
+    "message": "Verzoek naar je leerkracht versturen…",
+    "description": "Status while an unblock request is being sent."
+  },
+  "blockRequested": {
+    "message": "Verzonden — wachten op je leerkracht.",
+    "description": "Status after an unblock request was sent successfully."
+  },
+  "blockReachTeacherFailed": {
+    "message": "Kon je leerkracht niet bereiken: $reason$",
+    "description": "Error status when an unblock request could not be delivered.",
+    "placeholders": {
+      "reason": {
+        "content": "$1",
+        "example": "hub unavailable"
+      }
+    }
+  },
+  "blockApproved": {
+    "message": "Goedgekeurd — de pagina wordt geopend…",
+    "description": "Status when the teacher approved access and the page is reopening."
+  },
+  "blockReasonUnknown": {
+    "message": "Onbekende fout",
+    "description": "Fallback reason embedded in blockReachTeacherFailed when the background reports none."
+  },
+
+  "popupActiveTitle": {
+    "message": "Je bent gefocust",
+    "description": "Popup headline while a focus session is active."
+  },
+  "popupActiveBody": {
+    "message": "Anchor houdt je op de sites die je leerkracht heeft toegestaan. Al het andere is gepauzeerd tot de sessie eindigt.",
+    "description": "Popup body while a focus session is active."
+  },
+  "popupClassCode": {
+    "message": "Klascode",
+    "description": "Label before the class join code in the popup."
+  },
+  "popupAllowedSites": {
+    "message": "Toegestane sites",
+    "description": "Label above the list of allowed sites in the popup."
+  },
+  "popupAllowlistEmpty": {
+    "message": "Op dit moment zijn alleen de basissites van je school toegestaan.",
+    "description": "Shown when the active session's allowlist adds no sites beyond the baseline."
+  },
+  "popupIdleTitle": {
+    "message": "Geen actieve sessie",
+    "description": "Popup headline when no focus session is running."
+  },
+  "popupIdleBody": {
+    "message": "Je kunt vrij browsen. Anchor grijpt pas in als je leerkracht een focussessie voor je klas start.",
+    "description": "Popup body when no focus session is running."
+  },
+  "popupEyebrowIdle": {
+    "message": "Inactief",
+    "description": "Eyebrow label shown in the popup when no session is active."
+  }
+}

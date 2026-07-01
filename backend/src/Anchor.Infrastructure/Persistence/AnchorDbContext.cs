@@ -1,6 +1,7 @@
 using Anchor.Domain.Bundles;
 using Anchor.Domain.Classes;
 using Anchor.Domain.Events;
+using Anchor.Domain.Schools;
 using Anchor.Domain.Sessions;
 using Anchor.Domain.Users;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,7 @@ public sealed class AnchorDbContext : DbContext
     }
 
     public DbSet<User> Users => Set<User>();
+    public DbSet<School> Schools => Set<School>();
     public DbSet<Class> Classes => Set<Class>();
     public DbSet<ClassMembership> ClassMemberships => Set<ClassMembership>();
     public DbSet<Bundle> Bundles => Set<Bundle>();

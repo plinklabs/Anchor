@@ -45,6 +45,8 @@ class _FakeAuth implements MsalAuthService {
   @override
   Future<String> acquireToken() async => 'fake-token';
   @override
+  Future<String> acquireTokenSilent() async => 'fake-token';
+  @override
   AccountInfo? currentAccount() => null;
 }
 
@@ -64,7 +66,10 @@ class _FakeSessions extends SessionsApi {
   Future<List<ActiveSession>> activeSessions() async => const [];
 
   @override
-  Future<List<SessionHistoryEntry>> history({int limit = 50, int offset = 0}) async {
+  Future<List<SessionHistoryEntry>> history({
+    int limit = 50,
+    int offset = 0,
+  }) async {
     if (offset > 0) return const <SessionHistoryEntry>[];
     return [
       SessionHistoryEntry(
