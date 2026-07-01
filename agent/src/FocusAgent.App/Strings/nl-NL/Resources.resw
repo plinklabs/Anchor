@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!--
+    nl-NL (Dutch — proof of concept) string catalogue for the agent (i18n, #323 / part of #320).
+
+    English (en-US) is the source + fallback locale (see <DefaultLanguage> in
+    FocusAgent.App.csproj); nl-NL is the Dutch proof-of-concept. Keys must stay
+    identical across every locale — I18nCatalogueParityTests locks that. Every
+    key is looked up in code via the Loc helper (ResourceLoader over an explicit
+    MRT ResourceContext) — the agent ships unpackaged, where the framework's own
+    x:Uid resolution can't be pointed at a chosen language.
+
+    DO NOT hand-edit the resheader block below; it is the standard resx schema
+    Visual Studio's .resw editor expects.
+  -->
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="MainSessionLabel" xml:space="preserve">
+    <value>FOCUSSESSIE</value>
+  </data>
+  <data name="MainLeaveButton" xml:space="preserve">
+    <value>SESSIE VERLATEN</value>
+  </data>
+  <data name="MainCloseButton" xml:space="preserve">
+    <value>SLUITEN</value>
+  </data>
+  <data name="OverlayHeadline" xml:space="preserve">
+    <value>Laten we bij de sessie blijven</value>
+  </data>
+  <data name="OverlayMessage" xml:space="preserve">
+    <value>Je leerkracht is een focussessie gestart, dus deze app is even aan de kant gezet. Kies er een om verder te gaan.</value>
+  </data>
+  <data name="GuidedHeadline" xml:space="preserve">
+    <value>Nog één stap</value>
+  </data>
+  <data name="GuidedBody" xml:space="preserve">
+    <value>Anchor heeft de Edge-extensie nodig om je focussessies op koers te houden. We openen de store — klik op Ophalen en daarna op Toevoegen aan Edge.</value>
+  </data>
+  <data name="GuidedSteps" xml:space="preserve">
+    <value>Op de pagina die opent:  OPHALEN  →  EXTENSIE TOEVOEGEN</value>
+  </data>
+  <data name="GuidedLater" xml:space="preserve">
+    <value>LATER</value>
+  </data>
+  <data name="GuidedOpenStore" xml:space="preserve">
+    <value>STORE OPENEN</value>
+  </data>
+  <data name="JoinHeadline" xml:space="preserve">
+    <value>Deelnemen met code</value>
+  </data>
+  <data name="JoinBody" xml:space="preserve">
+    <value>Voer de 6-cijferige code in die op het dashboard van je leerkracht staat.</value>
+  </data>
+  <data name="JoinCancel" xml:space="preserve">
+    <value>ANNULEREN</value>
+  </data>
+  <data name="ConfirmTitle" xml:space="preserve">
+    <value>Focussessie start</value>
+  </data>
+  <data name="ConfirmCancel" xml:space="preserve">
+    <value>NU NIET</value>
+  </data>
+  <data name="Main_Status_Starting" xml:space="preserve">
+    <value>Bezig met starten…</value>
+  </data>
+  <data name="Main_Status_SigningIn" xml:space="preserve">
+    <value>Bezig met aanmelden…</value>
+  </data>
+  <data name="Main_Detail_SigningIn" xml:space="preserve">
+    <value>Als er een Windows-accountkiezer verschijnt, kies dan je schoolaccount.</value>
+  </data>
+  <data name="Main_Status_Connecting" xml:space="preserve">
+    <value>Bezig met verbinden…</value>
+  </data>
+  <data name="Main_Status_Reconnecting" xml:space="preserve">
+    <value>Opnieuw verbinden…</value>
+  </data>
+  <data name="Main_Status_Connected" xml:space="preserve">
+    <value>Verbonden</value>
+  </data>
+  <data name="Main_Status_ConnectedAs" xml:space="preserve">
+    <value>Verbonden als {0}</value>
+  </data>
+  <data name="Main_Detail_Waiting" xml:space="preserve">
+    <value>Wachten op een focussessie van je leerkracht.</value>
+  </data>
+  <data name="Main_Status_Disconnected" xml:space="preserve">
+    <value>Verbinding verbroken</value>
+  </data>
+  <data name="Main_Detail_Retrying" xml:space="preserve">
+    <value>Automatisch opnieuw proberen.</value>
+  </data>
+  <data name="Main_Status_NotSignedIn" xml:space="preserve">
+    <value>Niet aangemeld</value>
+  </data>
+  <data name="Main_Detail_ClickSignIn" xml:space="preserve">
+    <value>Klik op Aanmelden om het opnieuw te proberen.</value>
+  </data>
+  <data name="Main_Button_SignIn" xml:space="preserve">
+    <value>AANMELDEN</value>
+  </data>
+  <data name="Main_Button_Reconnect" xml:space="preserve">
+    <value>OPNIEUW VERBINDEN</value>
+  </data>
+  <data name="Main_Button_ReconnectNow" xml:space="preserve">
+    <value>NU OPNIEUW VERBINDEN</value>
+  </data>
+  <data name="Main_Session_Since" xml:space="preserve">
+    <value>In sessie sinds {0}</value>
+  </data>
+  <data name="Main_Session_InSession" xml:space="preserve">
+    <value>In sessie</value>
+  </data>
+  <data name="Main_Heartbeat_WaitingFirst" xml:space="preserve">
+    <value>Wachten op eerste hartslag…</value>
+  </data>
+  <data name="Main_Heartbeat_LastPing" xml:space="preserve">
+    <value>Laatste ping {0}</value>
+  </data>
+  <data name="Main_Heartbeat_Stale" xml:space="preserve">
+    <value>{0} (verouderd)</value>
+  </data>
+  <data name="Main_Leave_Title" xml:space="preserve">
+    <value>Sessie verlaten?</value>
+  </data>
+  <data name="Main_Leave_Content" xml:space="preserve">
+    <value>Als je vertrekt, ziet je leerkracht dat je de sessie hebt verlaten. Doorgaan?</value>
+  </data>
+  <data name="Main_Leave_Primary" xml:space="preserve">
+    <value>Sessie verlaten</value>
+  </data>
+  <data name="Main_Leave_Stay" xml:space="preserve">
+    <value>Blijven</value>
+  </data>
+  <data name="Tray_Status_SignedOut" xml:space="preserve">
+    <value>AFGEMELD</value>
+  </data>
+  <data name="Tray_OpenAnchor" xml:space="preserve">
+    <value>Anchor openen</value>
+  </data>
+  <data name="Tray_JoinSession" xml:space="preserve">
+    <value>Deelnemen aan een sessie…</value>
+  </data>
+  <data name="Tray_ExitAnchor" xml:space="preserve">
+    <value>Anchor afsluiten</value>
+  </data>
+  <data name="Tray_Status_Connected" xml:space="preserve">
+    <value>VERBONDEN</value>
+  </data>
+  <data name="Tray_Status_ConnectedName" xml:space="preserve">
+    <value>VERBONDEN — {0}</value>
+  </data>
+  <data name="Tray_Status_Connecting" xml:space="preserve">
+    <value>BEZIG MET VERBINDEN…</value>
+  </data>
+  <data name="Tray_Status_Reconnecting" xml:space="preserve">
+    <value>OPNIEUW VERBINDEN…</value>
+  </data>
+  <data name="Tray_Status_Disconnected" xml:space="preserve">
+    <value>VERBINDING VERBROKEN</value>
+  </data>
+  <data name="Tray_Tooltip_ConnectedAs" xml:space="preserve">
+    <value>Verbonden als {0}</value>
+  </data>
+  <data name="Tray_Tooltip_Connected" xml:space="preserve">
+    <value>Verbonden</value>
+  </data>
+  <data name="Tray_Tooltip_Connecting" xml:space="preserve">
+    <value>Bezig met verbinden…</value>
+  </data>
+  <data name="Tray_Tooltip_Reconnecting" xml:space="preserve">
+    <value>Opnieuw verbinden…</value>
+  </data>
+  <data name="Tray_Tooltip_Disconnected" xml:space="preserve">
+    <value>Verbinding verbroken</value>
+  </data>
+  <data name="Tray_Tooltip_SignedOut" xml:space="preserve">
+    <value>Afgemeld</value>
+  </data>
+  <data name="Tray_Tooltip_Prefix" xml:space="preserve">
+    <value>Anchor — {0}</value>
+  </data>
+  <data name="Overlay_BlockedApp" xml:space="preserve">
+    <value>Zojuist aan de kant gezet: {0}</value>
+  </data>
+  <data name="Overlay_NoApps" xml:space="preserve">
+    <value>Er zijn geen specifieke apps ingesteld voor deze sessie — je leerkracht vertelt wat er nu komt.</value>
+  </data>
+  <data name="Overlay_PublisherApps" xml:space="preserve">
+    <value>Apps van {0}</value>
+  </data>
+  <data name="Join_Button_Join" xml:space="preserve">
+    <value>DEELNEMEN</value>
+  </data>
+  <data name="Join_Button_Joining" xml:space="preserve">
+    <value>BEZIG MET DEELNEMEN…</value>
+  </data>
+  <data name="JoinError_Network" xml:space="preserve">
+    <value>Kan de server niet bereiken. Controleer je verbinding en probeer het opnieuw.</value>
+  </data>
+  <data name="JoinError_Unauthorized" xml:space="preserve">
+    <value>Je bent niet aangemeld. Open de app opnieuw en probeer het nog eens.</value>
+  </data>
+  <data name="JoinError_NotFound" xml:space="preserve">
+    <value>Code niet gevonden.</value>
+  </data>
+  <data name="JoinError_AlreadyInSession" xml:space="preserve">
+    <value>Je zit al in een focussessie.</value>
+  </data>
+  <data name="JoinError_Expired" xml:space="preserve">
+    <value>De sessie is beëindigd.</value>
+  </data>
+  <data name="JoinError_RateLimited" xml:space="preserve">
+    <value>Te veel pogingen, probeer het zo meteen opnieuw.</value>
+  </data>
+  <data name="JoinError_Unexpected" xml:space="preserve">
+    <value>Onverwacht antwoord van de server ({0}). Probeer het opnieuw.</value>
+  </data>
+  <data name="Confirm_Teacher" xml:space="preserve">
+    <value>{0} is een focussessie gestart. Er wordt automatisch deelgenomen.</value>
+  </data>
+  <data name="Confirm_Countdown" xml:space="preserve">
+    <value>{0}s</value>
+  </data>
+  <data name="Title_FocusSession" xml:space="preserve">
+    <value>Anchor — Focussessie</value>
+  </data>
+  <data name="Title_InstallExtension" xml:space="preserve">
+    <value>Anchor — De extensie installeren</value>
+  </data>
+  <data name="Title_JoinByCode" xml:space="preserve">
+    <value>Anchor — Deelnemen met code</value>
+  </data>
+</root>

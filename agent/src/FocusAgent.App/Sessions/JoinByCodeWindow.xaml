@@ -71,16 +71,16 @@
         </StackPanel>
 
         <!-- headline: in Fraunces display. -->
-        <TextBlock Grid.Row="1"
+        <TextBlock x:Name="HeadlineText"
+                   Grid.Row="1"
                    Style="{StaticResource PlinkDisplaySmallTextStyle}"
-                   Foreground="{StaticResource PlinkOnInkBrush}"
-                   Text="Join by code" />
+                   Foreground="{StaticResource PlinkOnInkBrush}" />
 
         <!-- supporting line: plain Hanken on ink. -->
-        <TextBlock Grid.Row="2"
+        <TextBlock x:Name="BodyText"
+                   Grid.Row="2"
                    Style="{StaticResource PlinkBodyLargeTextStyle}"
-                   Foreground="{StaticResource PlinkOnInkMutedBrush}"
-                   Text="Enter the 6-digit code shown on your teacher's dashboard." />
+                   Foreground="{StaticResource PlinkOnInkMutedBrush}" />
 
         <TextBox x:Name="CodeBox"
                  Grid.Row="3"
@@ -105,12 +105,11 @@
                     Spacing="10">
             <Button x:Name="CancelButton"
                     Style="{StaticResource PlinkOnInkSecondaryButtonStyle}"
-                    Content="CANCEL"
                     Click="OnCancelClicked" />
-            <!-- JOIN: the single magenta spark — the one primary action. -->
+            <!-- JOIN: the single magenta spark — the one primary action. Content is
+                 set (localized) in code and toggled by SetBusy (JOIN ⇄ JOINING…). -->
             <Button x:Name="JoinButton"
                     Style="{StaticResource PlinkPrimaryButtonStyle}"
-                    Content="JOIN"
                     IsEnabled="False"
                     Click="OnJoinClicked" />
         </StackPanel>

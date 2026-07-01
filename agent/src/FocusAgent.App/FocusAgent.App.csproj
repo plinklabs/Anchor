@@ -14,6 +14,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <!-- i18n (#323 / part of #320): en-US is the source + fallback locale, so a
+         key missing from the active language (or an unsupported display language)
+         resolves to English via MRT's language fallback rather than a blank/raw
+         key. The .resw catalogues live under Strings/<lang>/Resources.resw and the
+         Windows App SDK build compiles them into resources.pri next to the exe. -->
+    <DefaultLanguage>en-US</DefaultLanguage>
   </PropertyGroup>
 
   <ItemGroup>

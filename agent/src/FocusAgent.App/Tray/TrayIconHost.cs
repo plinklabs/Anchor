@@ -1,3 +1,4 @@
+using FocusAgent.App.Localization;
 using FocusAgent.Core.Realtime;
 using H.NotifyIcon;
 using Microsoft.UI.Dispatching;
@@ -66,28 +67,28 @@ internal sealed class TrayIconHost : IDisposable
         // Space Mono eyebrow voice: UPPERCASE, plain, calm (ANCHOR_BRAND.md §5).
         var text = state switch
         {
-            AgentConnectionState.Connected when !string.IsNullOrWhiteSpace(displayName) => $"CONNECTED — {displayName!.ToUpperInvariant()}",
-            AgentConnectionState.Connected => "CONNECTED",
-            AgentConnectionState.Connecting => "CONNECTING…",
-            AgentConnectionState.Reconnecting => "RECONNECTING…",
-            AgentConnectionState.Disconnected => "DISCONNECTED",
+            AgentConnectionState.Connected when !string.IsNullOrWhiteSpace(displayName) => Loc.Format("Tray_Status_ConnectedName", displayName!.ToUpperInvariant()),
+            AgentConnectionState.Connected => Loc.Get("Tray_Status_Connected"),
+            AgentConnectionState.Connecting => Loc.Get("Tray_Status_Connecting"),
+            AgentConnectionState.Reconnecting => Loc.Get("Tray_Status_Reconnecting"),
+            AgentConnectionState.Disconnected => Loc.Get("Tray_Status_Disconnected"),
             _ => TrayMenu.DefaultStatusText,
         };
         // The tooltip stays sentence-case prose ("Anchor — Connected"); only the
         // in-menu status row carries the mono eyebrow treatment.
         var tooltip = state switch
         {
-            AgentConnectionState.Connected when !string.IsNullOrWhiteSpace(displayName) => $"Connected as {displayName}",
-            AgentConnectionState.Connected => "Connected",
-            AgentConnectionState.Connecting => "Connecting…",
-            AgentConnectionState.Reconnecting => "Reconnecting…",
-            AgentConnectionState.Disconnected => "Disconnected",
-            _ => "Signed out",
+            AgentConnectionState.Connected when !string.IsNullOrWhiteSpace(displayName) => Loc.Format("Tray_Tooltip_ConnectedAs", displayName!),
+            AgentConnectionState.Connected => Loc.Get("Tray_Tooltip_Connected"),
+            AgentConnectionState.Connecting => Loc.Get("Tray_Tooltip_Connecting"),
+            AgentConnectionState.Reconnecting => Loc.Get("Tray_Tooltip_Reconnecting"),
+            AgentConnectionState.Disconnected => Loc.Get("Tray_Tooltip_Disconnected"),
+            _ => Loc.Get("Tray_Tooltip_SignedOut"),
         };
         _dispatcher.TryEnqueue(() =>
         {
             _statusItem.Text = text;
-            _icon.ToolTipText = $"Anchor — {tooltip}";
+            _icon.ToolTipText = Loc.Format("Tray_Tooltip_Prefix", tooltip);
         });
     }
 
