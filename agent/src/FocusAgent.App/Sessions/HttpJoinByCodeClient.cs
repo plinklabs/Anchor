@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FocusAgent.App.Localization;
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
@@ -80,7 +81,7 @@ public sealed class HttpJoinByCodeClient : IJoinByCodeClient
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Network error calling /sessions/join-by-code.");
-            return new JoinByCodeOutcome(JoinByCodeStatus.NetworkError, "Couldn't reach the server. Check your connection and try again.");
+            return new JoinByCodeOutcome(JoinByCodeStatus.NetworkError, Loc.Get("JoinError_Network"));
         }
 
         try
@@ -101,22 +102,22 @@ public sealed class HttpJoinByCodeClient : IJoinByCodeClient
                 return new JoinByCodeOutcome(JoinByCodeStatus.Success, "");
             case HttpStatusCode.Unauthorized:
                 return new JoinByCodeOutcome(JoinByCodeStatus.Unauthorized,
-                    "You're not signed in. Reopen the app and try again.");
+                    Loc.Get("JoinError_Unauthorized"));
             case HttpStatusCode.NotFound:
                 return new JoinByCodeOutcome(JoinByCodeStatus.NotFound,
-                    await ReadMessageOrDefaultAsync(response, "Code not found.", ct).ConfigureAwait(false));
+                    await ReadMessageOrDefaultAsync(response, Loc.Get("JoinError_NotFound"), ct).ConfigureAwait(false));
             case HttpStatusCode.Conflict:
                 return new JoinByCodeOutcome(JoinByCodeStatus.AlreadyInSession,
-                    await ReadMessageOrDefaultAsync(response, "You're already in a focus session.", ct).ConfigureAwait(false));
+                    await ReadMessageOrDefaultAsync(response, Loc.Get("JoinError_AlreadyInSession"), ct).ConfigureAwait(false));
             case HttpStatusCode.Gone:
                 return new JoinByCodeOutcome(JoinByCodeStatus.Expired,
-                    await ReadMessageOrDefaultAsync(response, "Session has ended.", ct).ConfigureAwait(false));
+                    await ReadMessageOrDefaultAsync(response, Loc.Get("JoinError_Expired"), ct).ConfigureAwait(false));
             case HttpStatusCode.TooManyRequests:
                 return new JoinByCodeOutcome(JoinByCodeStatus.RateLimited,
-                    await ReadMessageOrDefaultAsync(response, "Too many attempts, try again shortly.", ct).ConfigureAwait(false));
+                    await ReadMessageOrDefaultAsync(response, Loc.Get("JoinError_RateLimited"), ct).ConfigureAwait(false));
             default:
                 return new JoinByCodeOutcome(JoinByCodeStatus.NetworkError,
-                    $"Unexpected server response ({(int)response.StatusCode}). Try again.");
+                    Loc.Format("JoinError_Unexpected", (int)response.StatusCode));
         }
     }
 

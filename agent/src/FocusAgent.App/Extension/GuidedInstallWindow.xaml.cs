@@ -1,3 +1,4 @@
+using FocusAgent.App.Localization;
 using FocusAgent.Core.Extension;
 using Microsoft.UI.Xaml;
 
@@ -24,12 +25,25 @@ public sealed partial class GuidedInstallWindow : Window
     {
         InitializeComponent();
         _launcher = launcher;
-        Title = "Anchor — Install the extension";
+        Title = Loc.Get("Title_InstallExtension");
+        HeadlineText.Text = Loc.Get("GuidedHeadline");
+        BodyText.Text = Loc.Get("GuidedBody");
+        StepsText.Text = Loc.Get("GuidedSteps");
+        LaterButton.Content = Loc.Get("GuidedLater");
+        OpenStoreButton.Content = Loc.Get("GuidedOpenStore");
         Closed += OnClosed;
     }
 
     /// <summary>Completes when the window is dismissed (store opened or "Later").</summary>
     public Task Completion => _completion.Task;
+
+    /// <summary>
+    /// The localized copy this window resolved from its <c>x:Uid</c> resources —
+    /// read by the <c>--verify-i18n</c> mode (#323) to prove the XAML/x:Uid path
+    /// resolves under the active language. Not part of the runtime flow.
+    /// </summary>
+    internal (string Headline, string Later, string OpenStore) LocalizedProbe() =>
+        (HeadlineText.Text, (string)LaterButton.Content, (string)OpenStoreButton.Content);
 
     private void OnOpenStoreClicked(object sender, RoutedEventArgs e)
     {

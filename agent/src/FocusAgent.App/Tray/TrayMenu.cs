@@ -1,3 +1,4 @@
+using FocusAgent.App.Localization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -21,7 +22,7 @@ namespace FocusAgent.App.Tray;
 internal static class TrayMenu
 {
     /// <summary>The status row text shown when the menu first opens (signed out).</summary>
-    public const string DefaultStatusText = "SIGNED OUT";
+    public static string DefaultStatusText => Loc.Get("Tray_Status_SignedOut");
 
     /// <summary>
     /// The handles a caller (real tray or self-test) needs after the menu is built:
@@ -62,19 +63,19 @@ internal static class TrayMenu
         // Open Anchor — the primary action, carrying the single magenta spark as a
         // leading glyph in the icon column (the tray menu's <5% magenta, §2). Keeps
         // the native item's hover/focus behaviour; only its icon is the spark.
-        var openItem = ActionItem("Open Anchor", onOpen);
+        var openItem = ActionItem(Loc.Get("Tray_OpenAnchor"), onOpen);
         openItem.Icon = MagentaSparkIcon();
         flyout.Items.Add(openItem);
 
         // Join a session by code — neutral on-ink action; disabled mid-session.
-        var joinItem = ActionItem("Join a session…", onJoinByCode);
+        var joinItem = ActionItem(Loc.Get("Tray_JoinSession"), onJoinByCode);
         flyout.Items.Add(joinItem);
 
         flyout.Items.Add(Separator());
 
         // #102: the true exit lives here (the main window's button only closes to
         // the tray). "Exit Anchor" — Anchor proper-noun in prose, per §1.
-        var exitItem = ActionItem("Exit Anchor", onQuit);
+        var exitItem = ActionItem(Loc.Get("Tray_ExitAnchor"), onQuit);
         flyout.Items.Add(exitItem);
 
         return new Handles(flyout, statusItem, joinItem);

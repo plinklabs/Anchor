@@ -112,6 +112,12 @@ public partial class App : Application
             return;
         }
 
+        if (Program.VerifyI18n)
+        {
+            RunI18nVerification();
+            return;
+        }
+
         // #248: surface a fatal UI-thread exception thrown *after* startup (a click
         // handler, a timer callback marshalled to the dispatcher) instead of letting
         // WinUI swallow it into a silent exit. Handling it (e.Handled) keeps the
@@ -716,6 +722,56 @@ public partial class App : Application
     private sealed class NoOpStoreLauncher : IStoreLauncher
     {
         public void OpenStoreListing(string storeUrl) { }
+    }
+
+    /// <summary>
+    /// Dev-only path (#323): resolve a representative set of localized strings for
+    /// the language <c>Program.Main</c> already pinned (<c>--verify-i18n &lt;lang&gt;</c>)
+    /// and write them to the result file for the integration test to read. It
+    /// exercises <em>both</em> localization paths against the built exe's real
+    /// resources.pri: the XAML <c>x:Uid</c> path (by parsing a live
+    /// <see cref="Extension.GuidedInstallWindow"/> and reading back its resolved
+    /// copy) and the code-behind <see cref="Localization.Loc"/> path. So the test
+    /// can prove Dutch renders and an unsupported language falls back to English —
+    /// the whole pipeline (resw → PRI → language fallback), not a stubbed lookup.
+    /// Writes no UI and needs no host bootstrap. See Program.cs.
+    /// </summary>
+    private void RunI18nVerification()
+    {
+        var lines = new List<string>();
+        void Add(string key, string value) => lines.Add($"{key}={value}");
+
+        // Window path: parse a real window and read back the copy its constructor
+        // resolved from resources.pri under the forced language — the composed
+        // surface, not a raw lookup.
+        try
+        {
+            var probe = new Extension.GuidedInstallWindow(new NoOpStoreLauncher());
+            var (headline, later, openStore) = probe.LocalizedProbe();
+            Add("window.guided_headline", headline);
+            Add("window.guided_later", later);
+            Add("window.guided_openstore", openStore);
+            probe.Close();
+        }
+        catch (Exception ex)
+        {
+            Add("window.error", ex.Message);
+        }
+
+        // Direct code-lookup path: the Loc helper (ResourceLoader/MRT) resolving keys.
+        Add("code.tray_open", Localization.Loc.Get("Tray_OpenAnchor"));
+        Add("code.status_connected", Localization.Loc.Get("Main_Status_Connected"));
+        Add("code.join_not_found", Localization.Loc.Get("JoinError_NotFound"));
+
+        var resultPath = Environment.GetEnvironmentVariable(Program.I18nResultPathEnvVar);
+        if (!string.IsNullOrEmpty(resultPath))
+        {
+            try { File.WriteAllText(resultPath, string.Join(Environment.NewLine, lines)); }
+            catch { /* the caller also has the exit code; a write failure isn't fatal here. */ }
+        }
+
+        Environment.ExitCode = 0;
+        Exit();
     }
 
     /// <summary>
