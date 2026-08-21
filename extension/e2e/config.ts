@@ -71,8 +71,16 @@ export const BASELINE_ONLIST_HOST = '127.0.0.1';
 export const BUNDLE_ONLY_HOST = 'team.sharepoint.com';
 export const OFFLIST_HOST = 'offlist.test';
 
+/**
+ * The Entra sign-in authority the extension's token flow targets. Mapped to
+ * loopback like the test hosts so no spec can ever reach the real Entra — with
+ * nothing listening on :443 an auth attempt fails fast and deterministically,
+ * which is what the #331 sign-in-failure spec drives.
+ */
+export const ENTRA_AUTHORITY_HOST = 'login.microsoftonline.com';
+
 /** Hosts Edge must resolve to the local static server (host → 127.0.0.1). */
-export const MAPPED_HOSTS = [OFFLIST_HOST, BUNDLE_ONLY_HOST];
+export const MAPPED_HOSTS = [OFFLIST_HOST, BUNDLE_ONLY_HOST, ENTRA_AUTHORITY_HOST];
 
 // --- Browser launch knobs -------------------------------------------------
 /** Edge by default; override (e.g. `chromium`) with E2E_BROWSER_CHANNEL. */

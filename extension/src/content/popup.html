@@ -102,6 +102,36 @@
         color: var(--text-muted);
         margin-top: var(--space-2);
       }
+      /* Hard sign-in failure (#331). A hairline-boxed notice rather than a
+         shouty alert: it is information for the student to relay, not a scold.
+         The spark magenta marks it as the one thing on this surface that needs
+         attention. */
+      .auth-error {
+        border: var(--border-width) solid var(--border);
+        border-left: 3px solid var(--spark, #ec4899);
+        border-radius: var(--radius);
+        padding: var(--space-3);
+      }
+      .auth-error__title {
+        font-family: var(--font-body);
+        font-weight: var(--body-weight-strong);
+        color: var(--on-ink);
+      }
+      .auth-error__body {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        margin-top: var(--space-2);
+      }
+      .auth-error__detail {
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        color: var(--on-ink);
+        background: var(--surface-inset);
+        border-radius: var(--radius);
+        padding: var(--space-2);
+        margin-top: var(--space-2);
+        overflow-wrap: anywhere;
+      }
       .footnote {
         margin-top: var(--space-4);
         font-family: var(--font-mono);
@@ -132,6 +162,15 @@
         </span>
         <span data-eyebrow-label data-i18n="focusSession">Focus session</span>
       </p>
+
+      <!-- Hard sign-in failure (#331). Sits outside the active/idle faces
+           because it explains why the rest of the popup may look wrong: with no
+           token there is no hub connection, so nothing is being enforced. -->
+      <div class="auth-error" data-auth-error hidden>
+        <p class="auth-error__title" data-i18n="popupAuthFailedTitle">Anchor can't sign you in</p>
+        <p class="auth-error__body" data-i18n="popupAuthFailedBody">Your school account couldn't be signed in, so Anchor isn't connected right now. Show this to your teacher or IT support:</p>
+        <p class="auth-error__detail" data-auth-error-detail>—</p>
+      </div>
 
       <!-- Active session -->
       <div data-when="active">

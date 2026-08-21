@@ -103,5 +103,13 @@
   "popupEyebrowIdle": {
     "message": "Inactief",
     "description": "Eyebrow label shown in the popup when no session is active."
+  },
+  "popupAuthFailedTitle": {
+    "message": "Anchor kan je niet aanmelden",
+    "description": "Popup/badge heading when the student's Entra sign-in failed outright."
+  },
+  "popupAuthFailedBody": {
+    "message": "Je schoolaccount kon niet worden aangemeld, dus Anchor is nu niet verbonden. Toon dit aan je leerkracht of ICT-dienst:",
+    "description": "Popup body asking the student to relay the sign-in error text below it."
   }
 }

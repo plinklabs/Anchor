@@ -6,6 +6,9 @@ import { selectTabsToBlock } from './shared/tab-scan';
 import { selectTabsToRestore } from './shared/tab-restore';
 import { loadSettings, persistBackendUrl, persistAuthConfig, resolveAuthMode } from './shared/settings';
 import { EntraAuthenticator } from './shared/auth';
+import { claimInteractiveSignIn, clearAuthGate, recordAuthFailure } from './shared/auth-gate';
+import type { AuthFailure } from './shared/auth-gate';
+import { t } from './shared/i18n';
 import type { AuthConfig } from './shared/settings';
 import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
 import { WitnessClient, WITNESS_HOST_NAME } from './shared/witness';
@@ -40,9 +43,10 @@ let witness: WitnessClient | null = null;
 let heartbeat: SessionHeartbeat | null = null;
 let authenticator: EntraAuthenticator | null = null;
 // Bounds interactive sign-in to at most one window per service-worker lifetime
-// (#289): a dismissed prompt must not re-pop on every SignalR reconnect. Reset
-// when a new auth config arrives or the worker restarts (module state is lost on
-// hibernation), so a genuinely-signed-out student is re-prompted next wake.
+// (#289): a dismissed prompt must not re-pop on every SignalR reconnect. Module
+// state, so it is lost on hibernation — which is exactly why it is only *half*
+// the guard; the half that survives a worker restart (plus the backoff after a
+// failure) lives in auth-gate.ts (#331).
 let interactiveSignInTried = false;
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -91,11 +95,7 @@ async function ensureHub(): Promise<void> {
     // Edge's existing Office 365 session silently; it permits one interactive
     // sign-in per worker lifetime if SSO can't satisfy it, then stays silent.
     authenticator ??= new EntraAuthenticator(settings.authConfig!);
-    hubClient = new HubClient(settings, callbacks, () => {
-      const allowInteractive = !interactiveSignInTried;
-      interactiveSignInTried = true;
-      return authenticator!.getToken({ allowInteractive });
-    });
+    hubClient = new HubClient(settings, callbacks, () => acquireHubToken());
   } else {
     // Dev: the impersonation OID rides the hub URL query string (no token).
     hubClient = new HubClient(settings, callbacks);
@@ -107,6 +107,63 @@ async function ensureHub(): Promise<void> {
     log.error('hub start failed; will rely on automatic reconnect', err);
   }
   ensureHeartbeat();
+}
+
+// SignalR's accessTokenFactory: called on connect and on every reconnect, so it
+// doubles as the refresh hook — and as the one place a sign-in window can ever
+// be opened from.
+//
+// Two guards must both agree before it may open one:
+//   • the module flag keeps the per-reconnect refreshes inside a single worker
+//     lifetime silent (#289) — a dismissed prompt must not re-pop on reconnect;
+//   • the storage.session claim survives worker hibernation and adds a backoff,
+//     so an auth config that can never succeed (the AADSTS700051 case in #331)
+//     cannot re-pop a window on every revival.
+// A failure is recorded either way, so a dead hub connection names its cause on
+// the badge and in the popup rather than failing silently.
+async function acquireHubToken(): Promise<string> {
+  let allowInteractive = false;
+  if (!interactiveSignInTried) {
+    interactiveSignInTried = true;
+    allowInteractive = await claimInteractiveSignIn();
+  }
+  try {
+    const token = await authenticator!.getToken({ allowInteractive });
+    await clearAuthGate();
+    await paintAuthBadge(null);
+    return token;
+  } catch (err) {
+    const failure = await recordAuthFailure(err);
+    log.error(
+      `student sign-in failed — ${failure.code ?? 'no Entra error code'}: ${failure.message}`,
+      { allowInteractive },
+    );
+    await paintAuthBadge(failure);
+    throw err;
+  }
+}
+
+// The toolbar action is the extension's always-visible state surface, so a hard
+// auth failure marks it and says why on hover; the popup behind it carries the
+// full text. Badge state is browser-session scoped like the gate itself, so the
+// two clear together.
+async function paintAuthBadge(failure: AuthFailure | null): Promise<void> {
+  try {
+    await chrome.action.setBadgeText({ text: failure ? '!' : '' });
+    if (failure) {
+      await chrome.action.setBadgeBackgroundColor({ color: '#EC4899' });
+      await chrome.action.setTitle({
+        title: `${t('popupAuthFailedTitle')} — ${failure.code ?? failure.message}`,
+      });
+    } else {
+      // Back to the manifest's default_title — the brand name isn't localized.
+      await chrome.action.setTitle({ title: 'Anchor' });
+    }
+  } catch (err) {
+    // A missing action (unlikely — the manifest declares one) must never break
+    // token acquisition.
+    log.debug('could not paint the toolbar action', err);
+  }
 }
 
 // Extension witness heartbeat (#149). Always-on like the hub and the native
@@ -462,10 +519,14 @@ async function handleAuthConfigFromAgent(config: AuthConfig): Promise<void> {
     return;
   }
   if (changed) {
-    // Drop the cached authenticator + the per-worker interactive guard so the
-    // next connect re-acquires a token under the new tenant/client/scope.
+    // Drop the cached authenticator + both halves of the interactive guard so the
+    // next connect re-acquires a token under the new tenant/client/scope: a config
+    // change is precisely the event that can fix a failing sign-in, so it must not
+    // stay stuck behind the #331 backoff (or keep showing the stale failure).
     authenticator = null;
     interactiveSignInTried = false;
+    await clearAuthGate();
+    await paintAuthBadge(null);
     if (hubClient) {
       log.info('auth config changed — restarting hub under the new auth config');
       try {

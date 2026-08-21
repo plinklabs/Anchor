@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { allowedSiteLabels } from './popup';
+import { allowedSiteLabels, authFailureDetail } from './popup';
 import type { ActiveSessionState } from '../shared/types';
 
 // AE2 (#178): the toolbar-action status popup. Two layers of guard:
@@ -97,5 +97,39 @@ describe('popup page — fixed ink treatment (AE2 / #178)', () => {
   it('exposes the allowlist + join-code hooks popup.ts paints', () => {
     expect(html).toMatch(/data-allowlist\b/);
     expect(html).toMatch(/data-joincode\b/);
+  });
+
+  it('carries the sign-in failure notice, hidden until one is recorded (#331)', () => {
+    expect(html).toMatch(/data-auth-error\b[^>]*hidden/);
+    expect(html).toMatch(/data-auth-error-detail\b/);
+  });
+});
+
+describe('authFailureDetail (#331)', () => {
+  const failure = (code: string | null, message: string) => ({ code, message, at: 0 });
+
+  it('shows the Entra description as-is when it already names the code', () => {
+    const text = authFailureDetail(
+      failure('AADSTS700051', "AADSTS700051: response_type 'token' is not enabled for the application."),
+    );
+    expect(text).toBe("AADSTS700051: response_type 'token' is not enabled for the application.");
+  });
+
+  it('prefixes the bare code when the message does not carry it', () => {
+    expect(authFailureDetail(failure('AADSTS50011', 'Sign-in failed.'))).toBe(
+      'AADSTS50011 — Sign-in failed.',
+    );
+  });
+
+  it('falls back to the message when there is no Entra code', () => {
+    expect(authFailureDetail(failure(null, 'Authorization page could not be loaded.'))).toBe(
+      'Authorization page could not be loaded.',
+    );
+  });
+
+  it('caps a runaway error so it cannot blow the popup out of shape', () => {
+    const text = authFailureDetail(failure(null, 'x'.repeat(500)));
+    expect(text).toHaveLength(240);
+    expect(text.endsWith('…')).toBe(true);
   });
 });
