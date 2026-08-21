@@ -48,15 +48,6 @@ export interface LoadExtensionOptions {
    */
   witnessAuth?: { tenantId: string; clientId: string; scope: string };
   /**
-   * Cut the native-messaging witness link for this run (Windows only): the key
-   * is repointed at a missing manifest and restored on close. Use it in a spec
-   * that seeds its own settings, so a developer box with the real Anchor agent
-   * installed can't have its host push that machine's production backend URL /
-   * auth config over them mid-test (#331). Ignored when a witness host is
-   * explicitly requested above.
-   */
-  suppressWitnessHost?: boolean;
-  /**
    * BCP-47 UI language to launch the browser in (e.g. `nl`). Passed as Chromium's
    * `--lang`, which is what `chrome.i18n` selects its `_locales/<lang>` catalogue
    * from (#322). Omit for the host default (en on the CI runners).
@@ -111,14 +102,19 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     throw new Error(`No built extension at ${DIST_PATH}. Run \`npm run build\` first.`);
   }
 
-  // #204: optionally register the real witness host and inject the backend URL
-  // it should hand the extension. connectNative inherits the browser's env, so
-  // setting it here is what the launched host reads.
+  // The native-messaging witness link is opt-IN, per run (#332). A spec that
+  // asks for it gets the REAL host, registered here with the backend URL / auth
+  // config it should hand down (#204/#289; connectNative inherits the browser's
+  // env, so setting it here is what the launched host reads). Every other spec
+  // gets the link cut, because on a developer box the installed Anchor agent
+  // owns this registry key permanently and its host would push that machine's
+  // *production* backend URL and auth config over the settings the spec just
+  // seeded. Either way the key is restored to what the box had on close.
   let witnessHost: RegisteredWitnessHost | null = null;
   let suppressedWitness: SuppressedWitnessHost | null = null;
   if (options.witnessBackendUrl || options.witnessAuth) {
     witnessHost = registerWitnessHost();
-  } else if (options.suppressWitnessHost) {
+  } else {
     suppressedWitness = suppressWitnessHost();
   }
   if (options.witnessBackendUrl) {

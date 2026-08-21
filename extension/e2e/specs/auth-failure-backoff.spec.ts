@@ -19,9 +19,10 @@
 // state survives a worker generation, that the toolbar reports it, and that the
 // popup names it.
 //
-// Loads its own extension (rather than the `ext` fixture) to cut the witness
-// link: on a developer box the installed agent's host would otherwise push that
-// machine's production auth config over the one seeded here.
+// The auth config seeded here is only safe from an on-box agent because
+// loadExtension cuts the witness link for every spec that doesn't ask for a
+// host (#332) — otherwise a developer's installed agent would push that
+// machine's production config straight over it.
 
 import { test, expect } from '../fixtures.ts';
 import { BACKEND_URL } from '../config.ts';
@@ -81,7 +82,7 @@ async function badgeText(ext: LoadedExtension): Promise<string> {
 }
 
 test('a sign-in that can never succeed is reported once and never re-pops (#331)', async () => {
-  const ext = await loadExtension({ suppressWitnessHost: true });
+  const ext = await loadExtension();
   try {
     await configureTokenAuth(ext);
 
