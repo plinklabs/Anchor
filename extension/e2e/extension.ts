@@ -21,9 +21,15 @@ import {
   DIST_PATH,
   HEADLESS,
   MAPPED_HOSTS,
+  OFFLIST_HOST,
   STUDENT_OID,
 } from './config.ts';
-import { registerWitnessHost, type RegisteredWitnessHost } from './witness-host.ts';
+import {
+  registerWitnessHost,
+  suppressWitnessHost,
+  type RegisteredWitnessHost,
+  type SuppressedWitnessHost,
+} from './witness-host.ts';
 
 export interface LoadExtensionOptions {
   /**
@@ -41,6 +47,15 @@ export interface LoadExtensionOptions {
    * sign-in itself can't be driven without a real tenant, so it's out of scope).
    */
   witnessAuth?: { tenantId: string; clientId: string; scope: string };
+  /**
+   * Cut the native-messaging witness link for this run (Windows only): the key
+   * is repointed at a missing manifest and restored on close. Use it in a spec
+   * that seeds its own settings, so a developer box with the real Anchor agent
+   * installed can't have its host push that machine's production backend URL /
+   * auth config over them mid-test (#331). Ignored when a witness host is
+   * explicitly requested above.
+   */
+  suppressWitnessHost?: boolean;
   /**
    * BCP-47 UI language to launch the browser in (e.g. `nl`). Passed as Chromium's
    * `--lang`, which is what `chrome.i18n` selects its `_locales/<lang>` catalogue
@@ -65,6 +80,17 @@ export interface LoadedExtension {
   /** Resolve once a console line containing `substring` has been observed
    *  (checks already-seen lines first), else reject after `timeout` ms. */
   waitForLog(substring: string, timeout?: number): Promise<string>;
+  /** Resolve once at least `count` console lines containing `substring` have
+   *  been seen. Use instead of waitForLog when the line is expected *again*
+   *  (e.g. a second worker generation), since waitForLog matches history. */
+  waitForLogCount(substring: string, count: number, timeout?: number): Promise<void>;
+  /** Number of console lines seen so far containing `substring`. */
+  countLogs(substring: string): number;
+  /** Terminate the MV3 service worker and let a browsing event revive it —
+   *  the hibernate/revive cycle Chrome performs on its own between event
+   *  bursts, which is where worker-memory state is lost (#331). Resolves once
+   *  the new generation has run background.js top-level again. */
+  restartServiceWorker(): Promise<void>;
   /** Write settings, cold-restart the SW, and wait for the hub to connect.
    *  Returns the post-restart service worker. */
   configure(settings?: ExtensionSettings): Promise<Worker>;
@@ -74,6 +100,9 @@ export interface LoadedExtension {
    *  on the stale handle). Use this for every storage read instead of capturing
    *  `serviceWorkers()[0]` and awaiting `evaluate` on it. */
   getStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T>;
+  /** Same, over chrome.storage.session — the worker-restart-surviving store the
+   *  active session and the sign-in gate (#331) live in. */
+  getSessionStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T>;
   close(): Promise<void>;
 }
 
@@ -86,8 +115,11 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   // it should hand the extension. connectNative inherits the browser's env, so
   // setting it here is what the launched host reads.
   let witnessHost: RegisteredWitnessHost | null = null;
+  let suppressedWitness: SuppressedWitnessHost | null = null;
   if (options.witnessBackendUrl || options.witnessAuth) {
     witnessHost = registerWitnessHost();
+  } else if (options.suppressWitnessHost) {
+    suppressedWitness = suppressWitnessHost();
   }
   if (options.witnessBackendUrl) {
     process.env.ANCHOR_WITNESS_BACKEND_URL = options.witnessBackendUrl;
@@ -118,7 +150,7 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     ],
   });
 
-  const { logs, waitForLog } = attachConsoleFeed(context);
+  const { logs, waitForLog, waitForLogCount, countLogs } = attachConsoleFeed(context);
 
   const firstWorker = await getServiceWorker(context);
   const extensionId = new URL(firstWorker.url()).host;
@@ -149,15 +181,48 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     return worker;
   }
 
+  // Chrome tears an idle MV3 worker down and revives it on the next event it
+  // has a listener for; waiting for that to happen on its own would make a spec
+  // both slow and timing-dependent, so we do it deliberately. CDP's
+  // Target.closeTarget stops the worker (verified: background.js top-level runs
+  // again afterwards, while chrome.storage.session survives), and a top-level
+  // navigation is the same wake trigger a browsing student provides.
+  async function restartServiceWorker(): Promise<void> {
+    const before = countLogs(WORKER_START_LOG);
+    const page = await context.newPage();
+    try {
+      const cdp = await context.newCDPSession(page);
+      const { targetInfos } = await cdp.send('Target.getTargets');
+      const target = targetInfos.find(
+        (t) => t.type === 'service_worker' && t.url.startsWith(`chrome-extension://${extensionId}/`),
+      );
+      if (!target) throw new Error('no extension service-worker target to terminate');
+      await cdp.send('Target.closeTarget', { targetId: target.targetId });
+      await cdp.detach();
+      // The host doesn't resolve, but onBeforeNavigate fires before the request
+      // is made — which is all the worker needs to wake.
+      await page.goto(`http://${OFFLIST_HOST}/wake`).catch(() => {});
+      await waitForLogCount(WORKER_START_LOG, before + 1, 20_000);
+    } finally {
+      await page.close();
+    }
+  }
+
   return {
     context,
     extensionId,
     blockPagePrefix,
     logs,
     waitForLog,
+    waitForLogCount,
+    countLogs,
     configure,
+    restartServiceWorker,
     getStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T> {
-      return readStorage<T>(context, keys);
+      return readStorage<T>(context, keys, 'local');
+    },
+    getSessionStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T> {
+      return readStorage<T>(context, keys, 'session');
     },
     async close() {
       await context.close();
@@ -168,6 +233,7 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
         delete process.env.ANCHOR_WITNESS_AUTH_CLIENT_ID;
         delete process.env.ANCHOR_WITNESS_AUTH_SCOPE;
       }
+      suppressedWitness?.restore();
       fs.rmSync(userDataDir, { recursive: true, force: true });
     },
   };
@@ -178,7 +244,7 @@ async function getServiceWorker(context: BrowserContext): Promise<Worker> {
   return context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
 }
 
-/** Read chrome.storage.local in a way that survives an MV3 idle-restart (#313).
+/** Read a chrome.storage area in a way that survives an MV3 idle-restart (#313).
  *  An idle service worker can be torn down between the moment we grab its handle
  *  and the moment `evaluate` runs, at which point Playwright throws "Service
  *  worker restarted". We re-acquire the live worker on each attempt — the
@@ -187,6 +253,7 @@ async function getServiceWorker(context: BrowserContext): Promise<Worker> {
 async function readStorage<T = Record<string, unknown>>(
   context: BrowserContext,
   keys: string | string[],
+  area: 'local' | 'session',
 ): Promise<T> {
   const keyList = Array.isArray(keys) ? keys : [keys];
   const MAX_ATTEMPTS = 3;
@@ -195,8 +262,9 @@ async function readStorage<T = Record<string, unknown>>(
     const sw = await getServiceWorker(context);
     try {
       return (await sw.evaluate(
-        (k) => chrome.storage.local.get<{ [key: string]: unknown }>(k),
-        keyList,
+        ([a, k]) =>
+          chrome.storage[a as 'local' | 'session'].get<{ [key: string]: unknown }>(k as string[]),
+        [area, keyList] as [string, string[]],
       )) as T;
     } catch (err) {
       if (err instanceof Error && err.message.includes('Service worker restarted')) {
@@ -209,11 +277,16 @@ async function readStorage<T = Record<string, unknown>>(
   throw lastError;
 }
 
+/** The line background.js logs at top level on every worker generation. */
+const WORKER_START_LOG = 'service worker started';
+
 /** Collect every console line from the context (pages + service workers) and
  *  expose a substring waiter over the running buffer. */
 function attachConsoleFeed(context: BrowserContext): {
   logs: string[];
   waitForLog: (substring: string, timeout?: number) => Promise<string>;
+  waitForLogCount: (substring: string, count: number, timeout?: number) => Promise<void>;
+  countLogs: (substring: string) => number;
 } {
   const logs: string[] = [];
   const waiters: Array<{ substring: string; resolve: (line: string) => void }> = [];
@@ -228,6 +301,24 @@ function attachConsoleFeed(context: BrowserContext): {
       }
     }
   });
+
+  const countLogs = (substring: string): number =>
+    logs.filter((line) => line.includes(substring)).length;
+
+  /** Wait for the *n-th* occurrence, which waitForLog can't express: it matches
+   *  the history buffer, so a line already seen resolves it immediately. */
+  async function waitForLogCount(substring: string, count: number, timeout = 15_000): Promise<void> {
+    const deadline = Date.now() + timeout;
+    while (countLogs(substring) < count) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out after ${timeout}ms waiting for ${count} console lines containing ` +
+            `"${substring}" (saw ${countLogs(substring)}).\n--- console so far ---\n${logs.join('\n')}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
 
   function waitForLog(substring: string, timeout = 15_000): Promise<string> {
     const seen = logs.find((line) => line.includes(substring));
@@ -250,5 +341,5 @@ function attachConsoleFeed(context: BrowserContext): {
     });
   }
 
-  return { logs, waitForLog };
+  return { logs, waitForLog, waitForLogCount, countLogs };
 }

@@ -14,11 +14,14 @@
 // Windows-only (native messaging + HKCU): callers gate on process.platform.
 
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { REPO_ROOT, STABLE_EXTENSION_ID } from './config.ts';
 
 const HOST_NAME = 'net.anchor.witness';
+/** Where Edge looks up the witness host's manifest. */
+const HOST_REG_KEY = `HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\${HOST_NAME}`;
 const HOST_PROJECT = path.join(
   REPO_ROOT,
   'agent',
@@ -59,8 +62,7 @@ export function registerWitnessHost(): RegisteredWitnessHost {
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
 
   // HKCU\Software\Microsoft\Edge\NativeMessagingHosts\<name> (default) = manifest path.
-  const regKey = `HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts\\${HOST_NAME}`;
-  execFileSync('reg', ['add', regKey, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], {
+  execFileSync('reg', ['add', HOST_REG_KEY, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], {
     stdio: 'pipe',
   });
 
@@ -68,10 +70,66 @@ export function registerWitnessHost(): RegisteredWitnessHost {
     manifestPath,
     unregister() {
       try {
-        execFileSync('reg', ['delete', regKey, '/f'], { stdio: 'pipe' });
+        execFileSync('reg', ['delete', HOST_REG_KEY, '/f'], { stdio: 'pipe' });
       } catch {
         // Best-effort cleanup — a leaked key only points at a stale manifest
         // path and is harmless to a later run that overwrites it.
+      }
+    },
+  };
+}
+
+export interface SuppressedWitnessHost {
+  /** Put the registry key back the way it was found. */
+  restore(): void;
+}
+
+/**
+ * Temporarily point the witness-host key at a manifest that isn't there, so
+ * chrome.runtime.connectNative fails and *no* on-box agent can talk to the
+ * extension under test.
+ *
+ * This matters on a developer machine, where the installed Anchor agent
+ * registers this key permanently: its host hands the extension that box's
+ * *production* backend URL and auth config, which silently overwrites whatever
+ * settings a spec just seeded (and, since the config *changed*, restarts the
+ * hub). A spec that isn't exercising the agent link should suppress it so it
+ * tests what it thinks it is testing. Unlike registerWitnessHost's unregister,
+ * this restores the previous value — a developer's agent link keeps working.
+ *
+ * No-op off Windows, where there is no HKCU to begin with.
+ */
+export function suppressWitnessHost(): SuppressedWitnessHost {
+  if (!witnessHostSupported()) return { restore() {} };
+
+  let previous: string | null = null;
+  try {
+    const out = execFileSync('reg', ['query', HOST_REG_KEY, '/ve'], { stdio: 'pipe' }).toString();
+    previous = /\bREG_SZ\s+(.+)/.exec(out)?.[1]?.trim() ?? null;
+  } catch {
+    // Key absent — nothing registered, so nothing to restore either.
+  }
+
+  // A path that deliberately does not exist: Edge fails to open the manifest,
+  // connectNative rejects, and WitnessClient takes its usual "no host" path.
+  const missing = path.join(os.tmpdir(), 'anchor-e2e-suppressed-witness-host.json');
+  execFileSync('reg', ['add', HOST_REG_KEY, '/ve', '/t', 'REG_SZ', '/d', missing, '/f'], {
+    stdio: 'pipe',
+  });
+
+  return {
+    restore() {
+      try {
+        if (previous) {
+          execFileSync('reg', ['add', HOST_REG_KEY, '/ve', '/t', 'REG_SZ', '/d', previous, '/f'], {
+            stdio: 'pipe',
+          });
+        } else {
+          execFileSync('reg', ['delete', HOST_REG_KEY, '/f'], { stdio: 'pipe' });
+        }
+      } catch {
+        // Best-effort: leaving the key pointing at a missing manifest only
+        // disables the agent link until the next run (or agent install) sets it.
       }
     },
   };
