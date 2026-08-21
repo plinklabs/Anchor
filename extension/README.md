@@ -267,6 +267,19 @@ so no spec touches the public internet):
 | `block-on-navigation` | off-list navigations are blocked; on-list ones are left untouched (#72) |
 | `amend-bundles` | dropping a bundle mid-session re-scans and blocks a now-off-list tab (#93) |
 
+**Hermetic against an on-box agent (#332).** On a developer machine the installed
+Anchor agent registers the witness native-messaging host *permanently*
+(`HKCU\…\Edge\NativeMessagingHosts\net.anchor.witness`), and that host hands the
+extension the box's **production** backend URL and auth config over the witness
+link — straight over whatever a spec just seeded. So `loadExtension()` repoints
+that key at a missing manifest for the duration of every run that doesn't
+explicitly ask for a witness host (`witnessBackendUrl` / `witnessAuth` — the #204
+/ #289 specs, which register the real one). Both paths put the key back to
+whatever the box had, on close and on process exit, so a run never leaves your
+agent unregistered from Edge. `hermetic-witness.spec.ts` drives that exact
+situation — a registered host trying to push a foreign backend URL — and proves
+none of it reaches the extension under test.
+
 Prerequisites: Node ≥ 22 (the harness is TypeScript run via Node's built-in type
 stripping), Microsoft Edge, and the .NET SDK on `PATH` (the harness builds and
 runs the backend). Loading an MV3 extension needs a **headed** browser, so the
