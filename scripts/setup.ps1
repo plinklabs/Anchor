@@ -637,6 +637,93 @@ function Test-PermissionGranted {
     return $false
 }
 
+# The app's **Web** platform block (redirectUris + implicitGrantSettings), or
+# $null when the app doesn't exist / can't be read.
+function Get-AppWebPlatform {
+    param([string]$AppId)
+    $json = Invoke-AzRead @('ad', 'app', 'show', '--id', $AppId, '--query', 'web', '-o', 'json')
+    if (-not $json) { return $null }
+    return ($json | ConvertFrom-Json)
+}
+
+# The Web platform's redirect URIs as a (possibly empty) array. StrictMode-safe:
+# `az` omits/blanks the property on an app that has no web platform at all.
+function Get-WebRedirectUri {
+    param($Web)
+    if ($null -eq $Web) { return @() }
+    if ($Web.PSObject.Properties.Name -notcontains 'redirectUris') { return @() }
+    if (-not $Web.redirectUris) { return @() }
+    return @($Web.redirectUris)
+}
+
+# True when an app's Web platform already carries $RedirectUri *and* has implicit
+# access-token issuance switched on — the exact pair the browser extension's
+# implicit flow needs (extension/src/shared/auth.ts). Read-only and tolerant: a
+# missing app / unreadable JSON reads as "not configured" ($false).
+function Test-ExtensionWebPlatform {
+    param([string]$AppId, [string]$RedirectUri)
+    $web = Get-AppWebPlatform -AppId $AppId
+    if ($null -eq $web) { return $false }
+
+    $hasRedirect = (Get-WebRedirectUri -Web $web) -contains $RedirectUri
+
+    $issuesTokens = $false
+    if (($web.PSObject.Properties.Name -contains 'implicitGrantSettings') -and $web.implicitGrantSettings) {
+        $issuesTokens = (Test-Prop $web.implicitGrantSettings 'enableAccessTokenIssuance' $true)
+    }
+
+    return ($hasRedirect -and $issuesTokens)
+}
+
+# Converge the agent app's Web platform onto what the browser extension needs,
+# then VERIFY the change actually landed (#331).
+#
+# The extension signs the student in with the OAuth2 *implicit* flow, so Entra
+# rejects it with `AADSTS700051: response_type 'token' is not enabled for the
+# application` unless the registration carries the chromiumapp.org redirect URI
+# as a Web platform AND has enableAccessTokenIssuance set. That failure surfaces
+# far from here — in a student's face, on a production box — so a silent
+# non-convergence is expensive: `az ad app update` exits 0 whether or not the
+# Graph patch took, and an app that was created by hand or adopted from before
+# this step existed is exactly the case that needs it most (same class of gap as
+# the Graph permission one, #281). Hence read → patch only when off → read back,
+# and route a still-wrong state through Write-Manual with the exact command.
+#
+# `--web-redirect-uris` *replaces* the whole set, so the existing URIs are read
+# and handed back alongside ours — an adopted registration that carries other
+# web redirects keeps them.
+function Set-ExtensionWebPlatform {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$AppId, [string]$RedirectUri)
+    if (-not $AppId -or $AppId -match '<') { return }
+
+    $web = Get-AppWebPlatform -AppId $AppId
+    if (Test-ExtensionWebPlatform -AppId $AppId -RedirectUri $RedirectUri) {
+        Write-Host '    Extension redirect URI + implicit access tokens already set — skipping.'
+        return
+    }
+
+    $uris = @(Get-WebRedirectUri -Web $web)
+    if ($uris -notcontains $RedirectUri) { $uris += $RedirectUri }
+
+    Invoke-Native -Exe 'az' -ArgList (@('ad', 'app', 'update', '--id', $AppId, '--web-redirect-uris') +
+        $uris + @('--enable-access-token-issuance', 'true', '-o', 'none')) `
+        -Target $AppId -Action 'add extension chromiumapp.org redirect URI + enable implicit access tokens'
+
+    # Nothing was changed under -WhatIf, so there is nothing to read back.
+    if ($WhatIfPreference) { return }
+
+    if (Test-ExtensionWebPlatform -AppId $AppId -RedirectUri $RedirectUri) {
+        Write-Host '    Verified: extension redirect URI + implicit access tokens are set.'
+        return
+    }
+
+    Write-Manual ("Agent app $AppId still lacks the extension's Web redirect URI ($RedirectUri) and/or implicit access-token issuance " +
+        "after the update — student sign-in from the browser extension will fail with AADSTS700051 and keep re-opening a sign-in window. " +
+        "Check with 'az ad app show --id $AppId --query web' and fix with: " +
+        "az ad app update --id $AppId --web-redirect-uris $RedirectUri --enable-access-token-issuance true")
+}
+
 # Ensure a service principal (enterprise app) exists for an app registration.
 # `az ad app create` only creates the application *object*; without an SP in the
 # tenant the app is not a consentable "service", so granting admin consent to a
@@ -1356,12 +1443,12 @@ if (-not $SkipEntra) {
         # extension id is pinned by the manifest key, so this redirect is the same
         # constant for every deployment — see extension/README.md ("Stable
         # extension ID") and EdgeExtensionPolicy.ExtensionId in the agent.
+        # Set *and verified* (#331): an app that already existed is the case most
+        # likely to be missing it, and the symptom only shows up as AADSTS700051
+        # in a student's browser.
         $extensionId = 'dnkimhodjfogjibnbbfdjdapgmmiojio'
         $extensionRedirect = "https://$extensionId.chromiumapp.org/"
-        Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'update', '--id', $agentClientId,
-            '--web-redirect-uris', $extensionRedirect,
-            '--enable-access-token-issuance', 'true', '-o', 'none') `
-            -Target $agentClientId -Action 'add extension chromiumapp.org redirect URI + enable implicit access tokens'
+        Set-ExtensionWebPlatform -AppId $agentClientId -RedirectUri $extensionRedirect
 
         # Request the API's access_as_user scope so the agent can obtain a token
         # for the backend (skip if already granted so a re-run doesn't duplicate).
