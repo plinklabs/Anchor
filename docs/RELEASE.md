@@ -300,11 +300,35 @@ instructions. One-time setup: [`extension/README.md`](../extension/README.md#pub
 | Name | Kind | What it is | If unset |
 | --- | --- | --- | --- |
 | `EDGE_ADDONS_PRODUCT_ID` | variable | Edge Add-ons **product ID** of the canonical listing. | API submit skipped; ZIP uploaded as artifact for manual submit. |
-| `EDGE_ADDONS_CLIENT_ID` | secret | Edge Add-ons **API client ID**. | As above. |
-| `EDGE_ADDONS_API_KEY` | secret | Edge Add-ons **API key**. | As above. |
+| `EDGE_ADDONS_CLIENT_ID` | secret | Edge Add-ons **API client ID**. Regenerated *together with* the API key on every rotation — see below. | As above. |
+| `EDGE_ADDONS_API_KEY` | secret | Edge Add-ons **API key**. Expires 72 days after creation. | As above. |
+| `EDGE_ADDONS_KEY_ROTATED` | variable | Date (`YYYY-MM-DD`) the API credentials were last created, so expiry can be warned about before it bites (#336). | Expiry can't be tracked; the weekly check files an issue saying so. |
 
 > Both client release workflows use the auto-provided `GITHUB_TOKEN`
 > (`agent-release.yml` to upload the Velopack release assets) — no setup needed.
+
+#### Rotating the Edge Add-ons API key (every 72 days)
+
+Microsoft cut Edge Add-ons API key lifetime from two years to **72 days**. The
+key does **not** renew on use, the lifetime **cannot be changed**, and there is
+**no API to rotate it** — the upstream request is still open
+([microsoft/MicrosoftEdge-Extensions#272][edge-key-issue]). So this is a manual
+chore roughly every ten weeks:
+
+1. Partner Center → **Microsoft Edge** → **Publish API** → **Create API credentials**.
+2. Copy **both** the Client ID and the new API key. The same button that renews
+   the key regenerates the **Client ID**, so updating only `EDGE_ADDONS_API_KEY`
+   leaves a mismatched pair — the publish then fails with a `403` that looks
+   nothing like an expiry.
+3. Update `EDGE_ADDONS_CLIENT_ID` **and** `EDGE_ADDONS_API_KEY`.
+4. Set `EDGE_ADDONS_KEY_ROTATED` to today's date.
+
+[`edge-key-expiry.yml`](../.github/workflows/edge-key-expiry.yml) checks the
+recorded date weekly and files (or updates) a rotation issue once the key is
+within 14 days of expiry — a key expires on the calendar's schedule, not the
+repo's, so this can't wait for the next release to notice.
+
+[edge-key-issue]: https://github.com/microsoft/MicrosoftEdge-Extensions/issues/272
 
 ### Azure App Service — application settings
 
@@ -382,6 +406,22 @@ re-push.
    when the `EDGE_ADDONS_*` config is set, publishes/updates the canonical Edge
    listing. If it isn't set, download the `anchor-extension-<version>` artifact and
    upload it by hand at the Edge Add-ons dashboard.
+
+**If the publish fails**, the run diagnoses which of the two causes it was and
+files an issue naming the stranded tag (#336) — a tag-triggered workflow produces
+no PR check, so nothing else would tell you. The packaged ZIP is always attached
+to the run, so recovery never needs a re-tag:
+
+| Cause | Signal | Recovery |
+| --- | --- | --- |
+| A prior submission is still **in review** | Probe authenticates fine; the store refuses the submission | Wait for review to clear, then `gh run rerun <run-id> --failed` |
+| **Credentials rejected** | Probe returns 401/403 | Rotate both credentials (above), then `gh run rerun <run-id> --failed` |
+
+Reviews have taken **over two weeks**. If a stranded release waits long enough
+that newer work has landed, **bump the version and cut a fresh tag** rather than
+re-running the old job — republishing a build you would immediately supersede
+helps nobody. (This is what 0.4.1 did after 0.4.0 was stranded behind the 0.3.0
+review.)
 
 ## Operator checklist (fork bringing up its own cloud)
 

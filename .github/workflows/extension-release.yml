@@ -35,6 +35,21 @@ name: Extension Release
 # still builds + packages + uploads the ZIP as a workflow artifact and prints the
 # manual-submit instructions, so the API can be wired later without changing this
 # file. No code-signing here — the Edge store re-signs on publish.
+#
+# Failing loudly (#336): a tag-triggered workflow produces no PR check, so a
+# failed publish is visible only to someone who opens the Actions tab — 0.4.0 sat
+# unpublished for ten weeks that way. Two additions close that:
+#
+#   * "Diagnose publish failure" turns the store's opaque error into an answer.
+#     The two causes need opposite responses (wait out a review vs rotate
+#     credentials) and look identical in the log, so a read-only probe decides
+#     which one it was — see extension/scripts/diagnose-publish-failure.mjs.
+#   * The `notify` job opens a GitHub issue naming the stranded tag. An issue
+#     survives a holiday; a red dot in the Actions tab does not.
+#
+# The API key expiry check is advisory on purpose: keys last 72 days and cannot
+# be renewed programmatically, so the run warns but never blocks — the ZIP is
+# still worth producing for a manual upload.
 
 on:
   push:
@@ -56,6 +71,12 @@ jobs:
     defaults:
       run:
         working-directory: extension
+    # Surfaced to the `notify` job so the issue it files can name the actual
+    # cause instead of just linking a red run.
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      cause: ${{ steps.diagnose.outputs.cause }}
+      diagnosis: ${{ steps.diagnose.outputs.title }}
     steps:
       - uses: actions/checkout@v4
 
@@ -120,7 +141,19 @@ jobs:
             echo "::notice::Edge Add-ons submission secrets not set — skipping API submit. Download the 'anchor-extension-${{ steps.ver.outputs.version }}' artifact and upload it manually at https://partner.microsoft.com/dashboard/microsoftedge (see extension/README.md)."
           fi
 
+      # Advisory, never a gate: Edge Add-ons API keys expire 72 days after they
+      # are created, don't renew on use, and can't be rotated programmatically.
+      # Cutting a tag on a nearly-dead key should say so before the publish, not
+      # after it 403s. `EDGE_ADDONS_KEY_ROTATED` is the date the credentials were
+      # last created in Partner Center.
+      - name: Check Edge Add-ons API key expiry
+        if: ${{ steps.cfg.outputs.configured == 'true' }}
+        env:
+          KEY_ROTATED: ${{ vars.EDGE_ADDONS_KEY_ROTATED }}
+        run: node scripts/check-key-expiry.mjs
+
       - name: Publish to Edge Add-ons store
+        id: publish
         if: ${{ steps.cfg.outputs.configured == 'true' }}
         uses: wdzeng/edge-addon@v2
         with:
@@ -128,3 +161,72 @@ jobs:
           zip-path: ${{ steps.pack.outputs.zip }}
           client-id: ${{ secrets.EDGE_ADDONS_CLIENT_ID }}
           api-key: ${{ secrets.EDGE_ADDONS_API_KEY }}
+
+      # The store returns the same shape of error whether a prior submission is
+      # still in review or the credentials are dead, and the two need opposite
+      # responses. One read-only probe settles it — see the script for why the
+      # probe is safe (it resolves a deliberately non-existent operation id, so
+      # it uploads nothing and changes no submission).
+      - name: Diagnose publish failure
+        id: diagnose
+        if: ${{ failure() && steps.publish.outcome == 'failure' }}
+        env:
+          PRODUCT_ID: ${{ vars.EDGE_ADDONS_PRODUCT_ID }}
+          CLIENT_ID: ${{ secrets.EDGE_ADDONS_CLIENT_ID }}
+          API_KEY: ${{ secrets.EDGE_ADDONS_API_KEY }}
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+          RUN_ID: ${{ github.run_id }}
+        run: node scripts/diagnose-publish-failure.mjs
+
+  # A tag-triggered workflow shows up nowhere except the Actions tab, so a failed
+  # release is silent by construction. File an issue instead — and update the
+  # existing one on a re-run rather than stacking duplicates.
+  notify:
+    name: Report a failed release
+    needs: release
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the release-failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          CAUSE: ${{ needs.release.outputs.cause }}
+          DIAGNOSIS: ${{ needs.release.outputs.diagnosis }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Release $TAG failed to publish"
+
+          if [ -n "${DIAGNOSIS:-}" ]; then
+            summary="**Diagnosis (\`$CAUSE\`):** $DIAGNOSIS"$'\n\n'"The run log carries the exact recovery steps."
+          else
+            summary="The run failed before the publish step could be diagnosed — check the log."
+          fi
+
+          body="\`$TAG\` was tagged but is **not on the Edge Add-ons store**.
+
+          $summary
+
+          Run: $RUN_URL
+
+          The packaged ZIP is attached to that run as an artifact, so recovery
+          never needs a re-tag: fix the cause and re-run the failed job with
+          \`gh run rerun ${{ github.run_id }} --failed\`. If newer work has landed
+          by then, bump the version and cut a fresh tag instead.
+
+          _Filed automatically by extension-release.yml (#336)._"
+
+          existing=$(gh issue list --state open --search "$title in:title" \
+            --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing — $RUN_URL"
+            echo "::notice::Updated existing issue #$existing for $TAG."
+          else
+            url=$(gh issue create --title "$title" --label blocked --body "$body")
+            echo "::notice::Filed $url for the stranded $TAG release."
+          fi

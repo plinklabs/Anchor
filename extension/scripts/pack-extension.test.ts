@@ -119,12 +119,51 @@ describe('extension-release workflow', () => {
     }
   })();
 
+  const workflowPath = (name: string) =>
+    fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url));
+
   it.runIf(hasActionlint)('passes actionlint', () => {
-    const workflow = fileURLToPath(
-      new URL('../../.github/workflows/extension-release.yml', import.meta.url),
-    );
-    expect(existsSync(workflow)).toBe(true);
+    // Both release-path workflows: the tag-triggered release and the scheduled
+    // key-expiry warning it depends on (#336). Neither runs on a PR, so a typo
+    // in either would surface only on the day it was needed.
+    const workflows = [workflowPath('extension-release.yml'), workflowPath('edge-key-expiry.yml')];
+    for (const workflow of workflows) expect(existsSync(workflow)).toBe(true);
     // Throws (non-zero exit) if actionlint finds problems.
-    execFileSync('actionlint', [workflow], { cwd: extensionDir, stdio: 'inherit', shell: true });
+    execFileSync('actionlint', workflows, { cwd: extensionDir, stdio: 'inherit', shell: true });
+  });
+
+  // #336: a failed publish must not be able to go quiet again. actionlint proves
+  // the YAML is valid, not that the reporting is still wired, so pin the pieces
+  // that make a failure visible — each of these silently disables it if dropped.
+  describe('failure reporting stays wired (#336)', () => {
+    const release = readFileSync(workflowPath('extension-release.yml'), 'utf8');
+
+    it('diagnoses a failed publish', () => {
+      expect(release).toContain('node scripts/diagnose-publish-failure.mjs');
+      // Must run *because* the publish failed — an unconditional step would
+      // probe the store on every green release.
+      expect(release).toMatch(/if:.*failure\(\).*steps\.publish\.outcome == 'failure'/);
+    });
+
+    it('files an issue when the release fails', () => {
+      expect(release).toMatch(/notify:/);
+      expect(release).toContain('gh issue create');
+      // Without issues: write the job fails at the point it would report.
+      expect(release).toMatch(/permissions:\s*\n\s*issues: write/);
+    });
+
+    it('checks key expiry before publishing, not after', () => {
+      const expiryAt = release.indexOf('check-key-expiry.mjs');
+      const publishAt = release.indexOf('wdzeng/edge-addon');
+      expect(expiryAt).toBeGreaterThan(-1);
+      expect(expiryAt).toBeLessThan(publishAt);
+    });
+
+    it('warns on a schedule, not only when someone cuts a release', () => {
+      // A key expires on the calendar; the repo may go weeks without a release.
+      const expiry = readFileSync(workflowPath('edge-key-expiry.yml'), 'utf8');
+      expect(expiry).toMatch(/schedule:\s*\n\s*(#.*\n\s*)*- cron:/);
+      expect(expiry).toContain('node scripts/check-key-expiry.mjs');
+    });
   });
 });

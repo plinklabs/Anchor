@@ -1,0 +1,100 @@
+name: Edge API Key Expiry
+
+# Warn before the Edge Add-ons API key dies (#336).
+#
+# Microsoft cut Edge Add-ons API key lifetime to 72 days (from two years). The
+# key does not renew on use, the lifetime cannot be configured, and there is no
+# API to rotate it — the upstream request for one is still open
+# (microsoft/MicrosoftEdge-Extensions#272). So roughly every ten weeks a human
+# must press "Create API credentials" in Partner Center and paste the new Client
+# ID *and* key into the repo secrets.
+#
+# Nothing here can automate that. What it can do is stop the expiry being
+# discovered by a failed release two months later: this runs weekly against the
+# recorded rotation date, and files/updates an issue once the key is inside the
+# warning window. The release workflow runs the same check inline, but a release
+# only happens when someone cuts one — a key expires on the calendar's schedule,
+# not the repo's.
+#
+# `EDGE_ADDONS_KEY_ROTATED` (repository variable, YYYY-MM-DD) is the date the
+# credentials were last created. If it is unset the check says so rather than
+# silently passing — an untracked key is the state this issue exists to prevent.
+
+on:
+  schedule:
+    # Mondays 08:00 UTC — a warning that lands at the start of a week has a
+    # working week to be acted on before the key lapses.
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check Edge Add-ons API key expiry
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # No `npm ci` — the checker is dependency-free on purpose so this job
+      # stays a few seconds long and can't be broken by an unrelated install.
+      - name: Check key expiry
+        id: key
+        env:
+          KEY_ROTATED: ${{ vars.EDGE_ADDONS_KEY_ROTATED }}
+        run: node scripts/check-key-expiry.mjs
+
+      # Only an actionable state files an issue: `ok` is silence by design, and
+      # a weekly "all good" notification trains people to ignore the channel.
+      - name: File or update the rotation reminder
+        if: ${{ steps.key.outputs.level == 'warn' || steps.key.outputs.level == 'expired' || steps.key.outputs.level == 'unknown' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          LEVEL: ${{ steps.key.outputs.level }}
+          MESSAGE: ${{ steps.key.outputs.message }}
+          EXPIRES_ON: ${{ steps.key.outputs.expires_on }}
+        run: |
+          set -euo pipefail
+          title="Rotate the Edge Add-ons API key"
+
+          body="$MESSAGE
+
+          **Why this can't be automated:** there is no API to renew an Edge
+          Add-ons API key — see [microsoft/MicrosoftEdge-Extensions#272](https://github.com/microsoft/MicrosoftEdge-Extensions/issues/272).
+          Rotation is manual, roughly every 72 days.
+
+          **Steps**
+
+          1. Partner Center → Microsoft Edge → **Publish API** → **Create API credentials**.
+          2. Copy **both** the Client ID and the new API key — renewing regenerates both.
+          3. Update the \`EDGE_ADDONS_CLIENT_ID\` and \`EDGE_ADDONS_API_KEY\` secrets.
+             Updating only the key leaves a mismatched pair that fails a publish with 403.
+          4. Set the \`EDGE_ADDONS_KEY_ROTATED\` variable to today's date (YYYY-MM-DD).
+
+          Current expiry: ${EXPIRES_ON:-unknown}
+
+          _Filed automatically by edge-key-expiry.yml (#336)._"
+
+          existing=$(gh issue list --state open --search "$title in:title" \
+            --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body "$body"
+            echo "::notice::Updated existing rotation reminder #$existing ($LEVEL)."
+          else
+            url=$(gh issue create --title "$title" --label chore --body "$body")
+            echo "::notice::Filed $url ($LEVEL)."
+          fi
