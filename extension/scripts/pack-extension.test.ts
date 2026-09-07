@@ -136,7 +136,13 @@ describe('extension-release workflow', () => {
   // the YAML is valid, not that the reporting is still wired, so pin the pieces
   // that make a failure visible — each of these silently disables it if dropped.
   describe('failure reporting stays wired (#336)', () => {
-    const release = readFileSync(workflowPath('extension-release.yml'), 'utf8');
+    // Normalise line endings: git checks these out CRLF on Windows and LF on
+    // Linux, and JS treats `\r` as a line terminator (so `.` won't cross it).
+    // Without this the assertions below pass in CI and fail on a dev box —
+    // the same platform split that hid #339.
+    const readWorkflow = (name: string) =>
+      readFileSync(workflowPath(name), 'utf8').replace(/\r\n/g, '\n');
+    const release = readWorkflow('extension-release.yml');
 
     it('diagnoses a failed publish', () => {
       expect(release).toContain('node scripts/diagnose-publish-failure.mjs');
@@ -161,7 +167,7 @@ describe('extension-release workflow', () => {
 
     it('warns on a schedule, not only when someone cuts a release', () => {
       // A key expires on the calendar; the repo may go weeks without a release.
-      const expiry = readFileSync(workflowPath('edge-key-expiry.yml'), 'utf8');
+      const expiry = readWorkflow('edge-key-expiry.yml');
       expect(expiry).toMatch(/schedule:\s*\n\s*(#.*\n\s*)*- cron:/);
       expect(expiry).toContain('node scripts/check-key-expiry.mjs');
     });

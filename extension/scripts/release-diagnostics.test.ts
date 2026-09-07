@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+// @ts-expect-error — .mjs sibling, no type declarations needed for the test.
+import { isMainModule } from './is-main-module.mjs';
 // @ts-expect-error — .mjs sibling, no type declarations needed for the test.
 import {
   API_ROOT,
@@ -127,6 +131,45 @@ describe('publish failure classification (#336)', () => {
     const out = formatDiagnosis(await diagnose({ productId: 'p', clientId: 'c', apiKey: 'k', fetchImpl: impl }));
     expect(out).toContain('::error title=Edge Add-ons publish failed::');
     expect(out).toContain('Probe status: 403');
+  });
+});
+
+// #339: both diagnostics shipped with a CLI guard that compared
+// `file://${argv[1]}` to import.meta.url. Windows absolute paths start with a
+// drive letter, so that builds two slashes where Node reports three — the guard
+// never matched and the scripts exited 0 having printed nothing. It passed on
+// the Linux runners, so only a developer running them by hand ever saw it.
+describe('CLI entry point (#339)', () => {
+  it('recognises the path Node actually reports for a script', () => {
+    const href = new URL('./check-key-expiry.mjs', import.meta.url).href;
+    const path = fileURLToPath(href);
+    expect(isMainModule(href, path)).toBe(true);
+
+    // The exact trap: on Windows the hand-built form disagrees with Node's own.
+    // Asserted only there, because on POSIX the two happen to coincide — which
+    // is precisely why CI never caught it.
+    if (process.platform === 'win32') {
+      expect(`file://${path.replace(/\\/g, '/')}`).not.toBe(href);
+    }
+  });
+
+  it('is false for another module, and for no entry path at all', () => {
+    const href = new URL('./check-key-expiry.mjs', import.meta.url).href;
+    expect(isMainModule(href, fileURLToPath(new URL('./pack-extension.mjs', import.meta.url)))).toBe(false);
+    expect(isMainModule(href, undefined)).toBe(false);
+    expect(isMainModule(href, '')).toBe(false);
+  });
+
+  // The check above pins the helper; this pins the thing the user actually does.
+  // A unit test on the comparison would have passed on Linux with the old code,
+  // so run the script the way the workflow runs it and require real output.
+  it('prints a status when the script is executed directly', () => {
+    const script = fileURLToPath(new URL('./check-key-expiry.mjs', import.meta.url));
+    const out = execFileSync(process.execPath, [script], {
+      env: { ...process.env, KEY_ROTATED: '2026-09-07', GITHUB_OUTPUT: '' },
+      encoding: 'utf8',
+    });
+    expect(out).toMatch(/Edge Add-ons API key/);
   });
 });
 
