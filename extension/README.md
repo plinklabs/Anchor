@@ -141,12 +141,35 @@ from the dropped Microsoft Store / Partner Center *app* account):
      secret).
    - secret `EDGE_ADDONS_CLIENT_ID` — the API client ID.
    - secret `EDGE_ADDONS_API_KEY` — the API key.
+   - variable `EDGE_ADDONS_KEY_ROTATED` — today's date, so the 72-day expiry can
+     be warned about (see below).
 
    ```powershell
-   gh variable set EDGE_ADDONS_PRODUCT_ID --body "<product-id>"
-   gh secret   set EDGE_ADDONS_CLIENT_ID --body "<client-id>"
-   gh secret   set EDGE_ADDONS_API_KEY   --body "<api-key>"
+   gh variable set EDGE_ADDONS_PRODUCT_ID  --body "<product-id>"
+   gh secret   set EDGE_ADDONS_CLIENT_ID   --body "<client-id>"
+   gh secret   set EDGE_ADDONS_API_KEY     --body "<api-key>"
+   gh variable set EDGE_ADDONS_KEY_ROTATED --body "$(Get-Date -Format yyyy-MM-dd)"
    ```
+
+#### The API key expires every 72 days
+
+This is the single most common way a release fails to ship. The key does **not**
+renew on use, its lifetime **cannot be changed**, and there is **no API to rotate
+it** ([upstream request][edge-key-issue], still open). Renew it in Partner Center
+→ *Publish API* → **Create API credentials**, then update **both** secrets:
+
+> The renew button regenerates the **Client ID** as well as the key. Updating
+> only `EDGE_ADDONS_API_KEY` leaves a mismatched pair, and the publish fails with
+> a bare `403` that looks nothing like an expiry. Always set both, then bump
+> `EDGE_ADDONS_KEY_ROTATED` to the new date.
+
+[`edge-key-expiry.yml`](../.github/workflows/edge-key-expiry.yml) warns weekly
+once the key is inside 14 days of expiry, and a failed publish is diagnosed
+automatically ([`diagnose-publish-failure.mjs`](scripts/diagnose-publish-failure.mjs))
+so the log says whether to wait out a review or rotate credentials — the two look
+identical otherwise. Details: [`docs/RELEASE.md`](../docs/RELEASE.md#rotating-the-edge-add-ons-api-key-every-72-days).
+
+[edge-key-issue]: https://github.com/microsoft/MicrosoftEdge-Extensions/issues/272
 
 If those three are **not** set, the release workflow still builds, packages, and
 uploads the ZIP as a workflow artifact, and prints manual-submit instructions —
