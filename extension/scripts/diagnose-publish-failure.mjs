@@ -27,6 +27,8 @@
 // Run by the release workflow's "Diagnose publish failure" step, which fires
 // only when the publish step already failed — this never masks a success.
 
+import { isMainModule } from './is-main-module.mjs';
+
 /** Endpoint root of the Edge Add-ons (Partner Center) REST API. */
 export const API_ROOT = 'https://api.addons.microsoftedge.microsoft.com';
 
@@ -153,7 +155,7 @@ export function formatDiagnosis(d) {
 // CLI entry point — used by the release workflow. Always exits 0: the job has
 // already failed on the publish step, and a non-zero exit here would replace
 // that failure with a confusing second one.
-if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   const diagnosis = await diagnose({
     productId: process.env.PRODUCT_ID ?? '',
     clientId: process.env.CLIENT_ID ?? '',

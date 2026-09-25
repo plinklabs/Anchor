@@ -18,6 +18,8 @@
 // build + ZIP artifact are still worth producing, and a hard failure at this
 // step would hide them.
 
+import { isMainModule } from './is-main-module.mjs';
+
 /** Edge Add-ons API keys expire this many days after they are created. */
 export const KEY_LIFETIME_DAYS = 72;
 
@@ -112,7 +114,7 @@ export function formatKeyStatus(status) {
 
 // CLI entry point — used by the scheduled check and the release job. Exits 0
 // even when the key is expired: this is a notification, not a gate (see above).
-if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   const status = keyStatus(process.env.KEY_ROTATED ?? '');
   console.log(formatKeyStatus(status));
   if (process.env.GITHUB_OUTPUT) {
