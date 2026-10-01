@@ -19,6 +19,15 @@ public sealed class EventRetentionOptions
     public int PruneIntervalMinutes { get; set; } = 1440;
 
     /// <summary>
+    /// UTC hour (0–23) the prune runs at — with the default daily interval,
+    /// once a day at this hour. The pruner never runs at startup (#344); it
+    /// waits for the next scheduled run, so batched deletes stay out of school
+    /// hours and a restart doesn't query the database. 02:00 UTC is 03:00 or
+    /// 04:00 in Belgium.
+    /// </summary>
+    public int PruneHourUtc { get; set; } = 2;
+
+    /// <summary>
     /// Rows-per-round on the batched delete. A first-time prune against a
     /// backlog of months of events shouldn't hold a long write lock against
     /// concurrent event inserts; smaller batches give the writers room.
@@ -42,5 +51,10 @@ public sealed class EventRetentionOptions
     public int OrphanedActiveSessionWarnThreshold { get; set; } = 100;
 
     public TimeSpan RawEventMaxAge => TimeSpan.FromDays(RawEventDays);
-    public TimeSpan PruneInterval => TimeSpan.FromMinutes(PruneIntervalMinutes);
+
+    // Floored at one minute: the pruner divides by it to find the next run.
+    public TimeSpan PruneInterval => TimeSpan.FromMinutes(Math.Max(1, PruneIntervalMinutes));
+
+    // An out-of-range hour wraps instead of failing the background service.
+    public int EffectivePruneHourUtc => ((PruneHourUtc % 24) + 24) % 24;
 }

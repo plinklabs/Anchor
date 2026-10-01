@@ -13,6 +13,10 @@ namespace Anchor.Api.Events;
 /// abandoned session would otherwise lose its events with no aggregate to
 /// fall back on. Deletes run in batches so a one-time backlog cleanup doesn't
 /// hold a long write lock against concurrent inserts.
+/// <para>
+/// Runs are scheduled at a fixed quiet hour, never at startup (#344): see
+/// <see cref="NextRunAfter"/>.
+/// </para>
 /// </summary>
 public sealed class EventPruner : BackgroundService
 {
@@ -37,6 +41,19 @@ public sealed class EventPruner : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Wait first: a fresh process doesn't query the database until the
+            // next scheduled run.
+            var now = _clock.GetUtcNow();
+            try
+            {
+                await Task.Delay(NextRunAfter(now, _options.CurrentValue) - now, _clock, stoppingToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
             try
             {
                 await PruneOnceAsync(stoppingToken).ConfigureAwait(false);
@@ -49,16 +66,24 @@ public sealed class EventPruner : BackgroundService
             {
                 _log.LogError(ex, "EventPruner scan failed");
             }
-
-            try
-            {
-                await Task.Delay(_options.CurrentValue.PruneInterval, _clock, stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
         }
+    }
+
+    /// <summary>
+    /// The first scheduled run strictly after <paramref name="now"/>. Runs fall
+    /// on a fixed UTC grid: <see cref="EventRetentionOptions.PruneHourUtc"/>,
+    /// then every <see cref="EventRetentionOptions.PruneInterval"/> from there
+    /// (with the default daily interval, once a day at that hour). Because the
+    /// grid doesn't depend on when the process started, a restart neither runs
+    /// a prune right away nor pushes the next one back — waiting a full interval
+    /// after each start would never prune on days with several deploys.
+    /// </summary>
+    public static DateTimeOffset NextRunAfter(DateTimeOffset now, EventRetentionOptions options)
+    {
+        var interval = options.PruneInterval;
+        var anchor = DateTimeOffset.UnixEpoch.AddHours(options.EffectivePruneHourUtc);
+        var intervalsElapsed = (now - anchor).Ticks / interval.Ticks;
+        return anchor + TimeSpan.FromTicks((intervalsElapsed + 1) * interval.Ticks);
     }
 
     /// <summary>

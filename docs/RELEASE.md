@@ -84,8 +84,19 @@ push to main (backend/**) ─▶ Backend CI (build + test) ─▶ [success?] ─
   run, or a successful CI run on another branch, does not deploy.
 - The deploy checks out `workflow_run.head_sha`, so the artifact it publishes is
   the exact commit CI validated — not a later tip of `main`.
-- EF Core migrations apply on app startup in non-Development environments
-  (issue #205), so there is no separate migration step in the workflow.
+- EF Core migrations are applied **by the deploy, before the new build goes
+  live** (#344): the job builds a migrations bundle (`dotnet ef migrations
+  bundle`, with `dotnet-ef` pinned in `backend/dotnet-tools.json`) and runs it
+  against the production database, then deploys. A failed migration fails the
+  job before the deploy step, so the running build keeps serving. The app itself
+  doesn't touch the database at startup. The bundle connects with the App
+  Service's own `DefaultConnection` string, which the deploy identity reads
+  through its Website Contributor role, and reaches Azure SQL through the
+  "Allow Azure services" firewall rule (GitHub's Ubuntu runners run in Azure) —
+  no extra secret, role or firewall rule. Backend CI builds the same bundle on
+  every PR so a broken one is caught before merge.
+- Deploys are serialized (`concurrency: backend-deploy`), so two runs never
+  migrate the database at the same time.
 
 ## Interaction with the PR gate (`ci-gate.yml`)
 
@@ -369,9 +380,9 @@ release**.
 1. Merge the change to `main` (through the normal PR + `CI Gate / gate` flow).
 2. The matching leg deploys automatically:
    - **backend** — Backend CI runs on `backend/**`; on success
-     `backend-deploy.yml` publishes the CI-validated commit to the App Service.
-     EF Core migrations apply on app startup (non-Development), so there is no
-     separate migration step.
+     `backend-deploy.yml` applies any new EF Core migrations to the production
+     database, then publishes the CI-validated commit to the App Service. If
+     the migration fails, nothing is deployed.
    - **dashboard** — a push under `dashboard/**` builds with the `vars.*`
      dart-defines and uploads to the Static Web App.
    - **website** — a push under `website/**` mirrors `website/` into the

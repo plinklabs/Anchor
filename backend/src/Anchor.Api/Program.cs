@@ -162,9 +162,9 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-// Bring the database schema up to date: EnsureCreated + dev seed in Development
-// (SQLite), apply EF Core migrations in non-Development (Azure SQL, issue #205),
-// and no-op under Test (the test host owns its in-memory schema).
+// EnsureCreated + dev seed in Development (SQLite). Everywhere else startup
+// leaves the database alone: the deploy pipeline applies the EF Core migrations
+// to Azure SQL (#344), and the test host owns its in-memory schema.
 await StartupDatabaseInitializer.InitializeAsync(app);
 
 if (!app.Environment.IsDevelopment())

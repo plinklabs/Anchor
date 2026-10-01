@@ -676,8 +676,11 @@ gh variable set AGENT_CLIENT_ID   --repo OWNER/REPO --body "$AGENT_CLIENT_ID"
    - dashboard: a push under `dashboard/**` builds and uploads to the Static Web
      App.
 
-EF Core migrations apply on app startup in non-Development environments, so there
-is no separate migration step.
+The backend deploy applies the EF Core migrations to the database before it
+deploys the new build, so the first backend deploy creates the schema on the
+empty database; there is no separate migration step to run. It needs the SQL
+server's "Allow Azure services and resources to access this server" setting
+(the template's `AllowAzureServices` rule), which the App Service needs anyway.
 
 ---
 
