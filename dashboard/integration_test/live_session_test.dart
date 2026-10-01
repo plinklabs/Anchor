@@ -25,7 +25,9 @@ import 'package:plink_design_system/plink_design_system.dart';
 //   - an unblock-request push (#…) surfaces the pending panel,
 //   - a UI bundle toggle issues PUT /sessions/{id}/bundles (#93),
 //   - pushed events render in the live event feed,
-//   - the end of the teacher's other session doesn't end this one (#354).
+//   - the end of the teacher's other session doesn't end this one (#354),
+//   - after a hub reconnect the page joins its session again and catches up on
+//     what it missed while offline (#365).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -74,30 +76,73 @@ class _FakeAuth implements MsalAuthService {
 
 /// Stands in for the SignalR client. Production builds the real one; here the
 /// test pushes events through [emit] to mimic the backend's hub broadcasts.
+///
+/// It routes them the way the hub does (#365): nothing arrives while the
+/// connection is down, and the roster signals go to the session group, so they
+/// arrive only while the current connection has joined it. A reconnect is a
+/// new connection, in no session group until the page calls JoinSession again.
 class _StubHub extends SessionHubClient {
   _StubHub()
     : super(apiBaseUrl: Uri.parse('http://localhost'), tokenProvider: _noToken);
 
   static Future<String?> _noToken() async => null;
 
+  /// What SessionBroadcaster sends to the session group.
+  static const _sessionGroupKinds = {
+    'ParticipantStateChanged',
+    'HeartbeatLost',
+    'AgentReconnected',
+    'UnblockRequested',
+    'TamperDetected',
+  };
+
   final _ctrl = StreamController<SessionEvent>.broadcast();
+  final _reconnectedCtrl = StreamController<void>.broadcast();
+  bool _online = true;
+  bool _inSessionGroup = false;
+  int joinCalls = 0;
 
   @override
   Stream<SessionEvent> get events => _ctrl.stream;
 
-  void emit(String kind, [Map<String, dynamic> payload = const {}]) =>
-      _ctrl.add(SessionEvent(kind: kind, payload: payload, at: DateTime.now()));
+  @override
+  Stream<void> get reconnected => _reconnectedCtrl.stream;
+
+  void emit(String kind, [Map<String, dynamic> payload = const {}]) {
+    if (!_online) return;
+    if (_sessionGroupKinds.contains(kind) && !_inSessionGroup) return;
+    _ctrl.add(SessionEvent(kind: kind, payload: payload, at: DateTime.now()));
+  }
+
+  /// The connection drops, e.g. a network blip or a backend restart.
+  void drop() {
+    _online = false;
+    _inSessionGroup = false;
+  }
+
+  /// SignalR's automatic reconnect brings the connection back.
+  void reconnect() {
+    _online = true;
+    _reconnectedCtrl.add(null);
+  }
 
   @override
   Future<void> connect() async {}
   @override
-  Future<void> joinSession(String sessionId, {String? joinCode}) async {}
+  Future<void> joinSession(String sessionId, {String? joinCode}) async {
+    joinCalls++;
+    _inSessionGroup = true;
+  }
+
   @override
   Future<void> leaveSession(String sessionId) async {}
   @override
   Future<void> disconnect() async {}
   @override
-  Future<void> dispose() async => _ctrl.close();
+  Future<void> dispose() async {
+    await _ctrl.close();
+    await _reconnectedCtrl.close();
+  }
 }
 
 class _FakeSessions extends SessionsApi {
@@ -114,6 +159,9 @@ class _FakeSessions extends SessionsApi {
   // Records approval calls so a test can assert which scope the UI chose (#101).
   final List<(String, String)> perStudentApprovals = [];
   final List<String> classApprovals = [];
+  // How often the page fetched the detail and the pending list (#365).
+  int getSessionCalls = 0;
+  int unblockRequestsCalls = 0;
 
   @override
   Future<MeResponse> me() async =>
@@ -139,23 +187,28 @@ class _FakeSessions extends SessionsApi {
   );
 
   @override
-  Future<SessionDetail> getSession(String sessionId) async => SessionDetail(
-    id: sessionId,
-    classId: 'c1',
-    className: 'Math 101',
-    joinCode: 'ABC123',
-    startedAt: _startedAt,
-    endedAt: null,
-    summaries: const [],
-    recentEvents: const [],
-    participants: roster,
-    bundles: sessionBundles,
-    grants: const [],
-  );
+  Future<SessionDetail> getSession(String sessionId) async {
+    getSessionCalls++;
+    return SessionDetail(
+      id: sessionId,
+      classId: 'c1',
+      className: 'Math 101',
+      joinCode: 'ABC123',
+      startedAt: _startedAt,
+      endedAt: null,
+      summaries: const [],
+      recentEvents: const [],
+      participants: roster,
+      bundles: sessionBundles,
+      grants: const [],
+    );
+  }
 
   @override
-  Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async =>
-      pending;
+  Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async {
+    unblockRequestsCalls++;
+    return pending;
+  }
 
   @override
   Future<void> approveUnblock(
@@ -438,6 +491,80 @@ void main() {
       );
       expect(find.text('LIVE'), findsNothing);
       expect(find.text('SessionEnded'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'after a hub reconnect the live view joins its session again and catches up (#365)',
+    (tester) async {
+      // Room for the pending-requests panel next to the roster.
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final h = await _bootToLiveSession(tester);
+      expect(h.hub.joinCalls, 1);
+      expect(find.text('In session'), findsOneWidget);
+      final detailFetches = h.sessions.getSessionCalls;
+      final pendingFetches = h.sessions.unblockRequestsCalls;
+
+      // The backend restarts. While the page is offline Ada leaves and asks
+      // for a site, and neither broadcast reaches it.
+      h.hub.drop();
+      h.sessions.roster = [_participant('Ada', ParticipantLiveState.left)];
+      h.hub.emit('ParticipantStateChanged', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+      });
+      final now = DateTime(2026, 6, 12, 9, 20);
+      h.sessions.pending = [
+        UnblockRequestSummary(
+          host: 'chat.example.com',
+          count: 1,
+          firstRequestedAt: now,
+          latestRequestedAt: now,
+          requesters: [
+            UnblockRequestRequester(
+              userId: 'Ada',
+              displayName: 'Ada',
+              requestedAt: now,
+            ),
+          ],
+        ),
+      ];
+      h.hub.emit('UnblockRequested', {
+        'sessionId': _sessionId,
+        'host': 'chat.example.com',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('In session'), findsOneWidget);
+      expect(find.text('Pending requests'), findsNothing);
+
+      // The connection comes back: the page joins its session again and
+      // re-fetches the roster and the pending requests it missed.
+      h.hub.reconnect();
+      await tester.pumpAndSettle();
+
+      expect(h.hub.joinCalls, 2);
+      expect(h.sessions.getSessionCalls, detailFetches + 1);
+      expect(h.sessions.unblockRequestsCalls, pendingFetches + 1);
+      expect(find.text('Left'), findsOneWidget);
+      expect(find.text('Students (0/1 in session)'), findsOneWidget);
+      expect(find.text('Pending requests'), findsOneWidget);
+      expect(find.text('chat.example.com'), findsOneWidget);
+
+      // And a roster push after the reconnect reaches it: Ada comes back.
+      h.sessions.roster = [_participant('Ada', ParticipantLiveState.joined)];
+      h.hub.emit('ParticipantStateChanged', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('In session'), findsOneWidget);
+      expect(find.text('Students (1/1 in session)'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     },
   );
 
