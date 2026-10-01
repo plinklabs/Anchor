@@ -179,6 +179,51 @@ public class SessionRehydrationServiceTests
         Assert.Null(coordinator.JoinedSessionId);
     }
 
+    [Fact]
+    public async Task Every_NotifyConnectedAsync_catches_up_on_a_session_that_started_unheard_after_confirming_the_joined_one()
+    {
+        // #356: the SessionStarted broadcast reached no connection of this
+        // agent — it was offline, or had only just connected. Ending the old
+        // session comes first, so the student isn't left in it.
+        var hub = new RecordingHub();
+        var ui = new SilentUi();
+        var coordinator = NewCoordinator(hub, ui);
+        var service = new SessionRehydrationService(new StubClient(Array.Empty<SessionStartedPayload>()), coordinator);
+        var ended = Payload();
+        await coordinator.HandleSessionStartedAsync(ended);
+        await service.NotifyConnectedAsync();
+        Assert.Equal(new[] { "IsInSession", "GetStartedSession" }, hub.Calls);
+
+        hub.StillInSession = false;
+        var started = Payload();
+        hub.StartedSession = started;
+        hub.Calls.Clear();
+        await service.NotifyConnectedAsync();
+
+        Assert.Equal(new[] { "IsInSession", "GetStartedSession" }, hub.Calls);
+        Assert.Equal(new[] { ended.SessionId, started.SessionId }, hub.JoinCalls.Select(c => c.SessionId));
+        Assert.Equal(started.SessionId, coordinator.JoinedSessionId);
+        Assert.Equal(2, ui.ShownCount);
+    }
+
+    [Fact]
+    public async Task A_rehydrated_session_is_rejoined_silently_not_asked_about_again()
+    {
+        var hub = new RecordingHub();
+        var ui = new SilentUi();
+        var coordinator = NewCoordinator(hub, ui);
+        var payload = Payload();
+        hub.StartedSession = payload;
+        var service = new SessionRehydrationService(new StubClient(new[] { payload }), coordinator);
+
+        await service.NotifyConnectedAsync();
+        await service.NotifyConnectedAsync();
+
+        Assert.Single(hub.JoinCalls);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.Equal(0, ui.ShownCount);
+    }
+
     private static SessionCoordinator NewCoordinator(RecordingHub hub, SilentUi ui)
     {
         var settings = Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) });
@@ -246,15 +291,29 @@ public class SessionRehydrationServiceTests
         public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default)
         {
             lock (IsInSessionCalls) IsInSessionCalls.Add(sessionId);
+            lock (Calls) Calls.Add("IsInSession");
             return Task.FromResult(StillInSession);
         }
+        // The backend's answer to GetStartedSession (#356); none by default.
+        public SessionStartedPayload? StartedSession { get; set; }
+        public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default)
+        {
+            lock (Calls) Calls.Add("GetStartedSession");
+            return Task.FromResult(StartedSession);
+        }
+        // The order of the backend questions each pass asks.
+        public List<string> Calls { get; } = new();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class SilentUi : ISessionUiHost
     {
+        public int ShownCount { get; private set; }
         public Task<JoinDecision> ShowJoinConfirmationAsync(JoinConfirmation confirmation, CancellationToken ct = default)
-            => Task.FromResult(JoinDecision.Confirmed);
+        {
+            ShownCount++;
+            return Task.FromResult(JoinDecision.Confirmed);
+        }
         public void DismissJoinConfirmation() { }
     }
 }

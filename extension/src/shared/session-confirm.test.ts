@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { confirmActiveSession } from './session-confirm';
+import { catchUpStartedSession, confirmActiveSession } from './session-confirm';
+import type { SessionStartedPayload } from './types';
 
 function makeDeps(options: {
   activeSessionId: string | null;
@@ -62,5 +63,82 @@ describe('confirmActiveSession', () => {
 
     expect(h.asked).toEqual(['sess-1']);
     expect(h.ended).toEqual([]);
+  });
+});
+
+function startedPayload(sessionId: string): SessionStartedPayload {
+  return {
+    sessionId,
+    classId: 'class-1',
+    startedAt: '2026-10-01T08:00:00Z',
+    joinCode: '123456',
+    apps: [],
+    domains: [{ matchType: 'Suffix', value: 'example.org' }],
+  };
+}
+
+function makeCatchUpDeps(options: {
+  activeSessionId: string | null;
+  getStartedSession: () => Promise<SessionStartedPayload | null>;
+}) {
+  const started: SessionStartedPayload[] = [];
+  return {
+    started,
+    deps: {
+      getActiveSessionId: async () => options.activeSessionId,
+      getStartedSession: options.getStartedSession,
+      startSession: async (payload: SessionStartedPayload) => {
+        started.push(payload);
+      },
+    },
+  };
+}
+
+describe('catchUpStartedSession', () => {
+  it('starts a session that started while the extension was not listening (#356)', async () => {
+    const payload = startedPayload('sess-1');
+    const h = makeCatchUpDeps({ activeSessionId: null, getStartedSession: async () => payload });
+
+    await catchUpStartedSession(h.deps);
+
+    expect(h.started).toEqual([payload]);
+  });
+
+  it('replaces an older session with the one the student is in now', async () => {
+    const payload = startedPayload('sess-2');
+    const h = makeCatchUpDeps({ activeSessionId: 'sess-1', getStartedSession: async () => payload });
+
+    await catchUpStartedSession(h.deps);
+
+    expect(h.started).toEqual([payload]);
+  });
+
+  it('leaves the session it already enforces alone', async () => {
+    // Restarting it would drop the unblock grants merged into the cached
+    // allowlist since it started.
+    const h = makeCatchUpDeps({
+      activeSessionId: 'sess-1',
+      getStartedSession: async () => startedPayload('sess-1'),
+    });
+
+    await catchUpStartedSession(h.deps);
+
+    expect(h.started).toEqual([]);
+  });
+
+  it('starts nothing when no session runs or the backend cannot be asked', async () => {
+    const none = makeCatchUpDeps({ activeSessionId: null, getStartedSession: async () => null });
+    const failing = makeCatchUpDeps({
+      activeSessionId: null,
+      getStartedSession: async () => {
+        throw new Error('connection dropped again');
+      },
+    });
+
+    await catchUpStartedSession(none.deps);
+    await catchUpStartedSession(failing.deps);
+
+    expect(none.started).toEqual([]);
+    expect(failing.started).toEqual([]);
   });
 });

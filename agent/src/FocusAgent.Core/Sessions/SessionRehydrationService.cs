@@ -19,10 +19,15 @@ namespace FocusAgent.Core.Sessions;
 ///
 /// Then, on every connect, it has the coordinator ask the backend whether the
 /// student is still in their joined session
-/// (<see cref="SessionCoordinator.ConfirmJoinedSessionAsync"/>, #354). Every
+/// (<see cref="SessionCoordinator.ConfirmJoinedSessionAsync"/>, #354), and for a
+/// session that started without the agent hearing it
+/// (<see cref="SessionCoordinator.CatchUpStartedSessionAsync"/>, #356). Every
 /// reconnect is a new SignalR connection, and whatever the backend broadcast
-/// while the agent was offline — <c>SessionEnded</c> in particular — never
-/// reaches it.
+/// while the agent was offline — <c>SessionEnded</c>, <c>SessionStarted</c> —
+/// never reaches it. Nor does what it broadcasts in the moment after the
+/// connection opens, before the backend has added it to the student's user
+/// group. Both questions are hub calls, which the backend answers only once it
+/// has.
 ///
 /// The trigger is driven externally via <see cref="NotifyConnectedAsync"/>
 /// rather than by subscribing to <c>ConnectionManager</c> directly, because
@@ -95,6 +100,12 @@ public sealed class SessionRehydrationService
 
             // Never throws but for cancellation: a failed check keeps the session.
             await _coordinator.ConfirmJoinedSessionAsync(ct).ConfigureAwait(false);
+
+            // After the confirm, so a session that ended while the agent was
+            // offline is left before a newer one is offered; after rehydration,
+            // so a session the student was already in is rejoined silently
+            // rather than asked about again. Never throws but for cancellation.
+            await _coordinator.CatchUpStartedSessionAsync(ct).ConfigureAwait(false);
         }
         finally
         {

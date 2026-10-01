@@ -29,6 +29,11 @@ public sealed class SessionCoordinator : IAsyncDisposable
     private Guid? _activeSessionId;
     private Guid? _joinedSessionId;
 
+    // Sessions whose start this agent has handled — from the SessionStarted
+    // broadcast, a rejoin, or a catch-up — so a catch-up after a reconnect
+    // (#356) never replays one the student has already answered.
+    private readonly HashSet<Guid> _handledStarts = new();
+
     public SessionCoordinator(
         ISessionHubConnection hub,
         ISessionUiHost ui,
@@ -95,14 +100,28 @@ public sealed class SessionCoordinator : IAsyncDisposable
         }
     }
 
-    internal async Task HandleSessionStartedAsync(SessionStartedPayload payload, CancellationToken ct = default)
+    internal Task HandleSessionStartedAsync(SessionStartedPayload payload, CancellationToken ct = default) =>
+        HandleSessionStartedAsync(payload, catchingUp: false, ct);
+
+    private async Task HandleSessionStartedAsync(SessionStartedPayload payload, bool catchingUp, CancellationToken ct)
     {
-        // Already joined this session (e.g. the rehydration service rejoined
-        // it just before the teacher's SessionStarted broadcast arrived).
-        // Don't re-prompt or re-call JoinSession — the agent is already in
-        // the correct state. Matches the #54 race-double-join guard.
+        // SessionStartedPayload does not yet carry the teacher's display name.
+        // Until the dashboard-polish issue lands it, surface a generic label.
+        const string teacherPlaceholder = "Your teacher";
+
+        JoinConfirmation confirmation;
         lock (_gate)
         {
+            // A catch-up (#356) stands in only for a SessionStarted this agent
+            // never handled. One it did handle it is in, is asking about, or
+            // the student already answered.
+            if (!_handledStarts.Add(payload.SessionId) && catchingUp)
+                return;
+
+            // Already joined this session (e.g. the rehydration service rejoined
+            // it just before the teacher's SessionStarted broadcast arrived).
+            // Don't re-prompt or re-call JoinSession — the agent is already in
+            // the correct state. Matches the #54 race-double-join guard.
             if (_joinedSessionId == payload.SessionId)
             {
                 _log.LogInformation(
@@ -110,21 +129,26 @@ public sealed class SessionCoordinator : IAsyncDisposable
                     payload.SessionId);
                 return;
             }
-        }
 
-        // SessionStartedPayload does not yet carry the teacher's display name.
-        // Until the dashboard-polish issue lands it, surface a generic label.
-        const string teacherPlaceholder = "Your teacher";
+            // The student is being asked about it right now. A start can arrive
+            // twice: by catch-up and by broadcast, when the session began just
+            // as the agent connected.
+            if (_active?.Payload.SessionId == payload.SessionId)
+            {
+                _log.LogInformation(
+                    "SessionStarted received for session {SessionId}, whose join confirmation is already showing; skipping.",
+                    payload.SessionId);
+                return;
+            }
 
-        var confirmation = new JoinConfirmation(payload, teacherPlaceholder, _settings.JoinConfirmationDuration, _clock);
-
-        lock (_gate)
-        {
+            confirmation = new JoinConfirmation(payload, teacherPlaceholder, _settings.JoinConfirmationDuration, _clock);
             _active?.Abort();
             _active = confirmation;
             _activeSessionId = payload.SessionId;
         }
 
+        if (catchingUp)
+            _log.LogInformation("Session {SessionId} started while the agent wasn't listening; catching up.", payload.SessionId);
         _log.LogInformation("Session {SessionId} started; awaiting student confirmation", payload.SessionId);
 
         var decision = await _ui.ShowJoinConfirmationAsync(confirmation, ct).ConfigureAwait(false);
@@ -212,6 +236,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
         bool fire;
         lock (_gate)
         {
+            _handledStarts.Add(payload.SessionId);
             // Double-check under the gate in case another path joined between
             // our pre-check and the hub call returning.
             if (_joinedSessionId == payload.SessionId)
@@ -275,6 +300,59 @@ public sealed class SessionCoordinator : IAsyncDisposable
         _log.LogInformation(
             "Session {SessionId} ended or was left while the agent was disconnected; leaving it.", sessionId);
         HandleSessionEnded(sessionId);
+    }
+
+    /// <summary>
+    /// Asks the backend for the running session the student has been asked into
+    /// and, if this agent never heard that session start, handles it as the
+    /// <c>SessionStarted</c> it missed: the join confirmation, then the join
+    /// (#356). Called each time the hub connection comes up, after
+    /// <see cref="ConfirmJoinedSessionAsync"/>. The broadcast reaches only the
+    /// connections in the student's user group when it is sent, which misses an
+    /// agent that was offline when the teacher started the session — and one
+    /// that had only just connected, because the hub connection reports
+    /// connected before the backend has added it to that group. The question
+    /// is answered only once the backend has, so between the two the agent
+    /// misses no start.
+    ///
+    /// Waits for the student's answer, as a broadcast start does. Does nothing
+    /// for a session the agent is in, is asking about, or already handled — so
+    /// it never re-asks one the student declined or left — and nothing when the
+    /// question fails: there is no session to start. Never throws but for
+    /// cancellation.
+    /// </summary>
+    public async Task CatchUpStartedSessionAsync(CancellationToken ct = default)
+    {
+        SessionStartedPayload? started;
+        try
+        {
+            started = await _hub.GetStartedSessionAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not ask the backend for a session that started while the agent wasn't listening.");
+            return;
+        }
+
+        if (started is null)
+            return;
+
+        try
+        {
+            await HandleSessionStartedAsync(started, catchingUp: true, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed catching up on session {SessionId}", started.SessionId);
+        }
     }
 
     /// <summary>

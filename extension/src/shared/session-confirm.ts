@@ -1,4 +1,5 @@
-// Catching up on a session that ended while the extension was offline (#354).
+// Catching up on a session that ended while the extension was offline (#354),
+// and on one that started without the extension hearing it (#356).
 //
 // The backend tells clients that a session ended with a SessionEnded broadcast,
 // and a broadcast reaches only the hub connections open when it is sent. The
@@ -8,10 +9,17 @@
 // it. It would then keep blocking against the ended session's allowlist until
 // the browser restarted. So each time the hub connects, the extension asks the
 // backend whether the student is still in the session it is enforcing, and
-// ends it if not. Same injected-deps shape as SessionHeartbeat so it runs
-// headless in tests.
+// ends it if not.
+//
+// SessionStarted goes out the same way, so a session can also start without the
+// extension hearing it: while it is offline, or in the moment straight after it
+// connects — the connection is up before the backend has added it to the
+// student's user group, which the broadcast goes to. So it also asks which
+// session the student is in, and starts it if it isn't enforcing that one yet.
+// Same injected-deps shape as SessionHeartbeat so it runs headless in tests.
 
 import { logger } from './logger';
+import type { SessionStartedPayload } from './types';
 
 const log = logger('session-confirm');
 
@@ -46,4 +54,37 @@ export async function confirmActiveSession(deps: ConfirmActiveSessionDeps): Prom
 
   log.info('active session ended while the extension was disconnected', { sessionId });
   await deps.endSession(sessionId);
+}
+
+export interface CatchUpStartedSessionDeps {
+  /** The id of the session the extension is enforcing, or null. */
+  getActiveSessionId: () => Promise<string | null>;
+  /** Asks the backend for the session the student has been asked into and
+   *  hasn't declined or left, or null; rejects when it can't be asked. */
+  getStartedSession: () => Promise<SessionStartedPayload | null>;
+  /** Starts the session, exactly as a SessionStarted broadcast would. */
+  startSession: (payload: SessionStartedPayload) => Promise<void>;
+}
+
+/**
+ * Starts the session the backend says the student is in when the extension
+ * isn't enforcing it yet (#356). The backend answers only once it has added the
+ * connection to the student's user group, so between this answer and the
+ * SessionStarted broadcasts after it, no start is missed. Run it after
+ * confirmActiveSession, so an ended session is ended, and its tabs restored,
+ * before a newer one takes its place.
+ */
+export async function catchUpStartedSession(deps: CatchUpStartedSessionDeps): Promise<void> {
+  let started: SessionStartedPayload | null;
+  try {
+    started = await deps.getStartedSession();
+  } catch (err) {
+    log.warn('could not ask the backend for a session that started while the extension was not listening', { err });
+    return;
+  }
+  if (!started) return;
+  if (started.sessionId === (await deps.getActiveSessionId())) return;
+
+  log.info('session started while the extension was not listening', { sessionId: started.sessionId });
+  await deps.startSession(started);
 }

@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using Anchor.Api.Controllers;
 using Anchor.Api.Realtime;
 using Anchor.Api.Tests.FakeAuth;
+using Anchor.Domain.Bundles;
 using Anchor.Domain.Classes;
 using Anchor.Domain.Events;
 using Anchor.Domain.Sessions;
@@ -470,6 +471,93 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         Assert.False(await connection.InvokeAsync<bool>("IsInSession", session.Id));
         Assert.False(await outside.InvokeAsync<bool>("IsInSession", session.Id));
         Assert.False(await outside.InvokeAsync<bool>("IsInSession", Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task GetStartedSession_returns_a_session_started_straight_after_the_connection_opened()
+    {
+        // #356: what a client asks right after it connects. Its start completed
+        // on the handshake reply, before the server joined it to its user group,
+        // so the SessionStarted broadcast may have found the group empty.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var bundle = await TestSeed.AddBundleAsync(_factory, "Bundle-" + Guid.NewGuid().ToString("N")[..6]);
+        await TestSeed.AddBundleEntryAsync(
+            _factory, bundle.Id, BundleEntryKind.Domain, "started-session.example", BundleEntryMatchType.Suffix);
+        await using var connection = BuildConnection(scenario.Students[0].EntraOid, "Student");
+        await connection.StartAsync();
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsJsonAsync(
+            "/sessions", new StartSessionRequest(scenario.Class.Id, new[] { bundle.Id }));
+        response.EnsureSuccessStatusCode();
+        var started = (await response.Content.ReadFromJsonAsync<StartSessionResponse>())!;
+
+        var payload = await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession");
+
+        Assert.NotNull(payload);
+        Assert.Equal(started.Id, payload.SessionId);
+        Assert.Equal(scenario.Class.Id, payload.ClassId);
+        Assert.Equal(started.JoinCode, payload.JoinCode);
+        // The allowlist the SessionStarted broadcast carried.
+        Assert.Contains(payload.Domains, d => d.Value == "started-session.example");
+    }
+
+    [Fact]
+    public async Task GetStartedSession_returns_the_latest_running_session_joined_or_not()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var student = scenario.Students[0];
+        var older = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        Assert.Equal(older.Id, (await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession"))?.SessionId);
+        // Joining doesn't take it out: a client that never heard of it (an
+        // agent when the extension joined) still needs it.
+        await JoinAsync(connection, older.Id);
+        Assert.Equal(older.Id, (await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession"))?.SessionId);
+
+        // Seeded a few invocations later, so it started later.
+        var newer = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        Assert.True(newer.StartedAt > older.StartedAt);
+
+        Assert.Equal(newer.Id, (await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession"))?.SessionId);
+    }
+
+    [Fact]
+    public async Task GetStartedSession_is_null_once_declined_left_or_ended_and_for_anyone_outside_the_session()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 3);
+        var (declining, leaving, staying) = (scenario.Students[0], scenario.Students[1], scenario.Students[2]);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToArray());
+        var outsider = await TestSeed.AddUserAsync(_factory, UserRole.Student, "Outsider");
+        await using var declined = BuildConnection(declining.EntraOid, "Student");
+        await using var left = BuildConnection(leaving.EntraOid, "Student");
+        await using var stays = BuildConnection(staying.EntraOid, "Student");
+        await using var outside = BuildConnection(outsider.EntraOid, "Student");
+        await using var teacher = BuildConnection(scenario.Teacher.EntraOid, "Teacher");
+        foreach (var connection in new[] { declined, left, stays, outside, teacher })
+            await connection.StartAsync();
+
+        await declined.InvokeAsync("DeclineSession", new DeclineSessionRequest(session.Id, Reason: null));
+        await JoinAsync(left, session.Id);
+        await left.InvokeAsync("LeaveSession", session.Id);
+
+        Assert.Null(await declined.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
+        Assert.Null(await left.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
+        Assert.Null(await outside.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
+        // The teacher runs the session; there's nothing for them to join.
+        Assert.Null(await teacher.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
+        Assert.Equal(session.Id, (await stays.InvokeAsync<SessionStartedPayload?>("GetStartedSession"))?.SessionId);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsync($"/sessions/{session.Id}/end", content: null);
+        response.EnsureSuccessStatusCode();
+
+        Assert.Null(await stays.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
     }
 
     [Fact]

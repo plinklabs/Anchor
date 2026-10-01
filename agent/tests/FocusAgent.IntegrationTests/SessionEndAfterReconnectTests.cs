@@ -54,11 +54,11 @@ public sealed class SessionEndAfterReconnectTests
             await _backend.RestartAsync();
             await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(30));
             Assert.Equal(sessionId, (await agent.TryGetStatusAsync())?.JoinedSessionId);
-            // The teacher ends it a moment later, not in the same instant the
-            // agent reconnects (see #356 for that window).
-            await Task.Delay(TimeSpan.FromSeconds(1));
 
             // --- the teacher ends the session ---------------------------------
+            // The moment the agent reports Connected, which can be before the
+            // backend has added the new connection to the student's user group
+            // (#356).
             await api.EndSessionAsync(sessionId);
             await AssertLeftAsync(agent, sessionId, "after the teacher ended it");
         }

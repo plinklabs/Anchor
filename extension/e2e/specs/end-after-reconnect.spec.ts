@@ -33,10 +33,9 @@ test('a redirected tab is restored when the session ends after the service worke
   const connections = ext.countLogs(HUB_CONNECTED);
   await ext.restartServiceWorker();
   await ext.waitForLogCount(HUB_CONNECTED, connections + 1, 20_000);
-  // The teacher ends it a moment later, not in the same instant the extension
-  // connects (see #356 for that window).
-  await new Promise((resolve) => setTimeout(resolve, 1_000));
 
+  // The very moment the connection is up, which can be before the backend has
+  // added it to the student's user group (#356).
   await backend.endSession(session.id);
 
   await expectRestored(page, ext);

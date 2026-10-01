@@ -91,7 +91,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 
 ### 5.2 During a focus session
 
-- Receives a `SessionStart` message via SignalR with the allowlist for this session.
+- Receives a `SessionStart` message via SignalR with the allowlist for this session. An agent that wasn't connected when the session started (asleep, off the network, or still connecting) asks the backend for it as soon as it connects, and carries on as if the message had arrived (#356). The extension does the same.
 - Shows a brief join confirmation: *"Mr. De Vos started a focus session. Joining in 5s. [Cancel]"*. Decline is logged.
 - Once joined:
   - Subscribes to `EVENT_SYSTEM_FOREGROUND` via `SetWinEventHook`.

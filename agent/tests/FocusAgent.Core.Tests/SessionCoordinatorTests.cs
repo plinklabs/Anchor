@@ -481,6 +481,115 @@ public class SessionCoordinatorTests
         Assert.False(left);
     }
 
+    [Fact]
+    public async Task CatchUpStartedSession_asks_the_student_about_a_session_the_agent_never_heard_start_and_joins_it()
+    {
+        // #356: the SessionStarted broadcast found no connection — the agent was
+        // offline, or had only just connected — so the start reaches it only
+        // through this question.
+        var payload = Payload();
+        var hub = new FakeHub { StartedSession = payload };
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+        SessionStartedPayload? joined = null;
+        coordinator.SessionJoined += (_, p) => joined = p;
+
+        await coordinator.CatchUpStartedSessionAsync();
+
+        Assert.Equal(payload, Assert.Single(ui.Shown).Payload);
+        Assert.Equal(payload.SessionId, Assert.Single(hub.JoinCalls).SessionId);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.Equal(payload, joined);
+    }
+
+    [Fact]
+    public async Task CatchUpStartedSession_does_nothing_without_a_started_session_or_when_the_backend_cannot_be_asked()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi();
+        var coordinator = NewCoordinator(hub, ui);
+
+        await coordinator.CatchUpStartedSessionAsync();
+        hub.GetStartedSessionThrows = new InvalidOperationException("connection dropped again");
+        await coordinator.CatchUpStartedSessionAsync();
+
+        Assert.Equal(2, hub.GetStartedSessionCalls);
+        Assert.Empty(ui.Shown);
+        Assert.Null(coordinator.ActiveSessionId);
+    }
+
+    [Fact]
+    public async Task CatchUpStartedSession_leaves_the_joined_session_alone()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+        var broadcast = Payload();
+        await coordinator.HandleSessionStartedAsync(broadcast);
+        var rejoined = Payload();
+
+        hub.StartedSession = broadcast;
+        await coordinator.CatchUpStartedSessionAsync();
+        await coordinator.RejoinAsync(rejoined);
+        hub.StartedSession = rejoined;
+        await coordinator.CatchUpStartedSessionAsync();
+
+        Assert.Single(ui.Shown);
+        Assert.Equal(2, hub.JoinCalls.Count);
+        Assert.Equal(rejoined.SessionId, coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task CatchUpStartedSession_does_not_ask_again_about_a_session_the_student_declined_or_left()
+    {
+        // The backend still lists them when the decline or the leave didn't
+        // reach it; the student answered once, and that stands.
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Declined };
+        var coordinator = NewCoordinator(hub, ui);
+        var declined = Payload();
+        await coordinator.HandleSessionStartedAsync(declined);
+        ui.NextDecision = JoinDecision.Confirmed;
+        var left = Payload();
+        await coordinator.HandleSessionStartedAsync(left);
+        await coordinator.LeaveSessionManuallyAsync();
+
+        hub.StartedSession = declined;
+        await coordinator.CatchUpStartedSessionAsync();
+        hub.StartedSession = left;
+        await coordinator.CatchUpStartedSessionAsync();
+
+        Assert.Equal(2, ui.Shown.Count);
+        Assert.Single(hub.JoinCalls);
+        Assert.Null(coordinator.ActiveSessionId);
+        Assert.Null(coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task A_start_that_arrives_by_catch_up_and_by_broadcast_asks_the_student_once()
+    {
+        // A session that starts as the agent connects: its row is in the
+        // catch-up's answer, and its broadcast still finds the connection.
+        var payload = Payload();
+        var hub = new FakeHub { StartedSession = payload };
+        var ui = new FakeUi { ManualResolve = true };
+        var coordinator = NewCoordinator(hub, ui);
+        var joinedCount = 0;
+        coordinator.SessionJoined += (_, _) => joinedCount++;
+
+        var catchUp = coordinator.CatchUpStartedSessionAsync();
+        await ui.WaitForShownAsync();
+        await coordinator.HandleSessionStartedAsync(payload);
+        ui.Resolve(JoinDecision.Confirmed);
+        await catchUp;
+
+        Assert.Single(ui.Shown);
+        Assert.NotEqual(JoinDecision.Aborted, ui.Shown[0].Decision);
+        Assert.Single(hub.JoinCalls);
+        Assert.Equal(1, joinedCount);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+    }
+
     private static SessionCoordinator NewCoordinator(FakeHub hub, FakeUi ui)
     {
         var settings = Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) });
@@ -549,6 +658,17 @@ public class SessionCoordinatorTests
             return IsInSessionThrows is null
                 ? Task.FromResult(StillInSession)
                 : Task.FromException<bool>(IsInSessionThrows);
+        }
+        // The backend's answer to GetStartedSession (#356), or the failure to ask.
+        public SessionStartedPayload? StartedSession { get; set; }
+        public Exception? GetStartedSessionThrows { get; set; }
+        public int GetStartedSessionCalls { get; private set; }
+        public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default)
+        {
+            GetStartedSessionCalls++;
+            return GetStartedSessionThrows is null
+                ? Task.FromResult(StartedSession)
+                : Task.FromException<SessionStartedPayload?>(GetStartedSessionThrows);
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
