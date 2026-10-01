@@ -215,6 +215,11 @@ class _SessionPageState extends State<SessionPage> {
       await _hub.joinSession(widget.sessionId);
       _eventsSub = _hub.events.listen((evt) {
         if (!mounted) return;
+        // The connection also hears about the teacher's other sessions: the
+        // backend sends SessionStarted to the teacher's user group for every
+        // session of their classes, and SessionEnded for every session they
+        // own (#354). This page is one session's live view.
+        if (_isAboutAnotherSession(evt)) return;
         setState(() {
           _events.insert(0, evt);
           if (evt.kind == 'SessionEnded' &&
@@ -247,6 +252,13 @@ class _SessionPageState extends State<SessionPage> {
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
+  }
+
+  /// Whether [evt] names a session other than this page's. Every hub payload
+  /// carries its session id.
+  bool _isAboutAnotherSession(SessionEvent evt) {
+    final Object? sessionId = evt.payload['sessionId'];
+    return sessionId != null && sessionId != widget.sessionId;
   }
 
   Future<void> _endSession() async {
