@@ -303,6 +303,15 @@ agent unregistered from Edge. `hermetic-witness.spec.ts` drives that exact
 situation — a registered host trying to push a foreign backend URL — and proves
 none of it reaches the extension under test.
 
+**Pinned to English (#364).** The block page and popup render in the browser UI
+language (see [Localization](#localization-i18n)), and Edge takes that from the
+host's Windows display language unless told otherwise. So `loadExtension()`
+always launches Edge with `--lang` set to `DEFAULT_LOCALE` (`en-US`, what the CI
+runner has, in [`e2e/config.ts`](e2e/config.ts)), and specs that assert English
+copy pass on a Dutch or any other dev box too. A spec that needs another language
+asks for it with `loadExtension({ locale: '<lang>' })`, as `i18n-dutch.spec.ts`
+does.
+
 Prerequisites: Node ≥ 22 (the harness is TypeScript run via Node's built-in type
 stripping), Microsoft Edge, and the .NET SDK on `PATH` (the harness builds and
 runs the backend). Loading an MV3 extension needs a **headed** browser, so the

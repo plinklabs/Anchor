@@ -91,3 +91,12 @@ export const BROWSER_CHANNEL = process.env.E2E_BROWSER_CHANNEL ?? 'msedge';
  * extension loading.
  */
 export const HEADLESS = process.env.E2E_HEADLESS === '1';
+/**
+ * The browser UI language every spec runs in unless it asks for another (#364).
+ * The extension renders in the browser UI language (chrome.i18n, #322), and Edge
+ * otherwise takes that from the host's Windows display language — so a spec that
+ * asserts English copy passed on the en-US CI runner and failed on a Dutch dev
+ * box. Pinned to what the CI runner has, so every machine renders the same copy.
+ * A spec that needs another language passes `loadExtension({ locale })`.
+ */
+export const DEFAULT_LOCALE = 'en-US';
