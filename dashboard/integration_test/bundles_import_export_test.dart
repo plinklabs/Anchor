@@ -9,7 +9,8 @@ import 'package:anchor_dashboard/bundles/bundle_format.dart';
 import 'package:anchor_dashboard/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for bundle import/export (#304): boots the *real*
 // AnchorDashboard (real router, real app-bar, real fonts, real navigation)
@@ -103,7 +104,7 @@ class _FakeFileIo implements BundleFileIo {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets(
     'admin imports a JSON file and the new bundle appears, then exports it '

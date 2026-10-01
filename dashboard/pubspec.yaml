@@ -71,6 +71,10 @@ dev_dependencies:
   integration_test:
     sdk: flutter
 
+  # Fake time for the hub client's reconnect test (#370): minutes of retries
+  # against the in-process hub run in milliseconds. Pinned by flutter_test.
+  fake_async: any
+
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
   # activated in the `analysis_options.yaml` file located at the root of your

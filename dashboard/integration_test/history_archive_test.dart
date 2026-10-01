@@ -7,8 +7,9 @@ import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for the teacher dashboard's history archive (AD7, #172).
 //
@@ -162,7 +163,7 @@ Future<void> _bootAuthenticated(WidgetTester tester) async {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets(
     'Home → History → open a past session renders the archived paper review '

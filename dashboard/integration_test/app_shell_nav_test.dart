@@ -8,7 +8,8 @@ import 'package:anchor_dashboard/main.dart';
 import 'package:anchor_dashboard/widgets/anchor_mark.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for the shared dashboard chrome (AD1, #166): boots the actual
 // AnchorDashboard (real router, real Fraunces/Space Mono fonts, real window)
@@ -73,7 +74,7 @@ class _FakeBundles extends BundlesApi {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets(
     'shared app-bar nav carries the chrome across pages, no overflow (#166)',

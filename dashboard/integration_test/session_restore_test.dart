@@ -8,7 +8,8 @@ import 'package:anchor_dashboard/main.dart';
 import 'package:anchor_dashboard/widgets/anchor_mark.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for session restore on reload (#302): boots the actual
 // AnchorDashboard with an *empty* AuthTokenStore — exactly the state a fresh
@@ -96,7 +97,7 @@ class _FakeBundles extends BundlesApi {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets(
     'a reload with a valid cached session lands on the shell, no re-login (#302)',

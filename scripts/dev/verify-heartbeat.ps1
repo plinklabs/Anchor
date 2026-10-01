@@ -32,6 +32,18 @@
     + slop for stale detection; default 2 keeps the run short. Production
     leaves this at 10s in appsettings.json.
 
+.PARAMETER TeacherOid
+    Seeded Dev Teacher OID the verifier starts the session as. Default
+    11111111-1111-1111-1111-111111111111 (matches DevDataSeeder).
+
+.PARAMETER StudentOid
+    Seeded Dev Student OID the verifier connects to SignalR as. Default
+    22222222-2222-2222-2222-222222222222 (matches DevDataSeeder).
+
+.PARAMETER ClassName
+    Seeded class name to start the session for. Default "3A" (matches
+    DevDataSeeder).
+
 .PARAMETER SkipBuild
     Skip dotnet builds.
 

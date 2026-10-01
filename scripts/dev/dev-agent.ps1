@@ -32,6 +32,23 @@
 .PARAMETER StatusPort
     Loopback port for the agent's status endpoint. Default 5295.
 
+.PARAMETER TeacherOid
+    Seeded Dev Teacher OID the console impersonates for its REST calls.
+    Default 11111111-1111-1111-1111-111111111111 (matches DevDataSeeder).
+
+.PARAMETER StudentOid
+    Seeded Dev Student OID for the agent to impersonate (passed as
+    Dev__ImpersonateOid). Default 22222222-2222-2222-2222-222222222222
+    (matches DevDataSeeder).
+
+.PARAMETER ClassName
+    Seeded class name to start sessions for. Default "3A" (matches
+    DevDataSeeder).
+
+.PARAMETER AppBundleName
+    Seeded app-bearing bundle that `s` starts the session with and `m`
+    restores. Default "Notepad (dev)".
+
 .PARAMETER AutoJoin
     Launch the agent with --auto-join (skips the confirmation toast and joins
     immediately). Off by default so you can watch the real toast.

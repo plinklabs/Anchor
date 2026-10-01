@@ -51,6 +51,7 @@ Text(AppLocalizations.of(context).homeHeadline)
 - **Source + fallback locale:** English (`app_en.arb`) is the template. Any missing key falls back to English, and any unsupported browser/OS language falls back to English too (`localeResolutionCallback` in [`lib/main.dart`](lib/main.dart) matches on language code, e.g. `nl-BE` → `nl`, else `en`).
 - **Active language = the browser/OS language**, chosen at startup. There is no in-app language picker (out of scope for now).
 - **Locales shipped:** English (`en`) and Dutch (`nl`, proof of concept).
+- **Integration tests run in English.** `flutter drive` gives Chrome the host's display language, so every test under `integration_test/` starts with `ensureE2eBinding()` ([`integration_test/support/e2e_binding.dart`](integration_test/support/e2e_binding.dart)), which pins the language the app sees to en-US on any host (#371). `test/e2e_binding_usage_test.dart` fails if a test skips it. `integration_test/dutch_locale_test.dart` asks for nl-BE instead and checks the Dutch copy.
 
 ### Add a locale
 

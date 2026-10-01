@@ -734,6 +734,24 @@ abstract class AppLocalizations {
   /// **'Connecting to the live feed…'**
   String get sessionConnecting;
 
+  /// No description provided for @sessionReconnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection lost — reconnecting. Live updates are paused.'**
+  String get sessionReconnecting;
+
+  /// No description provided for @sessionDisconnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Disconnected — live updates are paused.'**
+  String get sessionDisconnected;
+
+  /// No description provided for @sessionReconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect'**
+  String get sessionReconnect;
+
   /// No description provided for @sessionActivity.
   ///
   /// In en, this message translates to:

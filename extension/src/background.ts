@@ -1,6 +1,6 @@
 import { HubClient } from './shared/hub-client';
 import { SessionHeartbeat } from './shared/heartbeat';
-import { catchUpStartedSession, confirmActiveSession } from './shared/session-confirm';
+import { catchUpOnConnect } from './shared/session-confirm';
 import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
@@ -106,7 +106,8 @@ async function ensureHub(): Promise<void> {
   try {
     await hubClient.start();
   } catch (err) {
-    log.error('hub start failed; will rely on automatic reconnect', err);
+    // The client goes on trying on its own, on the reconnect backoff (#374).
+    log.error('hub start failed; retrying until it connects', err);
   }
   ensureHeartbeat();
 }
@@ -188,19 +189,16 @@ function ensureHeartbeat(): void {
 // doesn't stay in force until the browser restarts (#354). The same goes for a
 // SessionStarted, which also misses a connection in the moment before the
 // backend adds it to the student's user group: ask which session the student is
-// in, so a started one is enforced (#356).
+// in, so a started one is enforced (#356). The hub client runs this after
+// every connect, however long the outage before it was (#374).
 async function handleHubConnected(): Promise<void> {
-  const getActiveSessionId = async () => (await getActiveSession())?.sessionId ?? null;
-  await confirmActiveSession({
-    getActiveSessionId,
+  await catchUpOnConnect({
+    getActiveSessionId: async () => (await getActiveSession())?.sessionId ?? null,
     isInSession: (sessionId) => {
       if (!hubClient) return Promise.reject(new Error('no hub client'));
       return hubClient.isInSession(sessionId);
     },
     endSession: handleSessionEnded,
-  });
-  await catchUpStartedSession({
-    getActiveSessionId,
     getStartedSession: () => {
       if (!hubClient) return Promise.reject(new Error('no hub client'));
       return hubClient.getStartedSession();

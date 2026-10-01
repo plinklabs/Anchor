@@ -88,8 +88,10 @@ export interface LoadedExtension {
    *  broadcasts then never reaches the extension (#354). */
   restartServiceWorker(whileStopped?: () => Promise<void>): Promise<void>;
   /** Write settings, cold-restart the SW, and wait for the hub to connect.
-   *  Returns the post-restart service worker. */
-  configure(settings?: ExtensionSettings): Promise<Worker>;
+   *  Returns the post-restart service worker. With `awaitHub: false` it
+   *  returns once the new worker runs, for a spec whose backend can't be
+   *  reached yet (#374). */
+  configure(settings?: ExtensionSettings, options?: { awaitHub?: boolean }): Promise<Worker>;
   /** Read chrome.storage.local restart-safe (#313): re-acquires the live
    *  service worker on every attempt and retries if the MV3 worker idle-
    *  terminates mid-`evaluate` (Playwright throws "Service worker restarted"
@@ -159,7 +161,10 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   const extensionId = new URL(firstWorker.url()).host;
   const blockPagePrefix = `chrome-extension://${extensionId}/block-page.html`;
 
-  async function configure(settings: ExtensionSettings = {}): Promise<Worker> {
+  async function configure(
+    settings: ExtensionSettings = {},
+    { awaitHub = true }: { awaitHub?: boolean } = {},
+  ): Promise<Worker> {
     const backendUrl = settings.backendUrl ?? BACKEND_URL;
     const devImpersonateOid = settings.devImpersonateOid ?? STUDENT_OID;
 
@@ -180,7 +185,9 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     await current.evaluate(() => chrome.runtime.reload()).catch(() => {});
     const worker = await nextWorker;
 
-    await waitForLog('hub connection established', 20_000);
+    if (awaitHub) {
+      await waitForLog('hub connection established', 20_000);
+    }
     return worker;
   }
 
