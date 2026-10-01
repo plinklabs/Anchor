@@ -443,6 +443,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionMoreApprovalOptions => 'More approval options';
 
   @override
+  String get sessionNotYours =>
+      'This session isn\'t available to you. Only the teacher who started it can open it.';
+
+  @override
   String get sessionApproveWholeClass => 'Approve for whole class';
 
   @override
@@ -802,9 +806,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get historySessionFallback => 'Session';
 
   @override
-  String pastLoadError(String error) {
-    return 'Could not load past session: $error';
-  }
+  String get pastLoadError =>
+      'Could not load this past session. Please try again.';
 
   @override
   String get pastNotAvailable => 'Session not available.';

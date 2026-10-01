@@ -82,7 +82,9 @@ jobs:
       # session) with a cached MSAL session, and expects that page and that URL
       # once the session restore resolves, not Home (#378). Signed out, it expects
       # /login?from=<page>, then that page after sign-in, and Home for a `from`
-      # that points at another site (#379).
+      # that points at another site (#379). A link to another teacher's past or
+      # live session shows the calm not-available notice, never a raw 403, and
+      # the live page never opens the hub (#382).
       - name: Run deep-link e2e (web, headless Chrome)
         run: |
           flutter drive \

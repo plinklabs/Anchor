@@ -451,6 +451,10 @@ class AppLocalizationsNl extends AppLocalizations {
   String get sessionMoreApprovalOptions => 'Meer goedkeuringsopties';
 
   @override
+  String get sessionNotYours =>
+      'Deze sessie is niet beschikbaar voor jou. Alleen de leerkracht die ze gestart heeft, kan ze openen.';
+
+  @override
   String get sessionApproveWholeClass => 'Goedkeuren voor hele klas';
 
   @override
@@ -811,9 +815,8 @@ class AppLocalizationsNl extends AppLocalizations {
   String get historySessionFallback => 'Sessie';
 
   @override
-  String pastLoadError(String error) {
-    return 'Kon de afgelopen sessie niet laden: $error';
-  }
+  String get pastLoadError =>
+      'Kon deze afgelopen sessie niet laden. Probeer het opnieuw.';
 
   @override
   String get pastNotAvailable => 'Sessie niet beschikbaar.';

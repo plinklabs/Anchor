@@ -132,6 +132,7 @@
   "sessionPendingRequests": "Openstaande verzoeken",
   "sessionRequesters": "{count, plural, =1{1 leerling — {names}} other{{count} leerlingen — {names}}}",
   "sessionMoreApprovalOptions": "Meer goedkeuringsopties",
+  "sessionNotYours": "Deze sessie is niet beschikbaar voor jou. Alleen de leerkracht die ze gestart heeft, kan ze openen.",
   "sessionApproveWholeClass": "Goedkeuren voor hele klas",
   "sessionSummary": "Sessieoverzicht",
   "sessionAllowedBundles": "Toegestane bundels",
@@ -230,7 +231,7 @@
   "historyPastSessions": "Afgelopen sessies",
   "historySessionFallback": "Sessie",
 
-  "pastLoadError": "Kon de afgelopen sessie niet laden: {error}",
+  "pastLoadError": "Kon deze afgelopen sessie niet laden. Probeer het opnieuw.",
   "pastNotAvailable": "Sessie niet beschikbaar.",
   "pastSessionFallback": "Sessie",
   "pastBundlesUsed": "Gebruikte bundels",

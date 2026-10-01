@@ -842,6 +842,12 @@ abstract class AppLocalizations {
   /// **'More approval options'**
   String get sessionMoreApprovalOptions;
 
+  /// Shown on a live or past session page when the session belongs to another teacher, so the API refuses it with a 403 (#369, #382).
+  ///
+  /// In en, this message translates to:
+  /// **'This session isn\'t available to you. Only the teacher who started it can open it.'**
+  String get sessionNotYours;
+
   /// No description provided for @sessionApproveWholeClass.
   ///
   /// In en, this message translates to:
@@ -1397,8 +1403,8 @@ abstract class AppLocalizations {
   /// No description provided for @pastLoadError.
   ///
   /// In en, this message translates to:
-  /// **'Could not load past session: {error}'**
-  String pastLoadError(String error);
+  /// **'Could not load this past session. Please try again.'**
+  String get pastLoadError;
 
   /// No description provided for @pastNotAvailable.
   ///

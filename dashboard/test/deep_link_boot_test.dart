@@ -102,16 +102,15 @@ class _FakeSessions extends SessionsApi {
     int offset = 0,
   }) async => const [];
 
-  // Every past session belongs to another teacher: its detail is 403 since
-  // #369. The backend also refuses its unblock requests, but the page leaves
-  // that second failure uncaught (#382), so only the detail fails here.
+  // Every session belongs to another teacher: since #369 its detail and its
+  // unblock requests answer 403.
   @override
   Future<SessionDetail> getSession(String sessionId) async =>
       throw ApiException(403, '');
 
   @override
   Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async =>
-      const [];
+      throw ApiException(403, '');
 }
 
 class _FakeClasses extends ClassesApi {
@@ -392,7 +391,7 @@ void main() {
 
   testWidgets(
     "a signed-out link to another teacher's session opens its page, which "
-    'reports the load error (#379)',
+    'says calmly that it is not available (#379, #382)',
     (tester) async {
       final reported = _loadAt(tester, '/history/s-other');
       final tokens = AuthTokenStore();
@@ -408,18 +407,19 @@ void main() {
 
       await _signIn(tester);
 
-      // The session detail is 403 for a teacher who doesn't own it (#369).
-      // The page shows its load error inside the shell and the nav still
-      // works: no crash, no endless spinner. How it words that error is #382.
+      // The session is 403 for a teacher who doesn't own it (#369). The page
+      // says so calmly inside the shell (#382), with nothing of the raw
+      // exception, and the nav still works: no crash, no endless spinner.
       expect(find.byType(PastSessionPage), findsOneWidget);
       expect(find.text('PAST SESSION'), findsOneWidget);
       expect(
-        find.descendant(
-          of: find.byType(PastSessionPage),
-          matching: find.byType(Text),
+        find.text(
+          "This session isn't available to you. Only the teacher who started "
+          'it can open it.',
         ),
         findsOneWidget,
       );
+      expect(find.textContaining('ApiException'), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(reported.last, '/history/s-other');
       expect(tester.takeException(), isNull);

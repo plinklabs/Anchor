@@ -168,6 +168,10 @@
   "sessionRequesters": "{count, plural, =1{1 student — {names}} other{{count} students — {names}}}",
   "@sessionRequesters": { "placeholders": { "count": { "type": "int" }, "names": { "type": "String" } } },
   "sessionMoreApprovalOptions": "More approval options",
+  "sessionNotYours": "This session isn't available to you. Only the teacher who started it can open it.",
+  "@sessionNotYours": {
+    "description": "Shown on a live or past session page when the session belongs to another teacher, so the API refuses it with a 403 (#369, #382)."
+  },
   "sessionApproveWholeClass": "Approve for whole class",
   "sessionSummary": "Session summary",
   "sessionAllowedBundles": "Allowed bundles",
@@ -292,8 +296,7 @@
   "historyPastSessions": "Past sessions",
   "historySessionFallback": "Session",
 
-  "pastLoadError": "Could not load past session: {error}",
-  "@pastLoadError": { "placeholders": { "error": { "type": "String" } } },
+  "pastLoadError": "Could not load this past session. Please try again.",
   "pastNotAvailable": "Session not available.",
   "pastSessionFallback": "Session",
   "pastBundlesUsed": "Bundles used",

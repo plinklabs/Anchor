@@ -4,6 +4,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/sessions_api.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/api_error_text.dart';
 import 'past_session_shared.dart';
 
 /// Read-only review of an ended session (AD7, #172), redesigned to the paper
@@ -39,7 +40,7 @@ class _PastSessionPageState extends State<PastSessionPage> {
   SessionDetail? _detail;
   List<UnblockRequestSummary> _unapprovedRequests = const [];
   bool _loading = true;
-  String? _error;
+  ApiErrorMessage? _error;
 
   bool _didInitialLoad = false;
 
@@ -66,6 +67,10 @@ class _PastSessionPageState extends State<PastSessionPage> {
       final unapprovedFuture = widget.sessions.unblockRequests(
         widget.sessionId,
       );
+      // Wait on both at once. Awaiting them one after the other leaves the
+      // second unwatched while the first is pending, so its failure went
+      // uncaught: for a session another teacher owns both answer 403 (#382).
+      await Future.wait<Object>([detailFuture, unapprovedFuture]);
       final detail = await detailFuture;
       final unapproved = await unapprovedFuture;
       if (!mounted) return;
@@ -82,7 +87,15 @@ class _PastSessionPageState extends State<PastSessionPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.pastLoadError('$e'));
+      // A 403 is a session another teacher owns (#369): the calm notice, the
+      // way the other pages show a 403 (#278). Never the raw exception.
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.pastLoadError,
+          notAuthorized: l10n.sessionNotYours,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -101,11 +114,9 @@ class _PastSessionPageState extends State<PastSessionPage> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(PlinkSpacing.s6),
-          child: Text(
-            _error ?? AppLocalizations.of(context).pastNotAvailable,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.error,
-            ),
+          child: ApiErrorText(
+            _error ??
+                ApiErrorMessage(AppLocalizations.of(context).pastNotAvailable),
             textAlign: TextAlign.center,
           ),
         ),
