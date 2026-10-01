@@ -34,6 +34,7 @@ public sealed class SessionsController : ControllerBase
     private readonly JoinByCodeRateLimiter _joinByCodeLimiter;
     private readonly ISessionAllowlistExpander _allowlist;
     private readonly ParticipantLiveStateResolver _liveState;
+    private readonly ActiveParticipantCache _activeParticipants;
 
     public SessionsController(
         AnchorDbContext db,
@@ -42,7 +43,8 @@ public sealed class SessionsController : ControllerBase
         TimeProvider clock,
         JoinByCodeRateLimiter joinByCodeLimiter,
         ISessionAllowlistExpander allowlist,
-        ParticipantLiveStateResolver liveState)
+        ParticipantLiveStateResolver liveState,
+        ActiveParticipantCache activeParticipants)
     {
         _db = db;
         _users = users;
@@ -51,6 +53,7 @@ public sealed class SessionsController : ControllerBase
         _joinByCodeLimiter = joinByCodeLimiter;
         _allowlist = allowlist;
         _liveState = liveState;
+        _activeParticipants = activeParticipants;
     }
 
     [HttpPost]
@@ -175,6 +178,9 @@ public sealed class SessionsController : ControllerBase
             session.EndedAt = _clock.GetUtcNow();
             await AggregateEventSummariesAsync(session.Id, cancellationToken);
             await _db.SaveChangesAsync(cancellationToken);
+            // Drop the session's cached heartbeat-validation entries (#342) so
+            // they don't outlive it in memory.
+            _activeParticipants.ClearSession(session.Id);
             await _broadcaster.SessionEndedAsync(session.Id, cancellationToken);
         }
 
@@ -706,6 +712,10 @@ public sealed class SessionsController : ControllerBase
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+        // Clearing LeftAt can make a previously-left participant active again,
+        // so refresh the heartbeat-validation cache (#342) — otherwise it keeps
+        // rejecting their pings as "left".
+        _activeParticipants.Update(participant);
         _joinByCodeLimiter.Reset(caller.Id);
 
         // Single-target SessionStarted: the agent's existing handler picks

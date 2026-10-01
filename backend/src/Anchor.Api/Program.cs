@@ -121,6 +121,7 @@ builder.Services.AddSingleton<JoinByCodeRateLimiter>();
 builder.Services.AddScoped<ISessionAllowlistExpander, SessionAllowlistExpander>();
 builder.Services.AddSingleton<ISessionBroadcaster, SessionBroadcaster>();
 builder.Services.AddSingleton<HeartbeatTracker>();
+builder.Services.AddSingleton<ActiveParticipantCache>();
 builder.Services.AddSingleton<ParticipantLiveStateResolver>();
 builder.Services.Configure<HeartbeatOptions>(builder.Configuration.GetSection(HeartbeatOptions.SectionName));
 var heartbeatSection = builder.Configuration.GetSection(HeartbeatOptions.SectionName);

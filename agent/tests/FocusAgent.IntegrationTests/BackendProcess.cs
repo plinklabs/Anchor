@@ -13,12 +13,19 @@ namespace FocusAgent.IntegrationTests;
 /// e2e DB would silently drift). Heartbeat timings are sped up via env vars so
 /// the heartbeat spec resolves in seconds instead of the ~30s production cadence
 /// would need.
+///
+/// <see cref="StopAsync"/> + <see cref="RestartAsync"/> take the backend down and
+/// bring it back on the <em>same</em> database, the way a deploy or an App
+/// Service restart does in production: every in-memory structure (heartbeat
+/// tracking, the active-participant cache, hub groups) is gone, the rows are not.
 /// </summary>
 internal sealed class BackendProcess : IAsyncDisposable
 {
     private Process? _process;
 
     public string Url => TestConfig.BackendUrl;
+
+    public bool IsRunning => _process is { HasExited: false };
 
     public async Task StartAsync(CancellationToken ct = default)
     {
@@ -28,6 +35,48 @@ internal sealed class BackendProcess : IAsyncDisposable
             if (File.Exists(path)) File.Delete(path);
         }
 
+        await LaunchAsync(build: true, ct);
+    }
+
+    /// <summary>
+    /// Start the backend again after <see cref="StopAsync"/>, keeping the
+    /// database (including its -wal journal, which holds the most recent
+    /// commits). Skips the build: the first start already built this tree.
+    /// </summary>
+    public Task RestartAsync(CancellationToken ct = default)
+    {
+        if (IsRunning)
+            throw new InvalidOperationException("Backend is still running; stop it before restarting.");
+        return LaunchAsync(build: false, ct);
+    }
+
+    /// <summary>Kill the backend process tree, as a crash or redeploy would.</summary>
+    public async Task StopAsync()
+    {
+        if (_process is null) return;
+        try
+        {
+            if (!_process.HasExited)
+            {
+                // Kill the whole tree: `dotnet run` spawns the Kestrel host as a
+                // child, which would otherwise outlive the launcher.
+                _process.Kill(entireProcessTree: true);
+                await _process.WaitForExitAsync();
+            }
+        }
+        catch
+        {
+            // best-effort teardown
+        }
+        finally
+        {
+            _process.Dispose();
+            _process = null;
+        }
+    }
+
+    private async Task LaunchAsync(bool build, CancellationToken ct)
+    {
         var psi = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = TestConfig.RepoRoot,
@@ -39,6 +88,7 @@ internal sealed class BackendProcess : IAsyncDisposable
         psi.ArgumentList.Add("--project");
         psi.ArgumentList.Add(TestConfig.BackendProject);
         psi.ArgumentList.Add("--no-launch-profile");
+        if (!build) psi.ArgumentList.Add("--no-build");
         psi.ArgumentList.Add("--urls");
         psi.ArgumentList.Add(TestConfig.BackendUrl);
 
@@ -94,28 +144,7 @@ internal sealed class BackendProcess : IAsyncDisposable
             $"Backend did not become reachable at {TestConfig.BackendUrl} within {timeout.TotalSeconds:N0}s.");
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (_process is null) return;
-        try
-        {
-            if (!_process.HasExited)
-            {
-                // Kill the whole tree: `dotnet run` spawns the Kestrel host as a
-                // child, which would otherwise outlive the launcher.
-                _process.Kill(entireProcessTree: true);
-                await _process.WaitForExitAsync();
-            }
-        }
-        catch
-        {
-            // best-effort teardown
-        }
-        finally
-        {
-            _process.Dispose();
-        }
-    }
+    public async ValueTask DisposeAsync() => await StopAsync();
 }
 
 /// <summary>
@@ -131,7 +160,15 @@ public sealed class BackendFixture : IAsyncLifetime
 
     public string Url => _backend.Url;
 
+    public bool IsRunning => _backend.IsRunning;
+
     public async Task InitializeAsync() => await _backend.StartAsync();
+
+    /// <summary>Take the shared backend down. Pair with <see cref="RestartAsync"/>.</summary>
+    public Task StopAsync() => _backend.StopAsync();
+
+    /// <summary>Bring the shared backend back up on the same database.</summary>
+    public Task RestartAsync() => _backend.RestartAsync();
 
     public async Task DisposeAsync() => await _backend.DisposeAsync();
 }
