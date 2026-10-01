@@ -50,7 +50,8 @@ class _BundlesPageState extends State<BundlesPage> {
   bool _isNewDraft = false;
 
   /// A failure of the editor's own actions (validation, save, archive,
-  /// delete), drawn in the editor under the tester.
+  /// delete), drawn in the editor under the tester. It belongs to the bundle
+  /// or draft the editor holds, and goes when the editor leaves it (#385).
   ApiErrorMessage? _error;
 
   /// A failed catalogue load: `me()` or `list()` (#384). Drawn in the list
@@ -64,6 +65,14 @@ class _BundlesPageState extends State<BundlesPage> {
   ApiErrorMessage? _openError;
   BundleSummary? _openFailed;
   bool _opening = false;
+
+  /// Which bundle or draft the editor holds, bumped each time it leaves one
+  /// ([_leaveEditor]). Save, Archive and Delete note it before they wait on
+  /// the backend, and when the answer lands after the admin has opened
+  /// another bundle or started a new one, they leave that editor alone: a
+  /// slow Save on A that fails must not show its error under B, and one that
+  /// succeeds must not put A back in the editor (#385).
+  int _editorGeneration = 0;
 
   // Editor draft state (separate so cancellable).
   final TextEditingController _nameController = TextEditingController();
@@ -164,12 +173,11 @@ class _BundlesPageState extends State<BundlesPage> {
       final detail = await widget.bundles.get(summary.id);
       if (!mounted) return;
       setState(() {
+        _leaveEditor();
         _selected = detail;
         _isNewDraft = false;
         _nameController.text = detail.name;
         _entries = detail.entries.map(_EntryRow.fromEntry).toList();
-        _testController.clear();
-        _testResult = null;
       });
     } catch (e) {
       if (!mounted) return;
@@ -192,10 +200,9 @@ class _BundlesPageState extends State<BundlesPage> {
 
   void _startNew() {
     setState(() {
+      _leaveEditor();
       _selected = null;
       _isNewDraft = true;
-      _openError = null;
-      _openFailed = null;
       _nameController.text = '';
       _entries = [
         _EntryRow(
@@ -204,22 +211,32 @@ class _BundlesPageState extends State<BundlesPage> {
           value: '',
         ),
       ];
-      _testController.clear();
-      _testResult = null;
     });
   }
 
   void _clearEditor() {
     setState(() {
+      _leaveEditor();
       _selected = null;
       _isNewDraft = false;
-      _openError = null;
-      _openFailed = null;
       _nameController.text = '';
       _entries = [];
-      _testController.clear();
-      _testResult = null;
     });
+  }
+
+  /// The editor leaves the bundle or draft it held, for another one or for
+  /// nothing. Call inside setState. What belonged to the one it leaves goes
+  /// with it: the error from its Save, Archive or Delete (#385), any of those
+  /// still waiting on the backend, a failed open, and the tester's probe and
+  /// result. A failed catalogue load ([_loadError]) is about the list, not a
+  /// bundle, so it stays.
+  void _leaveEditor() {
+    _editorGeneration++;
+    _error = null;
+    _openError = null;
+    _openFailed = null;
+    _testController.clear();
+    _testResult = null;
   }
 
   void _addEntry(BundleEntryKind kind) {
@@ -270,6 +287,7 @@ class _BundlesPageState extends State<BundlesPage> {
       return;
     }
 
+    final generation = _editorGeneration;
     setState(() {
       _saving = true;
       _error = null;
@@ -282,15 +300,22 @@ class _BundlesPageState extends State<BundlesPage> {
         saved = await widget.bundles.update(_selected!.id, name, entries);
       }
       if (!mounted) return;
-      setState(() {
-        _selected = saved;
-        _isNewDraft = false;
-        _nameController.text = saved.name;
-        _entries = saved.entries.map(_EntryRow.fromEntry).toList();
-      });
+      // If the admin has moved on, the editor holds another bundle; the
+      // catalogue reload still shows the saved one's new version.
+      if (generation == _editorGeneration) {
+        setState(() {
+          _selected = saved;
+          _isNewDraft = false;
+          _nameController.text = saved.name;
+          _entries = saved.entries.map(_EntryRow.fromEntry).toList();
+        });
+      }
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
+      // The failure belongs to the bundle or draft the admin has left, not
+      // the one in the editor now (#385).
+      if (generation != _editorGeneration) return;
       // A 409 is the one failure the admin can fix here: another bundle has
       // that name.
       setState(
@@ -311,6 +336,7 @@ class _BundlesPageState extends State<BundlesPage> {
     final l10n = AppLocalizations.of(context);
     final selected = _selected;
     if (selected == null) return;
+    final generation = _editorGeneration;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -336,10 +362,12 @@ class _BundlesPageState extends State<BundlesPage> {
     try {
       await widget.bundles.archive(selected.id);
       if (!mounted) return;
-      _clearEditor();
+      // Only clear the editor if it still holds the archived bundle (#385).
+      if (generation == _editorGeneration) _clearEditor();
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
+      if (generation != _editorGeneration) return;
       setState(
         () => _error = describeApiError(
           e,
@@ -356,6 +384,7 @@ class _BundlesPageState extends State<BundlesPage> {
     final l10n = AppLocalizations.of(context);
     final selected = _selected;
     if (selected == null) return;
+    final generation = _editorGeneration;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -384,10 +413,12 @@ class _BundlesPageState extends State<BundlesPage> {
     try {
       await widget.bundles.hardDelete(selected.id);
       if (!mounted) return;
-      _clearEditor();
+      // Only clear the editor if it still holds the deleted bundle (#385).
+      if (generation == _editorGeneration) _clearEditor();
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
+      if (generation != _editorGeneration) return;
       // A 409: a session started with this bundle since the list loaded, and
       // a used bundle can only be archived.
       setState(
