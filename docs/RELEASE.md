@@ -84,8 +84,19 @@ push to main (backend/**) ─▶ Backend CI (build + test) ─▶ [success?] ─
   run, or a successful CI run on another branch, does not deploy.
 - The deploy checks out `workflow_run.head_sha`, so the artifact it publishes is
   the exact commit CI validated — not a later tip of `main`.
-- EF Core migrations apply on app startup in non-Development environments
-  (issue #205), so there is no separate migration step in the workflow.
+- EF Core migrations are applied **by the deploy, before the new build goes
+  live** (#344): the job builds a migrations bundle (`dotnet ef migrations
+  bundle`, with `dotnet-ef` pinned in `backend/dotnet-tools.json`) and runs it
+  against the production database, then deploys. A failed migration fails the
+  job before the deploy step, so the running build keeps serving. The app itself
+  doesn't touch the database at startup. The bundle connects with the App
+  Service's own `DefaultConnection` string, which the deploy identity reads
+  through its Website Contributor role, and reaches Azure SQL through the
+  "Allow Azure services" firewall rule (GitHub's Ubuntu runners run in Azure) —
+  no extra secret, role or firewall rule. Backend CI builds the same bundle on
+  every PR so a broken one is caught before merge.
+- Deploys are serialized (`concurrency: backend-deploy`), so two runs never
+  migrate the database at the same time.
 
 ## Interaction with the PR gate (`ci-gate.yml`)
 
@@ -345,11 +356,19 @@ nested configuration keys (`AzureAd__TenantId` → `AzureAd:TenantId`).
 | `AzureAd__Audience` | JWT bearer validation | Usually `api://<api-client-id>`. **Required.** |
 | `AzureAd__ClientCredentials` (e.g. `__0__SourceType`, `__0__ClientSecret`) | OBO token acquisition for Graph directory search | **Required for the user-directory search feature** (the on-behalf-of exchange). Without it the OBO call fails at first use, not at startup. A client secret or certificate on the API app registration. |
 | `Cors__AllowedOrigins__0`, `__1`, … | CORS policy | The dashboard origin(s), e.g. the Static Web App URL. **Required** for the dashboard to call the API from the browser. |
-| `Azure__SignalR__ConnectionString` | (Azure SignalR, when enabled) | Provisioned by Bicep from the SignalR Service primary key. The API currently uses **in-process** SignalR (`AddSignalR()`), so this is dormant until the backend opts into `AddAzureSignalR()`; documented here because the infra provisions it and it is the App Service setting to populate when that switch happens. |
 
-`Heartbeat`, `EventRetention`, and `Logging` have committed defaults in
-`appsettings.json` and only need App Service overrides to tune them — not for a
-baseline deploy.
+There is no SignalR setting: the API runs SignalR **in-process** (`AddSignalR()`)
+and never reads an Azure SignalR connection string, so Bicep provisions none.
+`Azure__SignalR__ConnectionString` only comes back if the backend scales out and
+switches to `AddAzureSignalR()` — see
+[Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
+
+`Heartbeat`, `EventRetention`, `SessionAutoEnd`, and `Logging` have committed
+defaults in `appsettings.json` and only need App Service overrides to tune them —
+not for a baseline deploy. For example, `EventRetention__RawEventDays` (default
+14) sets how many days raw session events are kept, and
+`SessionAutoEnd__MaxDuration` (default `04:00:00`) how long a session may run
+before it is treated as forgotten and ended.
 
 ## Cutting a release
 
@@ -364,9 +383,9 @@ release**.
 1. Merge the change to `main` (through the normal PR + `CI Gate / gate` flow).
 2. The matching leg deploys automatically:
    - **backend** — Backend CI runs on `backend/**`; on success
-     `backend-deploy.yml` publishes the CI-validated commit to the App Service.
-     EF Core migrations apply on app startup (non-Development), so there is no
-     separate migration step.
+     `backend-deploy.yml` applies any new EF Core migrations to the production
+     database, then publishes the CI-validated commit to the App Service. If
+     the migration fails, nothing is deployed.
    - **dashboard** — a push under `dashboard/**` builds with the `vars.*`
      dart-defines and uploads to the Static Web App.
    - **website** — a push under `website/**` mirrors `website/` into the
@@ -443,19 +462,18 @@ region(s):
 ```
 
 Useful flags: `-Location` (primary region) plus per-resource overrides
-(`-SqlLocation` / `-AppServiceLocation` / `-SignalRLocation` /
-`-StaticWebAppLocation`); `-SkipInfra` to only (re-)wire GitHub against an
-existing deployment; `-EntraClientId` / `-SpaClientId` to adopt hand-built app
+(`-SqlLocation` / `-AppServiceLocation` / `-StaticWebAppLocation`);
+`-SkipInfra` to only (re-)wire GitHub against an existing deployment;
+`-EntraClientId` / `-SpaClientId` to adopt hand-built app
 registrations. See [infra/README.md](../infra/README.md) for the full flow,
 region constraints, and admin-consent (which the script attempts automatically,
 falling back to a printed command if the runner isn't a tenant admin). The steps
 below remain the fallback when you provision by hand.
 
 1. Provision Azure resources — [`infra/main.bicep`](../infra/main.bicep) (App
-   Service, Azure SQL, SignalR, Static Web App). See [infra/README.md](../infra/README.md).
+   Service, Azure SQL, Static Web App). See [infra/README.md](../infra/README.md).
 2. Configure the **App Service application settings** above (Entra IDs, CORS
-   origins, client credentials). Bicep wires the SQL connection string and SignalR
-   connection string for you.
+   origins, client credentials). Bicep wires the SQL connection string for you.
    - **Entra app roles (authorization).** The backend authorizes entirely on the
      access token's `roles` claim (`RequireRole("Teacher")` / `"Student"`), so the
      API app registration must **define** the `Teacher` and `Student` app roles

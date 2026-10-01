@@ -9,10 +9,16 @@ namespace Anchor.Api.Events;
 /// Periodically deletes raw <see cref="Event"/> rows older than the configured
 /// retention window, but only when their parent session has ended. Sessions
 /// without an <c>EndedAt</c> are never pruned: the per-(session, user, kind)
-/// summary table is populated by <c>SessionsController.End</c>, so an
-/// abandoned session would otherwise lose its events with no aggregate to
-/// fall back on. Deletes run in batches so a one-time backlog cleanup doesn't
-/// hold a long write lock against concurrent inserts.
+/// summary table is populated when a session ends (<c>SessionEnder</c>), so a
+/// running session would otherwise lose its events with no aggregate to fall
+/// back on. Sessions the teacher forgets to end don't stay running for long:
+/// <c>SessionAutoEnder</c> ends them (#345). Deletes run in batches so a
+/// one-time backlog cleanup doesn't hold a long write lock against concurrent
+/// inserts.
+/// <para>
+/// Runs are scheduled at a fixed quiet hour, never at startup (#344): see
+/// <see cref="NextRunAfter"/>.
+/// </para>
 /// </summary>
 public sealed class EventPruner : BackgroundService
 {
@@ -37,6 +43,19 @@ public sealed class EventPruner : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            // Wait first: a fresh process doesn't query the database until the
+            // next scheduled run.
+            var now = _clock.GetUtcNow();
+            try
+            {
+                await Task.Delay(NextRunAfter(now, _options.CurrentValue) - now, _clock, stoppingToken)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
             try
             {
                 await PruneOnceAsync(stoppingToken).ConfigureAwait(false);
@@ -49,16 +68,24 @@ public sealed class EventPruner : BackgroundService
             {
                 _log.LogError(ex, "EventPruner scan failed");
             }
-
-            try
-            {
-                await Task.Delay(_options.CurrentValue.PruneInterval, _clock, stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
         }
+    }
+
+    /// <summary>
+    /// The first scheduled run strictly after <paramref name="now"/>. Runs fall
+    /// on a fixed UTC grid: <see cref="EventRetentionOptions.PruneHourUtc"/>,
+    /// then every <see cref="EventRetentionOptions.PruneInterval"/> from there
+    /// (with the default daily interval, once a day at that hour). Because the
+    /// grid doesn't depend on when the process started, a restart neither runs
+    /// a prune right away nor pushes the next one back — waiting a full interval
+    /// after each start would never prune on days with several deploys.
+    /// </summary>
+    public static DateTimeOffset NextRunAfter(DateTimeOffset now, EventRetentionOptions options)
+    {
+        var interval = options.PruneInterval;
+        var anchor = DateTimeOffset.UnixEpoch.AddHours(options.EffectivePruneHourUtc);
+        var intervalsElapsed = (now - anchor).Ticks / interval.Ticks;
+        return anchor + TimeSpan.FromTicks((intervalsElapsed + 1) * interval.Ticks);
     }
 
     /// <summary>
@@ -95,8 +122,9 @@ public sealed class EventPruner : BackgroundService
         // Orphan check: rows older than the cutoff under sessions that never
         // got an EndedAt. We don't delete these — the design (#77) is
         // explicit that active sessions are protected even if they cross
-        // the 30-day mark. But a non-trivial pile of them is a signal that
-        // the End path failed for someone, so surface it.
+        // the retention window. With forgotten sessions auto-ended (#345), a
+        // non-trivial pile of them is a signal that ending failed for someone
+        // (or auto-ending is turned off), so surface it.
         var orphanCount = sqliteFallback
             ? (await db.Events.AsNoTracking()
                 .Where(e => activeSessionIds.Contains(e.SessionId))

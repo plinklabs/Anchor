@@ -33,7 +33,7 @@ Design rationale, technology decisions, data model, and phasing live in [focus-s
 │  └─────────────┬───────────────────┘    │
 │                │                        │
 │  ┌─────────────▼───────────────────┐    │
-│  │ Azure SQL (Serverless)          │    │
+│  │ Azure SQL (Standard S0)         │    │
 │  │ • users, classes, sessions      │    │
 │  │ • allowlists, events            │    │
 │  └─────────────────────────────────┘    │
@@ -54,7 +54,7 @@ Design rationale, technology decisions, data model, and phasing live in [focus-s
 | Teacher dashboard | [dashboard/](dashboard/) | Scaffolded | Flutter Web, MSAL.js |
 | Student agent | [agent/](agent/) | Scaffolded | WinUI 3 + C#, Velopack auto-update, WAM silent auth (later) |
 | Edge extension | [extension/](extension/) | URL filter + block page | TypeScript, Edge (Chromium) MV3 |
-| Azure infra | [infra/](infra/) | Scaffolded | Bicep — App Service, Azure SQL, SignalR, Static Web Apps |
+| Azure infra | [infra/](infra/) | Scaffolded | Bicep — App Service (with in-process SignalR), Azure SQL, Static Web Apps |
 
 ## Prerequisites
 

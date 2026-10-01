@@ -35,6 +35,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     private readonly TimeProvider _clock;
     private readonly IHostEnvironment _env;
     private readonly HeartbeatTracker _heartbeats;
+    private readonly ActiveParticipantCache _activeParticipants;
     private readonly ISessionBroadcaster _broadcaster;
     private readonly ILogger<SessionHub> _log;
 
@@ -44,6 +45,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         TimeProvider clock,
         IHostEnvironment env,
         HeartbeatTracker heartbeats,
+        ActiveParticipantCache activeParticipants,
         ISessionBroadcaster broadcaster,
         ILogger<SessionHub> log)
     {
@@ -52,6 +54,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         _clock = clock;
         _env = env;
         _heartbeats = heartbeats;
+        _activeParticipants = activeParticipants;
         _broadcaster = broadcaster;
         _log = log;
     }
@@ -124,6 +127,8 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         }
 
         await _db.SaveChangesAsync(ct);
+        if (participant is not null)
+            _activeParticipants.Update(participant);
         await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(session.Id), ct);
 
         // Tell the teacher's roster a member just joined (#100). The owning
@@ -152,6 +157,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             var leftAt = _clock.GetUtcNow();
             participant.LeftAt = leftAt;
             await _db.SaveChangesAsync(ct);
+            _activeParticipants.Update(participant);
 
             await _broadcaster.ParticipantStateChangedAsync(
                 new ParticipantStateChangedPayload(
@@ -233,14 +239,9 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         // The hub is the only liveness witness, so we don't want a stale or
         // finished session keeping participant slots warm. Confirm the
         // participant is actively joined before recording the ping — mirrors
-        // ReportEvent's check.
-        var isActiveParticipant = await _db.SessionParticipants.AsNoTracking().AnyAsync(
-            p => p.SessionId == sessionId &&
-                 p.UserId == user.Id &&
-                 p.JoinedAt != null &&
-                 p.LeftAt == null,
-            ct);
-        if (!isActiveParticipant)
+        // ReportEvent's check. Answered from memory (#342): this runs on every
+        // ping from every agent and extension.
+        if (!await _activeParticipants.IsActiveAsync(_db.SessionParticipants.AsNoTracking(), sessionId, user.Id, ct))
             throw new HubException("Not an active participant of this session.");
 
         _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow(), source);
@@ -251,13 +252,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         var ct = Context.ConnectionAborted;
         var user = await ResolveCurrentUserAsync(ct);
 
-        var isActiveParticipant = await _db.SessionParticipants.AnyAsync(
-            p => p.SessionId == request.SessionId &&
-                 p.UserId == user.Id &&
-                 p.JoinedAt != null &&
-                 p.LeftAt == null,
-            ct);
-        if (!isActiveParticipant)
+        if (!await _activeParticipants.IsActiveAsync(_db.SessionParticipants.AsNoTracking(), request.SessionId, user.Id, ct))
             throw new HubException("Not a participant of this session.");
 
         if (!Enum.TryParse<EventKind>(request.Kind, ignoreCase: true, out var kind))
@@ -331,10 +326,14 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         {
             var participant = await _db.SessionParticipants
                 .FirstOrDefaultAsync(p => p.SessionId == request.SessionId && p.UserId == user.Id, ct);
-            if (participant is not null && participant.LeftAt is null)
+            if (participant is not null)
             {
-                participant.LeftAt = occurredAt;
-                await _db.SaveChangesAsync(ct);
+                if (participant.LeftAt is null)
+                {
+                    participant.LeftAt = occurredAt;
+                    await _db.SaveChangesAsync(ct);
+                }
+                _activeParticipants.Update(participant);
             }
 
             _heartbeats.Clear(request.SessionId, user.Id);

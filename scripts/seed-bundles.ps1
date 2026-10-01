@@ -7,8 +7,8 @@
 .DESCRIPTION
     A fresh production deployment starts with **zero bundles**:
     `DevDataSeeder.EnsureDevBundlesAsync` only runs in Development, and the
-    production startup path just applies EF Core migrations (empty tables, no
-    seed). So after `setup.ps1` provisions an environment the bundle picker is
+    production deploy just applies EF Core migrations (empty tables, no seed).
+    So after `setup.ps1` provisions an environment the bundle picker is
     empty and the first admin has to recreate every bundle by hand before a
     session can enforce anything.
 
@@ -31,8 +31,8 @@
          (Name, Version = 1) does not already exist — so a re-run is a no-op and
          never duplicates or disturbs an admin's hand-edited catalogue.
 
-    SCHEMA PRECONDITION: the `Bundles` / `BundleEntries` tables are created by the
-    backend's startup migrations on its first deploy — `setup.ps1` provisions the
+    SCHEMA PRECONDITION: the `Bundles` / `BundleEntries` tables are created when
+    the backend's first deploy applies the migrations — `setup.ps1` provisions the
     infrastructure but does not itself deploy the app. So this script must run
     *after* the backend has been deployed at least once. If the tables are not yet
     present the script stops with a clear message rather than a raw SQL error.
@@ -233,8 +233,8 @@ try {
     try {
         $conn.Open()
 
-        # The schema is created by the backend's startup migrations on first
-        # deploy, not by setup.ps1. Fail clearly if the tables aren't there yet
+        # The schema is created when the backend's first deploy applies the
+        # migrations, not by setup.ps1. Fail clearly if the tables aren't there yet
         # rather than surfacing a raw "Invalid object name 'Bundles'".
         $schemaCheck = $conn.CreateCommand()
         $schemaCheck.CommandText =
@@ -242,7 +242,7 @@ try {
             "WHERE TABLE_NAME = 'Bundles') THEN 1 ELSE 0 END"
         if ([int]$schemaCheck.ExecuteScalar() -ne 1) {
             throw "The 'Bundles' table does not exist in '$SqlDatabaseName' yet. Its schema is " +
-                  "created by the backend's startup migrations on first deploy. Deploy the backend " +
+                  "created when the backend's first deploy applies the migrations. Deploy the backend " +
                   "(push to main) at least once, then re-run this script."
         }
 

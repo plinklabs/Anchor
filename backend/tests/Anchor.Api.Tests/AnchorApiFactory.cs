@@ -51,6 +51,9 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
                 // EventPruner.PruneOnceAsync directly to avoid racing the
                 // shared in-memory SQLite connection.
                 ["EventRetention:EnablePruner"] = "false",
+                // Same again for the auto-end of forgotten sessions (#345):
+                // tests drive SessionAutoEnder.EndForgottenSessionsAsync directly.
+                ["SessionAutoEnd:EnableAutoEnder"] = "false",
             }));
 
         builder.ConfigureTestServices(services =>

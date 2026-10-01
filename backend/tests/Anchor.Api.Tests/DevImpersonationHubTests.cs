@@ -46,7 +46,7 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
             nameof(ISessionHubClient.SessionStarted),
             payload => received.TrySetResult(payload));
 
-        await connection.StartAsync();
+        await connection.StartAndAwaitOnConnectedAsync();
 
         var payload = NewPayload();
         var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
@@ -76,7 +76,10 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
             nameof(ISessionHubClient.SessionStarted),
             payload => leaked.TrySetResult(payload));
 
-        await connection.StartAsync();
+        // Without this the broadcast can go out before the hub has put the
+        // connection in any group, and the test passes without proving that
+        // the user-group routing keeps the message away from it.
+        await connection.StartAndAwaitOnConnectedAsync();
 
         var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
         await broadcaster.SessionStartedAsync(NewPayload(), new[] { seededStudent.Id });

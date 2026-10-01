@@ -2,8 +2,9 @@ name: Infra CI
 
 # Compile and lint the Azure Bicep template so a malformed or non-linting
 # infra change is caught in CI rather than at `az deployment` time. Path-filtered
-# to infra changes (and this workflow), mirroring the other CI legs, and wired
-# into the CI Gate so it is waited on only when infra actually changes.
+# to infra changes, scripts/setup.ps1 (which passes the template's parameters)
+# and this workflow, mirroring the other CI legs, and wired into the CI Gate so
+# it is waited on only when one of those actually changes.
 #
 # `az bicep build` performs a full compile and runs the Bicep linter. The repo's
 # bicepconfig.json promotes the linter rules we care about to errors, so a lint
@@ -13,11 +14,13 @@ on:
   pull_request:
     paths:
       - 'infra/**'
+      - 'scripts/setup.ps1'
       - '.github/workflows/infra-ci.yml'
   push:
     branches: [main, develop]
     paths:
       - 'infra/**'
+      - 'scripts/setup.ps1'
       - '.github/workflows/infra-ci.yml'
 
 permissions:
@@ -62,15 +65,15 @@ jobs:
 
           # Fork-parameterization contract (issue #212): no hardcoded names/IDs.
           for p in sqlServerName sqlDatabaseName appServiceName appServicePlanName \
-                   signalrName staticWebAppName entraTenantId entraClientId \
+                   staticWebAppName entraTenantId entraClientId \
                    entraAudience entraInstance dashboardCorsOriginOverride; do
             require_param "$p"
           done
 
           # Setup-script outputs the fork bootstrap consumes.
           for o in resourceGroup appServiceName appServiceUrl staticWebAppName \
-                   swaUrl sqlServerName sqlServerFqdn sqlDatabaseName signalrName \
-                   signalrHostName entraTenantId entraClientId entraAudience \
+                   swaUrl sqlServerName sqlServerFqdn sqlDatabaseName \
+                   entraTenantId entraClientId entraAudience \
                    dashboardCorsOrigin; do
             require_output "$o"
           done
@@ -81,4 +84,71 @@ jobs:
             require_appsetting "$s"
           done
 
-          echo "Bicep parameter/output/appSetting contract verified."
+          # Production tiers (issue #341). Invariants, not exact SKUs, so a
+          # deliberate S0 -> S1 move needs no edit here.
+          resource_field() {  # $1 = resource type, $2 = jq path inside it
+            jq -r "[.resources[] | select(.type==\"$1\") | $2][0]" "$json"
+          }
+          if [ "$(resource_field Microsoft.Web/sites .properties.siteConfig.alwaysOn)" != "true" ]; then
+            echo "::error::App Service must set siteConfig.alwaysOn (keeps HeartbeatMonitor and EventPruner running)"; exit 1
+          fi
+          case "$(resource_field Microsoft.Web/serverfarms .sku.tier)" in
+            Free|Shared|Dynamic|null)
+              echo "::error::App Service plan must be Basic or higher (Always On; Free allows 5 WebSockets)"; exit 1 ;;
+          esac
+          if [ "$(resource_field Microsoft.Sql/servers/databases '.properties.maxSizeBytes | type')" != "number" ]; then
+            echo "::error::SQL database must set maxSizeBytes, or a redeploy resets it to the tier default"; exit 1
+          fi
+          case "$(resource_field Microsoft.Sql/servers/databases .sku.name)" in
+            *_S_*|null)
+              echo "::error::SQL database must use a fixed-price tier, not serverless (connected agents keep it awake)"; exit 1 ;;
+          esac
+
+          # Realtime runs in-process on the App Service (AddSignalR(), issue #343),
+          # so an Azure SignalR Service would be a billed resource the API never
+          # talks to. Add the resource and its connection-string setting back only
+          # together with AddAzureSignalR() for a scale-out, and update this check.
+          if [ "$(jq '[.resources[] | select(.type | ascii_downcase | startswith("microsoft.signalrservice/signalr"))] | length' "$json")" != "0" ]; then
+            echo "::error::template provisions an Azure SignalR Service, but the API runs SignalR in-process (AddSignalR()); see infra/README.md#realtime-in-process-signalr"; exit 1
+          fi
+          if jq -e '[.resources[] | select(.type=="Microsoft.Web/sites") | .properties.siteConfig.appSettings[].name] | index("Azure__SignalR__ConnectionString")' "$json" >/dev/null; then
+            echo "::error::App Service sets Azure__SignalR__ConnectionString, but the API never reads it (in-process SignalR)"; exit 1
+          fi
+
+          echo "Bicep parameter/output/appSetting/tier contract verified."
+
+      # scripts/setup.ps1 is the deploy path operators use. `az deployment`
+      # rejects a parameter the template doesn't declare ("unrecognized template
+      # parameter"), so a parameter removed or renamed in main.bicep but still
+      # passed by the script fails every bootstrap at deploy time (e.g.
+      # signalrLocation, dropped in #343).
+      - name: Assert setup.ps1 passes only template parameters
+        shell: pwsh
+        run: |
+          $template = Get-Content -Raw "$env:RUNNER_TEMP/main.json" | ConvertFrom-Json -AsHashtable
+          $declared = @($template.parameters.Keys)
+
+          # Every "name=value" string the script adds to $deployArgs (the argument
+          # list of `az deployment group create`).
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/setup.ps1), [ref]$null, [ref]$null)
+          $assignments = $ast.FindAll({
+              param($n)
+              $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+              $n.Left.Extent.Text -eq '$deployArgs'
+            }, $true)
+          $passed = $assignments |
+            ForEach-Object { $_.Right.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or $n -is [System.Management.Automation.Language.ExpandableStringExpressionAst] }, $true) } |
+            ForEach-Object { if ($_.Value -match '^([A-Za-z][A-Za-z0-9]*)=') { $Matches[1] } } |
+            Sort-Object -Unique
+
+          if (-not $passed) {
+            Write-Output '::error::found no name=value parameters in setup.ps1 $deployArgs; update this check'
+            exit 1
+          }
+          $unknown = @($passed | Where-Object { $_ -notin $declared })
+          if ($unknown) {
+            Write-Output "::error::setup.ps1 passes parameters main.bicep doesn't declare: $($unknown -join ', ')"
+            exit 1
+          }
+          Write-Output "setup.ps1 deploy parameters all declared by the template: $($passed -join ', ')"

@@ -8,11 +8,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace Anchor.Api.Tests;
 
 /// <summary>
-/// Guards issue #205: on non-Development startup the API must apply EF Core
-/// migrations (Azure SQL), while Development keeps EnsureCreated + dev seed and
-/// Test does nothing. The branching is exercised through a fake operations
-/// implementation so it runs without a real SqlServer instance (the committed
-/// SqlServer migrations can't run on the SQLite providers used here).
+/// Development startup builds the SQLite schema (EnsureCreated) and seeds dev
+/// data; Test does nothing; Production and every other environment leave the
+/// database alone, because the deploy pipeline applies migrations (#344,
+/// replacing the startup migrations of #205). The branching is exercised
+/// through a fake operations implementation so no real database is involved.
 /// </summary>
 public sealed class StartupDatabaseInitializerTests
 {
@@ -20,9 +20,6 @@ public sealed class StartupDatabaseInitializerTests
     {
         public int EnsureCreatedCalls { get; private set; }
         public int SeedCalls { get; private set; }
-        public int MigrateCalls { get; private set; }
-        public int GetPendingCalls { get; private set; }
-        public IReadOnlyList<string> PendingMigrations { get; set; } = Array.Empty<string>();
 
         public Task EnsureCreatedAsync(AnchorDbContext db)
         {
@@ -35,18 +32,6 @@ public sealed class StartupDatabaseInitializerTests
             SeedCalls++;
             return Task.CompletedTask;
         }
-
-        public Task<IEnumerable<string>> GetPendingMigrationsAsync(AnchorDbContext db)
-        {
-            GetPendingCalls++;
-            return Task.FromResult<IEnumerable<string>>(PendingMigrations);
-        }
-
-        public Task MigrateAsync(AnchorDbContext db)
-        {
-            MigrateCalls++;
-            return Task.CompletedTask;
-        }
     }
 
     private sealed class FakeHostEnvironment : IHostEnvironment
@@ -57,51 +42,44 @@ public sealed class StartupDatabaseInitializerTests
         public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = null!;
     }
 
-    private static ServiceProvider BuildServices()
+    private static ServiceProvider BuildServices(bool withDbContext)
     {
         var services = new ServiceCollection();
-        // A real (SQLite) AnchorDbContext so CreateScope/GetRequiredService
-        // resolves; the fake operations never touch its schema.
-        services.AddDbContext<AnchorDbContext>(o => o.UseSqlite("Data Source=:memory:"));
+        if (withDbContext)
+        {
+            // A real (SQLite) AnchorDbContext so CreateScope/GetRequiredService
+            // resolves; the fake operations never touch its schema.
+            services.AddDbContext<AnchorDbContext>(o => o.UseSqlite("Data Source=:memory:"));
+        }
         return services.BuildServiceProvider();
     }
 
-    private static async Task RunAsync(string environment, FakeStartupDatabaseOperations ops)
+    private static async Task RunAsync(
+        string environment, FakeStartupDatabaseOperations ops, bool withDbContext = true)
     {
-        await using var provider = BuildServices();
+        await using var provider = BuildServices(withDbContext);
         var env = new FakeHostEnvironment { EnvironmentName = environment };
         await StartupDatabaseInitializer.InitializeAsync(
             provider, env, ops, NullLogger.Instance);
     }
 
-    [Fact]
-    public async Task Production_AppliesMigrations_AndDoesNotEnsureCreated()
+    [Theory]
+    [InlineData("Production")]
+    [InlineData("Staging")]
+    public async Task NonDevelopment_DoesNotTouchTheDatabase(string environment)
     {
-        var ops = new FakeStartupDatabaseOperations
-        {
-            PendingMigrations = new[] { "20260522203145_InitialCreate" },
-        };
+        var ops = new FakeStartupDatabaseOperations();
 
-        await RunAsync(Environments.Production, ops);
+        // No AnchorDbContext registered: resolving one would throw, so this
+        // also proves startup doesn't create a context at all.
+        await RunAsync(environment, ops, withDbContext: false);
 
-        Assert.Equal(1, ops.MigrateCalls);
         Assert.Equal(0, ops.EnsureCreatedCalls);
         Assert.Equal(0, ops.SeedCalls);
     }
 
     [Fact]
-    public async Task NonDevelopmentCustomEnvironment_AppliesMigrations()
-    {
-        var ops = new FakeStartupDatabaseOperations();
-
-        await RunAsync("Staging", ops);
-
-        Assert.Equal(1, ops.MigrateCalls);
-        Assert.Equal(0, ops.EnsureCreatedCalls);
-    }
-
-    [Fact]
-    public async Task Development_EnsureCreatedAndSeeds_WithoutMigrating()
+    public async Task Development_EnsureCreatedAndSeeds()
     {
         var ops = new FakeStartupDatabaseOperations();
 
@@ -109,7 +87,6 @@ public sealed class StartupDatabaseInitializerTests
 
         Assert.Equal(1, ops.EnsureCreatedCalls);
         Assert.Equal(1, ops.SeedCalls);
-        Assert.Equal(0, ops.MigrateCalls);
     }
 
     [Fact]
@@ -117,27 +94,9 @@ public sealed class StartupDatabaseInitializerTests
     {
         var ops = new FakeStartupDatabaseOperations();
 
-        await RunAsync("Test", ops);
+        await RunAsync("Test", ops, withDbContext: false);
 
         Assert.Equal(0, ops.EnsureCreatedCalls);
         Assert.Equal(0, ops.SeedCalls);
-        Assert.Equal(0, ops.MigrateCalls);
-        Assert.Equal(0, ops.GetPendingCalls);
-    }
-
-    [Fact]
-    public async Task Production_NoPendingMigrations_StillCallsMigrate()
-    {
-        // MigrateAsync is a no-op when nothing is pending; calling it
-        // unconditionally keeps the "fresh DB gets full schema" guarantee.
-        var ops = new FakeStartupDatabaseOperations
-        {
-            PendingMigrations = Array.Empty<string>(),
-        };
-
-        await RunAsync(Environments.Production, ops);
-
-        Assert.Equal(1, ops.MigrateCalls);
-        Assert.Equal(1, ops.GetPendingCalls);
     }
 }

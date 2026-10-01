@@ -49,6 +49,10 @@
          All are looked up by display name first, so re-runs reuse them.
       4. Deploy infra/main.bicep into the resource group, passing the Entra
          tenant/client IDs so the App Service application settings are wired.
+         The template provisions billed tiers sized for a school rollout, not
+         free ones: an App Service plan B1 (Always On) and Azure SQL Standard
+         S0, about EUR 24/month together (#341). Re-running against an
+         environment on older tiers moves it to these. See infra/README.md.
       5. Read the deployment outputs (resource names + URLs).
       6. Fetch the Static Web App deployment token and the App Service publish
          profile.
@@ -80,15 +84,15 @@
 
 .PARAMETER SqlLocation
 .PARAMETER AppServiceLocation
-.PARAMETER SignalRLocation
 .PARAMETER StaticWebAppLocation
     Per-resource region overrides, passed straight through to the matching Bicep
     parameters. When omitted, an *existing* resource keeps its current region
     (read live, so a re-run never tries to move it — region is immutable in
     Azure) and a not-yet-created resource falls back to -Location. Use these to
     reproduce a split layout (e.g. the live arcadia env spans Belgium Central +
-    West Europe) or to place SignalR / the Static Web App in a region where they
-    are offered.
+    West Europe) or to place the Static Web App in a region where it is
+    offered. There is no SignalR override: realtime runs in-process on the App
+    Service, so the template provisions no SignalR Service (#343).
 
 .PARAMETER UniqueSuffix
     Suffix for globally-unique resource names, passed straight through to the
@@ -182,8 +186,8 @@
     After provisioning, seed the curated example bundles (Microsoft 365 /
     Smartschool / Bingel) into the database by invoking scripts/seed-bundles.ps1
     (#292), so a fresh fork's bundle picker isn't empty. Off by default. Best
-    effort: the `Bundles` table is only created by the backend's startup
-    migrations on its first deploy, and setup.ps1 wires GitHub but does not
+    effort: the `Bundles` table is only created when the backend's first deploy
+    applies the migrations, and setup.ps1 wires GitHub but does not
     itself deploy — so on an initial provisioning run (before any push to `main`)
     the schema usually isn't there yet and the step prints a note telling you to
     run scripts/seed-bundles.ps1 once the backend has deployed. Re-running setup
@@ -231,7 +235,6 @@ param(
     [string]$Location = 'westeurope',
     [string]$SqlLocation,
     [string]$AppServiceLocation,
-    [string]$SignalRLocation,
     [string]$StaticWebAppLocation,
     # Not [Parameter(Mandatory)] any more: a bare run prompts for it through the
     # Spectre intake below, which would never get a turn if PowerShell's own
@@ -1146,7 +1149,6 @@ Write-Step 'Discover existing environment'
 
 $sqlServerNameGuess    = "anchor-sql-$UniqueSuffix"
 $appServiceNameGuess   = "anchor-api-$UniqueSuffix"
-$signalrNameGuess      = 'anchor-signalr'
 $staticWebAppNameGuess = 'anchor-dashboard'
 
 # Per-resource region: explicit override > existing resource's region > -Location.
@@ -1161,10 +1163,9 @@ function Resolve-ResourceLocation {
     return $Location
 }
 
-$resolvedSqlLocation     = Resolve-ResourceLocation $SqlLocation          $sqlServerNameGuess    'Microsoft.Sql/servers'
-$resolvedAppLocation     = Resolve-ResourceLocation $AppServiceLocation   $appServiceNameGuess   'Microsoft.Web/sites'
-$resolvedSignalrLocation = Resolve-ResourceLocation $SignalRLocation      $signalrNameGuess      'Microsoft.SignalRService/SignalR'
-$resolvedSwaLocation     = Resolve-ResourceLocation $StaticWebAppLocation $staticWebAppNameGuess 'Microsoft.Web/staticSites'
+$resolvedSqlLocation = Resolve-ResourceLocation $SqlLocation          $sqlServerNameGuess    'Microsoft.Sql/servers'
+$resolvedAppLocation = Resolve-ResourceLocation $AppServiceLocation   $appServiceNameGuess   'Microsoft.Web/sites'
+$resolvedSwaLocation = Resolve-ResourceLocation $StaticWebAppLocation $staticWebAppNameGuess 'Microsoft.Web/staticSites'
 
 # SQL admin login: explicit override > existing server's login > Bicep default.
 # Azure does not allow changing an existing server's administrator login, so a
@@ -1516,7 +1517,6 @@ else {
         "entraTenantId=$tenantId",
         "sqlServerLocation=$resolvedSqlLocation",
         "appServiceLocation=$resolvedAppLocation",
-        "signalrLocation=$resolvedSignalrLocation",
         "staticWebAppLocation=$resolvedSwaLocation"
     )
     if ($apiClientId) { $deployArgs += "entraClientId=$apiClientId" }
@@ -1835,8 +1835,8 @@ else {
 # A fresh production DB starts with zero bundles (DevDataSeeder is dev-only), so
 # the bundle picker is empty until an admin recreates them by hand (#292). When
 # -SeedBundles is set, invoke the companion seed-bundles.ps1 to insert the real
-# example catalogue. Best-effort: the schema is created by the backend's startup
-# migrations on its FIRST deploy, which setup.ps1 does not perform — so on an
+# example catalogue. Best-effort: the schema is created when the backend's FIRST
+# deploy applies the migrations, which setup.ps1 does not perform — so on an
 # initial run (before any push to main) the tables aren't there yet and the
 # script stops with a clear note. We downgrade that to a [MANUAL] reminder so the
 # overall provisioning still reports success; the operator re-runs the seed (or

@@ -33,3 +33,16 @@ jobs:
 
       - name: Test
         run: dotnet test Anchor.sln --configuration Release --no-build --verbosity normal
+
+      # backend-deploy.yml applies migrations with this bundle (#344). Building
+      # it here catches a broken bundle (e.g. dotnet-ef out of step with the EF
+      # Core packages) on the PR instead of in the deploy after merge.
+      - name: Build migrations bundle
+        run: |
+          dotnet tool restore
+          dotnet ef migrations bundle \
+            --project src/Anchor.Infrastructure/Anchor.Infrastructure.csproj \
+            --startup-project src/Anchor.Api/Anchor.Api.csproj \
+            --configuration Release \
+            --output "$RUNNER_TEMP/efbundle" \
+            --force
