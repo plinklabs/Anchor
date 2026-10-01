@@ -273,9 +273,10 @@ fast at startup with a clear error message if any are empty.
 
 ### Per-deployment config (release builds)
 
-`Backend:BaseUrl` and `Auth` are **substitutable per deployment** so a fork's
-published agent targets its own backend + Entra without editing the committed
-dev defaults (#203). The agent loads `appsettings.{Environment}.json` *after*
+`Backend:BaseUrl`, `Auth` and `Update:GithubRepoUrl` are **substitutable per
+deployment** so a fork's published agent targets its own backend + Entra, and
+updates from its own GitHub Releases, without editing the committed dev
+defaults (#203, #360). The agent loads `appsettings.{Environment}.json` *after*
 `appsettings.json`, where the environment comes from `DOTNET_ENVIRONMENT` /
 `ASPNETCORE_ENVIRONMENT`, defaulting to the build configuration: **Debug ⇒
 Development**, **Release ⇒ Production** (an explicit env var always wins). So:
@@ -285,9 +286,11 @@ Development**, **Release ⇒ Production** (an explicit env var always wins). So:
   unchanged.
 - A **release build** runs in **Production** and loads
   `appsettings.Production.json`. That file is committed as a *template* whose
-  `Backend:BaseUrl` + `Auth` values are `#{…}#` placeholders; the release /
-  Velopack pack step substitutes them so the published agent points at the
-  fork's backend. Any key it omits falls back to `appsettings.json`.
+  `Backend:BaseUrl`, `Auth` and `Update:GithubRepoUrl` values are `#{…}#`
+  placeholders; the release / Velopack pack step substitutes them so the
+  published agent points at the fork's backend and checks the releasing repo's
+  Releases for updates (`agent-release.yml` derives that repo from
+  `github.repository`). Any key it omits falls back to `appsettings.json`.
 
 To smoke-test the Production layer locally, fill the placeholders in a copy of
 `appsettings.Production.json` next to the built exe and launch with

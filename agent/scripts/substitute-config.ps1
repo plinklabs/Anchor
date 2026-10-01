@@ -7,12 +7,20 @@
 
 .DESCRIPTION
     appsettings.Production.json is committed as a TEMPLATE (#203): its
-    Backend:BaseUrl + Auth values are `#{TOKEN}#` placeholders so the committed
-    repo never hardcodes a single fork's backend/Entra. The release pipeline
-    runs this script against the *published* copy of that file (next to the
-    built exe) to bake in the deploying fork's values before `vpk pack`, so the
-    shipped agent targets the right backend the moment it's installed — with no
-    source edit and no runtime config server.
+    Backend:BaseUrl, Auth and Update:GithubRepoUrl values are `#{TOKEN}#`
+    placeholders so the committed repo never hardcodes a single fork's
+    backend/Entra or update feed. The release pipeline runs this script against
+    the *published* copy of that file (next to the built exe) to bake in the
+    deploying fork's values before `vpk pack`, so the shipped agent targets the
+    right backend the moment it's installed — with no source edit and no runtime
+    config server.
+
+    UPDATE_REPO_URL is the GitHub repository whose Releases the installed agent
+    checks for updates (#360). agent-release.yml sets it to the repository
+    running the release (https://github.com/<github.repository>), the same repo
+    it uploads the Velopack feed to, so a fork's agents never update from
+    upstream's Releases. Like every token in the template it is required: the
+    build fails if it is missing or blank.
 
     Each placeholder is filled from an environment variable of the SAME name as
     the token (e.g. `#{BACKEND_BASE_URL}#` <- $env:BACKEND_BASE_URL). This is
@@ -55,6 +63,7 @@
 .EXAMPLE
     $env:BACKEND_BASE_URL = 'https://anchor-api-arcadia.azurewebsites.net'
     $env:AUTH_TENANT_ID   = '...'; $env:AUTH_CLIENT_ID = '...'; $env:AUTH_SCOPE = 'api://.../.default'
+    $env:UPDATE_REPO_URL  = 'https://github.com/yourschool/Anchor'
     ./substitute-config.ps1 -Path ./publish/appsettings.Production.json
 #>
 [CmdletBinding()]

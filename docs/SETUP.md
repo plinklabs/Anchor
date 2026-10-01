@@ -651,6 +651,11 @@ gh variable set AGENT_CLIENT_ID   --repo OWNER/REPO --body "$AGENT_CLIENT_ID"
 > with `WAM_provider_error_…` (`0xCAA2000x`) (#271). The agent shares
 > `ENTRA_TENANT_ID` and `API_SCOPE`, only the client id differs.
 
+> **No variable for the agent's update feed.** `agent-release.yml` bakes the
+> repository running the release (`github.repository`) into the agent as its
+> update source, so agents installed from your fork's `Setup.exe` update from your
+> fork's Releases, not upstream's (#360).
+
 > **`API_SCOPE` form.** With **two** app registrations the script sets
 > `<entraAudience>/access_as_user` (i.e. `api://<api-client-id>/access_as_user`) —
 > the scope you exposed in Step 3a. When the SPA and API **share** one

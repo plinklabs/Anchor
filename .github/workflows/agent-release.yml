@@ -38,6 +38,14 @@ name: Agent Release
 # it is a real, populated variable — substitute-config.ps1 still fails the build
 # loudly if it is ever missing/blank.
 #
+# Update feed: the template's Update:GithubRepoUrl is substituted from
+# UPDATE_REPO_URL, which is NOT a repo variable. It is derived from the
+# repository running this workflow (github.repository) and is the same URL the
+# publish step uploads the Velopack feed to, so an installed agent only ever
+# updates from the Releases of the repo that built it. Before #360 the agent
+# fell back to the plinklabs/Anchor default, so a fork's agents took upstream's
+# next release, and with it upstream's backend and Entra config.
+#
 # Signing: none. The agent ships unsigned, so first install shows one SmartScreen
 # "More info -> Run anyway" prompt (#209 scope decision). Code-signing is a later
 # upgrade.
@@ -61,6 +69,11 @@ jobs:
     # Windows runner: the agent is WinUI 3 / Windows-only and the publish builds
     # the real win-x64 self-contained app, same as agent-e2e.yml.
     runs-on: windows-latest
+    env:
+      # The repo whose Releases carry this build's update feed (#360). Read by
+      # the pack step (baked into Update:GithubRepoUrl) and the publish step
+      # (vpk --repoUrl), so the two can't point at different repos.
+      UPDATE_REPO_URL: https://github.com/${{ github.repository }}
     steps:
       # submodules: the agent references the design-system WinUI binding from a
       # git submodule (agent/external/plink-design-system); without it the build
@@ -97,7 +110,8 @@ jobs:
         # Per-deployment config substituted into the published
         # appsettings.Production.json by substitute-config.ps1 (#203). Each var
         # is non-secret per-deployment config (a fork's own backend/Entra),
-        # hence vars.* — see the workflow header.
+        # hence vars.* — see the workflow header. UPDATE_REPO_URL comes from the
+        # job env above.
         env:
           BACKEND_BASE_URL: ${{ vars.API_BASE_URL }}
           AUTH_TENANT_ID: ${{ vars.ENTRA_TENANT_ID }}
@@ -109,11 +123,12 @@ jobs:
 
       # Upload the Velopack output (Setup.exe + full/delta nupkg + RELEASES feed)
       # to the GitHub Release for this tag. Installed agents read this feed to
-      # auto-update (delta) on the next tag.
+      # auto-update (delta) on the next tag. --repoUrl is the same
+      # UPDATE_REPO_URL the pack step baked into the agent's config.
       - name: Publish to GitHub Releases
         run: >-
           vpk upload github
-          --repoUrl https://github.com/${{ github.repository }}
+          --repoUrl ${{ env.UPDATE_REPO_URL }}
           --token ${{ secrets.GITHUB_TOKEN }}
           --tag ${{ github.ref_name }}
           --releaseName ${{ github.ref_name }}

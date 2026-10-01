@@ -70,8 +70,12 @@ public sealed record UpdateSettings
     /// <summary>
     /// The GitHub repository whose Releases carry the Velopack feed (the
     /// <c>RELEASES</c> / delta+full nupkg the release pipeline uploads, #209).
-    /// Defaults to this project's repo; a fork ships its own here so its installed
-    /// agents update from the fork's releases, not upstream.
+    /// A release build always overrides this default: the pack step bakes the
+    /// releasing repository into <c>appsettings.Production.json</c>
+    /// (<c>#{UPDATE_REPO_URL}#</c>, set by agent-release.yml from
+    /// <c>github.repository</c>), so a fork's installed agents update from the
+    /// fork's Releases, not upstream's (#360). The default only applies to builds
+    /// that skip that layer, such as <c>dotnet run</c>, which never update anyway.
     /// </summary>
     public string GithubRepoUrl { get; init; } = "https://github.com/plinklabs/Anchor";
 
