@@ -46,7 +46,7 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
             nameof(ISessionHubClient.SessionStarted),
             payload => received.TrySetResult(payload));
 
-        await connection.StartAsync();
+        await StartAndAwaitOnConnectedAsync(connection);
 
         var payload = NewPayload();
         var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
@@ -76,7 +76,10 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
             nameof(ISessionHubClient.SessionStarted),
             payload => leaked.TrySetResult(payload));
 
-        await connection.StartAsync();
+        // Without this the broadcast can go out before the hub has put the
+        // connection in any group, and the test passes without proving that
+        // the user-group routing keeps the message away from it.
+        await StartAndAwaitOnConnectedAsync(connection);
 
         var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
         await broadcaster.SessionStartedAsync(NewPayload(), new[] { seededStudent.Id });
@@ -105,6 +108,26 @@ public sealed class DevImpersonationHubTests : IClassFixture<DevImpersonationHub
         db.Users.Add(user);
         await db.SaveChangesAsync();
         return user;
+    }
+
+    /// <summary>
+    /// Starts the connection and returns once the server has finished
+    /// <see cref="SessionHub.OnConnectedAsync"/>, which is where the connection
+    /// joins its <c>user:{id}</c> group. <see cref="HubConnection.StartAsync"/>
+    /// alone isn't enough (#351): it completes when the handshake response
+    /// arrives, and the server sends that response before it runs
+    /// <c>OnConnectedAsync</c>, so a broadcast sent straight after it can find
+    /// the group still empty. The server dispatches a connection's invocations
+    /// only after <c>OnConnectedAsync</c> has completed, so the reply to any
+    /// invocation proves the join happened. <c>LeaveSession</c> for a session
+    /// that doesn't exist changes nothing on the server (no participant row, no
+    /// broadcast, no group to leave), and it throws if the connection didn't
+    /// resolve to a provisioned user.
+    /// </summary>
+    private static async Task StartAndAwaitOnConnectedAsync(HubConnection connection)
+    {
+        await connection.StartAsync();
+        await connection.InvokeAsync(nameof(SessionHub.LeaveSession), Guid.NewGuid());
     }
 
     private HubConnection BuildConnection(Guid oid, string role, Guid? impersonateOid)
