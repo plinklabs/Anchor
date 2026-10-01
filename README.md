@@ -33,7 +33,7 @@ Design rationale, technology decisions, data model, and phasing live in [focus-s
 │  └─────────────┬───────────────────┘    │
 │                │                        │
 │  ┌─────────────▼───────────────────┐    │
-│  │ Azure SQL (Serverless)          │    │
+│  │ Azure SQL (Standard S0)         │    │
 │  │ • users, classes, sessions      │    │
 │  │ • allowlists, events            │    │
 │  └─────────────────────────────────┘    │

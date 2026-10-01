@@ -81,4 +81,24 @@ jobs:
             require_appsetting "$s"
           done
 
-          echo "Bicep parameter/output/appSetting contract verified."
+          # Production tiers (issue #341). Invariants, not exact SKUs, so a
+          # deliberate S0 -> S1 move needs no edit here.
+          resource_field() {  # $1 = resource type, $2 = jq path inside it
+            jq -r "[.resources[] | select(.type==\"$1\") | $2][0]" "$json"
+          }
+          if [ "$(resource_field Microsoft.Web/sites .properties.siteConfig.alwaysOn)" != "true" ]; then
+            echo "::error::App Service must set siteConfig.alwaysOn (keeps HeartbeatMonitor and EventPruner running)"; exit 1
+          fi
+          case "$(resource_field Microsoft.Web/serverfarms .sku.tier)" in
+            Free|Shared|Dynamic|null)
+              echo "::error::App Service plan must be Basic or higher (Always On; Free allows 5 WebSockets)"; exit 1 ;;
+          esac
+          if [ "$(resource_field Microsoft.Sql/servers/databases '.properties.maxSizeBytes | type')" != "number" ]; then
+            echo "::error::SQL database must set maxSizeBytes, or a redeploy resets it to the tier default"; exit 1
+          fi
+          case "$(resource_field Microsoft.Sql/servers/databases .sku.name)" in
+            *_S_*|null)
+              echo "::error::SQL database must use a fixed-price tier, not serverless (connected agents keep it awake)"; exit 1 ;;
+          esac
+
+          echo "Bicep parameter/output/appSetting/tier contract verified."

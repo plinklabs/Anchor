@@ -49,6 +49,10 @@
          All are looked up by display name first, so re-runs reuse them.
       4. Deploy infra/main.bicep into the resource group, passing the Entra
          tenant/client IDs so the App Service application settings are wired.
+         The template provisions billed tiers sized for a school rollout, not
+         free ones: an App Service plan B1 (Always On) and Azure SQL Standard
+         S0, about EUR 24/month together (#341). Re-running against an
+         environment on older tiers moves it to these. See infra/README.md.
       5. Read the deployment outputs (resource names + URLs).
       6. Fetch the Static Web App deployment token and the App Service publish
          profile.

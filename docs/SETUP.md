@@ -31,11 +31,16 @@ One Azure resource group containing:
 | --- | --- | --- | --- |
 | Resource group | — | — | `anchor-rg` |
 | SQL logical server | Azure SQL | — | `anchor-sql-<suffix>` |
-| SQL database | Azure SQL DB | GP Serverless, 0.5–2 vCores | `anchordb` |
-| App Service (backend API) | App Service | F1 Free, Linux | `anchor-api-<suffix>` |
-| App Service Plan | App Service Plan | F1 Free, Linux | `ASP-anchorrg-b49b` |
+| SQL database | Azure SQL DB | Standard S0 (10 DTU), 250 GB max | `anchordb` |
+| App Service (backend API) | App Service | Basic B1, Linux, Always On | `anchor-api-<suffix>` |
+| App Service Plan | App Service Plan | Basic B1, Linux | `ASP-anchorrg-b49b` |
 | SignalR Service | SignalR | Free | `anchor-signalr` |
 | Static Web App (dashboard) | Static Web App | Free | `anchor-dashboard` |
+
+The App Service plan and database tiers are sized for a school rollout (~1,000
+students, ~300 in a session at once) and cost ~€24/month together; see
+[Production tiers and scaling](../infra/README.md#production-tiers-and-scaling)
+for why, and for the S1 fallback.
 
 Plus **three Entra ID (Azure AD) app registrations** — these are *not* deployed by
 Bicep; they are created in Entra and their IDs are passed *into* the deploy:

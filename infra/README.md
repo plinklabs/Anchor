@@ -1,6 +1,6 @@
 # Anchor — Azure Infrastructure
 
-All resources live in a single resource group. Everything starts on free tiers; upgrade SignalR to Standard when you test with a real class (20+ students). Region defaults to the resource group's region and can be set per resource — see [Regions](#regions).
+All resources live in a single resource group. The backend runs on a Basic B1 App Service plan and Azure SQL Standard S0, sized for a school rollout (~€24/month — see [Production tiers and scaling](#production-tiers-and-scaling)); SignalR and the Static Web App start on free tiers. Upgrade SignalR to Standard when you test with a real class (20+ students). Region defaults to the resource group's region and can be set per resource — see [Regions](#regions).
 
 ## Recommended: one-command bootstrap (`scripts/setup.ps1`)
 
@@ -182,8 +182,9 @@ az group delete --name anchor-rg --yes
 #### After teardown — what survives, and recreating
 
 Deleting the resource group removes the Azure resources but **not** everything
-the environment depends on. All resources are free-tier, so deleting and
-recreating costs nothing — but mind these:
+the environment depends on. The B1 plan and the S0 database bill by the hour,
+so deleting stops their charges and recreating costs nothing extra (the
+database's data is gone, of course) — but mind these:
 
 - **Entra app registrations and their admin consent live in Entra ID, not in
   the resource group**, so `az group delete` leaves them untouched (you won't
@@ -241,6 +242,35 @@ so nothing is published and the dashboard URL returns a bare **404** (issue
    and the API's `Cors__AllowedOrigins__0` to it (re-running `scripts/setup.ps1`
    does both), then re-run the deploy.
 
+### Production tiers and scaling
+
+The template provisions the tiers a school rollout needs: ~1,000 students, ~300
+of them in a session at any time during school hours (#341).
+
+- **App Service plan: Basic B1 (Linux), with Always On.** F1 caps a Linux app
+  at 5 concurrent WebSockets and 60 CPU-minutes a day, and every student holds
+  two connections (agent + extension). B1 allows ~50k WebSockets per instance,
+  which covers the ~1,600 peak connections with in-process SignalR. Always On
+  keeps the process loaded between requests, so the background services
+  (`HeartbeatMonitor`, `EventPruner`) keep running; F1 doesn't offer it.
+- **Azure SQL: Standard S0 (10 DTU), `maxSizeBytes` 250 GB.** Serverless only
+  pays off while the database sleeps most of the time, but every agent or
+  extension (re)connect resolves the user in the database, so with students
+  connected it stays awake through the school day (~€70–240/month at minimum
+  capacity). S0 is a flat price. Estimated storage at rollout scale is ~1.5 GB
+  of raw events (30-day retention) plus ~0.2 GB per school year of session
+  summaries and participants, well inside the 250 GB S0 includes. The template
+  sets `maxSizeBytes` explicitly: without it, a deploy applies the tier's default
+  max size (the serverless database got 32 GB that way).
+
+**Load test before go-live** with ~300 simulated students (agent + extension
+heartbeats, ~40 foreground changes per student per hour) to confirm B1 + S0 —
+tracked in #346. If the database runs out of DTUs, move to **S1** (~€31.60/month):
+change the `sku.name` of `sqlDb` in `main.bicep` and redeploy. Moving between
+S0, S1 and S2 is an online operation, and all three include 250 GB. Change the
+template rather than only running `az sql db update`, or the next redeploy
+scales the database back down.
+
 ### Upgrading SignalR for pilot
 
 When you need more than 20 connections, change the SKU in `main.bicep`:
@@ -278,14 +308,11 @@ Then redeploy with the same command.
   - Authentication: SQL authentication
   - Admin login + password — save these somewhere safe
 - Elastic pool: No
-- Workload environment: **Development**
+- Workload environment: **Production**
 - Compute + storage → click **Configure database**:
-  - Service tier: **General Purpose**
-  - Compute tier: **Serverless**
-  - Min vCores: 0.5
-  - Max vCores: 2
-  - Auto-pause delay: 60 minutes
-  - Check **"Use free limit"** if the option appears
+  - Service tier: **Standard (DTU-based)**
+  - DTUs: **S0 (10 DTUs)**
+  - Data max size: **250 GB** (included in S0 — see [Production tiers and scaling](#production-tiers-and-scaling))
 - Backup storage redundancy: **Locally-redundant**
 - **Networking** tab:
   - Connectivity method: Public endpoint
@@ -299,9 +326,12 @@ Then redeploy with the same command.
 - Runtime stack: **.NET 8 (LTS)**
 - OS: **Linux**
 - Region: West Europe
-- Pricing plan: Create new → **Free F1**
+- Pricing plan: Create new → **Basic B1**
 
-After creation, go to the app → **Settings → Environment variables**:
+After creation, go to the app → **Settings → Configuration → General settings**
+and turn **Always on** to **On** (it keeps the background services running).
+
+Then go to **Settings → Environment variables**:
 
 Add a **connection string**:
 - Name: `DefaultConnection`
@@ -336,17 +366,19 @@ After creation:
 
 Default names below assume `uniqueSuffix=arcadia` (the live `anchor-rg` deployment). Override the parameters to stand up a second environment.
 
-| Resource | Type | Tier | Monthly cost (dev) |
+| Resource | Type | Tier | Monthly cost |
 |---|---|---|---|
 | `anchor-rg` | Resource group | — | €0 |
 | `anchor-sql-arcadia` | SQL Server (logical) | — | €0 |
-| `anchordb` | SQL Database | GP Serverless, 0.5–2 vCores | €0 (free limit) |
-| `anchor-api-arcadia` | App Service | F1 Free | €0 |
-| `ASP-anchorrg-b49b` | App Service Plan | F1 Free, Linux | €0 |
+| `anchordb` | SQL Database | Standard S0 (10 DTU), 250 GB max | ~€12.60 |
+| `anchor-api-arcadia` | App Service | Runs on the plan below, Always On | (in the plan) |
+| `ASP-anchorrg-b49b` | App Service Plan | Basic B1, Linux | ~€11.60 |
 | `anchor-signalr` | SignalR Service | Free | €0 |
 | `anchor-dashboard` | Static Web App | Free | €0 |
 
-**Pilot cost** (Standard SignalR): ~€45/month for SignalR + ~€5–15/month for SQL if it exceeds the free limit.
+**Total:** ~€24/month (list prices, Belgium Central, excl. VAT), or ~€43/month
+if the load test calls for S1 — see [Production tiers and scaling](#production-tiers-and-scaling).
+Standard SignalR (see [Upgrading SignalR for pilot](#upgrading-signalr-for-pilot)) would add ~€45/month.
 
 ---
 

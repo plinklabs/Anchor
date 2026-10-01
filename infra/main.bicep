@@ -130,27 +130,40 @@ resource sqlFirewallAllowAzure 'Microsoft.Sql/servers/firewallRules@2023-08-01-p
   }
 }
 
-// ── SQL Database (Serverless) ───────────────
+// ── SQL Database (Standard S0) ──────────────
+// A fixed-price DTU tier, not serverless (#341). Serverless only pays off while
+// the database sleeps most of the day, but every agent/extension (re)connect
+// resolves the user in the database (SessionHub.OnConnectedAsync), so with
+// students connected it stays awake through the school day. S1 is the fallback
+// if the pre-rollout load test calls for it: moving between S0/S1/S2 is an
+// online operation — change `name` here and redeploy, so the template stays the
+// source of truth and a later redeploy doesn't scale it back down.
 
 resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   parent: sqlServer
   name: sqlDatabaseName
   location: sqlServerLocation
   sku: {
-    name: 'GP_S_Gen5'   // General Purpose, Serverless, Gen5
-    tier: 'GeneralPurpose'
-    family: 'Gen5'
-    capacity: 2          // max vCores
+    name: 'S0'           // Standard, 10 DTU
+    tier: 'Standard'
   }
   properties: {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
-    autoPauseDelay: 60   // minutes idle before auto-pause
-    minCapacity: json('0.5') // min vCores
+    // Always explicit: without it a deploy applies the tier's default max size
+    // (the serverless database silently got 32 GB that way). 250 GB is the
+    // storage S0–S2 include at no extra cost; the estimated footprint at rollout
+    // is ~1.5 GB of raw events plus ~0.2 GB of summaries per school year.
+    maxSizeBytes: 268435456000 // 250 GB
     requestedBackupStorageRedundancy: 'Local'
   }
 }
 
-// ── App Service Plan (Linux, Free) ──────────
+// ── App Service Plan (Linux, Basic B1) ──────
+// B1, not F1 (#341): F1 caps a Linux app at 5 concurrent WebSockets and 60
+// CPU-minutes a day, and every student holds two connections (agent +
+// extension). B1 allows ~50k WebSockets per instance — enough for in-process
+// SignalR at rollout's ~1,600 peak connections — and is the cheapest tier that
+// supports Always On (enabled on the site below).
 
 resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: appServicePlanName
@@ -160,8 +173,8 @@ resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
     reserved: true       // required for Linux
   }
   sku: {
-    name: 'F1'
-    tier: 'Free'
+    name: 'B1'
+    tier: 'Basic'
   }
 }
 
@@ -178,6 +191,11 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
       // targeting a newer runtime than this deploys "successfully" but 503s on a
       // host pinned to the older one (#276).
       linuxFxVersion: 'DOTNETCORE|10.0'
+      // Keep the process loaded between requests. Without Always On the app is
+      // unloaded after ~20 idle minutes, which stops the in-process background
+      // services (HeartbeatMonitor flags silent students, EventPruner enforces
+      // event retention). Needs a Basic or higher plan (#341).
+      alwaysOn: true
       // Entra + CORS application settings (double-underscore form). Provisioning
       // them here means the deployed API gets its environment-specific config
       // from the infra, not from committed appsettings.json.

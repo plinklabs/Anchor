@@ -45,7 +45,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 │  └─────────────┬───────────────────┘    │
 │                │                        │
 │  ┌─────────────▼───────────────────┐    │
-│  │ Azure SQL (Serverless)          │    │
+│  │ Azure SQL (Standard S0)         │    │
 │  │ • users, classes, sessions      │    │
 │  │ • allowlists, events            │    │
 │  └─────────────────────────────────┘    │
@@ -66,7 +66,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 | Browser extension | Edge (Chromium) extension, TypeScript | Single browser to support; observes URLs and active tab from inside Edge. |
 | Backend API | ASP.NET Core on Azure App Service | Pairs naturally with the C# agent, shared models, mature SignalR support. |
 | Realtime channel | SignalR | Push from teacher → student agents (start/stop session), report from student → backend (foreground events, URL events). |
-| Database | Azure SQL, Serverless tier | Data is relational; serverless tier auto-pauses outside school hours; cheap and EF Core works well. |
+| Database | Azure SQL, Standard S0 (DTU) | Data is relational and EF Core works well. Started on the serverless tier for its auto-pause, but connected agents keep the database awake through the school day, so a fixed-price tier is cheaper at rollout scale (#341). |
 | Event log overflow | Prune raw events > 30 days, keep summaries | Avoids growing the SQL DB unboundedly. Revisit later if analytics needs grow. |
 | Teacher dashboard | Flutter Web on Azure Static Web Apps | Developer is already productive in Flutter; internal tool so initial-load weight is acceptable. |
 | Auth | Microsoft Entra ID | Students and teachers already have school accounts; Edge and the agent can auth silently via WAM. |
