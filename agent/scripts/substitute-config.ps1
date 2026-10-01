@@ -1,4 +1,5 @@
 #requires -Version 5.1
+
 <#
 .SYNOPSIS
     Substitute the per-deployment #{TOKEN}# placeholders in the agent's

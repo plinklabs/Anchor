@@ -1,4 +1,5 @@
 ﻿#Requires -Version 7.0
+
 <#
 .SYNOPSIS
     One-command fork provisioning for an Anchor cloud environment (#213).
@@ -83,9 +84,9 @@
     have a per-resource override. Default: westeurope.
 
 .PARAMETER SqlLocation
-.PARAMETER AppServiceLocation
-.PARAMETER StaticWebAppLocation
-    Per-resource region overrides, passed straight through to the matching Bicep
+    Region for the SQL logical server + database (Bicep `sqlServerLocation`).
+    -SqlLocation, -AppServiceLocation and -StaticWebAppLocation are per-resource
+    region overrides, passed straight through to the matching Bicep
     parameters. When omitted, an *existing* resource keeps its current region
     (read live, so a re-run never tries to move it — region is immutable in
     Azure) and a not-yet-created resource falls back to -Location. Use these to
@@ -93,6 +94,15 @@
     West Europe) or to place the Static Web App in a region where it is
     offered. There is no SignalR override: realtime runs in-process on the App
     Service, so the template provisions no SignalR Service (#343).
+
+.PARAMETER AppServiceLocation
+    Region for the App Service and its plan (Bicep `appServiceLocation`). Same
+    per-resource override and fallback rules as -SqlLocation.
+
+.PARAMETER StaticWebAppLocation
+    Region for the Static Web App (Bicep `staticWebAppLocation`). Same
+    per-resource override and fallback rules as -SqlLocation; Static Web Apps
+    are offered in fewer regions than the other resources.
 
 .PARAMETER UniqueSuffix
     Suffix for globally-unique resource names, passed straight through to the
