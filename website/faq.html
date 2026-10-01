@@ -81,10 +81,10 @@
       <p>The student side runs on <strong>Windows</strong> (Windows 10 version 1809 or later, or Windows 11) in <strong>Microsoft Edge</strong>. The student agent is a native Windows tray app and the URL enforcement runs inside Edge, so both are required on the student device. The teacher dashboard is a web app that runs in any modern browser, with nothing to install.</p>
 
       <h2>Does it work on Chromebooks, Macs, or phones?</h2>
-      <p>Not on the student side. There is <strong>no Mac, Chromebook, iPad, or phone agent</strong> — this is a deliberate scope choice, not a roadmap gap. Enforcement lives in a native Windows app plus an Edge extension, so a managed Windows laptop running Edge is the only supported student device. The teacher's dashboard, however, is just a website and works on whatever device the teacher already uses.</p>
+      <p>Not on the student side. There is <strong>no Mac, Chromebook, iPad, or phone agent</strong> — this is a deliberate scope choice, not a roadmap gap. Enforcement lives in a native Windows app plus an Edge extension, so a Windows laptop running Edge — school-issued or the student's own — is the only supported student device. The teacher's dashboard, however, is just a website and works on whatever device the teacher already uses.</p>
 
       <h2>Do students have to install anything?</h2>
-      <p>The agent is installed once per laptop (an MSIX package, typically pushed by the school's IT through Intune or another MDM), and the Edge extension is force-installed by school policy. Day to day a student installs nothing and manages no extra password — they just sign in with their existing school Microsoft account.</p>
+      <p>Once. The student runs the agent's installer, a <code>Setup.exe</code> that the school publishes for its own Anchor backend. It installs for that Windows user only, needs no admin rights, starts whenever they sign in to Windows, and keeps itself up to date — nothing is pushed through Intune or another MDM. The agent then has Edge install the Anchor extension through a per-user Edge policy, or, if Edge doesn't pick that up, opens the extension's Edge Add-ons page so the student can add it in one click. Day to day a student installs nothing and manages no extra password — they just sign in with their existing school Microsoft account.</p>
     </section>
 
     <!-- ============================================================

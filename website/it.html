@@ -58,11 +58,11 @@
          ============================================================ -->
     <section class="feature-section">
       <p class="eyebrow">Requirements</p>
-      <p class="lead" style="max-width: 52rem; color: var(--muted); line-height: 1.65; margin-bottom: 1.75rem;">Anchor is deliberately narrow: Edge-only enforcement on managed Windows laptops, one backend per school. That focus is a design choice, not a roadmap gap — there is no Mac, Chromebook, or iPad student client, and no multi-tenant SaaS.</p>
+      <p class="lead" style="max-width: 52rem; color: var(--muted); line-height: 1.65; margin-bottom: 1.75rem;">Anchor is deliberately narrow: Edge-only enforcement on students' Windows laptops, one backend per school. It's built for bring-your-own devices, so nothing depends on the laptops being managed. That focus is a design choice, not a roadmap gap — there is no Mac, Chromebook, or iPad student client, and no multi-tenant SaaS.</p>
       <div class="feature-grid">
         <article>
           <h3>Student agent</h3>
-          <p>Windows 10 version 1809 or later, or Windows 11. A native tray app, delivered as MSIX. This is the only managed-device surface — there is no Mac, Chromebook, or iPad agent.</p>
+          <p>Windows 10 version 1809 or later, or Windows 11. A native tray app the student installs from a <code>Setup.exe</code>: it installs for that Windows user only, needs no admin rights and no MDM, starts when they sign in to Windows, and updates itself. There is no Mac, Chromebook, or iPad agent.</p>
         </article>
         <article>
           <h3>Browser</h3>
@@ -94,22 +94,22 @@
          ============================================================ -->
     <section class="feature-section">
       <p class="eyebrow">Rollout</p>
-      <p class="lead" style="max-width: 52rem; color: var(--muted); line-height: 1.65; margin-bottom: 1.75rem;">Three pieces to push, all through tools you already run. The GitHub docs carry the exact commands and settings — this is the shape of the work.</p>
+      <p class="lead" style="max-width: 52rem; color: var(--muted); line-height: 1.65; margin-bottom: 1.75rem;">Three pieces, in this order, and nothing to push through Intune or another MDM: you stand up the backend and publish an agent release, students install the agent themselves, and the agent sets up the extension. The GitHub docs carry the exact commands and settings — this is the shape of the work.</p>
       <div class="feature-grid">
         <article>
           <p class="step">01</p>
-          <h3>The agent</h3>
-          <p>Distribute the student agent as an MSIX package through Microsoft Intune (or your existing MDM), to the managed Windows laptops in scope.</p>
+          <h3>The backend</h3>
+          <p>In your school's fork of the repository, stand up your Azure backend with <code>scripts/setup.ps1</code> — one command provisions the resources, the Entra registrations, and the GitHub deploy wiring. A direct Bicep deploy and a portal walkthrough are documented as manual alternatives.</p>
         </article>
         <article>
           <p class="step">02</p>
-          <h3>The extension</h3>
-          <p>Force-install the Anchor extension from the Microsoft Edge Add-ons store via Edge policy, so it is present and pinned on every managed device.</p>
+          <h3>The agent</h3>
+          <p>Push an agent release tag on your repository. The release workflow builds a <code>Setup.exe</code> with your backend's address and Entra IDs baked in and publishes it on your repository's GitHub Releases. Students run it themselves: no admin rights needed, though the installer isn't code-signed yet, so Windows SmartScreen asks them to confirm once.</p>
         </article>
         <article>
           <p class="step">03</p>
-          <h3>The backend</h3>
-          <p>Stand up your Azure backend with <code>scripts/setup.ps1</code> — one command provisions the resources, the Entra registrations, and the GitHub deploy wiring. A direct Bicep deploy and a portal walkthrough are documented as manual alternatives.</p>
+          <h3>The extension</h3>
+          <p>Nothing to push. On first run the agent sets a per-user Edge policy that makes Edge install and pin the Anchor extension from the Edge Add-ons store. If Edge doesn't pick that up, the agent opens the store listing so the student can add it in one click. Uninstalling the agent removes the policy again.</p>
         </article>
       </div>
     </section>
@@ -141,7 +141,7 @@
         </article>
         <article>
           <h3><a href="https://github.com/plinklabs/Anchor/blob/main/docs/RELEASE.md">docs/RELEASE.md</a></h3>
-          <p>The deploy pipeline and the authoritative inventory of every secret and variable the deploy workflows consume.</p>
+          <p>The deploy pipeline, how to cut an agent release, and the authoritative inventory of every secret and variable the workflows consume.</p>
         </article>
         <article>
           <h3><a href="https://github.com/plinklabs/Anchor/blob/main/infra/README.md">infra/README.md</a></h3>
@@ -154,7 +154,7 @@
     <section class="callout">
       <p class="eyebrow">Get started</p>
       <h2>Deploy the backend, then roll out the clients</h2>
-      <p>Stand up your school's backend first, then push the agent and the extension to your managed devices. The setup guide walks the backend end to end; the agent ships from GitHub Releases, and the extension installs from the Edge store.</p>
+      <p>Stand up your school's backend first, then publish an agent release from your repository and share its <code>Setup.exe</code> with students. The setup guide walks the backend end to end, and the release guide covers the agent. The agent then has Edge install the extension from the Edge Add-ons store.</p>
       <!--
         "Add to Edge" points at the repository until the Edge Add-ons listing is
         public, mirroring the home page. Repoint once published. (Issue #254)
