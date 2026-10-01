@@ -24,13 +24,15 @@ import 'package:plink_design_system/plink_design_system.dart';
 //   - a roster state transition (#100) updates the live roster,
 //   - an unblock-request push (#…) surfaces the pending panel,
 //   - a UI bundle toggle issues PUT /sessions/{id}/bundles (#93),
-//   - pushed events render in the live event feed.
+//   - pushed events render in the live event feed,
+//   - the end of the teacher's other session doesn't end this one (#354).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
 // `hubClientFactory` injects the stub feed in place of the real SignalR client.
 
 const _sessionId = '11111111-2222-3333-4444-555555555555';
+const _otherSessionId = '99999999-8888-7777-6666-555555555555';
 final _startedAt = DateTime(2026, 6, 12, 9, 15);
 
 ApiClient _dummyClient() => ApiClient(
@@ -409,6 +411,35 @@ void main() {
     expect(find.text('Waiting for events…'), findsNothing);
     expect(find.text('SessionStarted'), findsOneWidget);
   });
+
+  testWidgets(
+    "the end of the teacher's other session leaves this live view alone (#354)",
+    (tester) async {
+      final h = await _bootToLiveSession(tester);
+
+      // The backend sends SessionEnded to the teacher's user group for every
+      // session they own, so this page's connection also hears another of the
+      // teacher's sessions end — e.g. a forgotten one ended automatically.
+      h.hub.emit('SessionEnded', {'sessionId': _otherSessionId});
+      await tester.pumpAndSettle();
+
+      expect(find.text('Session ended — event stream stopped.'), findsNothing);
+      expect(find.text('LIVE'), findsOneWidget);
+      expect(find.text('SessionEnded'), findsNothing);
+      expect(find.text('Waiting for events…'), findsOneWidget);
+
+      // Its own end still ends it.
+      h.hub.emit('SessionEnded', {'sessionId': _sessionId});
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Session ended — event stream stopped.'),
+        findsOneWidget,
+      );
+      expect(find.text('LIVE'), findsNothing);
+      expect(find.text('SessionEnded'), findsOneWidget);
+    },
+  );
 
   testWidgets('the live view renders as the paper instrument panel (AD4, #169)', (
     tester,

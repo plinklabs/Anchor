@@ -80,8 +80,11 @@ export interface LoadedExtension {
   /** Terminate the MV3 service worker and let a browsing event revive it —
    *  the hibernate/revive cycle Chrome performs on its own between event
    *  bursts, which is where worker-memory state is lost (#331). Resolves once
-   *  the new generation has run background.js top-level again. */
-  restartServiceWorker(): Promise<void>;
+   *  the new generation has run background.js top-level again.
+   *  `whileStopped` runs after the worker is gone and before anything revives
+   *  it: no hub connection is open meanwhile, so whatever the backend
+   *  broadcasts then never reaches the extension (#354). */
+  restartServiceWorker(whileStopped?: () => Promise<void>): Promise<void>;
   /** Write settings, cold-restart the SW, and wait for the hub to connect.
    *  Returns the post-restart service worker. */
   configure(settings?: ExtensionSettings): Promise<Worker>;
@@ -183,7 +186,7 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   // Target.closeTarget stops the worker (verified: background.js top-level runs
   // again afterwards, while chrome.storage.session survives), and a top-level
   // navigation is the same wake trigger a browsing student provides.
-  async function restartServiceWorker(): Promise<void> {
+  async function restartServiceWorker(whileStopped?: () => Promise<void>): Promise<void> {
     const before = countLogs(WORKER_START_LOG);
     const page = await context.newPage();
     try {
@@ -195,6 +198,12 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
       if (!target) throw new Error('no extension service-worker target to terminate');
       await cdp.send('Target.closeTarget', { targetId: target.targetId });
       await cdp.detach();
+      if (whileStopped) {
+        await whileStopped();
+        if (countLogs(WORKER_START_LOG) !== before) {
+          throw new Error('the service worker came back before the spec revived it');
+        }
+      }
       // The host doesn't resolve, but onBeforeNavigate fires before the request
       // is made — which is all the worker needs to wake.
       await page.goto(`http://${OFFLIST_HOST}/wake`).catch(() => {});

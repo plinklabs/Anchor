@@ -18,7 +18,7 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     }
 
     public ConcurrentBag<SessionStartedCall> SessionStartedCalls { get; } = new();
-    public ConcurrentBag<Guid> SessionEndedCalls { get; } = new();
+    public ConcurrentBag<SessionEndedCall> SessionEndedCalls { get; } = new();
     public ConcurrentBag<SessionBundlesUpdatedCall> SessionBundlesUpdatedCalls { get; } = new();
     public ConcurrentBag<ParticipantStateChangedPayload> ParticipantStateChangedCalls { get; } = new();
     public ConcurrentBag<HeartbeatLostPayload> HeartbeatLostCalls { get; } = new();
@@ -39,14 +39,20 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
         return _hub.Clients.Groups(groups).SessionStarted(payload);
     }
 
-    public Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    public Task SessionEndedAsync(
+        Guid sessionId,
+        IReadOnlyCollection<Guid> recipientUserIds,
+        CancellationToken cancellationToken = default)
     {
-        SessionEndedCalls.Add(sessionId);
+        SessionEndedCalls.Add(new SessionEndedCall(sessionId, recipientUserIds.ToArray()));
         // Mirror production SessionBroadcaster: drop liveness state up-front so
         // tests observing tracker behaviour see the same outcome they would in
-        // a real deployment.
+        // a real deployment, and route to the recipients' user groups (#354).
         _heartbeats.ClearSession(sessionId);
-        return _hub.Clients.Group(SessionHub.GroupName(sessionId)).SessionEnded(sessionId);
+        if (recipientUserIds.Count == 0)
+            return Task.CompletedTask;
+        var groups = recipientUserIds.Select(SessionHub.UserGroupName).ToArray();
+        return _hub.Clients.Groups(groups).SessionEnded(sessionId);
     }
 
     public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
@@ -97,6 +103,8 @@ public sealed record SessionStartedCall(SessionStartedPayload Payload, IReadOnly
     public Guid SessionId => Payload.SessionId;
     public string JoinCode => Payload.JoinCode;
 }
+
+public sealed record SessionEndedCall(Guid SessionId, IReadOnlyList<Guid> RecipientUserIds);
 
 public sealed record SessionBundlesUpdatedCall(Guid UserId, SessionBundlesUpdatedPayload Payload)
 {

@@ -1,3 +1,4 @@
+using Anchor.Api.Sessions;
 using Anchor.Domain.Events;
 using Anchor.Domain.Sessions;
 using Anchor.Domain.Users;
@@ -37,6 +38,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     private readonly HeartbeatTracker _heartbeats;
     private readonly ActiveParticipantCache _activeParticipants;
     private readonly ISessionBroadcaster _broadcaster;
+    private readonly ISessionAllowlistExpander _allowlist;
     private readonly ILogger<SessionHub> _log;
 
     public SessionHub(
@@ -47,6 +49,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         HeartbeatTracker heartbeats,
         ActiveParticipantCache activeParticipants,
         ISessionBroadcaster broadcaster,
+        ISessionAllowlistExpander allowlist,
         ILogger<SessionHub> log)
     {
         _db = db;
@@ -56,6 +59,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         _heartbeats = heartbeats;
         _activeParticipants = activeParticipants;
         _broadcaster = broadcaster;
+        _allowlist = allowlist;
         _log = log;
     }
 
@@ -245,6 +249,68 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             throw new HubException("Not an active participant of this session.");
 
         _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow(), source);
+    }
+
+    /// <summary>
+    /// Whether the caller is still in the session: it hasn't ended and the
+    /// caller is an active participant — the condition under which
+    /// <see cref="Heartbeat"/> and <see cref="ReportEvent"/> accept the caller's
+    /// calls for it. The agent and the extension ask after every reconnect
+    /// (#354): <c>SessionEnded</c> reaches only the connections open when it is
+    /// sent, so a session that ended while a client was offline — a network
+    /// drop, a backend restart, a laptop asleep through the automatic end —
+    /// would otherwise stay in force on that client. Read from the database
+    /// rather than <see cref="ActiveParticipantCache"/>: it runs once per
+    /// reconnect, not per ping, and decides whether the student leaves focus
+    /// mode.
+    /// </summary>
+    public async Task<bool> IsInSession(Guid sessionId)
+    {
+        var ct = Context.ConnectionAborted;
+        var user = await ResolveCurrentUserAsync(ct);
+        return await _db.SessionParticipants.AsNoTracking()
+            .AnyAsync(ActiveParticipantCache.IsActive(sessionId, user.Id), ct);
+    }
+
+    /// <summary>
+    /// The running session the caller is a participant of and hasn't declined
+    /// or left, as the <see cref="SessionStartedPayload"/> its start sent, or
+    /// null; the most recently started one if there are several. The start-side
+    /// counterpart of <see cref="IsInSession"/>: the agent and the extension
+    /// ask after every (re)connect and handle the answer as a
+    /// <c>SessionStarted</c> they missed (#356). That broadcast goes to the
+    /// user group, so it reaches only the connections in it when it is sent:
+    /// not a client that was offline then, and not one that had only just
+    /// connected, because a client's start completes on the handshake reply,
+    /// which the server sends before <see cref="OnConnectedAsync"/> adds the
+    /// connection to its user group. An invocation is dispatched only once
+    /// OnConnectedAsync has finished, so a session saved before this query runs
+    /// is in its answer, and any later one's broadcast finds the connection in
+    /// its group.
+    /// </summary>
+    public async Task<SessionStartedPayload?> GetStartedSession()
+    {
+        var ct = Context.ConnectionAborted;
+        var user = await ResolveCurrentUserAsync(ct);
+
+        var rows = await _db.SessionParticipants.AsNoTracking()
+            .Where(p => p.UserId == user.Id &&
+                        p.DeclinedAt == null &&
+                        p.LeftAt == null &&
+                        p.Session!.EndedAt == null)
+            .Select(p => new { p.Session!.Id, p.Session.ClassId, p.Session.StartedAt, p.Session.JoinCode })
+            .ToListAsync(ct);
+        // SQLite (dev + tests) can't ORDER BY a DateTimeOffset; sort in memory,
+        // as /sessions/rejoinable does.
+        var latest = rows.MaxBy(s => s.StartedAt);
+        if (latest is null)
+            return null;
+
+        // The allowlist a join-by-code SessionStarted carries: the session's
+        // bundles plus its whole-class grants (#101).
+        var allowlist = await _allowlist.ExpandForSessionAsync(latest.Id, ct);
+        return new SessionStartedPayload(
+            latest.Id, latest.ClassId, latest.StartedAt, latest.JoinCode, allowlist.Apps, allowlist.Domains);
     }
 
     public async Task ReportEvent(ReportEventRequest request)

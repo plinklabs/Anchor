@@ -1,5 +1,6 @@
 import { HubClient } from './shared/hub-client';
 import { SessionHeartbeat } from './shared/heartbeat';
+import { catchUpStartedSession, confirmActiveSession } from './shared/session-confirm';
 import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
@@ -79,6 +80,7 @@ async function ensureHub(): Promise<void> {
     onSessionEnded: handleSessionEnded,
     onAllowlistAmended: handleAllowlistAmended,
     onSessionBundlesUpdated: handleSessionBundlesUpdated,
+    onConnected: handleHubConnected,
   };
 
   if (mode === 'none') {
@@ -178,6 +180,35 @@ function ensureHeartbeat(): void {
     getActiveSessionId: async () => (await getActiveSession())?.sessionId ?? null,
   });
   heartbeat.start();
+}
+
+// Every (re)connect is a new hub connection, which never receives a SessionEnded
+// the backend sent while the extension was offline — between service-worker
+// generations, or through a network drop. Ask instead, so an ended session
+// doesn't stay in force until the browser restarts (#354). The same goes for a
+// SessionStarted, which also misses a connection in the moment before the
+// backend adds it to the student's user group: ask which session the student is
+// in, so a started one is enforced (#356).
+async function handleHubConnected(): Promise<void> {
+  const getActiveSessionId = async () => (await getActiveSession())?.sessionId ?? null;
+  await confirmActiveSession({
+    getActiveSessionId,
+    isInSession: (sessionId) => {
+      if (!hubClient) return Promise.reject(new Error('no hub client'));
+      return hubClient.isInSession(sessionId);
+    },
+    endSession: handleSessionEnded,
+  });
+  await catchUpStartedSession({
+    getActiveSessionId,
+    getStartedSession: () => {
+      if (!hubClient) return Promise.reject(new Error('no hub client'));
+      return hubClient.getStartedSession();
+    },
+    startSession: async (payload) => {
+      await hubClient?.joinStartedSession(payload);
+    },
+  });
 }
 
 async function handleSessionStarted(payload: SessionStartedPayload): Promise<void> {

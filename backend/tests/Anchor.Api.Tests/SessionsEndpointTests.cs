@@ -240,7 +240,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.NotNull(persisted.EndedAt);
 
         var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
-        Assert.Contains(session.Id, broadcaster.SessionEndedCalls);
+        Assert.Contains(broadcaster.SessionEndedCalls, c => c.SessionId == session.Id);
     }
 
     [Fact]

@@ -18,6 +18,7 @@ export class BackendClient {
   // execute this under Node's strip-only TypeScript mode, which rejects
   // parameter properties.
   private readonly baseUrl: string;
+  private readonly started: Array<{ id: string; oid: string }> = [];
 
   constructor(baseUrl: string = BACKEND_URL) {
     this.baseUrl = baseUrl;
@@ -53,12 +54,26 @@ export class BackendClient {
     bundleIds: string[] = [],
     oid: string = TEACHER_OID,
   ): Promise<StartedSession> {
-    return this.json<StartedSession>('POST', '/sessions', oid, { classId, bundleIds });
+    const session = await this.json<StartedSession>('POST', '/sessions', oid, { classId, bundleIds });
+    this.started.push({ id: session.id, oid });
+    return session;
   }
 
   /** POST /sessions/{id}/end — end a running session. */
   async endSession(sessionId: string, oid: string = TEACHER_OID): Promise<void> {
     await this.send('POST', `/sessions/${sessionId}/end`, oid);
+  }
+
+  /**
+   * Ends every session this client started (ending an ended one is a no-op).
+   * The fixture runs it after each spec: the next spec's extension would
+   * otherwise find a session still running when it connects, and enforce it
+   * from the start (#356).
+   */
+  async endStartedSessions(): Promise<void> {
+    for (const { id, oid } of this.started.splice(0)) {
+      await this.endSession(id, oid);
+    }
   }
 
   /**

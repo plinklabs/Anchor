@@ -91,7 +91,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 
 ### 5.2 During a focus session
 
-- Receives a `SessionStart` message via SignalR with the allowlist for this session.
+- Receives a `SessionStart` message via SignalR with the allowlist for this session. An agent that wasn't connected when the session started (asleep, off the network, or still connecting) asks the backend for it as soon as it connects, and carries on as if the message had arrived (#356). The extension does the same.
 - Shows a brief join confirmation: *"Mr. De Vos started a focus session. Joining in 5s. [Cancel]"*. Decline is logged.
 - Once joined:
   - Subscribes to `EVENT_SYSTEM_FOREGROUND` via `SetWinEventHook`.
@@ -100,7 +100,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
   - If the new foreground app is **not on the allowlist**: report the event, minimize that window (`ShowWindow` with `SW_MINIMIZE`), and bring the agent's overlay (or the most recently allowed app) back to the foreground.
   - The report names the app (process name, signed publisher) and whether it was blocked. It never includes the window title or the executable path: titles carry document names, chat partners and search terms, and paths carry the Windows user name (#345).
 - Edge is treated as one allowlisted "app" while the extension is responsible for URL-level filtering inside it.
-- When the session ends (teacher action, or the backend ending a session still running four hours after it started, #345): unsubscribes from hooks, hides overlay, returns to idle.
+- When the session ends (teacher action, or the backend ending a session still running four hours after it started, #345): unsubscribes from hooks, hides overlay, returns to idle. An agent that was offline when the session ended (asleep, or off the network) asks the backend whether its session is still on as soon as it reconnects, and returns to idle if not (#354). The extension does the same.
 
 ### 5.3 Native interop layer
 

@@ -58,8 +58,8 @@ public sealed class SessionAutoEnderTests : IClassFixture<SessionAutoEnderTests.
         Assert.Null(await EndedAtAsync(live.Session.Id));
 
         var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
-        Assert.Contains(forgotten.Session.Id, broadcaster.SessionEndedCalls);
-        Assert.DoesNotContain(live.Session.Id, broadcaster.SessionEndedCalls);
+        Assert.Contains(broadcaster.SessionEndedCalls, c => c.SessionId == forgotten.Session.Id);
+        Assert.DoesNotContain(broadcaster.SessionEndedCalls, c => c.SessionId == live.Session.Id);
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public sealed class SessionAutoEnderTests : IClassFixture<SessionAutoEnderTests.
         Assert.DoesNotContain(seeded.Session.Id, ended);
         Assert.Equal(endedAt, await EndedAtAsync(seeded.Session.Id));
         var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
-        Assert.DoesNotContain(seeded.Session.Id, broadcaster.SessionEndedCalls);
+        Assert.DoesNotContain(broadcaster.SessionEndedCalls, c => c.SessionId == seeded.Session.Id);
     }
 
     [Fact]

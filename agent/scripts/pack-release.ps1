@@ -1,4 +1,5 @@
 #requires -Version 5.1
+
 <#
 .SYNOPSIS
     Build the agent unpackaged, bake in the per-deployment config, and produce a

@@ -3,6 +3,9 @@
 //   - attach a real Entra access token via SignalR's accessTokenFactory (#289)
 //   - call JoinSession after auth succeeds
 //   - surface SessionStarted / SessionEnded as plain callbacks
+//   - say when the connection is (re)established, and ask whether the student
+//     is still in a session, so a SessionEnded missed while offline is caught (#354),
+//     and which session started, so a missed SessionStarted is caught too (#356)
 //   - report a BlockedUrl event back to the backend
 //
 // Keeping the SignalR API surface contained here means background.ts stays
@@ -32,11 +35,18 @@ export interface HubCallbacks {
   onSessionEnded: (sessionId: string) => void | Promise<void>;
   onAllowlistAmended: (payload: AllowlistAmendedPayload) => void | Promise<void>;
   onSessionBundlesUpdated: (payload: SessionBundlesUpdatedPayload) => void | Promise<void>;
+  /** After every successful connect: the first start and each automatic
+   *  reconnect. Each is a new SignalR connection, which never receives what
+   *  the backend broadcast before it existed (#354), nor what it broadcasts
+   *  in the moment before it has added the connection to the student's user
+   *  group: a connect completes first (#356). */
+  onConnected: () => void | Promise<void>;
 }
 
 export class HubClient {
   private readonly connection: signalR.HubConnection;
   private readonly settings: ExtensionSettings;
+  private readonly callbacks: HubCallbacks;
 
   /**
    * @param accessTokenFactory Production auth (#289): returns a fresh Entra access
@@ -50,6 +60,7 @@ export class HubClient {
     accessTokenFactory?: () => Promise<string>,
   ) {
     this.settings = settings;
+    this.callbacks = callbacks;
     this.connection = new signalR.HubConnectionBuilder()
       .withUrl(this.buildHubUrl(), {
         // The extension service worker is fetch-only — XHR isn't available
@@ -71,19 +82,7 @@ export class HubClient {
         sessionId: payload.sessionId,
         domainCount: payload.domains?.length ?? 0,
       });
-      try {
-        // The hub broadcasts SessionEnded to the SESSION group, so the
-        // extension must JoinSession to subscribe. JoinSession also creates
-        // the SessionParticipant row that ReportEvent (BlockedUrl) requires.
-        await this.connection.invoke('JoinSession', {
-          sessionId: payload.sessionId,
-          joinCode: payload.joinCode,
-        });
-        log.info('joined session group', { sessionId: payload.sessionId });
-      } catch (err) {
-        log.error('JoinSession failed', err);
-      }
-      await callbacks.onSessionStarted(payload);
+      await this.joinStartedSession(payload);
     });
 
     this.connection.on('SessionEnded', async (sessionId: string) => {
@@ -108,7 +107,10 @@ export class HubClient {
     });
 
     this.connection.onreconnecting((err) => log.warn('reconnecting', err));
-    this.connection.onreconnected((id) => log.info('reconnected', { connectionId: id }));
+    this.connection.onreconnected((id) => {
+      log.info('reconnected', { connectionId: id });
+      this.notifyConnected();
+    });
     this.connection.onclose((err) => log.warn('connection closed', err));
   }
 
@@ -116,10 +118,58 @@ export class HubClient {
     log.info('starting hub connection', { hubUrl: redactQuery(this.buildHubUrl()) });
     await this.connection.start();
     log.info('hub connection established');
+    this.notifyConnected();
   }
 
   async stop(): Promise<void> {
     await this.connection.stop();
+  }
+
+  /**
+   * Whether the student is still in the session: it hasn't ended and they
+   * haven't left it (#354). Rejects when the backend can't be asked, e.g. the
+   * hub isn't connected.
+   */
+  async isInSession(sessionId: string): Promise<boolean> {
+    return this.connection.invoke<boolean>('IsInSession', sessionId);
+  }
+
+  /**
+   * The running session the student has been asked into and hasn't declined or
+   * left, as the SessionStarted payload its start sent, or null (#356). Rejects
+   * when the backend can't be asked.
+   */
+  async getStartedSession(): Promise<SessionStartedPayload | null> {
+    return (await this.connection.invoke<SessionStartedPayload | null>('GetStartedSession')) ?? null;
+  }
+
+  /**
+   * Joins a session that started and hands it to onSessionStarted: what a
+   * SessionStarted broadcast does, and what catching up on a missed one does.
+   */
+  async joinStartedSession(payload: SessionStartedPayload): Promise<void> {
+    try {
+      // JoinSession marks the student joined (creating the participant row
+      // for a join-by-code student), which ReportEvent (BlockedUrl) and
+      // ExtensionHeartbeat require. SessionEnded doesn't depend on it: the
+      // backend sends that to the student's user group (#354).
+      await this.connection.invoke('JoinSession', {
+        sessionId: payload.sessionId,
+        joinCode: payload.joinCode,
+      });
+      log.info('joined session group', { sessionId: payload.sessionId });
+    } catch (err) {
+      log.error('JoinSession failed', err);
+    }
+    await this.callbacks.onSessionStarted(payload);
+  }
+
+  private notifyConnected(): void {
+    // Not awaited: whatever the callback does must not hold up start() or
+    // SignalR's reconnect handling.
+    void Promise.resolve()
+      .then(() => this.callbacks.onConnected())
+      .catch((err) => log.error('onConnected failed', err));
   }
 
   /**

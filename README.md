@@ -50,7 +50,7 @@ Design rationale, technology decisions, data model, and phasing live in [focus-s
 
 | Component | Path | Status | Stack |
 | --- | --- | --- | --- |
-| Backend API | [backend/](backend/) | Scaffolded | ASP.NET Core 8, EF Core, SignalR, Entra (Microsoft.Identity.Web) |
+| Backend API | [backend/](backend/) | Scaffolded | ASP.NET Core 10, EF Core, SignalR, Entra (Microsoft.Identity.Web) |
 | Teacher dashboard | [dashboard/](dashboard/) | Scaffolded | Flutter Web, MSAL.js |
 | Student agent | [agent/](agent/) | Scaffolded | WinUI 3 + C#, Velopack auto-update, WAM silent auth (later) |
 | Edge extension | [extension/](extension/) | URL filter + block page | TypeScript, Edge (Chromium) MV3 |
@@ -60,7 +60,7 @@ Design rationale, technology decisions, data model, and phasing live in [focus-s
 
 Install only what you need for the components you intend to run.
 
-- [ ] [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) — backend API, student agent
+- [ ] [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) — backend API, student agent
 - [ ] [Node.js LTS](https://nodejs.org/) — edge extension
 - [ ] [Flutter](https://docs.flutter.dev/get-started/install) (stable channel) — teacher dashboard
 - [ ] [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) — provisioning Azure resources via [infra/main.bicep](infra/main.bicep)

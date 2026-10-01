@@ -339,7 +339,9 @@ az signalr delete --name anchor-signalr --resource-group anchor-rg
 - Search **"App Services"** → Create → **Web App**
 - Name: `anchor-api-yourschool` (must be globally unique)
 - Publish: **Code**
-- Runtime stack: **.NET 8 (LTS)**
+- Runtime stack: **.NET 10 (LTS)** — must match the backend's target framework
+  (`net10.0`, the `DOTNETCORE|10.0` that `main.bicep` sets); a build on a host
+  pinned to an older runtime deploys fine but answers 503
 - OS: **Linux**
 - Region: West Europe
 - Pricing plan: Create new → **Basic B1**

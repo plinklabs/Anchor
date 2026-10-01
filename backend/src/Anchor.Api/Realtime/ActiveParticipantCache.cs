@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using Anchor.Domain.Sessions;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,9 +10,13 @@ namespace Anchor.Api.Realtime;
 /// the check behind every <c>Heartbeat</c> / <c>ExtensionHeartbeat</c> and
 /// <c>ReportEvent</c> (#342). Agent and extension each ping every 10 s, so at
 /// ~300 students a database query per ping was ~60 queries per second — by far
-/// the largest share of database load. "Active" means exactly what the database
-/// query it replaces meant: a <see cref="SessionParticipant"/> row with
-/// <c>JoinedAt</c> set and <c>LeftAt</c> null.
+/// the largest share of database load. "Active" means a
+/// <see cref="SessionParticipant"/> row with <c>JoinedAt</c> set and
+/// <c>LeftAt</c> null, in a session that hasn't ended (<see cref="IsActive"/>).
+/// The query this replaced didn't check the session: an agent or extension that
+/// never heard its session end could ping it back into the heartbeat tracker,
+/// and the monitor would then report the student lost, or the extension
+/// silent, after the session was over (#354).
 ///
 /// <para>
 /// Every code path that changes those two columns reports the row it just
@@ -59,6 +64,18 @@ public sealed class ActiveParticipantCache
     }
 
     /// <summary>
+    /// The database form of "active": the user's participant row in the
+    /// session has <c>JoinedAt</c> set and <c>LeftAt</c> null, and the session
+    /// hasn't ended.
+    /// </summary>
+    public static Expression<Func<SessionParticipant, bool>> IsActive(Guid sessionId, Guid userId) =>
+        p => p.SessionId == sessionId &&
+             p.UserId == userId &&
+             p.JoinedAt != null &&
+             p.LeftAt == null &&
+             p.Session!.EndedAt == null;
+
+    /// <summary>
     /// Answers from memory when it can; otherwise queries
     /// <paramref name="participants"/> once and caches the result.
     /// </summary>
@@ -70,12 +87,7 @@ public sealed class ActiveParticipantCache
         IsActiveAsync(
             sessionId,
             userId,
-            token => participants.AnyAsync(
-                p => p.SessionId == sessionId &&
-                     p.UserId == userId &&
-                     p.JoinedAt != null &&
-                     p.LeftAt == null,
-                token),
+            token => participants.AnyAsync(IsActive(sessionId, userId), token),
             ct);
 
     /// <summary>
