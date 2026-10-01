@@ -22,10 +22,8 @@ namespace Anchor.Api.Tests;
 /// Forgotten sessions end on their own (#345). Each test builds its own
 /// <see cref="SessionAutoEnder"/> on a fake clock and drives
 /// <see cref="SessionAutoEnder.EndForgottenSessionsAsync"/> (or its background
-/// loop) directly. The instance the host registers runs on the real clock and
-/// waits five minutes before its first sweep, so it never sweeps while these
-/// tests run — they don't rely on <c>SessionAutoEnd:EnableAutoEnder=false</c>
-/// in <see cref="AnchorApiFactory"/>, which doesn't reach Program.cs yet (#353).
+/// loop) directly; <see cref="AnchorApiFactory"/> keeps the host's own
+/// instance out of the test host (#353).
 /// </summary>
 public sealed class SessionAutoEnderTests : IClassFixture<SessionAutoEnderTests.AutoEndTestFactory>
 {
