@@ -49,7 +49,9 @@ const SHOTS = [
   // the empty "Select a bundle" pane — real navigation, the way a teacher lands.
   // Flutter web paints to a canvas (no DOM text to target), so click the
   // catalogue row by its stable on-canvas position in this fixed viewport.
-  { name: 'dashboard-bundles', hash: '#/bundles', click: { x: 90, y: 262 }, settle: 700 },
+  // Bundles lives under the Admin tab since #299, so the catalogue sits right
+  // of the admin sub-nav and "Exam apps" is its first row.
+  { name: 'dashboard-bundles', hash: '#/admin/bundles', click: { x: 300, y: 298 }, settle: 700 },
   { name: 'dashboard-classes', hash: '#/classes', settle: 700 },
   { name: 'dashboard-history', hash: '#/history', settle: 600 },
   { name: 'dashboard-past-session', hash: `#/history/demo-past-session-3b`, settle: 700 },

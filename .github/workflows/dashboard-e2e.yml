@@ -78,6 +78,18 @@ jobs:
             --browser-name=chrome \
             --headless
 
+      # Boots the real app at a deep route (a reload on Classes, a link to a past
+      # session) with a cached MSAL session, and expects that page and that URL
+      # once the session restore resolves, not Home (#378).
+      - name: Run deep-link e2e (web, headless Chrome)
+        run: |
+          flutter drive \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/deep_link_test.dart \
+            -d web-server \
+            --browser-name=chrome \
+            --headless
+
       # Boots the real app and drives Home → History → open a past session,
       # asserting the archive reads in the muted paper register (AD7, #172).
       # A fresh `flutter drive` reuses the chromedriver started above.
