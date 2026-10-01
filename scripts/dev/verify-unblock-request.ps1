@@ -28,7 +28,7 @@
     Default 22222222-2222-2222-2222-222222222222 (seeded Dev Student).
 .PARAMETER ClassName
     Default "3A".
-.PARAMETER Host
+.PARAMETER HostName
     Host to approve. Default "reddit.com".
 #>
 
