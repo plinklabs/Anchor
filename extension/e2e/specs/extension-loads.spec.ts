@@ -3,7 +3,7 @@
 // below it is trustworthy.
 
 import { test, expect } from '../fixtures.ts';
-import { BACKEND_URL, STABLE_EXTENSION_ID, STUDENT_OID } from '../config.ts';
+import { BACKEND_URL, DEFAULT_LOCALE, STABLE_EXTENSION_ID, STUDENT_OID } from '../config.ts';
 
 test('extension loads in Edge and its service worker boots', async ({ ext }) => {
   // A real MV3 extension id is 32 lowercase letters.
@@ -17,6 +17,22 @@ test('Edge derives the pinned stable extension id from the manifest key', async 
   // ExtensionInstallForcelist entry keeps matching. The unit test locks the
   // manifest→id derivation; this proves the browser actually does the same.
   expect(ext.extensionId).toBe(STABLE_EXTENSION_ID);
+});
+
+test('the browser runs in the pinned UI language, whatever the host language', async ({ ext }) => {
+  // #364: chrome.i18n picks its catalogue from the browser UI language, which Edge
+  // otherwise takes from the host's display language, so on a Dutch box every
+  // spec asserting English copy failed. Check the copy and the catalogue locale
+  // (@@ui_locale), not navigator.language or getUILanguage() (so not <html lang>
+  // either): Playwright Test emulates those as en-US on any host, while the
+  // catalogue still followed the host.
+  const page = await ext.context.newPage();
+  await page.goto(`${ext.blockPagePrefix}?blocked=https://example.com/`);
+  await expect(page.locator('h1')).toHaveText("Let's stay on track");
+  expect(await page.evaluate(() => chrome.i18n.getMessage('@@ui_locale'))).toBe(
+    DEFAULT_LOCALE.replace('-', '_'),
+  );
+  await page.close();
 });
 
 test('unconfigured extension refuses to connect to the hub', async ({ ext }) => {

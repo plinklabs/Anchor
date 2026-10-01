@@ -63,6 +63,10 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         _log = log;
     }
 
+    /// <summary>
+    /// The session group: the owning teacher's roster feed. Only their
+    /// connections join it, through <see cref="JoinSession"/> (#366).
+    /// </summary>
     public static string GroupName(Guid sessionId) => $"session:{sessionId:D}";
 
     public static string UserGroupName(Guid userId) => $"user:{userId:D}";
@@ -133,12 +137,22 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         await _db.SaveChangesAsync(ct);
         if (participant is not null)
             _activeParticipants.Update(participant);
-        await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(session.Id), ct);
 
-        // Tell the teacher's roster a member just joined (#100). The owning
-        // teacher isn't a participant, so their own subscribe doesn't emit.
-        if (!isOwningTeacher)
+        if (isOwningTeacher)
         {
+            // Only the owning teacher's connections subscribe to the session
+            // group (#366): it carries their roster feed, with each student's
+            // name, the URLs they ask to open and their tamper flags. A
+            // student's join records them as joined without subscribing them;
+            // what their agent and extension listen for goes to their user group.
+            // The teacher's join changes nothing else, so calling it again,
+            // from the same connection or a new one, only (re)subscribes it.
+            await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(session.Id), ct);
+        }
+        else
+        {
+            // Tell the teacher's roster a member just joined (#100). The owning
+            // teacher isn't a participant, so their own subscribe doesn't emit.
             await _broadcaster.ParticipantStateChangedAsync(
                 new ParticipantStateChangedPayload(
                     session.Id, user.Id, user.DisplayName,

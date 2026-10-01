@@ -922,10 +922,11 @@ public partial class App : Application
         // Layer config: committed dev defaults (appsettings.json) first, then the
         // per-environment file. In Development that's the gitignored local override
         // (appsettings.Development.json); in a release build it's the committed
-        // appsettings.Production.json *template*, whose Backend:BaseUrl + Auth
-        // placeholders the release pipeline substitutes at pack time so a fork's
-        // published agent targets its own backend + Entra without editing the
-        // committed dev source (#203).
+        // appsettings.Production.json *template*, whose Backend:BaseUrl, Auth and
+        // Update:GithubRepoUrl placeholders the release pipeline substitutes at
+        // pack time so a fork's published agent targets its own backend + Entra,
+        // and updates from its own Releases, without editing the committed dev
+        // source (#203, #360).
         builder.Configuration
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)

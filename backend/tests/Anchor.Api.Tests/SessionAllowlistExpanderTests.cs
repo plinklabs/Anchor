@@ -213,10 +213,12 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Development_build_adds_localhost_and_vscode_carveouts()
+    public async Task Development_build_adds_localhost_vscode_and_claude_carveouts()
     {
         // #125: a dev build must keep the dashboard/backend reachable (localhost)
         // and the editor usable (VS Code) even while a session enforces the list.
+        // #372: likewise Claude (desktop app + the Claude Code binary it runs,
+        // both claude.exe), so an e2e run doesn't take the developer's window.
         var expander = new SessionAllowlistExpander(_db, Env(Environments.Development));
 
         var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
@@ -224,22 +226,26 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "localhost");
         Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "127.0.0.1");
         Assert.Contains(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value == "Code");
+        Assert.Contains(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value == "claude");
         // Baseline survives alongside the carve-outs.
         Assert.Contains(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value == "msedge");
     }
 
     [Fact]
-    public async Task NonDevelopment_build_includes_neither_carveout()
+    public async Task NonDevelopment_build_includes_no_carveout()
     {
-        // Acceptance: a Release/non-Development build must include NEITHER the
-        // localhost domain nor VS Code — production stays fully locked down.
+        // Acceptance: a Release/non-Development build must include NONE of the
+        // dev carve-outs — not the localhost domain, VS Code, or Claude —
+        // production stays fully locked down. The agent matches process names
+        // case-insensitively, so the app checks are too.
         var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
 
         var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
 
         Assert.DoesNotContain(expanded.Domains, d => d.Value == "localhost");
         Assert.DoesNotContain(expanded.Domains, d => d.Value == "127.0.0.1");
-        Assert.DoesNotContain(expanded.Apps, a => a.Value == "Code");
+        Assert.DoesNotContain(expanded.Apps, a => a.Value.Equals("Code", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(expanded.Apps, a => a.Value.Equals("claude", StringComparison.OrdinalIgnoreCase));
         // Baseline still present — we only stripped the dev carve-outs.
         Assert.Contains(expanded.Apps, a => a.Value == "msedge");
     }

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using Anchor.Api.Controllers;
 using Anchor.Api.Realtime;
@@ -13,6 +14,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Anchor.Api.Tests;
 
@@ -718,6 +720,76 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task Roster_signals_about_a_student_reach_the_owning_teacher_and_no_student()
+    {
+        // #366: the session group carries the teacher's roster feed: a
+        // student's name with their joins and leaves, the URLs they ask to
+        // open, their tamper flags, their agent going quiet. Every student's
+        // agent and extension calls JoinSession, so while that subscribed them
+        // to the group, each student's device received the whole class's feed.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var startResponse = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
+        startResponse.EnsureSuccessStatusCode();
+        var sessionId = (await startResponse.Content.ReadFromJsonAsync<StartSessionResponse>())!.Id;
+        var student = scenario.Students[0];
+
+        await using var teacher = BuildConnection(scenario.Teacher.EntraOid, "Teacher");
+        await using var classmate = BuildConnection(scenario.Students[1].EntraOid, "Student");
+        await using var own = BuildConnection(student.EntraOid, "Student");
+        var teacherFeed = new RosterFeed(teacher);
+        var classmateFeed = new RosterFeed(classmate);
+        var ownFeed = new RosterFeed(own);
+
+        // The teacher's live page subscribes to its session; the classmate's
+        // agent or extension joins it the way they do on SessionStarted.
+        await teacher.StartAndAwaitOnConnectedAsync();
+        await JoinAsync(teacher, sessionId);
+        await classmate.StartAndAwaitOnConnectedAsync();
+        await JoinAsync(classmate, sessionId);
+        await own.StartAndAwaitOnConnectedAsync();
+
+        // Every roster signal about the student, raised the way production
+        // raises it.
+        await JoinAsync(own, sessionId);
+        await own.InvokeAsync("ReportEvent", new ReportEventRequest(
+            sessionId, nameof(EventKind.UnblockRequest),
+            """{"url":"https://reddit.com/r/aww","host":"reddit.com"}""", OccurredAt: null));
+        await own.InvokeAsync("ReportEvent", new ReportEventRequest(
+            sessionId, nameof(EventKind.TamperDetected), """{"kind":"inprivate_opened"}""", OccurredAt: null));
+        // HeartbeatLost and AgentReconnected come from the heartbeat monitor:
+        // the student's agent goes quiet past the timeout, then pings again.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var tracker = new HeartbeatTracker();
+        var monitor = ActivatorUtilities.CreateInstance<HeartbeatMonitor>(_factory.Services, tracker, (TimeProvider)clock);
+        tracker.Record(sessionId, student.Id, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromMinutes(5));
+        await monitor.ScanOnceAsync(CancellationToken.None);
+        tracker.Record(sessionId, student.Id, clock.GetUtcNow());
+        await monitor.ScanOnceAsync(CancellationToken.None);
+        await own.InvokeAsync("LeaveSession", sessionId);
+
+        // A connection receives its messages in the order they were sent.
+        await teacherFeed.WaitForAsync(student.Id, "ParticipantStateChanged:Left", TimeSpan.FromSeconds(5));
+        Assert.Equal(
+            new[]
+            {
+                "ParticipantStateChanged:Joined",
+                "UnblockRequested",
+                "TamperDetected",
+                "HeartbeatLost",
+                "AgentReconnected",
+                "ParticipantStateChanged:Left",
+            },
+            teacherFeed.About(student.Id));
+        // Room for a stray delivery to a student's connection to arrive.
+        await Task.Delay(500);
+        Assert.Empty(classmateFeed.All);
+        Assert.Empty(ownFeed.All);
+    }
+
+    [Fact]
     public async Task SessionStarted_REST_call_reaches_roster_members_only()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
@@ -783,6 +855,45 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         public Task First => _first.Task;
 
         public int Count => Volatile.Read(ref _count);
+    }
+
+    /// <summary>
+    /// The roster signals a connection receives, as (student, signal), where a
+    /// signal is the message name, or <c>ParticipantStateChanged:{state}</c>.
+    /// </summary>
+    private sealed class RosterFeed
+    {
+        private readonly ConcurrentQueue<(Guid UserId, string Signal)> _received = new();
+
+        public RosterFeed(HubConnection connection)
+        {
+            connection.On<ParticipantStateChangedPayload>(nameof(ISessionHubClient.ParticipantStateChanged),
+                p => _received.Enqueue((p.UserId, $"{nameof(ISessionHubClient.ParticipantStateChanged)}:{p.State}")));
+            connection.On<UnblockRequestedPayload>(nameof(ISessionHubClient.UnblockRequested),
+                p => _received.Enqueue((p.UserId, nameof(ISessionHubClient.UnblockRequested))));
+            connection.On<TamperDetectedPayload>(nameof(ISessionHubClient.TamperDetected),
+                p => _received.Enqueue((p.UserId, nameof(ISessionHubClient.TamperDetected))));
+            connection.On<HeartbeatLostPayload>(nameof(ISessionHubClient.HeartbeatLost),
+                p => _received.Enqueue((p.UserId, nameof(ISessionHubClient.HeartbeatLost))));
+            connection.On<AgentReconnectedPayload>(nameof(ISessionHubClient.AgentReconnected),
+                p => _received.Enqueue((p.UserId, nameof(ISessionHubClient.AgentReconnected))));
+        }
+
+        public IReadOnlyList<(Guid UserId, string Signal)> All => _received.ToArray();
+
+        public string[] About(Guid userId) =>
+            _received.Where(r => r.UserId == userId).Select(r => r.Signal).ToArray();
+
+        public async Task WaitForAsync(Guid userId, string signal, TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (!About(userId).Contains(signal))
+            {
+                if (DateTime.UtcNow > deadline)
+                    throw new TimeoutException($"No {signal} for {userId} within {timeout}; received [{string.Join(", ", About(userId))}].");
+                await Task.Delay(20);
+            }
+        }
     }
 
     private async Task<(User student, Session session)> SeedSessionWithStudentAsync()

@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import {
   BACKEND_URL,
   BROWSER_CHANNEL,
+  DEFAULT_LOCALE,
   DIST_PATH,
   HEADLESS,
   MAPPED_HOSTS,
@@ -50,7 +51,8 @@ export interface LoadExtensionOptions {
   /**
    * BCP-47 UI language to launch the browser in (e.g. `nl`). Passed as Chromium's
    * `--lang`, which is what `chrome.i18n` selects its `_locales/<lang>` catalogue
-   * from (#322). Omit for the host default (en on the CI runners).
+   * from (#322). Defaults to DEFAULT_LOCALE (`en-US`), never the host's language,
+   * so a spec renders the same copy on every machine (#364).
    */
   locale?: string;
 }
@@ -133,19 +135,21 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
 
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-ext-e2e-'));
   const hostRule = MAPPED_HOSTS.map((h) => `MAP ${h} 127.0.0.1`).join(',');
+  const locale = options.locale ?? DEFAULT_LOCALE;
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: BROWSER_CHANNEL,
     headless: HEADLESS,
     // `--lang` sets the browser UI language chrome.i18n reads (#322); `locale`
-    // keeps navigator.language/Accept-Language consistent with it.
-    ...(options.locale ? { locale: options.locale } : {}),
+    // keeps navigator.language/Accept-Language consistent with it. Always set:
+    // left out, Edge takes the host's display language (#364).
+    locale,
     args: [
       `--disable-extensions-except=${DIST_PATH}`,
       `--load-extension=${DIST_PATH}`,
       // Resolve the synthetic test hosts to the local static server so specs
       // never hit the public internet (config.MAPPED_HOSTS).
       `--host-resolver-rules=${hostRule}`,
-      ...(options.locale ? [`--lang=${options.locale}`] : []),
+      `--lang=${locale}`,
     ],
   });
 

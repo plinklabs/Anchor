@@ -92,13 +92,13 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
 
     public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
         // Session group: the owning teacher is the only "interested" party,
-        // but they may not yet have joined the hub (dashboard re-opened mid-
-        // session). Pushing to the session group lets any active connection
-        // pick this up; the dashboard filters/groups by host.
+        // and the only one in it (#366): it carries the student's name and the
+        // URL they asked for. Any of the teacher's connections that joined the
+        // session picks this up; the dashboard filters/groups by host.
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnblockRequested(payload);
 
     public Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default)
         // Session group: same routing as UnblockRequested — the owning teacher's
-        // dashboard is the consumer and may have reconnected mid-session.
+        // dashboard is the consumer, and no student may see a classmate's flag.
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).TamperDetected(payload);
 }

@@ -20,8 +20,62 @@ namespace FocusAgent.IntegrationTests;
 [SupportedOSPlatform("windows")]
 public sealed class SessionStartSweepTests
 {
+    // Process names the Development backend always allows (backend
+    // SessionAllowlist.DevelopmentApps): VS Code (#125) and Claude — the desktop
+    // app and the Claude Code binary it runs are both claude.exe (#372).
+    private static readonly string[] DevelopmentCarveoutApps = { "Code", "claude" };
+
     private readonly BackendFixture _backend;
     public SessionStartSweepTests(BackendFixture backend) => _backend = backend;
+
+    /// <summary>
+    /// The e2e backend boots under <c>Development</c> (see BackendProcess), so
+    /// every session it starts carries the dev carve-out apps. They must reach
+    /// the agent's live matcher and be spared by the session-start sweep —
+    /// otherwise every e2e run (and every local session) minimizes the window
+    /// the developer is working in while the tests run. On a dev box with Claude
+    /// or VS Code open, the sweep assertion checks those real windows; on a
+    /// runner with neither open it holds trivially and the allowedApps assertion
+    /// carries the spec.
+    /// </summary>
+    [Fact]
+    public async Task DevelopmentCarveoutApps_ReachTheAgent_AndAreSparedBySweep()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
+        await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+
+        var classId = await api.FindClassIdAsync();
+        // No bundles → only the baseline + the dev carve-outs are allowed.
+        var session = await api.StartSessionAsync(classId);
+        try
+        {
+            var joined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id && s.StartupSweep is not null, TimeSpan.FromSeconds(8));
+            Assert.True(
+                joined?.JoinedSessionId == session.Id && joined.StartupSweep is not null,
+                $"Agent did not auto-join and sweep within 8s (joinedSessionId: " +
+                $"{joined?.JoinedSessionId?.ToString() ?? "<none>"}, sweep: {joined?.StartupSweep is not null}).");
+
+            var allowed = joined!.AllowedApps ?? Array.Empty<string>();
+            var minimized = joined.StartupSweep!.MinimizedProcesses ?? Array.Empty<string>();
+            foreach (var app in DevelopmentCarveoutApps)
+            {
+                Assert.True(
+                    allowed.Contains(app, StringComparer.OrdinalIgnoreCase),
+                    $"The Development carve-out '{app}' never reached the agent's matcher. " +
+                    $"allowedApps: [{string.Join(", ", allowed)}].");
+                Assert.False(
+                    minimized.Contains(app, StringComparer.OrdinalIgnoreCase),
+                    $"The session-start sweep minimized the Development carve-out '{app}'. " +
+                    $"minimized: [{string.Join(", ", minimized)}].");
+            }
+        }
+        finally
+        {
+            await api.EndSessionAsync(session.Id);
+        }
+    }
 
     [Fact]
     public async Task OffListWindowOpenAtSessionStart_IsMinimizedBySweep()

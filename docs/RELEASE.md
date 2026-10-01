@@ -167,6 +167,14 @@ launches the agent automatically once installed.
   can't serve — reusing it made release sign-in fail with `WAM_provider_error_…`
   (`0xCAA2000x`) (#271). `substitute-config.ps1` fails the build if any required
   value is blank, so a missing variable can't silently ship a dead config — #247.
+- The update feed is baked in the same way, with **nothing to set**: the agent's
+  `Update:GithubRepoUrl` is substituted from `UPDATE_REPO_URL`, which the workflow
+  derives from the repository running the release (`github.repository`) — the
+  same repo it uploads the feed to. A fork's installed agents therefore update
+  from the fork's own Releases, never from upstream's (#360). Agents installed
+  from a fork release built before #360 still check `plinklabs/Anchor`; only a
+  reinstall (uninstall, then run a newer fork `Setup.exe`) moves them onto the
+  fork's feed.
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
 - The agent ships **unsigned** (one SmartScreen "More info → Run anyway" on first
@@ -301,6 +309,10 @@ carries. Pointing the agent at `ENTRA_CLIENT_ID` made release sign-in fail with
 registration and sets this variable. Unlike the dashboard's silent fall-back, the
 agent pack **fails the build** if any required value is unset or blank
 (`substitute-config.ps1`), so a missing variable can't ship a dead config (#247).
+
+The agent's update feed needs **no variable**: `agent-release.yml` sets
+`UPDATE_REPO_URL` to `https://github.com/<github.repository>` itself, so each
+fork's agents update from that fork's Releases (#360).
 
 #### Extension — Edge Add-ons submission (`extension-release.yml`)
 

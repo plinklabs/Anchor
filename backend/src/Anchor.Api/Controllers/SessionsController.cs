@@ -329,9 +329,13 @@ public sealed class SessionsController : ControllerBase
         if (session is null)
             return NotFound();
 
-        var isParticipant = await _db.SessionParticipants.AsNoTracking()
-            .AnyAsync(p => p.SessionId == id && p.UserId == caller.Id, cancellationToken);
-        if (session.TeacherId != caller.Id && !isParticipant)
+        // Only the owning teacher (#369). The detail is their roster view:
+        // every student's name, state and tamper flag, the URLs they asked to
+        // open, the hosts granted to them. A participant, student or a teacher
+        // who joined by code, would read their classmates' activity; no client
+        // of theirs calls this (the agent rejoins through /sessions/rejoinable,
+        // the extension uses the hub). Same rule as the session group (#366).
+        if (session.TeacherId != caller.Id)
             return Forbid();
 
         var className = await _db.Classes.AsNoTracking()

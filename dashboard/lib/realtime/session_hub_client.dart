@@ -31,8 +31,16 @@ class SessionHubClient {
 
   HubConnection? _connection;
   final _events = StreamController<SessionEvent>.broadcast();
+  final _reconnected = StreamController<void>.broadcast();
 
   Stream<SessionEvent> get events => _events.stream;
+
+  /// Fires each time the connection comes back after a drop (#365). A
+  /// reconnect is a new hub connection: the hub puts it back in the user's
+  /// group (OnConnectedAsync) but in no session group, so a caller that joined
+  /// a session has to call [joinSession] again — and catch up on whatever was
+  /// broadcast while it was offline.
+  Stream<void> get reconnected => _reconnected.stream;
 
   Future<void> connect() async {
     if (_connection != null) return;
@@ -106,6 +114,10 @@ class SessionHubClient {
       });
     }
 
+    connection.onreconnected((_) {
+      if (!_reconnected.isClosed) _reconnected.add(null);
+    });
+
     await connection.start();
     _connection = connection;
   }
@@ -138,5 +150,6 @@ class SessionHubClient {
   Future<void> dispose() async {
     await disconnect();
     await _events.close();
+    await _reconnected.close();
   }
 }

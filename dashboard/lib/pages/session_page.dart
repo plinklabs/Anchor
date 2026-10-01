@@ -43,6 +43,7 @@ enum _ExitChoice { endSession, leaveRunning, cancel }
 class _SessionPageState extends State<SessionPage> {
   late final SessionHubClient _hub;
   StreamSubscription<SessionEvent>? _eventsSub;
+  StreamSubscription<void>? _reconnectedSub;
   final List<SessionEvent> _events = [];
   bool _connecting = true;
   bool _ending = false;
@@ -246,12 +247,33 @@ class _SessionPageState extends State<SessionPage> {
           _loadDetail();
         }
       });
+      _reconnectedSub = _hub.reconnected.listen((_) => _rejoinAfterReconnect());
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = l10n.sessionConnectError('$e'));
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
+  }
+
+  /// The hub connection came back after a drop (#365). SignalR keeps no group
+  /// membership across a reconnect, and every roster signal (participant
+  /// state, heartbeat, tamper, unblock request) goes to the session group, so
+  /// join it again, then re-fetch the roster and the pending requests the page
+  /// missed while it was offline. Join first: a change after the join reaches
+  /// this connection, one before it is in the re-fetch. The hub runs an
+  /// invocation only after OnConnectedAsync, so the join can't race the
+  /// reconnect's own setup.
+  Future<void> _rejoinAfterReconnect() async {
+    if (_ended) return;
+    try {
+      await _hub.joinSession(widget.sessionId);
+    } catch (_) {
+      // JoinSession refuses a session that ended while the page was offline.
+      // The detail re-fetch below still runs and picks the end up.
+    }
+    if (!mounted) return;
+    await Future.wait([_loadDetail(), _loadPendingRequests()]);
   }
 
   /// Whether [evt] names a session other than this page's. Every hub payload
@@ -343,6 +365,7 @@ class _SessionPageState extends State<SessionPage> {
   @override
   void dispose() {
     _eventsSub?.cancel();
+    _reconnectedSub?.cancel();
     _hub.dispose();
     super.dispose();
   }
