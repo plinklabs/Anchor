@@ -74,7 +74,7 @@
         </article>
         <article>
           <h3>Backend</h3>
-          <p>Microsoft Azure. Each school self-hosts a small set of free-tier resources (App Service, Azure SQL, SignalR, Static Web App) in its own subscription. Single-tenant by design.</p>
+          <p>Microsoft Azure, in the school's own subscription: an App Service on the Basic B1 plan (Always On), an Azure SQL Standard S0 database, and the teacher dashboard on a free-tier Static Web App. For a school of around 1,000 students that's about €24 a month (Azure list prices, Belgium Central, excluding VAT), or about €43 if the database needs Standard S1. Single-tenant by design.</p>
         </article>
       </div>
     </section>
@@ -120,7 +120,7 @@
     <section class="callout">
       <p class="eyebrow">Network</p>
       <h2>Plain HTTPS outbound — no proxy surgery</h2>
-      <p>Everything runs over <strong>HTTPS/TLS</strong>. Each student device makes <strong>outbound</strong> connections to your school's Azure backend (the App Service API) and to Azure SignalR for the realtime session channel — the same kind of HTTPS traffic to <code>*.azurewebsites.net</code> and the SignalR service that the rest of your Microsoft cloud already uses.</p>
+      <p>Everything runs over <strong>HTTPS/TLS</strong>. Each student device makes <strong>outbound</strong> connections to your school's App Service (by default <code>anchor-api-&lt;suffix&gt;.azurewebsites.net</code>), which serves both the API and the realtime session channel. The realtime channel runs inside the API itself, so there is no separate SignalR service to allow — just make sure outbound HTTPS to that host permits <strong>WebSocket upgrades</strong>. Beyond that, devices sign in through Microsoft Entra ID (<code>login.microsoftonline.com</code>), and the agent checks the project's GitHub Releases for updates.</p>
       <p>Anchor needs <strong>no proxy certificate, no TLS interception, and no MITM</strong> on its connections. Because enforcement and reporting are device-resident and outbound-only, it is <strong>BYOD-friendly</strong>: it does not depend on devices sitting behind a particular network, so it works on school Wi-Fi and at home alike.</p>
     </section>
 
