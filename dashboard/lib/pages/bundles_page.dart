@@ -43,13 +43,27 @@ class BundlesPage extends StatefulWidget {
 }
 
 class _BundlesPageState extends State<BundlesPage> {
-  bool _loading = false;
   bool _denied = false;
   bool _includeArchived = false;
   List<BundleSummary>? _list;
   BundleDetail? _selected;
   bool _isNewDraft = false;
+
+  /// A failure of the editor's own actions (validation, save, archive,
+  /// delete), drawn in the editor under the tester.
   ApiErrorMessage? _error;
+
+  /// A failed catalogue load: `me()` or `list()` (#384). Drawn in the list
+  /// pane, where the catalogue goes, so it shows whether or not a bundle is
+  /// open, and a catalogue that never loaded doesn't read as "No bundles.".
+  ApiErrorMessage? _loadError;
+
+  /// A failed open of one bundle (#384) and the row it was for, which Retry
+  /// opens again. Drawn in the editor pane in place of the select-a-bundle
+  /// placeholder.
+  ApiErrorMessage? _openError;
+  BundleSummary? _openFailed;
+  bool _opening = false;
 
   // Editor draft state (separate so cancellable).
   final TextEditingController _nameController = TextEditingController();
@@ -92,7 +106,7 @@ class _BundlesPageState extends State<BundlesPage> {
       // first frame. By the catch, the element is mounted and context is valid.
       final l10n = AppLocalizations.of(context);
       setState(
-        () => _error = describeApiError(
+        () => _loadError = describeApiError(
           e,
           generic: l10n.bundlesLoadListError,
           notAuthorized: l10n.apiError403Admin,
@@ -101,10 +115,17 @@ class _BundlesPageState extends State<BundlesPage> {
     }
   }
 
+  /// Retry after a failed catalogue load. Runs the whole bootstrap again, as
+  /// the failure may have been the admin check (`me()`) rather than the list.
+  void _retryLoad() {
+    setState(() => _loadError = null);
+    _bootstrap();
+  }
+
   Future<void> _refreshList() async {
     final l10n = AppLocalizations.of(context);
     setState(() {
-      _loading = true;
+      _loadError = null;
       _error = null;
     });
     try {
@@ -123,20 +144,22 @@ class _BundlesPageState extends State<BundlesPage> {
     } catch (e) {
       if (!mounted) return;
       setState(
-        () => _error = describeApiError(
+        () => _loadError = describeApiError(
           e,
           generic: l10n.bundlesLoadListError,
           notAuthorized: l10n.apiError403Admin,
         ),
       );
-    } finally {
-      if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _openBundle(BundleSummary summary) async {
     final l10n = AppLocalizations.of(context);
-    setState(() => _loading = true);
+    setState(() {
+      _opening = true;
+      _openError = null;
+      _openFailed = null;
+    });
     try {
       final detail = await widget.bundles.get(summary.id);
       if (!mounted) return;
@@ -150,15 +173,20 @@ class _BundlesPageState extends State<BundlesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(
-        () => _error = describeApiError(
+      // The admin asked to leave whatever was open for this bundle, as a
+      // successful open would have. Say why it didn't open where the editor
+      // goes, not under another bundle's editor or nowhere at all.
+      _clearEditor();
+      setState(() {
+        _openError = describeApiError(
           e,
           generic: l10n.bundlesLoadOneError,
           notAuthorized: l10n.apiError403Admin,
-        ),
-      );
+        );
+        _openFailed = summary;
+      });
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _opening = false);
     }
   }
 
@@ -166,6 +194,8 @@ class _BundlesPageState extends State<BundlesPage> {
     setState(() {
       _selected = null;
       _isNewDraft = true;
+      _openError = null;
+      _openFailed = null;
       _nameController.text = '';
       _entries = [
         _EntryRow(
@@ -183,6 +213,8 @@ class _BundlesPageState extends State<BundlesPage> {
     setState(() {
       _selected = null;
       _isNewDraft = false;
+      _openError = null;
+      _openFailed = null;
       _nameController.text = '';
       _entries = [];
       _testController.clear();
@@ -703,30 +735,66 @@ class _BundlesPageState extends State<BundlesPage> {
           ),
         ),
         const _Hairline(),
-        Expanded(
-          child: _loading && list == null
-              ? const Center(child: CircularProgressIndicator())
-              : list == null || list.isEmpty
-              ? Center(
-                  child: Text(
-                    AppLocalizations.of(context).bundlesNoBundles,
-                    style: _monoLabel(PlinkColors.muted),
-                  ),
-                )
-              : ListView.separated(
-                  padding: EdgeInsets.zero,
-                  itemCount: list.length,
-                  separatorBuilder: (_, _) => const _Hairline(),
-                  itemBuilder: (context, i) {
-                    final b = list[i];
-                    return _BundleRow(
-                      summary: b,
-                      selected: _selected?.id == b.id,
-                      onTap: () => _openBundle(b),
-                    );
-                  },
+        Expanded(child: _buildCatalogue(list)),
+      ],
+    );
+  }
+
+  Widget _buildCatalogue(List<BundleSummary>? list) {
+    final loadError = _loadError;
+    if (list == null) {
+      // No catalogue yet: the load failed, so say so, or it is still running.
+      // Only a list that actually loaded can be "No bundles." (#384).
+      return Center(
+        child: loadError == null
+            ? const CircularProgressIndicator()
+            : Padding(
+                padding: const EdgeInsets.all(PlinkSpacing.s4),
+                child: _LoadFailure(
+                  message: loadError,
+                  retryKey: const Key('bundles-load-retry-button'),
+                  onRetry: _retryLoad,
                 ),
+              ),
+      );
+    }
+    final rows = list.isEmpty
+        ? Center(
+            child: Text(
+              AppLocalizations.of(context).bundlesNoBundles,
+              style: _monoLabel(PlinkColors.muted),
+            ),
+          )
+        : ListView.separated(
+            padding: EdgeInsets.zero,
+            itemCount: list.length,
+            separatorBuilder: (_, _) => const _Hairline(),
+            itemBuilder: (context, i) {
+              final b = list[i];
+              return _BundleRow(
+                summary: b,
+                selected: _selected?.id == b.id,
+                onTap: () => _openBundle(b),
+              );
+            },
+          );
+    if (loadError == null) return rows;
+    // A reload failed with a catalogue already on screen (the archived toggle,
+    // or the reload after a save): keep the rows, and say above them that the
+    // reload failed.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(PlinkSpacing.s4),
+          child: _LoadFailure(
+            message: loadError,
+            retryKey: const Key('bundles-load-retry-button'),
+            onRetry: _retryLoad,
+          ),
         ),
+        const _Hairline(),
+        Expanded(child: rows),
       ],
     );
   }
@@ -734,14 +802,28 @@ class _BundlesPageState extends State<BundlesPage> {
   Widget _buildEditor() {
     final l10n = AppLocalizations.of(context);
     if (_selected == null && !_isNewDraft) {
+      final openError = _openError;
+      final openFailed = _openFailed;
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(PlinkSpacing.s6),
-          child: Text(
-            l10n.bundlesSelectOrNew,
-            style: _monoLabel(PlinkColors.muted),
-            textAlign: TextAlign.center,
-          ),
+          child: _opening
+              ? const CircularProgressIndicator()
+              // A bundle that failed to open says so here, where its editor
+              // would be, not as the select-a-bundle placeholder (#384).
+              : openError != null
+              ? _LoadFailure(
+                  message: openError,
+                  retryKey: const Key('bundles-open-retry-button'),
+                  onRetry: openFailed == null
+                      ? null
+                      : () => _openBundle(openFailed),
+                )
+              : Text(
+                  l10n.bundlesSelectOrNew,
+                  style: _monoLabel(PlinkColors.muted),
+                  textAlign: TextAlign.center,
+                ),
         ),
       );
     }
@@ -1096,6 +1178,41 @@ TextStyle _monoSpec(Color color, double size) => TextStyle(
   height: 1.4,
   fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
 );
+
+/// A failed load, the way Home, Classes and History show one (#278, #384):
+/// the human sentence from [describeApiError], centred, with a calm ink Retry.
+/// A 403 is the no-admin-access notice, which a retry can't clear, so it gets
+/// no Retry.
+class _LoadFailure extends StatelessWidget {
+  const _LoadFailure({
+    required this.message,
+    required this.retryKey,
+    required this.onRetry,
+  });
+
+  final ApiErrorMessage message;
+  final Key retryKey;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ApiErrorText(message, textAlign: TextAlign.center),
+        if (!message.isAuthorization && onRetry != null) ...[
+          const SizedBox(height: PlinkSpacing.s3),
+          // Calm ink: retrying a fetch is never the magenta spark.
+          OutlinedButton(
+            key: retryKey,
+            onPressed: onRetry,
+            child: Text(AppLocalizations.of(context).actionRetry),
+          ),
+        ],
+      ],
+    );
+  }
+}
 
 /// One catalogue row — a hairline instrument line. The bundle name reads first;
 /// its version is a mono spec chip and an archived bundle wears a muted badge.
