@@ -1,4 +1,5 @@
 ﻿#Requires -Version 5.1
+
 <#
 .SYNOPSIS
     Promote an existing Anchor user to the DB-only `Admin` role in a deployed
