@@ -1,4 +1,6 @@
+using Anchor.Api.Events;
 using Anchor.Api.Realtime;
+using Anchor.Api.Sessions;
 using Anchor.Api.Tests.FakeAuth;
 using Anchor.Api.Users;
 using Anchor.Infrastructure.Persistence;
@@ -35,6 +37,7 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(EnvironmentName);
+        DisableBackgroundServices(builder);
 
         // Program.cs's Development path requires ConnectionStrings:DefaultConnection
         // before we override the DbContext below. Supply a harmless placeholder so
@@ -43,17 +46,6 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             new Dictionary<string, string?>
             {
                 ["ConnectionStrings:DefaultConnection"] = "Data Source=:memory:",
-                // The monitor scans tracker state on a timer; tests drive
-                // the scan deterministically via HeartbeatMonitor.ScanOnceAsync
-                // instead so assertions don't race the timer.
-                ["Heartbeat:EnableMonitor"] = "false",
-                // Same reasoning as Heartbeat:EnableMonitor — tests drive
-                // EventPruner.PruneOnceAsync directly to avoid racing the
-                // shared in-memory SQLite connection.
-                ["EventRetention:EnablePruner"] = "false",
-                // Same again for the auto-end of forgotten sessions (#345):
-                // tests drive SessionAutoEnder.EndForgottenSessionsAsync directly.
-                ["SessionAutoEnd:EnableAutoEnder"] = "false",
             }));
 
         builder.ConfigureTestServices(services =>
@@ -89,6 +81,27 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             services.AddSingleton<FakeUserDirectorySearch>();
             services.AddSingleton<IUserDirectorySearch>(sp => sp.GetRequiredService<FakeUserDirectorySearch>());
         });
+    }
+
+    /// <summary>
+    /// Keeps Program.cs's background services out of the test host: tests
+    /// drive <see cref="HeartbeatMonitor.ScanOnceAsync"/>,
+    /// <see cref="EventPruner.PruneOnceAsync"/> and
+    /// <see cref="SessionAutoEnder.EndForgottenSessionsAsync"/> themselves, so
+    /// no loop on the real clock emits HeartbeatLost / ExtensionSilent events,
+    /// prunes seeded events or ends seeded sessions behind their backs.
+    /// <para>
+    /// Host settings, not <c>ConfigureAppConfiguration</c>: Program.cs reads
+    /// these flags before <c>Build()</c>, and under minimal hosting only host
+    /// settings are visible that early (#353). A test that needs one of the
+    /// services opts back in with <c>UseSetting(flag, "true")</c>.
+    /// </para>
+    /// </summary>
+    public static void DisableBackgroundServices(IWebHostBuilder builder)
+    {
+        builder.UseSetting($"{HeartbeatOptions.SectionName}:{nameof(HeartbeatOptions.EnableMonitor)}", "false");
+        builder.UseSetting($"{EventRetentionOptions.SectionName}:{nameof(EventRetentionOptions.EnablePruner)}", "false");
+        builder.UseSetting($"{SessionAutoEndOptions.SectionName}:{nameof(SessionAutoEndOptions.EnableAutoEnder)}", "false");
     }
 
     public async Task InitializeAsync()

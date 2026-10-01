@@ -124,6 +124,9 @@ builder.Services.AddSingleton<HeartbeatTracker>();
 builder.Services.AddSingleton<ActiveParticipantCache>();
 builder.Services.AddSingleton<ParticipantLiveStateResolver>();
 builder.Services.Configure<HeartbeatOptions>(builder.Configuration.GetSection(HeartbeatOptions.SectionName));
+// The Enable* flags of the background services below are read before Build(),
+// so a WebApplicationFactory has to pass them as host settings (UseSetting);
+// ConfigureAppConfiguration only applies at Build(), too late (#353).
 var heartbeatSection = builder.Configuration.GetSection(HeartbeatOptions.SectionName);
 var enableHeartbeatMonitor = heartbeatSection.GetValue<bool?>(nameof(HeartbeatOptions.EnableMonitor)) ?? true;
 if (enableHeartbeatMonitor)
