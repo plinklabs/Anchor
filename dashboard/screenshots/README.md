@@ -49,6 +49,13 @@ Output is deterministic: fixed demo data, a fixed clock baked into the data, a
 fixed 1440×900 viewport, and `go_router`'s hash routes (`#/`, `#/session/…`,
 `#/bundles`, …) so no server-side rewrites are needed.
 
+The shots are always in US English. The dashboard follows the browser
+language, so the generator sets every browser context to `en-US` (`LOCALE`),
+whatever the host's display language (#377). The website is English, and its
+alt text quotes the English copy.
+[`test/screenshot_locale_test.dart`](../test/screenshot_locale_test.dart) fails
+if a context drops the pin.
+
 ## Notes
 
 - Reuses the Playwright Chromium already installed for the extension e2e suite
