@@ -88,3 +88,16 @@ export async function catchUpStartedSession(deps: CatchUpStartedSessionDeps): Pr
   log.info('session started while the extension was not listening', { sessionId: started.sessionId });
   await deps.startSession(started);
 }
+
+export type CatchUpOnConnectDeps = ConfirmActiveSessionDeps & CatchUpStartedSessionDeps;
+
+/**
+ * What the extension does each time its hub connection comes up, however it got
+ * there: the first start, an automatic reconnect, or a new start after the
+ * connection closed (#374). Ends the session the student is no longer in (#354),
+ * then starts the one they are in (#356), in that order.
+ */
+export async function catchUpOnConnect(deps: CatchUpOnConnectDeps): Promise<void> {
+  await confirmActiveSession(deps);
+  await catchUpStartedSession(deps);
+}
