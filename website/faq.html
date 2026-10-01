@@ -94,7 +94,7 @@
       <p class="eyebrow" id="cost-and-data-heading">Cost &amp; data</p>
 
       <h2>Does it cost anything?</h2>
-      <p>Anchor itself is <strong>free and open source</strong>, licensed GPL-3.0. There is no licence fee and no per-seat charge — Plink Labs sells nothing and operates nothing. The only cost is hosting your own backend: a small set of Azure resources (App Service, Azure SQL, SignalR, Static Web App) sized to fit the free tier for a single school.</p>
+      <p>Anchor itself is <strong>free and open source</strong>, licensed GPL-3.0. There is no licence fee and no per-seat charge — Plink Labs sells nothing and operates nothing. The only cost is hosting your own backend in your school's Azure subscription: an App Service on the Basic B1 plan and an Azure SQL Standard S0 database, with the teacher dashboard on a free-tier Static Web App. For a school of around 1,000 students that comes to about <strong>€24 a month</strong> (Azure list prices, Belgium Central region, excluding VAT), or about €43 a month if the database needs to move up to Standard S1. Azure's free App Service tier can't hold the live connections of a full class, so a free-tier deployment isn't an option for real lessons.</p>
 
       <h2>Who can see the data, and where is it stored?</h2>
       <p>Anchor is <strong>self-hosted</strong>: each school runs its own backend in its own Azure subscription, and student devices and the dashboard talk only to that. Your data stays in your Azure. The supervising teacher sees the live session activity for their class; access beyond that is governed by the school, which is the data controller. <strong>Plink Labs operates no backend, receives no student data, and has no access to any school's deployment.</strong></p>
