@@ -573,9 +573,13 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         studentB.On<SessionStartedPayload>(nameof(ISessionHubClient.SessionStarted), p => signalB.TrySetResult(p));
         outsideConn.On<SessionStartedPayload>(nameof(ISessionHubClient.SessionStarted), p => signalOutsider.TrySetResult(p));
 
-        await studentA.StartAsync();
-        await studentB.StartAsync();
-        await outsideConn.StartAsync();
+        // SessionStarted goes to user groups, which a connection joins only in
+        // OnConnectedAsync (#355). The outsider needs the wait too: without it
+        // the negative check below can pass because its connection isn't in
+        // any group yet, not because the routing kept the message away.
+        await studentA.StartAndAwaitOnConnectedAsync();
+        await studentB.StartAndAwaitOnConnectedAsync();
+        await outsideConn.StartAndAwaitOnConnectedAsync();
 
         using var client = _factory.CreateClient();
         TestAuth.SetTeacher(client, scenario.Teacher);
