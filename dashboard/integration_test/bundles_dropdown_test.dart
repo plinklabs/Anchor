@@ -7,7 +7,8 @@ import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for the bundle editor's match-type dropdown (#115).
 //
@@ -100,7 +101,7 @@ class _FakeBundles extends BundlesApi {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets(
     'admin opens a bundle with a SignedPublisher app entry; the match-type '

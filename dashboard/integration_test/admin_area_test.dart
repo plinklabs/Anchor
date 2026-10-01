@@ -9,7 +9,8 @@ import 'package:anchor_dashboard/widgets/anchor_mark.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
-import 'package:integration_test/integration_test.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for the admin area (#299): boots the actual AnchorDashboard
 // (real router, real fonts, real window) and exercises the restructure end to
@@ -94,7 +95,7 @@ AnchorDashboard _app({required bool admin}) {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets(
     'admin: Admin tab opens the area, sub-nav shows Bundles, /bundles redirects',

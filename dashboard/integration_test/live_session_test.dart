@@ -10,8 +10,9 @@ import 'package:anchor_dashboard/main.dart';
 import 'package:anchor_dashboard/realtime/session_hub_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for the teacher dashboard's live-session view (#132).
 //
@@ -332,7 +333,7 @@ Future<_Harness> _bootToLiveSession(WidgetTester tester) async {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets('a SignalR roster transition updates the live roster (#132)', (
     tester,
