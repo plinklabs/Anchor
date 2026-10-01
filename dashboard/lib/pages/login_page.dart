@@ -65,8 +65,11 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
       setState(() => _error = l10n.loginTimeoutError);
     } catch (e) {
+      // A sentence, never the raw MSAL error (#383). The detail stays in the
+      // browser console, where an AADSTS code is what a setup needs.
+      debugPrint('Sign-in failed: $e');
       if (!mounted) return;
-      setState(() => _error = e.toString());
+      setState(() => _error = l10n.loginError);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

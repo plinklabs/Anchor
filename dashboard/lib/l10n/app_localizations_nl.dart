@@ -80,6 +80,9 @@ class AppLocalizationsNl extends AppLocalizations {
       'Aanmelden duurt langer dan verwacht. Probeer het opnieuw.';
 
   @override
+  String get loginError => 'Kon je niet aanmelden. Probeer het opnieuw.';
+
+  @override
   String get shellNavHome => 'Start';
 
   @override
@@ -115,6 +118,10 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get apiError403 =>
       'Je account is nog niet ingesteld als leerkracht. Vraag een beheerder om toegang te verlenen.';
+
+  @override
+  String get apiError403Admin =>
+      'Je account heeft geen beheerderstoegang. Vraag een beheerder om die te verlenen.';
 
   @override
   String get homeLoadError =>
@@ -332,14 +339,12 @@ class AppLocalizationsNl extends AppLocalizations {
   String get classesCsvHeaderMissing => 'De koprij moet upn bevatten.';
 
   @override
-  String sessionUpdateBundlesError(String error) {
-    return 'Kon de bundels niet bijwerken: $error';
-  }
+  String get sessionUpdateBundlesError =>
+      'Kon de toegestane bundels niet bijwerken. Probeer het opnieuw.';
 
   @override
-  String sessionApproveError(String error) {
-    return 'Goedkeuren mislukt: $error';
-  }
+  String get sessionApproveError =>
+      'Kon het verzoek niet goedkeuren. Probeer het opnieuw.';
 
   @override
   String sessionCopiedCode(String code) {
@@ -347,14 +352,12 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String sessionConnectError(String error) {
-    return 'Kon geen verbinding maken met de live stream: $error';
-  }
+  String get sessionConnectError =>
+      'Kon geen verbinding maken met de live feed van deze sessie. Laad de pagina opnieuw om het nog eens te proberen.';
 
   @override
-  String sessionEndError(String error) {
-    return 'Kon de sessie niet beëindigen: $error';
-  }
+  String get sessionEndError =>
+      'Kon de sessie niet beëindigen. Probeer het opnieuw.';
 
   @override
   String get sessionLeaveTitle => 'Deze sessie verlaten?';
@@ -473,19 +476,12 @@ class AppLocalizationsNl extends AppLocalizations {
   String get sessionCopyCode => 'Code kopiëren';
 
   @override
-  String bundlesLoadError(String error) {
-    return 'Kon niet laden: $error';
-  }
+  String get bundlesLoadListError =>
+      'Kon de bundels niet laden. Probeer het opnieuw.';
 
   @override
-  String bundlesLoadListError(String error) {
-    return 'Kon de bundels niet laden: $error';
-  }
-
-  @override
-  String bundlesLoadOneError(String error) {
-    return 'Kon de bundel niet laden: $error';
-  }
+  String get bundlesLoadOneError =>
+      'Kon deze bundel niet laden. Probeer het opnieuw.';
 
   @override
   String get bundlesNameRequired => 'Naam is verplicht.';
@@ -497,9 +493,12 @@ class AppLocalizationsNl extends AppLocalizations {
   String get bundlesEntryAtLeastOne => 'Er is minstens één item vereist.';
 
   @override
-  String bundlesSaveError(String error) {
-    return 'Opslaan mislukt: $error';
-  }
+  String get bundlesSaveError =>
+      'Kon de bundel niet opslaan. Probeer het opnieuw.';
+
+  @override
+  String get bundlesNameTaken =>
+      'Er bestaat al een bundel met die naam. Kies een andere naam.';
 
   @override
   String get bundlesArchiveTitle => 'Bundel archiveren?';
@@ -513,9 +512,8 @@ class AppLocalizationsNl extends AppLocalizations {
   String get bundlesArchive => 'Archiveren';
 
   @override
-  String bundlesArchiveError(String error) {
-    return 'Archiveren mislukt: $error';
-  }
+  String get bundlesArchiveError =>
+      'Kon de bundel niet archiveren. Probeer het opnieuw.';
 
   @override
   String get bundlesDeleteTitle => 'Bundel verwijderen?';
@@ -526,9 +524,12 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String bundlesDeleteError(String error) {
-    return 'Verwijderen mislukt: $error';
-  }
+  String get bundlesDeleteError =>
+      'Kon de bundel niet verwijderen. Probeer het opnieuw.';
+
+  @override
+  String get bundlesDeleteUsedError =>
+      'Een sessie heeft deze bundel gebruikt, dus je kunt hem niet verwijderen. Archiveer hem in de plaats.';
 
   @override
   String bundlesTestNoMatch(String probe) {
@@ -556,9 +557,8 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String bundlesExportError(String error) {
-    return 'Exporteren mislukt: $error';
-  }
+  String get bundlesExportError =>
+      'Kon de bundels niet exporteren. Probeer het opnieuw.';
 
   @override
   String bundlesImported(int count, int created, int updated) {
@@ -583,8 +583,12 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String bundlesImportError(String error) {
-    return 'Importeren mislukt: $error';
+  String get bundlesImportError =>
+      'Kon de bundels niet importeren. Probeer het opnieuw.';
+
+  @override
+  String bundlesImportOneError(String name) {
+    return '\"$name\" kon niet opgeslagen worden.';
   }
 
   @override
@@ -725,18 +729,15 @@ class AppLocalizationsNl extends AppLocalizations {
   String get addStudentNoMatches => 'Geen resultaten.';
 
   @override
-  String adminsLoadError(String error) {
-    return 'Kon de beheerders niet laden: $error';
-  }
+  String get adminsLoadError =>
+      'Kon de beheerders niet laden. Probeer het opnieuw.';
 
   @override
-  String adminsSearchError(String error) {
-    return 'Zoeken mislukt: $error';
-  }
+  String get adminsSearchError => 'Zoeken mislukt. Probeer het opnieuw.';
 
   @override
-  String adminsPromoteError(String name, String error) {
-    return 'Kon $name niet promoveren: $error';
+  String adminsPromoteError(String name) {
+    return 'Kon $name niet promoveren. Probeer het opnieuw.';
   }
 
   @override
@@ -752,8 +753,8 @@ class AppLocalizationsNl extends AppLocalizations {
       'Kan de laatste beheerder niet verwijderen. Promoveer eerst een andere gebruiker.';
 
   @override
-  String adminsRemoveError(String name, String error) {
-    return 'Kon $name niet verwijderen: $error';
+  String adminsRemoveError(String name) {
+    return 'Kon $name niet verwijderen. Probeer het opnieuw.';
   }
 
   @override
@@ -780,13 +781,12 @@ class AppLocalizationsNl extends AppLocalizations {
   String get adminsNoAdmins => 'Geen beheerders.';
 
   @override
-  String schoolsLoadError(String error) {
-    return 'Kon de scholen niet laden: $error';
-  }
+  String get schoolsLoadError =>
+      'Kon de scholen niet laden. Probeer het opnieuw.';
 
   @override
-  String schoolsUpdateError(String name, String error) {
-    return 'Kon $name niet bijwerken: $error';
+  String schoolsUpdateError(String name) {
+    return 'Kon $name niet bijwerken. Probeer het opnieuw.';
   }
 
   @override

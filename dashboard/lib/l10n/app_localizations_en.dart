@@ -80,6 +80,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Signing in is taking longer than expected. Please try again.';
 
   @override
+  String get loginError => 'Could not sign you in. Please try again.';
+
+  @override
   String get shellNavHome => 'Home';
 
   @override
@@ -115,6 +118,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get apiError403 =>
       'Your account isn\'t set up as a teacher yet. Ask an administrator to grant access.';
+
+  @override
+  String get apiError403Admin =>
+      'Your account doesn\'t have admin access. Ask an administrator to grant it.';
 
   @override
   String get homeLoadError =>
@@ -326,14 +333,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get classesCsvHeaderMissing => 'Header must include upn.';
 
   @override
-  String sessionUpdateBundlesError(String error) {
-    return 'Failed to update bundles: $error';
-  }
+  String get sessionUpdateBundlesError =>
+      'Could not update the allowed bundles. Please try again.';
 
   @override
-  String sessionApproveError(String error) {
-    return 'Approve failed: $error';
-  }
+  String get sessionApproveError =>
+      'Could not approve the request. Please try again.';
 
   @override
   String sessionCopiedCode(String code) {
@@ -341,14 +346,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String sessionConnectError(String error) {
-    return 'Could not connect to live stream: $error';
-  }
+  String get sessionConnectError =>
+      'Could not connect to the live feed for this session. Reload the page to try again.';
 
   @override
-  String sessionEndError(String error) {
-    return 'Failed to end session: $error';
-  }
+  String get sessionEndError => 'Failed to end session. Please try again.';
 
   @override
   String get sessionLeaveTitle => 'Leave this session?';
@@ -465,19 +467,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionCopyCode => 'Copy code';
 
   @override
-  String bundlesLoadError(String error) {
-    return 'Could not load: $error';
-  }
+  String get bundlesLoadListError =>
+      'Could not load bundles. Please try again.';
 
   @override
-  String bundlesLoadListError(String error) {
-    return 'Could not load bundles: $error';
-  }
-
-  @override
-  String bundlesLoadOneError(String error) {
-    return 'Failed to load bundle: $error';
-  }
+  String get bundlesLoadOneError =>
+      'Could not load this bundle. Please try again.';
 
   @override
   String get bundlesNameRequired => 'Name is required.';
@@ -489,9 +484,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bundlesEntryAtLeastOne => 'At least one entry is required.';
 
   @override
-  String bundlesSaveError(String error) {
-    return 'Save failed: $error';
-  }
+  String get bundlesSaveError => 'Could not save the bundle. Please try again.';
+
+  @override
+  String get bundlesNameTaken =>
+      'A bundle with that name already exists. Choose another name.';
 
   @override
   String get bundlesArchiveTitle => 'Archive bundle?';
@@ -505,9 +502,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bundlesArchive => 'Archive';
 
   @override
-  String bundlesArchiveError(String error) {
-    return 'Archive failed: $error';
-  }
+  String get bundlesArchiveError =>
+      'Could not archive the bundle. Please try again.';
 
   @override
   String get bundlesDeleteTitle => 'Delete bundle?';
@@ -518,9 +514,12 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String bundlesDeleteError(String error) {
-    return 'Delete failed: $error';
-  }
+  String get bundlesDeleteError =>
+      'Could not delete the bundle. Please try again.';
+
+  @override
+  String get bundlesDeleteUsedError =>
+      'A session has used this bundle, so it can\'t be deleted. Archive it instead.';
 
   @override
   String bundlesTestNoMatch(String probe) {
@@ -548,9 +547,8 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String bundlesExportError(String error) {
-    return 'Export failed: $error';
-  }
+  String get bundlesExportError =>
+      'Could not export the bundles. Please try again.';
 
   @override
   String bundlesImported(int count, int created, int updated) {
@@ -575,8 +573,12 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String bundlesImportError(String error) {
-    return 'Import failed: $error';
+  String get bundlesImportError =>
+      'Could not import the bundles. Please try again.';
+
+  @override
+  String bundlesImportOneError(String name) {
+    return '\"$name\" could not be saved.';
   }
 
   @override
@@ -716,18 +718,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get addStudentNoMatches => 'No matches.';
 
   @override
-  String adminsLoadError(String error) {
-    return 'Could not load admins: $error';
-  }
+  String get adminsLoadError => 'Could not load admins. Please try again.';
 
   @override
-  String adminsSearchError(String error) {
-    return 'Search failed: $error';
-  }
+  String get adminsSearchError => 'Search failed. Please try again.';
 
   @override
-  String adminsPromoteError(String name, String error) {
-    return 'Could not promote $name: $error';
+  String adminsPromoteError(String name) {
+    return 'Could not promote $name. Please try again.';
   }
 
   @override
@@ -743,8 +741,8 @@ class AppLocalizationsEn extends AppLocalizations {
       'Can’t remove the last admin. Promote another user first.';
 
   @override
-  String adminsRemoveError(String name, String error) {
-    return 'Could not remove $name: $error';
+  String adminsRemoveError(String name) {
+    return 'Could not remove $name. Please try again.';
   }
 
   @override
@@ -771,13 +769,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get adminsNoAdmins => 'No admins.';
 
   @override
-  String schoolsLoadError(String error) {
-    return 'Could not load schools: $error';
-  }
+  String get schoolsLoadError => 'Could not load schools. Please try again.';
 
   @override
-  String schoolsUpdateError(String name, String error) {
-    return 'Could not update $name: $error';
+  String schoolsUpdateError(String name) {
+    return 'Could not update $name. Please try again.';
   }
 
   @override

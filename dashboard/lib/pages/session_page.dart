@@ -129,7 +129,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _bundleError = l10n.sessionUpdateBundlesError('$e'));
+      final line = _failureText(e, l10n.sessionUpdateBundlesError, l10n);
+      setState(() => _bundleError = line);
     } finally {
       if (mounted) setState(() => _updatingBundles = false);
     }
@@ -171,6 +172,23 @@ class _SessionPageState extends State<SessionPage> {
   static bool _isNotYours(Object error) =>
       error is ApiException && error.statusCode == 403;
 
+  /// What the page shows when one of the teacher's own requests fails (#383):
+  /// [generic], the action's human sentence, never the raw exception, through
+  /// the helper the other pages use (#278). A 403 is the backend refusing this
+  /// session to the signed-in teacher (#369), whichever request it answers, so
+  /// the page shows the notice it shows for a 403 on the loads (#382) in place
+  /// of the live view, and there is no line to show: null.
+  String? _failureText(Object error, String generic, AppLocalizations l10n) {
+    final message = describeApiError(
+      error,
+      generic: generic,
+      notAuthorized: l10n.sessionNotYours,
+    );
+    if (!message.isAuthorization) return message.text;
+    _showNotYours();
+    return null;
+  }
+
   /// The session belongs to another teacher (#382): show the calm notice in
   /// place of the live view, and stop the live feed. It never gives up on its
   /// own (#370), and every reconnect would rejoin and re-fetch (#365), only to
@@ -203,7 +221,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _unblockError = l10n.sessionApproveError('$e'));
+      final line = _failureText(e, l10n.sessionApproveError, l10n);
+      setState(() => _unblockError = line);
     } finally {
       if (mounted) setState(() => _approving.remove(summary.host));
     }
@@ -225,7 +244,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _unblockError = l10n.sessionApproveError('$e'));
+      final line = _failureText(e, l10n.sessionApproveError, l10n);
+      setState(() => _unblockError = line);
     } finally {
       if (mounted) setState(() => _approving.remove(summary.host));
     }
@@ -296,7 +316,10 @@ class _SessionPageState extends State<SessionPage> {
       await _hub.joinSession(widget.sessionId);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _joinError = l10n.sessionConnectError('$e'));
+      // The hub refused the join (a HubException) or the connection went
+      // while it ran: either way a sentence, never the raw text (#383).
+      final line = _failureText(e, l10n.sessionConnectError, l10n);
+      setState(() => _joinError = line);
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
@@ -355,7 +378,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.sessionEndError('$e'));
+      final line = _failureText(e, l10n.sessionEndError, l10n);
+      setState(() => _error = line);
     } finally {
       if (mounted) setState(() => _ending = false);
     }
@@ -415,7 +439,8 @@ class _SessionPageState extends State<SessionPage> {
       context.go('/');
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.sessionEndError('$e'));
+      final line = _failureText(e, l10n.sessionEndError, l10n);
+      setState(() => _error = line);
     } finally {
       if (mounted) setState(() => _ending = false);
     }

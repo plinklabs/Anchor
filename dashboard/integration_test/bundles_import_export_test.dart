@@ -56,6 +56,9 @@ class _FakeBundles extends BundlesApi {
   _FakeBundles(this._store) : super(_dummyClient());
   final List<BundleDetail> _store;
 
+  /// What create throws, when a test sets it (#383).
+  Object? createError;
+
   @override
   Future<List<BundleSummary>> list({bool includeArchived = false}) async => [
     for (final b in _store)
@@ -74,6 +77,8 @@ class _FakeBundles extends BundlesApi {
 
   @override
   Future<BundleDetail> create(String name, List<BundleEntry> entries) async {
+    final error = createError;
+    if (error != null) throw error;
     final detail = BundleDetail(
       id: 'id-${_store.length + 1}',
       name: name,
@@ -178,6 +183,57 @@ void main() {
       expect(exported.ok, isTrue, reason: exported.errors.join('\n'));
       expect(exported.bundles.single.name, 'Reading list');
       expect(exported.bundles.single.entries.single.value, 'example.com');
+    },
+  );
+
+  testWidgets(
+    'a bundle the import could not save is listed by name, never by the raw '
+    'exception (#383)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final bundles = _FakeBundles(<BundleDetail>[])
+        ..createError = ApiException(500, 'System.Exception: boom');
+      final tokens = AuthTokenStore()
+        ..setSession(
+          token: 'fake-token',
+          account: const AccountInfo(
+            homeAccountId: 'home-1',
+            username: 'admin@school.example',
+            displayName: 'Admin',
+            department: null,
+          ),
+        );
+      await tester.pumpWidget(
+        AnchorDashboard(
+          tokens: tokens,
+          auth: _FakeAuth(),
+          api: _dummyClient(),
+          sessions: _FakeSessions(),
+          bundles: bundles,
+          classes: ClassesApi(_dummyClient()),
+          apiBaseUrl: Uri.parse('http://localhost'),
+          bundleFileIo: _FakeFileIo(
+            pickResult:
+                '{"name":"Reading list","entries":[{"kind":"Domain","value":"example.com","matchType":"Exact"}]}',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav-admin')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('bundles-import-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Imported with 1 failure'), findsOneWidget);
+      expect(find.text('• "Reading list" could not be saved.'), findsOneWidget);
+      expect(find.textContaining('ApiException'), findsNothing);
+      expect(find.textContaining('System.'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 }

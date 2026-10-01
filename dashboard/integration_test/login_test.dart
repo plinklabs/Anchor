@@ -31,19 +31,29 @@ ApiClient _dummyClient() => ApiClient(
 // [hangAcquire] is set, the silent token step never completes — the day-old
 // cached-session stall behind #303.
 class _FakeAuth implements MsalAuthService {
-  _FakeAuth({this.hangAcquire = false});
+  _FakeAuth({this.hangAcquire = false, this.signInError});
 
   final bool hangAcquire;
+
+  /// What the sign-in popup throws, when a test sets it (#383).
+  final Object? signInError;
 
   @override
   Future<void> initialize() async {}
   @override
-  Future<AccountInfo?> signIn() async => const AccountInfo(
+  Future<AccountInfo?> signIn() async {
+    final error = signInError;
+    if (error != null) throw error;
+    return _account;
+  }
+
+  static const _account = AccountInfo(
     homeAccountId: 'home-1',
     username: 'teacher@school.example',
     displayName: 'Ms Teacher',
     department: null,
   );
+
   @override
   Future<void> signOut() async {}
   @override
@@ -185,6 +195,48 @@ void main() {
       expect(find.byKey(const Key('sign-in')), findsOneWidget);
       expect(find.text('01 · HOME'), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a failed sign-in reads as a sentence, never the raw MSAL error (#383)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        AnchorDashboard(
+          tokens: AuthTokenStore(), // no session → redirect to /login
+          auth: _FakeAuth(
+            signInError: StateError(
+              'BrowserAuthError: popup_window_error: Error opening popup '
+              'window.',
+            ),
+          ),
+          api: _dummyClient(),
+          sessions: _FakeSessions(),
+          bundles: _FakeBundles(),
+          classes: _FakeClasses(),
+          apiBaseUrl: Uri.parse('http://localhost'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('sign-in')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Could not sign you in. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('BrowserAuthError'), findsNothing);
+      expect(find.textContaining('Bad state'), findsNothing);
+      // Still on login, and the button is there to try again.
+      expect(find.byKey(const Key('sign-in')), findsOneWidget);
+      expect(find.text('01 · HOME'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

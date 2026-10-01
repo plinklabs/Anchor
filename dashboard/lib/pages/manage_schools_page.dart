@@ -3,6 +3,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/schools_api.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/api_error_text.dart';
 
 /// Admin-only "Schools" sub-tab (#301), in the paper treatment.
 ///
@@ -22,7 +23,7 @@ class ManageSchoolsPage extends StatefulWidget {
 
 class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
   bool _loading = false;
-  String? _error;
+  ApiErrorMessage? _error;
   List<School>? _schools;
 
   // Names with an in-flight toggle, so their row can show progress and stay
@@ -51,7 +52,13 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
       setState(() => _schools = list);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.schoolsLoadError('$e'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.schoolsLoadError,
+          notAuthorized: l10n.apiError403Admin,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -75,7 +82,13 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.schoolsUpdateError(school.name, '$e'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.schoolsUpdateError(school.name),
+          notAuthorized: l10n.apiError403Admin,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _busy.remove(school.name));
     }
@@ -112,13 +125,7 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
                 ),
                 const SizedBox(height: PlinkSpacing.s6),
                 if (_error != null) ...[
-                  Text(
-                    _error!,
-                    key: const Key('manage-schools-error'),
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
+                  ApiErrorText(_error!, key: const Key('manage-schools-error')),
                   const SizedBox(height: PlinkSpacing.s4),
                 ],
                 _buildSchoolList(),

@@ -80,6 +80,9 @@ class _FakeAdmins extends AdminsApi {
   final List<String> promoted = [];
   final List<String> demoted = [];
 
+  /// What demote throws, when a test sets it (#383).
+  Object? demoteError;
+
   @override
   Future<List<AdminUser>> listAdmins() async => admins;
 
@@ -97,6 +100,8 @@ class _FakeAdmins extends AdminsApi {
 
   @override
   Future<void> demote(String userId) async {
+    final error = demoteError;
+    if (error != null) throw error;
     demoted.add(userId);
     admins = admins.where((a) => a.id != userId).toList();
   }
@@ -173,6 +178,40 @@ void main() {
       expect(admins.demoted, ['a2']);
       expect(find.text('Bob Admin'), findsNothing);
 
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a failed remove reads as a sentence, never the raw exception (#383)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final admins = _FakeAdmins()
+        ..demoteError = ApiException(500, 'System.Exception: boom');
+      await tester.pumpWidget(_app(admins));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav-admin')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('admin-nav-admins')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('admin-remove-a2')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Could not remove Bob Admin. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('ApiException'), findsNothing);
+      expect(find.textContaining('System.'), findsNothing);
+      // Nothing was removed.
+      expect(find.text('Bob Admin'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

@@ -6,6 +6,7 @@ import '../api/sessions_api.dart';
 import '../bundles/bundle_file_io.dart';
 import '../bundles/bundle_format.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/api_error_text.dart';
 
 /// Admin-only catalogue editor for bundles (#75), redesigned to the paper
 /// treatment (AD5, #170).
@@ -48,7 +49,7 @@ class _BundlesPageState extends State<BundlesPage> {
   List<BundleSummary>? _list;
   BundleDetail? _selected;
   bool _isNewDraft = false;
-  String? _error;
+  ApiErrorMessage? _error;
 
   // Editor draft state (separate so cancellable).
   final TextEditingController _nameController = TextEditingController();
@@ -89,8 +90,13 @@ class _BundlesPageState extends State<BundlesPage> {
       // Read l10n here (not before the first await): _bootstrap runs from
       // initState, where depending on an inherited widget is illegal until the
       // first frame. By the catch, the element is mounted and context is valid.
+      final l10n = AppLocalizations.of(context);
       setState(
-        () => _error = AppLocalizations.of(context).bundlesLoadError('$e'),
+        () => _error = describeApiError(
+          e,
+          generic: l10n.bundlesLoadListError,
+          notAuthorized: l10n.apiError403Admin,
+        ),
       );
     }
   }
@@ -116,7 +122,13 @@ class _BundlesPageState extends State<BundlesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesLoadListError('$e'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.bundlesLoadListError,
+          notAuthorized: l10n.apiError403Admin,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -138,7 +150,13 @@ class _BundlesPageState extends State<BundlesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesLoadOneError('$e'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.bundlesLoadOneError,
+          notAuthorized: l10n.apiError403Admin,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -194,19 +212,21 @@ class _BundlesPageState extends State<BundlesPage> {
     final l10n = AppLocalizations.of(context);
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = l10n.bundlesNameRequired);
+      setState(() => _error = ApiErrorMessage(l10n.bundlesNameRequired));
       return;
     }
     final entries = <BundleEntry>[];
     for (final row in _entries) {
       final value = row.controller.text.trim();
       if (value.isEmpty) {
-        setState(() => _error = l10n.bundlesEntryValueRequired);
+        setState(
+          () => _error = ApiErrorMessage(l10n.bundlesEntryValueRequired),
+        );
         return;
       }
       final validation = _validateEntry(l10n, row.kind, row.matchType, value);
       if (validation != null) {
-        setState(() => _error = validation);
+        setState(() => _error = ApiErrorMessage(validation));
         return;
       }
       entries.add(
@@ -214,7 +234,7 @@ class _BundlesPageState extends State<BundlesPage> {
       );
     }
     if (entries.isEmpty) {
-      setState(() => _error = l10n.bundlesEntryAtLeastOne);
+      setState(() => _error = ApiErrorMessage(l10n.bundlesEntryAtLeastOne));
       return;
     }
 
@@ -239,7 +259,17 @@ class _BundlesPageState extends State<BundlesPage> {
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesSaveError('$e'));
+      // A 409 is the one failure the admin can fix here: another bundle has
+      // that name.
+      setState(
+        () => _error = e is ApiException && e.statusCode == 409
+            ? ApiErrorMessage(l10n.bundlesNameTaken)
+            : describeApiError(
+                e,
+                generic: l10n.bundlesSaveError,
+                notAuthorized: l10n.apiError403Admin,
+              ),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -278,7 +308,13 @@ class _BundlesPageState extends State<BundlesPage> {
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesArchiveError('$e'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.bundlesArchiveError,
+          notAuthorized: l10n.apiError403Admin,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -320,7 +356,17 @@ class _BundlesPageState extends State<BundlesPage> {
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesDeleteError('$e'));
+      // A 409: a session started with this bundle since the list loaded, and
+      // a used bundle can only be archived.
+      setState(
+        () => _error = e is ApiException && e.statusCode == 409
+            ? ApiErrorMessage(l10n.bundlesDeleteUsedError)
+            : describeApiError(
+                e,
+                generic: l10n.bundlesDeleteError,
+                notAuthorized: l10n.apiError403Admin,
+              ),
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -413,7 +459,13 @@ class _BundlesPageState extends State<BundlesPage> {
       _fileIo.downloadJson('bundles.json', exportBundlesToJson(data));
       _snack(l10n.bundlesExported(data.length));
     } catch (e) {
-      _snack(l10n.bundlesExportError('$e'));
+      _snack(
+        describeApiError(
+          e,
+          generic: l10n.bundlesExportError,
+          notAuthorized: l10n.apiError403Admin,
+        ).text,
+      );
     } finally {
       if (mounted) setState(() => _porting = false);
     }
@@ -457,7 +509,13 @@ class _BundlesPageState extends State<BundlesPage> {
             updated++;
           }
         } catch (e) {
-          failures.add('"${bundle.name}": $e');
+          failures.add(
+            describeApiError(
+              e,
+              generic: l10n.bundlesImportOneError(bundle.name),
+              notAuthorized: l10n.apiError403Admin,
+            ).text,
+          );
         }
       }
 
@@ -475,7 +533,13 @@ class _BundlesPageState extends State<BundlesPage> {
         );
       }
     } catch (e) {
-      _snack(l10n.bundlesImportError('$e'));
+      _snack(
+        describeApiError(
+          e,
+          generic: l10n.bundlesImportError,
+          notAuthorized: l10n.apiError403Admin,
+        ).text,
+      );
     } finally {
       if (mounted) setState(() => _porting = false);
     }
@@ -750,12 +814,7 @@ class _BundlesPageState extends State<BundlesPage> {
               _buildTester(),
               const SizedBox(height: PlinkSpacing.s6),
               if (_error != null) ...[
-                Text(
-                  _error!,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                ),
+                ApiErrorText(_error!),
                 const SizedBox(height: PlinkSpacing.s4),
               ],
               Row(
