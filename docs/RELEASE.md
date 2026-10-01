@@ -345,7 +345,12 @@ nested configuration keys (`AzureAd__TenantId` → `AzureAd:TenantId`).
 | `AzureAd__Audience` | JWT bearer validation | Usually `api://<api-client-id>`. **Required.** |
 | `AzureAd__ClientCredentials` (e.g. `__0__SourceType`, `__0__ClientSecret`) | OBO token acquisition for Graph directory search | **Required for the user-directory search feature** (the on-behalf-of exchange). Without it the OBO call fails at first use, not at startup. A client secret or certificate on the API app registration. |
 | `Cors__AllowedOrigins__0`, `__1`, … | CORS policy | The dashboard origin(s), e.g. the Static Web App URL. **Required** for the dashboard to call the API from the browser. |
-| `Azure__SignalR__ConnectionString` | (Azure SignalR, when enabled) | Provisioned by Bicep from the SignalR Service primary key. The API currently uses **in-process** SignalR (`AddSignalR()`), so this is dormant until the backend opts into `AddAzureSignalR()`; documented here because the infra provisions it and it is the App Service setting to populate when that switch happens. |
+
+There is no SignalR setting: the API runs SignalR **in-process** (`AddSignalR()`)
+and never reads an Azure SignalR connection string, so Bicep provisions none.
+`Azure__SignalR__ConnectionString` only comes back if the backend scales out and
+switches to `AddAzureSignalR()` — see
+[Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
 
 `Heartbeat`, `EventRetention`, and `Logging` have committed defaults in
 `appsettings.json` and only need App Service overrides to tune them — not for a
@@ -443,19 +448,18 @@ region(s):
 ```
 
 Useful flags: `-Location` (primary region) plus per-resource overrides
-(`-SqlLocation` / `-AppServiceLocation` / `-SignalRLocation` /
-`-StaticWebAppLocation`); `-SkipInfra` to only (re-)wire GitHub against an
-existing deployment; `-EntraClientId` / `-SpaClientId` to adopt hand-built app
+(`-SqlLocation` / `-AppServiceLocation` / `-StaticWebAppLocation`);
+`-SkipInfra` to only (re-)wire GitHub against an existing deployment;
+`-EntraClientId` / `-SpaClientId` to adopt hand-built app
 registrations. See [infra/README.md](../infra/README.md) for the full flow,
 region constraints, and admin-consent (which the script attempts automatically,
 falling back to a printed command if the runner isn't a tenant admin). The steps
 below remain the fallback when you provision by hand.
 
 1. Provision Azure resources — [`infra/main.bicep`](../infra/main.bicep) (App
-   Service, Azure SQL, SignalR, Static Web App). See [infra/README.md](../infra/README.md).
+   Service, Azure SQL, Static Web App). See [infra/README.md](../infra/README.md).
 2. Configure the **App Service application settings** above (Entra IDs, CORS
-   origins, client credentials). Bicep wires the SQL connection string and SignalR
-   connection string for you.
+   origins, client credentials). Bicep wires the SQL connection string for you.
    - **Entra app roles (authorization).** The backend authorizes entirely on the
      access token's `roles` claim (`RequireRole("Teacher")` / `"Student"`), so the
      API app registration must **define** the `Teacher` and `Student` app roles

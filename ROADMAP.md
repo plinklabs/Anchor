@@ -22,7 +22,7 @@ Goal: make **schools** first-class operators who *never fork*. Forking remains t
 Forking + "configure Azure" is too much to ask of school IT. But this app records minors' browsing activity, so that data should stay in the **school's own tenant/Azure** — a central multi-tenant SaaS is the wrong call. The result is a deliberate split:
 
 - **Contributors** → fork the repo (v1 path).
-- **Schools** → consume the **canonical agent** (Velopack/Releases) + **canonical extension** (Edge store), deploy only their **backend + DB (+ SignalR)** to their own Azure, and connect the clients via discovery.
+- **Schools** → consume the **canonical agent** (Velopack/Releases) + **canonical extension** (Edge store), deploy only their **backend + DB** to their own Azure, and connect the clients via discovery.
 
 ### Building blocks
 

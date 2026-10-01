@@ -84,15 +84,15 @@
 
 .PARAMETER SqlLocation
 .PARAMETER AppServiceLocation
-.PARAMETER SignalRLocation
 .PARAMETER StaticWebAppLocation
     Per-resource region overrides, passed straight through to the matching Bicep
     parameters. When omitted, an *existing* resource keeps its current region
     (read live, so a re-run never tries to move it — region is immutable in
     Azure) and a not-yet-created resource falls back to -Location. Use these to
     reproduce a split layout (e.g. the live arcadia env spans Belgium Central +
-    West Europe) or to place SignalR / the Static Web App in a region where they
-    are offered.
+    West Europe) or to place the Static Web App in a region where it is
+    offered. There is no SignalR override: realtime runs in-process on the App
+    Service, so the template provisions no SignalR Service (#343).
 
 .PARAMETER UniqueSuffix
     Suffix for globally-unique resource names, passed straight through to the
@@ -235,7 +235,6 @@ param(
     [string]$Location = 'westeurope',
     [string]$SqlLocation,
     [string]$AppServiceLocation,
-    [string]$SignalRLocation,
     [string]$StaticWebAppLocation,
     # Not [Parameter(Mandatory)] any more: a bare run prompts for it through the
     # Spectre intake below, which would never get a turn if PowerShell's own
@@ -1150,7 +1149,6 @@ Write-Step 'Discover existing environment'
 
 $sqlServerNameGuess    = "anchor-sql-$UniqueSuffix"
 $appServiceNameGuess   = "anchor-api-$UniqueSuffix"
-$signalrNameGuess      = 'anchor-signalr'
 $staticWebAppNameGuess = 'anchor-dashboard'
 
 # Per-resource region: explicit override > existing resource's region > -Location.
@@ -1165,10 +1163,9 @@ function Resolve-ResourceLocation {
     return $Location
 }
 
-$resolvedSqlLocation     = Resolve-ResourceLocation $SqlLocation          $sqlServerNameGuess    'Microsoft.Sql/servers'
-$resolvedAppLocation     = Resolve-ResourceLocation $AppServiceLocation   $appServiceNameGuess   'Microsoft.Web/sites'
-$resolvedSignalrLocation = Resolve-ResourceLocation $SignalRLocation      $signalrNameGuess      'Microsoft.SignalRService/SignalR'
-$resolvedSwaLocation     = Resolve-ResourceLocation $StaticWebAppLocation $staticWebAppNameGuess 'Microsoft.Web/staticSites'
+$resolvedSqlLocation = Resolve-ResourceLocation $SqlLocation          $sqlServerNameGuess    'Microsoft.Sql/servers'
+$resolvedAppLocation = Resolve-ResourceLocation $AppServiceLocation   $appServiceNameGuess   'Microsoft.Web/sites'
+$resolvedSwaLocation = Resolve-ResourceLocation $StaticWebAppLocation $staticWebAppNameGuess 'Microsoft.Web/staticSites'
 
 # SQL admin login: explicit override > existing server's login > Bicep default.
 # Azure does not allow changing an existing server's administrator login, so a
@@ -1520,7 +1517,6 @@ else {
         "entraTenantId=$tenantId",
         "sqlServerLocation=$resolvedSqlLocation",
         "appServiceLocation=$resolvedAppLocation",
-        "signalrLocation=$resolvedSignalrLocation",
         "staticWebAppLocation=$resolvedSwaLocation"
     )
     if ($apiClientId) { $deployArgs += "entraClientId=$apiClientId" }

@@ -34,13 +34,16 @@ One Azure resource group containing:
 | SQL database | Azure SQL DB | Standard S0 (10 DTU), 250 GB max | `anchordb` |
 | App Service (backend API) | App Service | Basic B1, Linux, Always On | `anchor-api-<suffix>` |
 | App Service Plan | App Service Plan | Basic B1, Linux | `ASP-anchorrg-b49b` |
-| SignalR Service | SignalR | Free | `anchor-signalr` |
 | Static Web App (dashboard) | Static Web App | Free | `anchor-dashboard` |
 
 The App Service plan and database tiers are sized for a school rollout (~1,000
 students, ~300 in a session at once) and cost ~€24/month together; see
 [Production tiers and scaling](../infra/README.md#production-tiers-and-scaling)
 for why, and for the S1 fallback.
+
+There is no Azure SignalR Service: realtime runs in-process on the App Service.
+The service only becomes relevant if the backend scales out to more than one
+instance — see [Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
 
 Plus **three Entra ID (Azure AD) app registrations** — these are *not* deployed by
 Bicep; they are created in Entra and their IDs are passed *into* the deploy:
@@ -401,8 +404,8 @@ user/group →** pick the user **→ role `Teacher`**.
 ## Step 4 — Deploy the infrastructure (Bicep)
 
 This is the direct-Bicep deploy from `infra/README.md`. It creates the SQL server
-+ database, App Service + plan, SignalR, and the Static Web App, and wires the
-Entra/CORS values as App Service application settings.
++ database, App Service + plan, and the Static Web App, and wires the Entra/CORS
+values as App Service application settings.
 
 ```bash
 az deployment group create \
@@ -434,11 +437,11 @@ edits; the defaults reproduce the live `arcadia` deployment. (Full table in
 | `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin (`Cors__AllowedOrigins__0`). |
 | `sqlServerName` / `sqlDatabaseName` | `anchor-sql-<suffix>` / `anchordb` | Override to reuse manually-created resources. |
 | `appServiceName` / `appServicePlanName` | `anchor-api-<suffix>` / `ASP-anchorrg-b49b` | Backend App Service + plan. |
-| `signalrName` / `staticWebAppName` | `anchor-signalr` / `anchor-dashboard` | SignalR + dashboard SWA. |
+| `staticWebAppName` | `anchor-dashboard` | Dashboard SWA. |
 
 > **Portal fallback (no CLI).** If `az` gives you trouble, create each resource by
 > hand following the [portal walk-through in `infra/README.md`](../infra/README.md#alternative-manual-setup-via-the-azure-portal)
-> (SQL DB, App Service, SignalR, Static Web App), then add the App Service
+> (SQL DB, App Service, Static Web App), then add the App Service
 > application settings from [Step 6](#step-6--app-service-application-settings)
 > manually — Bicep would otherwise have wired them.
 
@@ -491,9 +494,9 @@ az ad app permission add --id "$SPA_CLIENT_ID" \
 ## Step 6 — App Service application settings
 
 The Bicep deploy already set most of these (`ASPNETCORE_ENVIRONMENT`,
-`Azure__SignalR__ConnectionString`, `AzureAd__Instance`, `AzureAd__TenantId`,
-`AzureAd__ClientId`, `AzureAd__Audience`, `Cors__AllowedOrigins__0`, and the
-`DefaultConnection` connection string). If you used the **portal fallback** in
+`AzureAd__Instance`, `AzureAd__TenantId`, `AzureAd__ClientId`,
+`AzureAd__Audience`, `Cors__AllowedOrigins__0`, and the `DefaultConnection`
+connection string). If you used the **portal fallback** in
 Step 4, add them yourself now — see the table in
 [`docs/RELEASE.md`](RELEASE.md#azure-app-service--application-settings). The
 double-underscore form maps to .NET nested keys (`AzureAd__TenantId` →

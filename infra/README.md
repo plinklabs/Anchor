@@ -1,6 +1,6 @@
 # Anchor — Azure Infrastructure
 
-All resources live in a single resource group. The backend runs on a Basic B1 App Service plan and Azure SQL Standard S0, sized for a school rollout (~€24/month — see [Production tiers and scaling](#production-tiers-and-scaling)); SignalR and the Static Web App start on free tiers. Upgrade SignalR to Standard when you test with a real class (20+ students). Region defaults to the resource group's region and can be set per resource — see [Regions](#regions).
+All resources live in a single resource group. The backend runs on a Basic B1 App Service plan and Azure SQL Standard S0, sized for a school rollout (~€24/month — see [Production tiers and scaling](#production-tiers-and-scaling)); the Static Web App is on the free tier. Realtime (SignalR) runs in-process on the App Service, so there is no separate SignalR resource — see [Realtime: in-process SignalR](#realtime-in-process-signalr). Region defaults to the resource group's region and can be set per resource — see [Regions](#regions).
 
 ## Recommended: one-command bootstrap (`scripts/setup.ps1`)
 
@@ -57,14 +57,14 @@ consent commands.
 
 `-Location` sets the default region for the resource group and every resource.
 Override individual resources with `-SqlLocation`, `-AppServiceLocation`,
-`-SignalRLocation`, `-StaticWebAppLocation` (each falls back to `-Location`).
-These map straight to the matching Bicep parameters.
+`-StaticWebAppLocation` (each falls back to `-Location`). These map straight to
+the matching Bicep parameters.
 
-- **Why per-resource:** a single region rarely fits. **Static Web Apps** and
-  **SignalR** are offered only in a limited set of regions, so they may need to
-  live apart from your SQL/App Service region. The live `anchor-rg` (`arcadia`)
+- **Why per-resource:** a single region rarely fits. **Static Web Apps** are
+  offered only in a limited set of regions, so the dashboard may need to live
+  apart from your SQL/App Service region. The live `anchor-rg` (`arcadia`)
   deployment is itself split — App Service / plan / SQL in **Belgium Central**,
-  SignalR / Static Web App in **West Europe**.
+  Static Web App in **West Europe**.
 - **Adopt-in-place:** when a resource already exists, the script reads its
   current region and pins it (region is immutable in Azure — a redeploy that
   tried to move it would fail), so you never have to specify regions just to
@@ -139,8 +139,8 @@ az deployment group create \
 ```
 
 The deployment takes ~3 minutes and outputs the resource names + URLs for the
-App Service, SignalR, SQL Server, and Static Web App, plus the Entra/CORS values
-it applied — everything the fork bootstrap (`scripts/setup.ps1`) consumes.
+App Service, SQL Server, and Static Web App, plus the Entra/CORS values it
+applied — everything the fork bootstrap (`scripts/setup.ps1`) consumes.
 
 ### Parameters
 
@@ -158,10 +158,10 @@ resource only when you pass the matching per-resource locations (the
 |---|---|---|
 | `uniqueSuffix` | `arcadia` | Suffix for globally-unique names; drives the resource-name defaults below. |
 | `location` | resource group region | Default region for all resources. |
-| `sqlServerLocation` / `appServiceLocation` / `signalrLocation` / `staticWebAppLocation` | `location` | Per-resource region overrides (App Service plan follows `appServiceLocation`). |
+| `sqlServerLocation` / `appServiceLocation` / `staticWebAppLocation` | `location` | Per-resource region overrides (App Service plan follows `appServiceLocation`). |
 | `sqlServerName` / `sqlDatabaseName` | `anchor-sql-<suffix>` / `anchordb` | SQL logical server + database name. |
 | `appServiceName` / `appServicePlanName` | `anchor-api-<suffix>` / `ASP-anchorrg-b49b` | Backend App Service + plan name. |
-| `signalrName` / `staticWebAppName` | `anchor-signalr` / `anchor-dashboard` | SignalR + dashboard SWA name. |
+| `staticWebAppName` | `anchor-dashboard` | Dashboard SWA name. |
 | `entraTenantId` / `entraClientId` | empty | Entra tenant + API app-registration client ID. Required for a working deploy; applied as App Service settings (`AzureAd__TenantId` / `AzureAd__ClientId`). |
 | `entraAudience` | `api://<entraClientId>` | JWT audience the API validates. |
 | `entraInstance` | current cloud login endpoint | Entra authority. |
@@ -271,18 +271,31 @@ S0, S1 and S2 is an online operation, and all three include 250 GB. Change the
 template rather than only running `az sql db update`, or the next redeploy
 scales the database back down.
 
-### Upgrading SignalR for pilot
+### Realtime: in-process SignalR
 
-When you need more than 20 connections, change the SKU in `main.bicep`:
+The SignalR hub runs inside the API process (`AddSignalR()` in
+`backend/src/Anchor.Api/Program.cs`), so agents, extensions and the dashboard
+connect straight to the App Service. One B1 instance covers that (see above).
+The template provisions no Azure SignalR Service, and a bigger class doesn't
+need one (#343).
 
-```bicep
-sku: {
-  name: 'Standard_S1'
-  capacity: 1           // 1 unit = 1000 connections
-}
+The service only becomes relevant if the backend scales out to more than one
+instance: then each instance only reaches the clients connected to it, unless
+the API switches to `AddAzureSignalR()` or a backplane. Scale-out also needs
+shared heartbeat state, because `HeartbeatTracker` and `ActiveParticipantCache`
+live in memory. Add the SignalR resource and its
+`Azure__SignalR__ConnectionString` app setting back together with that code
+change; until then, infra CI fails a template that provisions them.
+
+**Environments deployed before #343** still have an `anchor-signalr` resource
+(Free tier, unused). A redeploy leaves it in place, because the deploy doesn't
+delete resources the template no longer declares, but it drops the
+`Azure__SignalR__ConnectionString` setting from the App Service. Delete the
+resource when convenient:
+
+```bash
+az signalr delete --name anchor-signalr --resource-group anchor-rg
 ```
-
-Then redeploy with the same command.
 
 ---
 
@@ -338,21 +351,10 @@ Add a **connection string**:
 - Type: SQL Azure
 - Value: `Server=tcp:YOUR-SQL-SERVER.database.windows.net,1433;Database=anchordb;User ID=YOUR-ADMIN;Password=YOUR-PASSWORD;Encrypt=true;TrustServerCertificate=false;`
 
-### 4. SignalR Service
+There is no SignalR Service to create: realtime runs in-process on this App
+Service (see [Realtime: in-process SignalR](#realtime-in-process-signalr)).
 
-- Search **"SignalR Service"** → Create
-- Name: `anchor-signalr`
-- Region: West Europe
-- Pricing tier: **Free** (20 connections — dev only)
-- Service mode: **Default**
-
-After creation:
-1. Go to **Keys**, copy the **primary connection string**
-2. Go to your App Service → **Environment variables** → add app setting:
-   - Name: `Azure__SignalR__ConnectionString` (double underscores)
-   - Value: the connection string you just copied
-
-### 5. Static Web App
+### 4. Static Web App
 
 - Search **"Static Web Apps"** → Create
 - Name: `anchor-dashboard`
@@ -373,12 +375,12 @@ Default names below assume `uniqueSuffix=arcadia` (the live `anchor-rg` deployme
 | `anchordb` | SQL Database | Standard S0 (10 DTU), 250 GB max | ~€12.60 |
 | `anchor-api-arcadia` | App Service | Runs on the plan below, Always On | (in the plan) |
 | `ASP-anchorrg-b49b` | App Service Plan | Basic B1, Linux | ~€11.60 |
-| `anchor-signalr` | SignalR Service | Free | €0 |
 | `anchor-dashboard` | Static Web App | Free | €0 |
 
 **Total:** ~€24/month (list prices, Belgium Central, excl. VAT), or ~€43/month
 if the load test calls for S1 — see [Production tiers and scaling](#production-tiers-and-scaling).
-Standard SignalR (see [Upgrading SignalR for pilot](#upgrading-signalr-for-pilot)) would add ~€45/month.
+Realtime runs in-process on the App Service, so there is no SignalR line (see
+[Realtime: in-process SignalR](#realtime-in-process-signalr)).
 
 ---
 
@@ -389,10 +391,9 @@ to populate GitHub secrets/variables, without re-querying Azure:
 
 `resourceGroup`, `location`, `appServiceName`, `appServiceUrl`,
 `staticWebAppName`, `swaUrl`, `sqlServerName`, `sqlServerFqdn`,
-`sqlDatabaseName`, `signalrName`, `signalrHostName`, the resolved per-resource
-regions (`sqlServerLocation` / `appServiceLocation` / `signalrLocation` /
-`staticWebAppLocation`), and the applied `entraTenantId` / `entraClientId` /
-`entraAudience` / `dashboardCorsOrigin`.
+`sqlDatabaseName`, the resolved per-resource regions (`sqlServerLocation` /
+`appServiceLocation` / `staticWebAppLocation`), and the applied
+`entraTenantId` / `entraClientId` / `entraAudience` / `dashboardCorsOrigin`.
 
 ## What's NOT provisioned here
 

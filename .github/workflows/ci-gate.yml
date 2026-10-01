@@ -55,6 +55,7 @@ jobs:
               - '.github/workflows/extension-e2e.yml'
             infra:
               - 'infra/**'
+              - 'scripts/setup.ps1'
               - '.github/workflows/infra-ci.yml'
 
       # Each wait targets a suite's check by its (now unique) job name and only

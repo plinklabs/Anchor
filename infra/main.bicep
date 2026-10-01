@@ -13,8 +13,8 @@
 // environment still deploys with no extra arguments. Regions, however, are NOT
 // hardcoded: `location` defaults to the resource group's region and each
 // resource can override it (the live arcadia env is itself split across two
-// regions — App Service / plan / SQL in Belgium Central, SignalR / Static Web
-// App in West Europe — which a single location cannot reproduce).
+// regions — App Service / plan / SQL in Belgium Central, Static Web App in
+// West Europe — which a single location cannot reproduce).
 // ──────────────────────────────────────────────
 
 @description('Default Azure region for all resources. Defaults to the resource group region; override per-resource with the *Location params below.')
@@ -23,19 +23,16 @@ param location string = resourceGroup().location
 // ── Per-resource region overrides ───────────
 // Each defaults to `location`. Override individually to reproduce a split
 // layout (e.g. the live arcadia env) or to place a resource in a region where
-// the others are not offered (Static Web Apps / SignalR have a limited region
-// set). The setup script reads an existing resource's current region and pins
-// it here on re-run, so adopting an environment never tries to move a resource
-// (region is immutable in Azure).
+// the others are not offered (Static Web Apps have a limited region set). The
+// setup script reads an existing resource's current region and pins it here on
+// re-run, so adopting an environment never tries to move a resource (region is
+// immutable in Azure).
 
 @description('Region for the SQL logical server + database.')
 param sqlServerLocation string = location
 
 @description('Region for the App Service and its plan.')
 param appServiceLocation string = location
-
-@description('Region for the SignalR Service.')
-param signalrLocation string = location
 
 @description('Region for the Static Web App.')
 param staticWebAppLocation string = location
@@ -59,9 +56,6 @@ param appServiceName string = 'anchor-api-${uniqueSuffix}'
 
 @description('Name of the App Service Plan. Defaults to the auto-generated name of the original manually-created plan in anchor-rg; override for a fresh environment, e.g. asp-anchor-<suffix>.')
 param appServicePlanName string = 'ASP-anchorrg-b49b'
-
-@description('Name of the SignalR Service (globally unique). Defaults to anchor-signalr; override for additional environments, e.g. anchor-signalr-<suffix>.')
-param signalrName string = 'anchor-signalr'
 
 @description('Name of the Static Web App for the Flutter dashboard. Defaults to anchor-dashboard; override for additional environments, e.g. anchor-dashboard-<suffix>.')
 param staticWebAppName string = 'anchor-dashboard'
@@ -205,10 +199,6 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
           value: 'Production'
         }
         {
-          name: 'Azure__SignalR__ConnectionString'
-          value: signalr.listKeys().primaryConnectionString
-        }
-        {
           name: 'AzureAd__Instance'
           value: entraInstance
         }
@@ -240,24 +230,15 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-// ── SignalR Service (Free) ──────────────────
-
-resource signalr 'Microsoft.SignalRService/signalR@2024-03-01' = {
-  name: signalrName
-  location: signalrLocation
-  sku: {
-    name: 'Free_F1'
-    capacity: 1
-  }
-  properties: {
-    features: [
-      {
-        flag: 'ServiceMode'
-        value: 'Default'
-      }
-    ]
-  }
-}
+// ── Realtime: no Azure SignalR Service ──────
+// SignalR runs in-process on the App Service (`AddSignalR()` in
+// backend/src/Anchor.Api/Program.cs), so the template provisions no SignalR
+// Service (#343). One B1 instance holds rollout's ~1,600 peak connections. The
+// service only matters if the backend scales out to 2+ instances, which also
+// needs shared heartbeat state (HeartbeatTracker and ActiveParticipantCache are
+// in-memory). Add the resource and its Azure__SignalR__ConnectionString app
+// setting back together with `AddAzureSignalR()` then; until that switch,
+// infra CI rejects them.
 
 // ── Static Web App (Flutter dashboard) ──────
 
@@ -282,7 +263,6 @@ output location string = location
 // resource actually landed (and pin them on a subsequent adopt/re-run).
 output sqlServerLocation string = sqlServerLocation
 output appServiceLocation string = appServiceLocation
-output signalrLocation string = signalrLocation
 output staticWebAppLocation string = staticWebAppLocation
 
 output appServiceName string = appService.name
@@ -294,9 +274,6 @@ output swaUrl string = 'https://${swa.properties.defaultHostname}'
 output sqlServerName string = sqlServer.name
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output sqlDatabaseName string = sqlDb.name
-
-output signalrName string = signalr.name
-output signalrHostName string = signalr.properties.hostName
 
 // Echo back the Entra config the deploy applied, so the dashboard build
 // variables (ENTRA_TENANT_ID / ENTRA_CLIENT_ID / API_SCOPE) and the operator
