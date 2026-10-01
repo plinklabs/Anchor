@@ -1121,6 +1121,18 @@ class _ImportResultsBar extends StatelessWidget {
   }
 }
 
+/// The school year, as `YYYY-YYYY`, that the New class form fills in on
+/// [date]. Belgian school years run Sept–June, so anything from August on
+/// belongs to the year that just started; earlier months still belong to the
+/// previous September's year.
+///
+/// Public so tests can work out the year the form will show today instead of
+/// hard-coding one (#375).
+String schoolYearFor(DateTime date) {
+  final start = date.month >= 8 ? date.year : date.year - 1;
+  return '$start-${start + 1}';
+}
+
 typedef CreateClassCallback =
     Future<ClassSummary> Function({
       required String name,
@@ -1153,16 +1165,7 @@ class _NewClassDialogState extends State<_NewClassDialog> {
   @override
   void initState() {
     super.initState();
-    _schoolYear.text = _currentSchoolYear();
-  }
-
-  /// Academic year guess for the New class form. Belgian school years run
-  /// Sept–June, so anything from August on belongs to the year that just
-  /// started; earlier months still belong to the previous September's year.
-  static String _currentSchoolYear() {
-    final now = DateTime.now();
-    final start = now.month >= 8 ? now.year : now.year - 1;
-    return '$start-${start + 1}';
+    _schoolYear.text = schoolYearFor(DateTime.now());
   }
 
   @override
