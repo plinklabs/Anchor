@@ -44,11 +44,18 @@ class _SessionPageState extends State<SessionPage> {
   late final SessionHubClient _hub;
   StreamSubscription<SessionEvent>? _eventsSub;
   StreamSubscription<void>? _reconnectedSub;
+  StreamSubscription<SessionHubLinkState>? _linkSub;
+  late final AppLifecycleListener _lifecycle;
   final List<SessionEvent> _events = [];
   bool _connecting = true;
   bool _ending = false;
   bool _ended = false;
   String? _error;
+  // The hub refused to join the session. Kept apart from [_error] so that a
+  // later reconnect that joins can clear it (#370).
+  String? _joinError;
+  // Whether the live feed is getting through; null until it first reports.
+  SessionHubLinkState? _link;
   SessionDetail? _detail;
   List<UnblockRequestSummary> _pendingRequests = const [];
   final Set<String> _approving = {};
@@ -65,6 +72,9 @@ class _SessionPageState extends State<SessionPage> {
       apiBaseUrl: widget.apiBaseUrl,
       tokenProvider: () async => widget.tokens.token,
     );
+    // A closed connection doesn't retry on its own (#370); try again when
+    // the teacher comes back to the page.
+    _lifecycle = AppLifecycleListener(onResume: _restartHub);
     _bootstrap();
   }
 
@@ -211,52 +221,65 @@ class _SessionPageState extends State<SessionPage> {
 
   Future<void> _connect() async {
     final l10n = AppLocalizations.of(context);
-    try {
-      await _hub.connect();
-      await _hub.joinSession(widget.sessionId);
-      _eventsSub = _hub.events.listen((evt) {
-        if (!mounted) return;
-        // The connection also hears about the teacher's other sessions: the
-        // backend sends SessionStarted to the teacher's user group for every
-        // session of their classes, and SessionEnded for every session they
-        // own (#354). This page is one session's live view.
-        if (_isAboutAnotherSession(evt)) return;
-        setState(() {
-          _events.insert(0, evt);
-          if (evt.kind == 'SessionEnded' &&
-              evt.payload['sessionId'] == widget.sessionId) {
-            _ended = true;
-          }
-        });
-        // UnblockRequested = a student just clicked Request access. Re-fetch
-        // the pending list rather than maintain a separate in-memory tracker:
-        // the GET endpoint already de-dupes per (student, host) and filters
-        // out already-granted entries, so this is the cheapest way to stay
-        // consistent with the source of truth.
-        if (evt.kind == 'UnblockRequested') {
-          _loadPendingRequests();
-        }
-        // Roster transitions (#100): a member joined/declined/left, or their
-        // agent stopped/resumed reporting. TamperDetected (#105) likewise flips
-        // the server-computed `tampered` flag. Re-fetch the detail so the roster
-        // reflects the server-computed per-student state.
-        if (evt.kind == 'ParticipantStateChanged' ||
-            evt.kind == 'HeartbeatLost' ||
-            evt.kind == 'AgentReconnected' ||
-            evt.kind == 'TamperDetected') {
-          _loadDetail();
+    // Listen before connecting, so that a connection whose first start fails
+    // is still caught up once a restart brings it up (#370).
+    _linkSub = _hub.linkState.listen((state) {
+      if (mounted) setState(() => _link = state);
+    });
+    _reconnectedSub = _hub.reconnected.listen((_) => _rejoinAfterReconnect());
+    _eventsSub = _hub.events.listen((evt) {
+      if (!mounted) return;
+      // The connection also hears about the teacher's other sessions: the
+      // backend sends SessionStarted to the teacher's user group for every
+      // session of their classes, and SessionEnded for every session they
+      // own (#354). This page is one session's live view.
+      if (_isAboutAnotherSession(evt)) return;
+      setState(() {
+        _events.insert(0, evt);
+        if (evt.kind == 'SessionEnded' &&
+            evt.payload['sessionId'] == widget.sessionId) {
+          _ended = true;
         }
       });
-      _reconnectedSub = _hub.reconnected.listen((_) => _rejoinAfterReconnect());
+      // UnblockRequested = a student just clicked Request access. Re-fetch
+      // the pending list rather than maintain a separate in-memory tracker:
+      // the GET endpoint already de-dupes per (student, host) and filters
+      // out already-granted entries, so this is the cheapest way to stay
+      // consistent with the source of truth.
+      if (evt.kind == 'UnblockRequested') {
+        _loadPendingRequests();
+      }
+      // Roster transitions (#100): a member joined/declined/left, or their
+      // agent stopped/resumed reporting. TamperDetected (#105) likewise flips
+      // the server-computed `tampered` flag. Re-fetch the detail so the roster
+      // reflects the server-computed per-student state.
+      if (evt.kind == 'ParticipantStateChanged' ||
+          evt.kind == 'HeartbeatLost' ||
+          evt.kind == 'AgentReconnected' ||
+          evt.kind == 'TamperDetected') {
+        _loadDetail();
+      }
+    });
+    try {
+      await _hub.connect();
+    } catch (_) {
+      // It didn't start. The link state says it's disconnected, and the page
+      // offers to reconnect (#370).
+      if (mounted) setState(() => _connecting = false);
+      return;
+    }
+    try {
+      await _hub.joinSession(widget.sessionId);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.sessionConnectError('$e'));
+      setState(() => _joinError = l10n.sessionConnectError('$e'));
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
   }
 
-  /// The hub connection came back after a drop (#365). SignalR keeps no group
+  /// The hub connection came back after a drop (#365), however long it was
+  /// down, or a restart brought it up (#370). SignalR keeps no group
   /// membership across a reconnect, and every roster signal (participant
   /// state, heartbeat, tamper, unblock request) goes to the session group, so
   /// join it again, then re-fetch the roster and the pending requests the page
@@ -268,12 +291,22 @@ class _SessionPageState extends State<SessionPage> {
     if (_ended) return;
     try {
       await _hub.joinSession(widget.sessionId);
+      if (mounted) setState(() => _joinError = null);
     } catch (_) {
       // JoinSession refuses a session that ended while the page was offline.
       // The detail re-fetch below still runs and picks the end up.
     }
     if (!mounted) return;
     await Future.wait([_loadDetail(), _loadPendingRequests()]);
+  }
+
+  /// Starts a closed hub connection again (#370): when the teacher comes back
+  /// to the page, or asks to. A connection that dropped retries on its own
+  /// for as long as the page is open; one that closed doesn't. Once it's
+  /// back, [_rejoinAfterReconnect] catches the page up.
+  void _restartHub() {
+    if (_ended || _link != SessionHubLinkState.disconnected) return;
+    _hub.restart();
   }
 
   /// Whether [evt] names a session other than this page's. Every hub payload
@@ -364,8 +397,10 @@ class _SessionPageState extends State<SessionPage> {
 
   @override
   void dispose() {
+    _lifecycle.dispose();
     _eventsSub?.cancel();
     _reconnectedSub?.cancel();
+    _linkSub?.cancel();
     _hub.dispose();
     super.dispose();
   }
@@ -446,6 +481,11 @@ class _SessionPageState extends State<SessionPage> {
           const _Hairline(),
           if (_connecting)
             _StatusLine(AppLocalizations.of(context).sessionConnecting),
+          if (!_ended &&
+              (_link == SessionHubLinkState.reconnecting ||
+                  _link == SessionHubLinkState.disconnected))
+            _ConnectionLine(state: _link!, onReconnect: _restartHub),
+          if (_joinError != null) _ErrorBanner(_joinError!),
           if (_error != null) _ErrorBanner(_error!),
           for (final Widget panel in panels) ...<Widget>[
             panel,
@@ -649,6 +689,57 @@ class _StatusLine extends StatelessWidget {
         PlinkSpacing.s3,
       ),
       child: Text(text, style: _monoLabel(PlinkColors.muted)),
+    );
+  }
+}
+
+/// The live feed isn't getting through (#370): it dropped and is
+/// reconnecting, or it closed. The roster and requests above can be stale
+/// until it's back, so the page says so — a quiet mono line with a muted
+/// icon, not an alarm — and offers to reconnect a closed connection.
+class _ConnectionLine extends StatelessWidget {
+  const _ConnectionLine({required this.state, required this.onReconnect});
+
+  final SessionHubLinkState state;
+  final VoidCallback onReconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppLocalizations l10n = AppLocalizations.of(context);
+    final bool closed = state == SessionHubLinkState.disconnected;
+    return Semantics(
+      liveRegion: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          _gutter,
+          PlinkSpacing.s2,
+          _gutter,
+          PlinkSpacing.s2,
+        ),
+        child: Row(
+          children: <Widget>[
+            Icon(
+              closed ? Icons.cloud_off_outlined : Icons.sync,
+              size: 16,
+              color: PlinkColors.ink60,
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Flexible(
+              child: Text(
+                closed ? l10n.sessionDisconnected : l10n.sessionReconnecting,
+                style: _monoLabel(PlinkColors.ink60),
+              ),
+            ),
+            if (closed) ...<Widget>[
+              const SizedBox(width: PlinkSpacing.s3),
+              TextButton(
+                onPressed: onReconnect,
+                child: Text(l10n.sessionReconnect),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

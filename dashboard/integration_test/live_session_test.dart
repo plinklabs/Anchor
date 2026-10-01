@@ -27,7 +27,9 @@ import 'package:plink_design_system/plink_design_system.dart';
 //   - pushed events render in the live event feed,
 //   - the end of the teacher's other session doesn't end this one (#354),
 //   - after a hub reconnect the page joins its session again and catches up on
-//     what it missed while offline (#365).
+//     what it missed while offline (#365),
+//   - while the hub connection is down the page says live updates are paused,
+//     and a closed connection can be reconnected from the page (#370).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -98,9 +100,11 @@ class _StubHub extends SessionHubClient {
 
   final _ctrl = StreamController<SessionEvent>.broadcast();
   final _reconnectedCtrl = StreamController<void>.broadcast();
+  final _linkCtrl = StreamController<SessionHubLinkState>.broadcast();
   bool _online = true;
   bool _inSessionGroup = false;
   int joinCalls = 0;
+  int restartCalls = 0;
 
   @override
   Stream<SessionEvent> get events => _ctrl.stream;
@@ -108,22 +112,42 @@ class _StubHub extends SessionHubClient {
   @override
   Stream<void> get reconnected => _reconnectedCtrl.stream;
 
+  @override
+  Stream<SessionHubLinkState> get linkState => _linkCtrl.stream;
+
   void emit(String kind, [Map<String, dynamic> payload = const {}]) {
     if (!_online) return;
     if (_sessionGroupKinds.contains(kind) && !_inSessionGroup) return;
     _ctrl.add(SessionEvent(kind: kind, payload: payload, at: DateTime.now()));
   }
 
-  /// The connection drops, e.g. a network blip or a backend restart.
+  /// The connection drops, e.g. a network blip or a backend restart, and
+  /// SignalR starts retrying it.
   void drop() {
     _online = false;
     _inSessionGroup = false;
+    _linkCtrl.add(SessionHubLinkState.reconnecting);
   }
 
   /// SignalR's automatic reconnect brings the connection back.
   void reconnect() {
     _online = true;
+    _linkCtrl.add(SessionHubLinkState.connected);
     _reconnectedCtrl.add(null);
+  }
+
+  /// The connection closes and nothing retries it (#370), e.g. the server
+  /// turned it away.
+  void close() {
+    _online = false;
+    _inSessionGroup = false;
+    _linkCtrl.add(SessionHubLinkState.disconnected);
+  }
+
+  @override
+  Future<void> restart() async {
+    restartCalls++;
+    reconnect();
   }
 
   @override
@@ -142,6 +166,7 @@ class _StubHub extends SessionHubClient {
   Future<void> dispose() async {
     await _ctrl.close();
     await _reconnectedCtrl.close();
+    await _linkCtrl.close();
   }
 }
 
@@ -564,6 +589,60 @@ void main() {
 
       expect(find.text('In session'), findsOneWidget);
       expect(find.text('Students (1/1 in session)'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'while the hub connection is down the live view says so, and Reconnect catches it up (#370)',
+    (tester) async {
+      const reconnecting =
+          'Connection lost — reconnecting. Live updates are paused.';
+      const disconnected = 'Disconnected — live updates are paused.';
+      // A realistic window, with room for the notice above the panels.
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final h = await _bootToLiveSession(tester);
+      expect(find.text(reconnecting), findsNothing);
+      expect(find.text(disconnected), findsNothing);
+
+      // The backend goes away: the live view says its updates are paused,
+      // while the session itself is still running.
+      h.hub.drop();
+      await tester.pumpAndSettle();
+      expect(find.text(reconnecting), findsOneWidget);
+      expect(find.text('LIVE'), findsOneWidget);
+
+      // The connection closes for good. Meanwhile Ada leaves.
+      h.hub.close();
+      h.sessions.roster = [_participant('Ada', ParticipantLiveState.left)];
+      await tester.pumpAndSettle();
+      expect(find.text(reconnecting), findsNothing);
+      expect(find.text(disconnected), findsOneWidget);
+      expect(find.text('In session'), findsOneWidget);
+
+      // The teacher reconnects: the page joins its session again and
+      // catches up (#365), and the notice goes.
+      await tester.tap(find.widgetWithText(TextButton, 'Reconnect'));
+      await tester.pumpAndSettle();
+
+      expect(h.hub.restartCalls, 1);
+      expect(h.hub.joinCalls, 2);
+      expect(find.text(disconnected), findsNothing);
+      expect(find.text('Left'), findsOneWidget);
+      expect(find.text('Students (0/1 in session)'), findsOneWidget);
+
+      // And live pushes reach it again: Ada comes back.
+      h.sessions.roster = [_participant('Ada', ParticipantLiveState.joined)];
+      h.hub.emit('ParticipantStateChanged', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('In session'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

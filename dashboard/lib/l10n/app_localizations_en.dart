@@ -378,6 +378,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionConnecting => 'Connecting to the live feed…';
 
   @override
+  String get sessionReconnecting =>
+      'Connection lost — reconnecting. Live updates are paused.';
+
+  @override
+  String get sessionDisconnected => 'Disconnected — live updates are paused.';
+
+  @override
+  String get sessionReconnect => 'Reconnect';
+
+  @override
   String get sessionActivity => 'Activity';
 
   @override

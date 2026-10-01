@@ -384,6 +384,17 @@ class AppLocalizationsNl extends AppLocalizations {
   String get sessionConnecting => 'Verbinden met de live feed…';
 
   @override
+  String get sessionReconnecting =>
+      'Verbinding verbroken — opnieuw verbinden. Live-updates zijn gepauzeerd.';
+
+  @override
+  String get sessionDisconnected =>
+      'Geen verbinding — live-updates zijn gepauzeerd.';
+
+  @override
+  String get sessionReconnect => 'Opnieuw verbinden';
+
+  @override
   String get sessionActivity => 'Activiteit';
 
   @override
