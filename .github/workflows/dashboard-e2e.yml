@@ -80,7 +80,9 @@ jobs:
 
       # Boots the real app at a deep route (a reload on Classes, a link to a past
       # session) with a cached MSAL session, and expects that page and that URL
-      # once the session restore resolves, not Home (#378).
+      # once the session restore resolves, not Home (#378). Signed out, it expects
+      # /login?from=<page>, then that page after sign-in, and Home for a `from`
+      # that points at another site (#379).
       - name: Run deep-link e2e (web, headless Chrome)
         run: |
           flutter drive \

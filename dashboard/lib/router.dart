@@ -23,6 +23,54 @@ import 'pages/session_page.dart';
 import 'widgets/admin_shell.dart';
 import 'widgets/app_shell.dart';
 
+/// The `/login` query parameter that holds the page a signed-out visitor asked
+/// for, so that signing in takes them there instead of Home (#379).
+const String loginFromParameter = 'from';
+
+/// The in-app location that [from] names, if it is safe to send a teacher there
+/// after sign-in (#379), else null.
+///
+/// [from] comes from the URL (`/login?from=...`), so anyone can write it into
+/// a link. Only a same-app path that [routes] knows passes: an absolute URL, a
+/// scheme-relative `//host`, a backslash (browsers read `/\host` as `//host`),
+/// a control character (browsers drop tabs and newlines, which can turn
+/// `/<tab>/host` into `//host`), another scheme (`javascript:`), a relative
+/// path, an unknown page, or `/login` itself all return null, so `/login`
+/// can't be used as an open redirect. GoRouter would hand such a location to
+/// the browser as the page URL. Dot segments are resolved and a fragment is
+/// dropped.
+String? safeReturnLocation(String? from, {required RouteConfiguration routes}) {
+  if (from == null || !from.startsWith('/') || from.startsWith('//')) {
+    return null;
+  }
+  if (from.contains(r'\') ||
+      from.codeUnits.any((unit) => unit < 0x20 || unit == 0x7f)) {
+    return null;
+  }
+  final Uri? uri = Uri.tryParse(from);
+  if (uri == null || uri.hasScheme || uri.hasAuthority) return null;
+  final Uri location = uri.removeFragment();
+  if (!location.path.startsWith('/') || location.path.startsWith('//')) {
+    return null;
+  }
+  if (location.path == '/login' || routes.findMatch(location).isError) {
+    return null;
+  }
+  return location.toString();
+}
+
+/// Where the router sends a signed-out visit to [requested]: `/login`, with
+/// the requested page in [loginFromParameter] when sign-in can return there
+/// (#379). Home needs no `from`: sign-in lands there anyway.
+String loginLocationFor(Uri requested, {required RouteConfiguration routes}) {
+  final String? from = safeReturnLocation(requested.toString(), routes: routes);
+  if (from == null || from == '/') return '/login';
+  return Uri(
+    path: '/login',
+    queryParameters: <String, String>{loginFromParameter: from},
+  ).toString();
+}
+
 GoRouter buildRouter({
   required AuthTokenStore tokens,
   required MsalAuthService auth,
@@ -36,14 +84,33 @@ GoRouter buildRouter({
   BundleFileIo? bundleFileIo,
   Duration loginSilentTimeout = const Duration(seconds: 30),
 }) {
-  return GoRouter(
+  late final GoRouter router;
+  router = GoRouter(
     refreshListenable: tokens,
     initialLocation: '/',
     redirect: (context, state) {
       final loggedIn = tokens.isAuthenticated;
       final goingToLogin = state.matchedLocation == '/login';
-      if (!loggedIn && !goingToLogin) return '/login';
-      if (loggedIn && goingToLogin) return '/';
+      // Signed out: to /login, carrying the page that was asked for (#379).
+      // Sign-in is an MSAL popup (web/anchor_auth.js), so the app never
+      // leaves this page and the `from` in the URL is still there when it
+      // succeeds. A reload that can't restore the session (#302) lands here
+      // too, with the page it was on.
+      if (!loggedIn && !goingToLogin) {
+        return loginLocationFor(state.uri, routes: router.configuration);
+      }
+      // Signed in on /login (sign-in just succeeded, or a session restored on
+      // a reload of /login): to the page that was asked for if it is a safe,
+      // known in-app location, else Home. A page this teacher may not open
+      // still handles that itself: the admin area sends a non-admin Home, and
+      // a session that isn't theirs shows its page's error (#369, #382).
+      if (loggedIn && goingToLogin) {
+        return safeReturnLocation(
+              state.uri.queryParameters[loginFromParameter],
+              routes: router.configuration,
+            ) ??
+            '/';
+      }
       return null;
     },
     routes: [
@@ -143,6 +210,7 @@ GoRouter buildRouter({
       ),
     ],
   );
+  return router;
 }
 
 AppSection _sectionFor(String location) {

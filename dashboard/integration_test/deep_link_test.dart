@@ -23,6 +23,11 @@ import 'support/e2e_binding.dart';
 // boots the actual AnchorDashboard "at" a deep location with the real fonts and
 // window, and expects that page once the session is restored. In a real
 // browser it also checks that the URL still holds the route.
+//
+// A teacher who isn't signed in (no cached session, or one that can't be
+// renewed silently) goes to /login, which keeps the page in `?from=`, and
+// signing in returns there instead of Home (#379). A `from` that points
+// anywhere outside the app is ignored.
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -54,6 +59,32 @@ class _CachedSessionAuth implements MsalAuthService {
   Future<String> acquireTokenSilent() async => 'fake-token';
   @override
   AccountInfo? currentAccount() => _cachedAccount;
+}
+
+// Nothing to restore on boot: no cached account, or ([expired]) a cached one
+// whose token can't be renewed without interaction. The sign-in popup on
+// /login then succeeds.
+class _SignedOutAuth implements MsalAuthService {
+  _SignedOutAuth({this.expired = false});
+
+  final bool expired;
+
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<AccountInfo?> signIn() async => _cachedAccount;
+  @override
+  Future<void> signOut() async {}
+  @override
+  Future<String> acquireToken() async => 'fake-token';
+  @override
+  Future<String> acquireTokenSilent() async {
+    if (expired) throw StateError('interaction_required');
+    return 'fake-token';
+  }
+
+  @override
+  AccountInfo? currentAccount() => expired ? _cachedAccount : null;
 }
 
 class _FakeSessions extends SessionsApi {
@@ -145,7 +176,11 @@ void _loadAt(WidgetTester tester, String location) {
   addTearDown(() => messenger.setMockMessageHandler(channel, null));
 }
 
-Future<AuthTokenStore> _reloadAt(WidgetTester tester, String location) async {
+Future<AuthTokenStore> _reloadAt(
+  WidgetTester tester,
+  String location, {
+  MsalAuthService? auth,
+}) async {
   tester.view.physicalSize = const Size(1400, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
@@ -159,7 +194,7 @@ Future<AuthTokenStore> _reloadAt(WidgetTester tester, String location) async {
   await tester.pumpWidget(
     AnchorDashboard(
       tokens: tokens,
-      auth: _CachedSessionAuth(),
+      auth: auth ?? _CachedSessionAuth(),
       api: _dummyClient(),
       sessions: _FakeSessions(),
       bundles: _FakeBundles(),
@@ -204,4 +239,95 @@ void main() {
     if (kIsWeb) expect(Uri.base.fragment, '/history/s-past');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'a signed-out link to a past session opens it after sign-in, not Home '
+    '(#379)',
+    (tester) async {
+      final tokens = await _reloadAt(
+        tester,
+        '/history/s-past',
+        auth: _SignedOutAuth(),
+      );
+
+      // Signed out: the login page, with the requested page kept in the URL.
+      expect(tokens.isAuthenticated, isFalse);
+      expect(find.byKey(const Key('login-headline')), findsOneWidget);
+      expect(find.byType(PastSessionPage), findsNothing);
+      if (kIsWeb) _expectLoginFrom('/history/s-past');
+
+      await _signIn(tester);
+
+      expect(tokens.isAuthenticated, isTrue);
+      expect(find.byType(PastSessionPage), findsOneWidget);
+      expect(find.text('PAST SESSION'), findsOneWidget);
+      expect(find.text('Math 101'), findsWidgets);
+      expect(find.byType(HomePage), findsNothing);
+      if (kIsWeb) expect(Uri.base.fragment, '/history/s-past');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a reload on /classes whose session needs interaction returns to Classes '
+    'after sign-in (#379)',
+    (tester) async {
+      final tokens = await _reloadAt(
+        tester,
+        '/classes',
+        auth: _SignedOutAuth(expired: true),
+      );
+
+      expect(tokens.isAuthenticated, isFalse);
+      expect(find.byKey(const Key('login-headline')), findsOneWidget);
+      if (kIsWeb) _expectLoginFrom('/classes');
+
+      await _signIn(tester);
+
+      expect(find.byType(ClassesPage), findsOneWidget);
+      expect(find.text('02 · CLASSES'), findsOneWidget);
+      expect(find.byType(HomePage), findsNothing);
+      if (kIsWeb) expect(Uri.base.fragment, '/classes');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a login link whose from= points at another site signs in to Home (#379)',
+    (tester) async {
+      // Where the app is served; only a browser has one.
+      final origin = kIsWeb ? Uri.base.origin : null;
+      final tokens = await _reloadAt(
+        tester,
+        '/login?from=${Uri.encodeComponent('https://evil.example/classes')}',
+        auth: _SignedOutAuth(),
+      );
+      expect(find.byKey(const Key('login-headline')), findsOneWidget);
+
+      await _signIn(tester);
+
+      // Still this app, on Home: the hostile `from` was ignored.
+      expect(tokens.isAuthenticated, isTrue);
+      expect(find.byType(HomePage), findsOneWidget);
+      expect(find.byType(ClassesPage), findsNothing);
+      if (kIsWeb) {
+        expect(Uri.base.origin, origin);
+        expect(Uri.base.fragment, '/');
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+}
+
+/// Taps the one sign-in button on /login and lets the (fake) popup finish.
+Future<void> _signIn(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('sign-in')));
+  await tester.pumpAndSettle();
+}
+
+/// In a browser: the URL is /login, holding [from] as the page to return to.
+void _expectLoginFrom(String from) {
+  final location = Uri.parse(Uri.base.fragment);
+  expect(location.path, '/login');
+  expect(location.queryParameters['from'], from);
 }
