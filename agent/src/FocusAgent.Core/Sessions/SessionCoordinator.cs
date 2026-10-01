@@ -233,6 +233,51 @@ public sealed class SessionCoordinator : IAsyncDisposable
     }
 
     /// <summary>
+    /// Asks the backend whether the student is still in the joined session, and
+    /// ends it locally if not (#354). Called each time the hub connection comes
+    /// back: <c>SessionEnded</c> reaches only the connections open when it is
+    /// sent, so a session that ended while the agent was offline — a network
+    /// drop, a backend restart, a laptop asleep through the automatic end of a
+    /// forgotten session — would otherwise keep the student in focus mode.
+    ///
+    /// Only a "no" from the backend ends the session. If the question fails (the
+    /// connection dropped again, a backend without the check) the agent stays in
+    /// the session and asks again on the next reconnect. No-op when not joined.
+    /// </summary>
+    public async Task ConfirmJoinedSessionAsync(CancellationToken ct = default)
+    {
+        Guid sessionId;
+        lock (_gate)
+        {
+            if (_joinedSessionId is not Guid joined)
+                return;
+            sessionId = joined;
+        }
+
+        bool stillIn;
+        try
+        {
+            stillIn = await _hub.IsInSessionAsync(sessionId, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not confirm session {SessionId} with the backend; staying in it.", sessionId);
+            return;
+        }
+
+        if (stillIn)
+            return;
+
+        _log.LogInformation(
+            "Session {SessionId} ended or was left while the agent was disconnected; leaving it.", sessionId);
+        HandleSessionEnded(sessionId);
+    }
+
+    /// <summary>
     /// The student chose to leave the current session from the agent UI (#102).
     /// Records a <c>ManualLeave</c> event for the teacher's post-session review,
     /// tells the backend the participant left (which broadcasts a "Left" state to

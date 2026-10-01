@@ -250,6 +250,7 @@ public class SessionHeartbeatServiceTests
             if (ThrowOnHeartbeat) throw new InvalidOperationException("simulated transport failure");
             return Task.FromResult(!ReturnFalseOnHeartbeat);
         }
+        public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

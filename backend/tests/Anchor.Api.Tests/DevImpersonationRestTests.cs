@@ -290,7 +290,10 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
                 return Task.CompletedTask;
             }
 
-            public Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default)
+            public Task SessionEndedAsync(
+                Guid sessionId,
+                IReadOnlyCollection<Guid> recipientUserIds,
+                CancellationToken cancellationToken = default)
             {
                 SessionEndedCalls.Add(sessionId);
                 return Task.CompletedTask;

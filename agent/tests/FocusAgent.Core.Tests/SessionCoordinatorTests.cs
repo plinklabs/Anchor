@@ -414,6 +414,73 @@ public class SessionCoordinatorTests
         Assert.False(fired);
     }
 
+    [Fact]
+    public async Task ConfirmJoinedSession_when_not_joined_does_not_ask_the_backend()
+    {
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi());
+
+        await coordinator.ConfirmJoinedSessionAsync();
+
+        Assert.Empty(hub.IsInSessionCalls);
+    }
+
+    [Fact]
+    public async Task ConfirmJoinedSession_keeps_a_session_the_student_is_still_in()
+    {
+        var hub = new FakeHub { StillInSession = true };
+        var coordinator = NewCoordinator(hub, new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+        var left = false;
+        coordinator.SessionLeft += (_, _) => left = true;
+
+        await coordinator.ConfirmJoinedSessionAsync();
+
+        Assert.Equal(new[] { payload.SessionId }, hub.IsInSessionCalls);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.Equal(payload.SessionId, coordinator.ActiveSessionId);
+        Assert.False(left);
+    }
+
+    [Fact]
+    public async Task ConfirmJoinedSession_leaves_a_session_that_ended_while_the_agent_was_offline()
+    {
+        // #354: the SessionEnded broadcast went out while the agent was
+        // disconnected, so asking on reconnect is the only way it finds out.
+        var hub = new FakeHub { StillInSession = false };
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+        Guid? left = null;
+        coordinator.SessionLeft += (_, id) => left = id;
+
+        await coordinator.ConfirmJoinedSessionAsync();
+
+        Assert.Null(coordinator.JoinedSessionId);
+        Assert.Null(coordinator.ActiveSessionId);
+        Assert.Equal(payload.SessionId, left);
+        // Leaving is local: the backend already knows the session is over.
+        Assert.Empty(hub.LeaveCalls);
+    }
+
+    [Fact]
+    public async Task ConfirmJoinedSession_stays_in_the_session_when_the_backend_cannot_be_asked()
+    {
+        var hub = new FakeHub { IsInSessionThrows = new InvalidOperationException("connection dropped again") };
+        var coordinator = NewCoordinator(hub, new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var payload = Payload();
+        await coordinator.HandleSessionStartedAsync(payload);
+        var left = false;
+        coordinator.SessionLeft += (_, _) => left = true;
+
+        await coordinator.ConfirmJoinedSessionAsync();
+
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.False(left);
+    }
+
     private static SessionCoordinator NewCoordinator(FakeHub hub, FakeUi ui)
     {
         var settings = Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) });
@@ -472,6 +539,17 @@ public class SessionCoordinatorTests
             return ReportThrows is null ? Task.CompletedTask : Task.FromException(ReportThrows);
         }
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
+        // The backend's answer to IsInSession (#354), or the failure to ask.
+        public bool StillInSession { get; set; } = true;
+        public Exception? IsInSessionThrows { get; set; }
+        public List<Guid> IsInSessionCalls { get; } = new();
+        public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default)
+        {
+            IsInSessionCalls.Add(sessionId);
+            return IsInSessionThrows is null
+                ? Task.FromResult(StillInSession)
+                : Task.FromException<bool>(IsInSessionThrows);
+        }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

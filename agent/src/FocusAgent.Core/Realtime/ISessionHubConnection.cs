@@ -26,4 +26,10 @@ public interface ISessionHubConnection : IAsyncDisposable
     /// same as a thrown exception — the ping did not happen.
     /// </summary>
     Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default);
+    /// <summary>
+    /// Asks the backend whether the student is still in the session: it hasn't
+    /// ended and they haven't left it (#354). Throws when the backend can't be
+    /// asked; only a <c>false</c> answer means the session is over.
+    /// </summary>
+    Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default);
 }

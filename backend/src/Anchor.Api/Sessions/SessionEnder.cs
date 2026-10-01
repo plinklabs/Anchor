@@ -11,8 +11,9 @@ namespace Anchor.Api.Sessions;
 /// session the teacher forgot (#345). Ending a session sets <c>EndedAt</c> and
 /// writes its per-(student, kind) <see cref="SessionEventSummary"/> rows in one
 /// transaction, drops its cached heartbeat-validation entries (#342), and
-/// broadcasts <c>SessionEnded</c> — which also drops its heartbeat tracking — so
-/// joined agents leave focus mode and the teacher's live page shows it ended.
+/// broadcasts <c>SessionEnded</c> — which also drops its heartbeat tracking — to
+/// the session's teacher and every participant, so agents and extensions leave
+/// focus mode and the teacher's live page shows it ended.
 /// </summary>
 public sealed class SessionEnder
 {
@@ -44,6 +45,7 @@ public sealed class SessionEnder
     public async Task<SessionEndOutcome> EndAsync(Guid sessionId, CancellationToken cancellationToken)
     {
         var endedAt = _clock.GetUtcNow();
+        IReadOnlyCollection<Guid> recipients;
 
         await using (var transaction = await _db.Database.BeginTransactionAsync(cancellationToken))
         {
@@ -57,6 +59,7 @@ public sealed class SessionEnder
             if (claimed == 1)
             {
                 await AddEventSummariesAsync(sessionId, cancellationToken);
+                recipients = await SessionMembersAsync(sessionId, cancellationToken);
                 await _db.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
             }
@@ -77,8 +80,28 @@ public sealed class SessionEnder
         // Drop the session's cached heartbeat-validation entries (#342) so they
         // don't outlive it in memory.
         _activeParticipants.ClearSession(sessionId);
-        await _broadcaster.SessionEndedAsync(sessionId, cancellationToken);
+        await _broadcaster.SessionEndedAsync(sessionId, recipients, cancellationToken);
         return new SessionEndOutcome(endedAt, EndedNow: true);
+    }
+
+    /// <summary>
+    /// Who <c>SessionEnded</c> is for: the session's teacher and every user with
+    /// a participant row, whether they joined, declined or left. A student who
+    /// declined or left in the agent can still have the extension enforcing the
+    /// session, or a join toast still open. Read in the ending transaction, so
+    /// a failure rolls the end back rather than ending the session silently.
+    /// </summary>
+    private async Task<IReadOnlyCollection<Guid>> SessionMembersAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        var teacherId = await _db.Sessions.AsNoTracking()
+            .Where(s => s.Id == sessionId)
+            .Select(s => s.TeacherId)
+            .SingleAsync(cancellationToken);
+        var participantIds = await _db.SessionParticipants.AsNoTracking()
+            .Where(p => p.SessionId == sessionId)
+            .Select(p => p.UserId)
+            .ToListAsync(cancellationToken);
+        return participantIds.Append(teacherId).Distinct().ToList();
     }
 
     /// <summary>

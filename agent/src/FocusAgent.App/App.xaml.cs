@@ -307,9 +307,10 @@ public partial class App : Application
             case ConnectionStatus.Connected:
                 _stuckSince = null;
                 // Issue #54: on first Connected, ask the backend whether this
-                // student is still mid-session and rejoin silently. The service
-                // gates itself to run once per process; later Connected events
-                // (reconnects) are no-ops.
+                // student is still mid-session and rejoin silently (once per
+                // process). #354: on every Connected, reconnects included, also
+                // ask whether the joined session is still on — one that ended
+                // while the agent was offline sent its SessionEnded to nobody.
                 if (_rehydration is { } rehydrate)
                     _ = rehydrate.NotifyConnectedAsync();
                 break;

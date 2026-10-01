@@ -364,39 +364,112 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         Assert.True(tracker.TryGet(session.Id, student.Id, out _));
 
         var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
-        await broadcaster.SessionEndedAsync(session.Id);
+        await broadcaster.SessionEndedAsync(session.Id, new[] { student.Id });
 
         Assert.False(tracker.TryGet(session.Id, student.Id, out _));
     }
 
     [Fact]
-    public async Task SessionEnded_broadcast_reaches_joined_clients_only()
+    public async Task Ending_a_session_reaches_its_teacher_and_participants_once_even_on_a_connection_that_never_joined_it()
     {
-        var (joiner, session) = await SeedSessionWithStudentAsync();
-        var outsider = await SeedUserAsync(UserRole.Student, "Outsider");
+        // #354: SignalR keeps no group membership across a reconnect, and the
+        // agent joins the session group once. A student whose agent joined and
+        // then reconnected, or whose extension's service worker was revived,
+        // holds a connection that never joined the session group, and must
+        // still hear the session end. A connection that did join must not hear
+        // it twice.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var outsider = await TestSeed.AddUserAsync(_factory, UserRole.Student, "Outsider");
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var startResponse = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
+        startResponse.EnsureSuccessStatusCode();
+        var sessionId = (await startResponse.Content.ReadFromJsonAsync<StartSessionResponse>())!.Id;
 
-        await using var joined = BuildConnection(joiner.EntraOid, "Student");
+        await using var joined = BuildConnection(scenario.Students[0].EntraOid, "Student");
+        await using var reconnected = BuildConnection(scenario.Students[1].EntraOid, "Student");
+        await using var teacher = BuildConnection(scenario.Teacher.EntraOid, "Teacher");
         await using var outside = BuildConnection(outsider.EntraOid, "Student");
-        await joined.StartAsync();
+        var ended = new[] { joined, reconnected, teacher, outside }
+            .Select(connection => new EndedListener(connection, sessionId))
+            .ToArray();
+
+        await joined.StartAndAwaitOnConnectedAsync();
+        await JoinAsync(joined, sessionId);
+        // The second student joined on a connection that has since dropped...
+        await using (var dropped = BuildConnection(scenario.Students[1].EntraOid, "Student"))
+        {
+            await dropped.StartAsync();
+            await JoinAsync(dropped, sessionId);
+        }
+        // ...and is back on a new one, which only joined its user group.
+        await reconnected.StartAndAwaitOnConnectedAsync();
+        // The teacher's live page subscribes to its own session.
+        await teacher.StartAndAwaitOnConnectedAsync();
+        await JoinAsync(teacher, sessionId);
+        await outside.StartAndAwaitOnConnectedAsync();
+
+        var endResponse = await client.PostAsync($"/sessions/{sessionId}/end", content: null);
+        endResponse.EnsureSuccessStatusCode();
+
+        await Task.WhenAll(ended.Take(3).Select(e => e.First.WaitAsync(TimeSpan.FromSeconds(5))));
+        // Room for a duplicate, or a stray delivery to the outsider, to arrive.
+        await Task.Delay(500);
+        Assert.Equal(new[] { 1, 1, 1, 0 }, ended.Select(e => e.Count).ToArray());
+    }
+
+    [Fact]
+    public async Task IsInSession_is_true_for_a_joined_participant_of_a_running_session()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        Assert.False(await connection.InvokeAsync<bool>("IsInSession", session.Id));
+        await JoinAsync(connection, session.Id);
+        Assert.True(await connection.InvokeAsync<bool>("IsInSession", session.Id));
+    }
+
+    [Fact]
+    public async Task IsInSession_is_false_once_the_session_has_ended_also_on_a_new_connection()
+    {
+        // #354: what a reconnecting agent or extension asks, because the
+        // SessionEnded broadcast went out while it was offline.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var student = scenario.Students[0];
+        var session = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        await using var before = BuildConnection(student.EntraOid, "Student");
+        await before.StartAsync();
+        await JoinAsync(before, session.Id);
+        Assert.True(await before.InvokeAsync<bool>("IsInSession", session.Id));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsync($"/sessions/{session.Id}/end", content: null);
+        response.EnsureSuccessStatusCode();
+
+        Assert.False(await before.InvokeAsync<bool>("IsInSession", session.Id));
+        await using var after = BuildConnection(student.EntraOid, "Student");
+        await after.StartAsync();
+        Assert.False(await after.InvokeAsync<bool>("IsInSession", session.Id));
+    }
+
+    [Fact]
+    public async Task IsInSession_is_false_after_leaving_and_for_anyone_outside_the_session()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+        var stranger = await SeedUserAsync(UserRole.Student, "Outsider");
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await using var outside = BuildConnection(stranger.EntraOid, "Student");
+        await connection.StartAsync();
         await outside.StartAsync();
+        await JoinAsync(connection, session.Id);
 
-        var joinedSignal = new TaskCompletionSource<Guid>();
-        var outsideSignal = new TaskCompletionSource<Guid>();
-        joined.On<Guid>(nameof(ISessionHubClient.SessionEnded), id => joinedSignal.TrySetResult(id));
-        outside.On<Guid>(nameof(ISessionHubClient.SessionEnded), id => outsideSignal.TrySetResult(id));
+        await connection.InvokeAsync("LeaveSession", session.Id);
 
-        await joined.InvokeAsync<JoinSessionResult>(
-            "JoinSession",
-            new JoinSessionRequest(session.Id, JoinCode: null));
-
-        var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
-        await broadcaster.SessionEndedAsync(session.Id);
-
-        var received = await joinedSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(session.Id, received);
-
-        var outsiderGotIt = await Task.WhenAny(outsideSignal.Task, Task.Delay(500)) == outsideSignal.Task;
-        Assert.False(outsiderGotIt, "Client outside the session group should not receive SessionEnded.");
+        Assert.False(await connection.InvokeAsync<bool>("IsInSession", session.Id));
+        Assert.False(await outside.InvokeAsync<bool>("IsInSession", session.Id));
+        Assert.False(await outside.InvokeAsync<bool>("IsInSession", Guid.NewGuid()));
     }
 
     [Fact]
@@ -597,6 +670,31 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
 
         var outsiderGotIt = await Task.WhenAny(signalOutsider.Task, Task.Delay(500)) == signalOutsider.Task;
         Assert.False(outsiderGotIt, "User outside the class roster should not receive SessionStarted.");
+    }
+
+    private static Task<JoinSessionResult> JoinAsync(HubConnection connection, Guid sessionId) =>
+        connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(sessionId, JoinCode: null));
+
+    /// <summary>Counts the SessionEnded messages a connection receives for one session.</summary>
+    private sealed class EndedListener
+    {
+        private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _count;
+
+        public EndedListener(HubConnection connection, Guid sessionId)
+        {
+            connection.On<Guid>(nameof(ISessionHubClient.SessionEnded), id =>
+            {
+                if (id != sessionId) return;
+                Interlocked.Increment(ref _count);
+                _first.TrySetResult();
+            });
+        }
+
+        public Task First => _first.Task;
+
+        public int Count => Volatile.Read(ref _count);
     }
 
     private async Task<(User student, Session session)> SeedSessionWithStudentAsync()

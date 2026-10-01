@@ -202,6 +202,34 @@ public sealed class SessionHubActiveParticipantTests
         Assert.False(cache.TryGet(session.Id, student.Id, out _));
     }
 
+    [Fact]
+    public async Task Heartbeats_and_events_for_a_session_that_has_ended_are_rejected()
+    {
+        // #354: an agent or extension that never heard SessionEnded keeps
+        // pinging. Ending the session dropped its cached participants, so the
+        // next ping falls back to the database, which must see that the session
+        // is over: otherwise the ping tracks the student again and the monitor
+        // reports them lost, or the extension silent, after the session ended.
+        var (student, session) = await SeedSessionWithStudentAsync();
+        await using var connection = await ConnectAsync(student);
+        await JoinAsync(connection, session.Id);
+        await connection.InvokeAsync("Heartbeat", session.Id);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, session.Teacher);
+        var response = await client.PostAsync($"/sessions/{session.Id}/end", content: null);
+        response.EnsureSuccessStatusCode();
+
+        var ex = await Assert.ThrowsAsync<HubException>(() => connection.InvokeAsync("Heartbeat", session.Id));
+        Assert.Contains("Not an active participant", ex.Message);
+        await Assert.ThrowsAsync<HubException>(() => connection.InvokeAsync("ExtensionHeartbeat", session.Id));
+        await Assert.ThrowsAsync<HubException>(() => connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.ForegroundChange), "{\"app\":\"notepad\"}", OccurredAt: null)));
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Agent));
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
+    }
+
     private async Task<HubConnection> ConnectAsync(User user)
     {
         var server = _factory.Server;

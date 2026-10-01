@@ -511,6 +511,7 @@ public class FocusSessionControllerTests
             return Task.CompletedTask;
         }
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
+        public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public async Task RaiseSessionStarted(SessionStartedPayload payload)

@@ -247,6 +247,27 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow(), source);
     }
 
+    /// <summary>
+    /// Whether the caller is still in the session: it hasn't ended and the
+    /// caller is an active participant — the condition under which
+    /// <see cref="Heartbeat"/> and <see cref="ReportEvent"/> accept the caller's
+    /// calls for it. The agent and the extension ask after every reconnect
+    /// (#354): <c>SessionEnded</c> reaches only the connections open when it is
+    /// sent, so a session that ended while a client was offline — a network
+    /// drop, a backend restart, a laptop asleep through the automatic end —
+    /// would otherwise stay in force on that client. Read from the database
+    /// rather than <see cref="ActiveParticipantCache"/>: it runs once per
+    /// reconnect, not per ping, and decides whether the student leaves focus
+    /// mode.
+    /// </summary>
+    public async Task<bool> IsInSession(Guid sessionId)
+    {
+        var ct = Context.ConnectionAborted;
+        var user = await ResolveCurrentUserAsync(ct);
+        return await _db.SessionParticipants.AsNoTracking()
+            .AnyAsync(ActiveParticipantCache.IsActive(sessionId, user.Id), ct);
+    }
+
     public async Task ReportEvent(ReportEventRequest request)
     {
         var ct = Context.ConnectionAborted;
