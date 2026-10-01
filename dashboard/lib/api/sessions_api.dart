@@ -258,9 +258,9 @@ class SessionUnblockGrantInfo {
 }
 
 /// Per-(student, kind) aggregate written when the session ends (#77). The
-/// raw event log is pruned after 30 days; these counts survive indefinitely
-/// so the dashboard can still say "47 foreground changes off-list, 12 blocked
-/// URLs" long after the underlying rows are gone.
+/// raw event log is pruned after 14 days by default; these counts survive
+/// indefinitely so the dashboard can still say "47 foreground changes
+/// off-list, 12 blocked URLs" long after the underlying rows are gone.
 class SessionEventSummary {
   SessionEventSummary({
     required this.userId,

@@ -188,7 +188,8 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
       // Keep the process loaded between requests. Without Always On the app is
       // unloaded after ~20 idle minutes, which stops the in-process background
       // services (HeartbeatMonitor flags silent students, EventPruner enforces
-      // event retention). Needs a Basic or higher plan (#341).
+      // event retention, SessionAutoEnder ends forgotten sessions). Needs a Basic
+      // or higher plan (#341).
       alwaysOn: true
       // Entra + CORS application settings (double-underscore form). Provisioning
       // them here means the deployed API gets its environment-specific config

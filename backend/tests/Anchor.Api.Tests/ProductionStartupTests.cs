@@ -16,10 +16,11 @@ namespace Anchor.Api.Tests;
 /// Boots the real <c>Program</c> the way App Service runs it — Production
 /// environment, the SqlServer provider, the real hosted services — and checks
 /// that startup never opens a database connection (#344). The deploy pipeline
-/// applies migrations, and <see cref="Events.EventPruner"/> waits for its
-/// scheduled hour, so the first request is served without a database round
-/// trip. Every connection attempt is recorded and failed by an EF interceptor,
-/// so nothing dials out.
+/// applies migrations, <see cref="Events.EventPruner"/> waits for its
+/// scheduled hour, and <see cref="Sessions.SessionAutoEnder"/> waits a sweep
+/// interval before looking for forgotten sessions (#345), so the first request
+/// is served without a database round trip. Every connection attempt is
+/// recorded and failed by an EF interceptor, so nothing dials out.
 /// </summary>
 public sealed class ProductionStartupTests
 {
@@ -39,11 +40,13 @@ public sealed class ProductionStartupTests
         var response = await client.GetAsync("/me");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
 
-        // The pruner has parked on its wait for 02:00 without a prune first.
+        // The pruner has parked on its wait for 02:00 without a prune first, and
+        // the auto-end on its first sweep interval without a sweep first.
         await clock.WaitForTimerAsync(due => due == TimeSpan.FromHours(16), Timeout);
+        await clock.WaitForTimerAsync(due => due == TimeSpan.FromMinutes(5), Timeout);
         Assert.Equal(0, probe.ConnectionAttempts);
 
-        // The scheduled run is the first thing that reaches for the database.
+        // The scheduled runs are the first things that reach for the database.
         clock.Advance(TimeSpan.FromHours(16));
         await probe.FirstAttempt.WaitAsync(Timeout);
     }

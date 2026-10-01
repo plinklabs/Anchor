@@ -35,6 +35,7 @@ public sealed class SessionsController : ControllerBase
     private readonly ISessionAllowlistExpander _allowlist;
     private readonly ParticipantLiveStateResolver _liveState;
     private readonly ActiveParticipantCache _activeParticipants;
+    private readonly SessionEnder _sessionEnder;
 
     public SessionsController(
         AnchorDbContext db,
@@ -44,7 +45,8 @@ public sealed class SessionsController : ControllerBase
         JoinByCodeRateLimiter joinByCodeLimiter,
         ISessionAllowlistExpander allowlist,
         ParticipantLiveStateResolver liveState,
-        ActiveParticipantCache activeParticipants)
+        ActiveParticipantCache activeParticipants,
+        SessionEnder sessionEnder)
     {
         _db = db;
         _users = users;
@@ -54,6 +56,7 @@ public sealed class SessionsController : ControllerBase
         _allowlist = allowlist;
         _liveState = liveState;
         _activeParticipants = activeParticipants;
+        _sessionEnder = sessionEnder;
     }
 
     [HttpPost]
@@ -166,60 +169,20 @@ public sealed class SessionsController : ControllerBase
         if (caller is null)
             return Unauthorized();
 
-        var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
-        if (session is null)
+        var teacherId = await _db.Sessions.AsNoTracking()
+            .Where(s => s.Id == id)
+            .Select(s => (Guid?)s.TeacherId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (teacherId is null)
             return NotFound();
 
-        if (session.TeacherId != caller.Id)
+        if (teacherId != caller.Id)
             return Forbid();
 
-        if (session.EndedAt is null)
-        {
-            session.EndedAt = _clock.GetUtcNow();
-            await AggregateEventSummariesAsync(session.Id, cancellationToken);
-            await _db.SaveChangesAsync(cancellationToken);
-            // Drop the session's cached heartbeat-validation entries (#342) so
-            // they don't outlive it in memory.
-            _activeParticipants.ClearSession(session.Id);
-            await _broadcaster.SessionEndedAsync(session.Id, cancellationToken);
-        }
-
-        return Ok(new EndSessionResponse(session.Id, session.EndedAt!.Value));
-    }
-
-    /// <summary>
-    /// Aggregate this session's raw events into the
-    /// <see cref="SessionEventSummary"/> table so the per-(student, kind)
-    /// counts survive the 30-day raw-event prune (#77). Caller is responsible
-    /// for the surrounding SaveChanges so the EndedAt update and the summary
-    /// rows commit in a single transaction.
-    /// </summary>
-    private async Task AggregateEventSummariesAsync(Guid sessionId, CancellationToken cancellationToken)
-    {
-        // SQLite (dev + tests) doesn't translate GROUP BY over DateTimeOffset
-        // server-side, so materialise the rows first. Volume per session is
-        // bounded (a class period generates hundreds, not millions of events).
-        var rows = await _db.Events.AsNoTracking()
-            .Where(e => e.SessionId == sessionId)
-            .Select(e => new { e.UserId, e.Kind, e.OccurredAt })
-            .ToListAsync(cancellationToken);
-
-        var groups = rows
-            .GroupBy(r => new { r.UserId, r.Kind })
-            .Select(g => new SessionEventSummary
-            {
-                SessionId = sessionId,
-                UserId = g.Key.UserId,
-                Kind = g.Key.Kind,
-                Count = g.Count(),
-                FirstAt = g.Min(r => r.OccurredAt),
-                LastAt = g.Max(r => r.OccurredAt),
-            });
-
-        foreach (var summary in groups)
-        {
-            _db.SessionEventSummaries.Add(summary);
-        }
+        // Idempotent: ending an already-ended session (a double click, or one the
+        // auto-end got to first, #345) returns its existing EndedAt.
+        var outcome = await _sessionEnder.EndAsync(id, cancellationToken);
+        return Ok(new EndSessionResponse(id, outcome.EndedAt));
     }
 
     [HttpPut("{id:guid}/bundles")]
@@ -394,7 +357,7 @@ public sealed class SessionsController : ControllerBase
             .ToListAsync(cancellationToken);
         // A student is flagged as tampered (#105) if any TamperDetected event
         // exists for them this session. Union the raw events with the per-kind
-        // summary so the flag survives the 30-day raw-event prune (#77) the same
+        // summary so the flag survives the raw-event prune (#77) the same
         // way the aggregate counts do — the dashboard never branches on retention.
         var tamperedUserIds = (await _db.Events.AsNoTracking()
                 .Where(e => e.SessionId == id && e.Kind == EventKind.TamperDetected)

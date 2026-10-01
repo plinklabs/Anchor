@@ -100,7 +100,7 @@
       <p>Anchor is <strong>self-hosted</strong>: each school runs its own backend in its own Azure subscription, and student devices and the dashboard talk only to that. Your data stays in your Azure. The supervising teacher sees the live session activity for their class; access beyond that is governed by the school, which is the data controller. <strong>Plink Labs operates no backend, receives no student data, and has no access to any school's deployment.</strong></p>
 
       <h2>How long is the data kept?</h2>
-      <p>Retention is set by the school, because the school runs the backend. As a default the backend prunes raw session events after 30 days and keeps summaries, but each deployment can configure this. Requests to access or delete data should go to your school or its IT administrator, who controls the deployment.</p>
+      <p>Retention is set by the school, because the school runs the backend. As a default the backend prunes raw session events after 14 days and keeps summaries, but each deployment can configure this. Requests to access or delete data should go to your school or its IT administrator, who controls the deployment.</p>
 
       <h2>Can we audit what it actually collects?</h2>
       <p>Yes. Anchor's full source code — including exactly what each component collects and sends — is public at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>. Nothing about the data flow is hidden.</p>

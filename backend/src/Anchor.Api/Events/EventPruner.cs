@@ -9,10 +9,12 @@ namespace Anchor.Api.Events;
 /// Periodically deletes raw <see cref="Event"/> rows older than the configured
 /// retention window, but only when their parent session has ended. Sessions
 /// without an <c>EndedAt</c> are never pruned: the per-(session, user, kind)
-/// summary table is populated by <c>SessionsController.End</c>, so an
-/// abandoned session would otherwise lose its events with no aggregate to
-/// fall back on. Deletes run in batches so a one-time backlog cleanup doesn't
-/// hold a long write lock against concurrent inserts.
+/// summary table is populated when a session ends (<c>SessionEnder</c>), so a
+/// running session would otherwise lose its events with no aggregate to fall
+/// back on. Sessions the teacher forgets to end don't stay running for long:
+/// <c>SessionAutoEnder</c> ends them (#345). Deletes run in batches so a
+/// one-time backlog cleanup doesn't hold a long write lock against concurrent
+/// inserts.
 /// <para>
 /// Runs are scheduled at a fixed quiet hour, never at startup (#344): see
 /// <see cref="NextRunAfter"/>.
@@ -120,8 +122,9 @@ public sealed class EventPruner : BackgroundService
         // Orphan check: rows older than the cutoff under sessions that never
         // got an EndedAt. We don't delete these — the design (#77) is
         // explicit that active sessions are protected even if they cross
-        // the 30-day mark. But a non-trivial pile of them is a signal that
-        // the End path failed for someone, so surface it.
+        // the retention window. With forgotten sessions auto-ended (#345), a
+        // non-trivial pile of them is a signal that ending failed for someone
+        // (or auto-ending is turned off), so surface it.
         var orphanCount = sqliteFallback
             ? (await db.Events.AsNoTracking()
                 .Where(e => activeSessionIds.Contains(e.SessionId))

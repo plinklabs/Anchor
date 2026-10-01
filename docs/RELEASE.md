@@ -363,9 +363,12 @@ and never reads an Azure SignalR connection string, so Bicep provisions none.
 switches to `AddAzureSignalR()` — see
 [Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
 
-`Heartbeat`, `EventRetention`, and `Logging` have committed defaults in
-`appsettings.json` and only need App Service overrides to tune them — not for a
-baseline deploy.
+`Heartbeat`, `EventRetention`, `SessionAutoEnd`, and `Logging` have committed
+defaults in `appsettings.json` and only need App Service overrides to tune them —
+not for a baseline deploy. For example, `EventRetention__RawEventDays` (default
+14) sets how many days raw session events are kept, and
+`SessionAutoEnd__MaxDuration` (default `04:00:00`) how long a session may run
+before it is treated as forgotten and ended.
 
 ## Cutting a release
 

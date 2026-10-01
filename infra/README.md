@@ -252,16 +252,19 @@ of them in a session at any time during school hours (#341).
   two connections (agent + extension). B1 allows ~50k WebSockets per instance,
   which covers the ~1,600 peak connections with in-process SignalR. Always On
   keeps the process loaded between requests, so the background services
-  (`HeartbeatMonitor`, `EventPruner`) keep running; F1 doesn't offer it.
+  (`HeartbeatMonitor`, `EventPruner`, `SessionAutoEnder`) keep running; F1
+  doesn't offer it.
 - **Azure SQL: Standard S0 (10 DTU), `maxSizeBytes` 250 GB.** Serverless only
   pays off while the database sleeps most of the time, but every agent or
   extension (re)connect resolves the user in the database, so with students
   connected it stays awake through the school day (~€70–240/month at minimum
-  capacity). S0 is a flat price. Estimated storage at rollout scale is ~1.5 GB
-  of raw events (30-day retention) plus ~0.2 GB per school year of session
-  summaries and participants, well inside the 250 GB S0 includes. The template
-  sets `maxSizeBytes` explicitly: without it, a deploy applies the tier's default
-  max size (the serverless database got 32 GB that way).
+  capacity). S0 is a flat price. Estimated storage at rollout scale is ~0.35 GB
+  of raw events (14-day retention, and foreground changes no longer carry window
+  titles or paths, #345) plus ~0.2 GB per school year of session summaries and
+  participants, well inside the 250 GB S0 includes. Sessions a teacher forgets
+  to end are ended four hours after they started, so their events are pruned
+  too. The template sets `maxSizeBytes` explicitly: without it, a deploy applies
+  the tier's default max size (the serverless database got 32 GB that way).
 
 **Load test before go-live** with ~300 simulated students (agent + extension
 heartbeats, ~40 foreground changes per student per hour) to confirm B1 + S0 —

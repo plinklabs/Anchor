@@ -7,14 +7,17 @@ public sealed class EventRetentionOptions
     /// <summary>
     /// Raw <see cref="Domain.Events.Event"/> rows older than this are eligible
     /// for pruning once their parent session has ended. Per-session summaries
-    /// are kept indefinitely.
+    /// are kept indefinitely. Two weeks (#345, down from 30 days) keeps last
+    /// week's lessons reviewable event by event on the past-session page while
+    /// holding no more per-event student data than that needs; the per-student
+    /// counts outlive it in the summaries.
     /// </summary>
-    public int RawEventDays { get; set; } = 30;
+    public int RawEventDays { get; set; } = 14;
 
     /// <summary>
-    /// How often <see cref="EventPruner"/> wakes up. 30 days is the cutoff so
-    /// daily is plenty — pruning N hours late costs nothing, the point is
-    /// bounded growth, not freshness (#77).
+    /// How often <see cref="EventPruner"/> wakes up. The cutoff is counted in
+    /// days, so daily is plenty — pruning N hours late costs nothing, the point
+    /// is bounded growth, not freshness (#77).
     /// </summary>
     public int PruneIntervalMinutes { get; set; } = 1440;
 
@@ -46,7 +49,7 @@ public sealed class EventRetentionOptions
     /// If a prune scan finds more than this many events under sessions that
     /// have <c>EndedAt = null</c> but are older than the retention window,
     /// the pruner logs a warning instead of silently leaving them. Indicates
-    /// a session that was abandoned without End being called.
+    /// a session that was never ended, by the teacher or the auto-end (#345).
     /// </summary>
     public int OrphanedActiveSessionWarnThreshold { get; set; } = 100;
 

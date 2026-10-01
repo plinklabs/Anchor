@@ -18,6 +18,9 @@ namespace FocusAgent.IntegrationTests;
 /// bring it back on the <em>same</em> database, the way a deploy or an App
 /// Service restart does in production: every in-memory structure (heartbeat
 /// tracking, the active-participant cache, hub groups) is gone, the rows are not.
+/// A restart can also override backend configuration for the spec that needs it
+/// (e.g. a seconds-long session limit for the auto-end spec, #345); the next
+/// restart without overrides goes back to the defaults.
 /// </summary>
 internal sealed class BackendProcess : IAsyncDisposable
 {
@@ -35,19 +38,23 @@ internal sealed class BackendProcess : IAsyncDisposable
             if (File.Exists(path)) File.Delete(path);
         }
 
-        await LaunchAsync(build: true, ct);
+        await LaunchAsync(build: true, configuration: null, ct);
     }
 
     /// <summary>
     /// Start the backend again after <see cref="StopAsync"/>, keeping the
     /// database (including its -wal journal, which holds the most recent
     /// commits). Skips the build: the first start already built this tree.
+    /// <paramref name="configuration"/> adds environment variables (config keys
+    /// in <c>Section__Key</c> form) on top of the usual e2e ones, for this run
+    /// of the backend only.
     /// </summary>
-    public Task RestartAsync(CancellationToken ct = default)
+    public Task RestartAsync(
+        IReadOnlyDictionary<string, string>? configuration = null, CancellationToken ct = default)
     {
         if (IsRunning)
             throw new InvalidOperationException("Backend is still running; stop it before restarting.");
-        return LaunchAsync(build: false, ct);
+        return LaunchAsync(build: false, configuration, ct);
     }
 
     /// <summary>Kill the backend process tree, as a crash or redeploy would.</summary>
@@ -75,7 +82,7 @@ internal sealed class BackendProcess : IAsyncDisposable
         }
     }
 
-    private async Task LaunchAsync(bool build, CancellationToken ct)
+    private async Task LaunchAsync(bool build, IReadOnlyDictionary<string, string>? configuration, CancellationToken ct)
     {
         var psi = new ProcessStartInfo("dotnet")
         {
@@ -102,6 +109,8 @@ internal sealed class BackendProcess : IAsyncDisposable
         // Keep the captured CI log readable — the EF command logger is otherwise
         // hundreds of SQL lines per run.
         psi.Environment["Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command"] = "Warning";
+        foreach (var (key, value) in configuration ?? new Dictionary<string, string>())
+            psi.Environment[key] = value;
 
         _process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         // Drain the pipes so the child never blocks on a full buffer; echo to
@@ -167,8 +176,12 @@ public sealed class BackendFixture : IAsyncLifetime
     /// <summary>Take the shared backend down. Pair with <see cref="RestartAsync"/>.</summary>
     public Task StopAsync() => _backend.StopAsync();
 
-    /// <summary>Bring the shared backend back up on the same database.</summary>
-    public Task RestartAsync() => _backend.RestartAsync();
+    /// <summary>
+    /// Bring the shared backend back up on the same database, optionally with
+    /// configuration overrides that last until the next restart.
+    /// </summary>
+    public Task RestartAsync(IReadOnlyDictionary<string, string>? configuration = null) =>
+        _backend.RestartAsync(configuration);
 
     public async Task DisposeAsync() => await _backend.DisposeAsync();
 }

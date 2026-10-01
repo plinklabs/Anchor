@@ -139,6 +139,17 @@ if (enableEventPruner)
     builder.Services.AddHostedService<EventPruner>();
 }
 
+// Ending a session is shared by the teacher's End and the auto-end of forgotten
+// sessions (#345).
+builder.Services.AddScoped<SessionEnder>();
+builder.Services.Configure<SessionAutoEndOptions>(builder.Configuration.GetSection(SessionAutoEndOptions.SectionName));
+var autoEndSection = builder.Configuration.GetSection(SessionAutoEndOptions.SectionName);
+var enableAutoEnder = autoEndSection.GetValue<bool?>(nameof(SessionAutoEndOptions.EnableAutoEnder)) ?? true;
+if (enableAutoEnder)
+{
+    builder.Services.AddHostedService<SessionAutoEnder>();
+}
+
 const string DashboardCorsPolicy = "DashboardCors";
 var dashboardOrigins = builder.Configuration
     .GetSection("Cors:AllowedOrigins")

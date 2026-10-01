@@ -5,9 +5,9 @@ namespace Anchor.Domain.Events;
 
 /// <summary>
 /// Per-(session, user, kind) aggregate of <see cref="Event"/> rows. Written
-/// when a session ends so that raw events can be pruned after 30 days while
-/// retaining the "47 foreground changes, 12 blocked URLs" counts indefinitely
-/// for reporting.
+/// when a session ends so that raw events can be pruned after the retention
+/// window (<c>EventRetention:RawEventDays</c>) while retaining the "47
+/// foreground changes, 12 blocked URLs" counts indefinitely for reporting.
 /// </summary>
 public sealed class SessionEventSummary
 {
