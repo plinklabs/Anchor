@@ -157,7 +157,7 @@ export class HubClient {
         sessionId: payload.sessionId,
         joinCode: payload.joinCode,
       });
-      log.info('joined session group', { sessionId: payload.sessionId });
+      log.info('joined session', { sessionId: payload.sessionId });
     } catch (err) {
       log.error('JoinSession failed', err);
     }

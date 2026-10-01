@@ -70,8 +70,14 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             services.AddDbContext<AnchorDbContext>(options =>
                 options.UseSqlite(_connectionString));
 
+            // Record every broadcast, and still send it the way production
+            // does: the recorder wraps the broadcaster Program.cs registered,
+            // so a hub test's connections receive what a real client would.
+            var productionBroadcaster = services.Last(d => d.ServiceType == typeof(ISessionBroadcaster)).ImplementationType
+                ?? throw new InvalidOperationException("Program.cs no longer registers ISessionBroadcaster by type.");
             services.RemoveAll<ISessionBroadcaster>();
-            services.AddSingleton<RecordingSessionBroadcaster>();
+            services.AddSingleton(sp => new RecordingSessionBroadcaster(
+                (ISessionBroadcaster)ActivatorUtilities.CreateInstance(sp, productionBroadcaster)));
             services.AddSingleton<ISessionBroadcaster>(sp => sp.GetRequiredService<RecordingSessionBroadcaster>());
 
             // Graph isn't reachable in tests; swap the directory search for a

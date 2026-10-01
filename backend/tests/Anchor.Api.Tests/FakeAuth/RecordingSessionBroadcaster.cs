@@ -1,20 +1,23 @@
 using System.Collections.Concurrent;
 using Anchor.Api.Realtime;
-using Microsoft.AspNetCore.SignalR;
 
 namespace Anchor.Api.Tests.FakeAuth;
 
+/// <summary>
+/// Records every broadcast, then hands it to the production
+/// <see cref="ISessionBroadcaster"/> (<see cref="AnchorApiFactory"/> passes in
+/// the one Program.cs registers), so a hub test's connections receive exactly
+/// what a real client would. It doesn't route anything itself: a copy of the
+/// routing here would let a test pass on the copy while production sends a
+/// message somewhere else (#366).
+/// </summary>
 public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
 {
-    private readonly IHubContext<SessionHub, ISessionHubClient> _hub;
-    private readonly HeartbeatTracker _heartbeats;
+    private readonly ISessionBroadcaster _inner;
 
-    public RecordingSessionBroadcaster(
-        IHubContext<SessionHub, ISessionHubClient> hub,
-        HeartbeatTracker heartbeats)
+    public RecordingSessionBroadcaster(ISessionBroadcaster inner)
     {
-        _hub = hub;
-        _heartbeats = heartbeats;
+        _inner = inner;
     }
 
     public ConcurrentBag<SessionStartedCall> SessionStartedCalls { get; } = new();
@@ -33,10 +36,7 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
         CancellationToken cancellationToken = default)
     {
         SessionStartedCalls.Add(new SessionStartedCall(payload, recipientUserIds.ToArray()));
-        if (recipientUserIds.Count == 0)
-            return Task.CompletedTask;
-        var groups = recipientUserIds.Select(SessionHub.UserGroupName).ToArray();
-        return _hub.Clients.Groups(groups).SessionStarted(payload);
+        return _inner.SessionStartedAsync(payload, recipientUserIds, cancellationToken);
     }
 
     public Task SessionEndedAsync(
@@ -45,56 +45,49 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
         CancellationToken cancellationToken = default)
     {
         SessionEndedCalls.Add(new SessionEndedCall(sessionId, recipientUserIds.ToArray()));
-        // Mirror production SessionBroadcaster: drop liveness state up-front so
-        // tests observing tracker behaviour see the same outcome they would in
-        // a real deployment, and route to the recipients' user groups (#354).
-        _heartbeats.ClearSession(sessionId);
-        if (recipientUserIds.Count == 0)
-            return Task.CompletedTask;
-        var groups = recipientUserIds.Select(SessionHub.UserGroupName).ToArray();
-        return _hub.Clients.Groups(groups).SessionEnded(sessionId);
+        return _inner.SessionEndedAsync(sessionId, recipientUserIds, cancellationToken);
     }
 
     public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
     {
         SessionBundlesUpdatedCalls.Add(new SessionBundlesUpdatedCall(userId, payload));
-        return _hub.Clients.Group(SessionHub.UserGroupName(userId)).SessionBundlesUpdated(payload);
+        return _inner.SessionBundlesUpdatedAsync(userId, payload, cancellationToken);
     }
 
     public Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default)
     {
         ParticipantStateChangedCalls.Add(payload);
-        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).ParticipantStateChanged(payload);
+        return _inner.ParticipantStateChangedAsync(payload, cancellationToken);
     }
 
     public Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default)
     {
         HeartbeatLostCalls.Add(payload);
-        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).HeartbeatLost(payload);
+        return _inner.HeartbeatLostAsync(payload, cancellationToken);
     }
 
     public Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default)
     {
         AgentReconnectedCalls.Add(payload);
-        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).AgentReconnected(payload);
+        return _inner.AgentReconnectedAsync(payload, cancellationToken);
     }
 
     public Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default)
     {
         AllowlistAmendedCalls.Add(payload);
-        return _hub.Clients.Group(SessionHub.UserGroupName(payload.UserId)).AllowlistAmended(payload);
+        return _inner.AllowlistAmendedAsync(payload, cancellationToken);
     }
 
     public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
     {
         UnblockRequestedCalls.Add(payload);
-        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnblockRequested(payload);
+        return _inner.UnblockRequestedAsync(payload, cancellationToken);
     }
 
     public Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default)
     {
         TamperDetectedCalls.Add(payload);
-        return _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).TamperDetected(payload);
+        return _inner.TamperDetectedAsync(payload, cancellationToken);
     }
 }
 
