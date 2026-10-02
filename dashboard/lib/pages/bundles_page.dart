@@ -89,7 +89,9 @@ class _BundlesPageState extends State<BundlesPage> {
 
   /// The page's own messenger, so its snack bars go with the page: a late
   /// failure's Reopen ([_reportLateFailure]) can't be tapped once the page,
-  /// and with it the draft it puts back, is gone (#386).
+  /// and with it the draft it puts back, is gone (#386). A failure that lands
+  /// after the admin has left the page goes to the app's messenger instead
+  /// (#388).
   final GlobalKey<ScaffoldMessengerState> _messenger =
       GlobalKey<ScaffoldMessengerState>();
 
@@ -291,22 +293,56 @@ class _BundlesPageState extends State<BundlesPage> {
   bool _editorStillOn(int generation) =>
       generation == _editorGeneration && !_opening;
 
+  /// Whether the admin is still on this page (#388): it is mounted, and
+  /// neither its route nor a route around it (the admin area's, the app
+  /// shell's) has been taken off its navigator. Going to another page (Home,
+  /// or Admins in the admin sub-nav) takes one off at once, but the page stays
+  /// mounted while it animates out, so a failure that lands then would show
+  /// on a page the admin has already left, and go with it.
+  ///
+  /// A route under a dialog or a dropdown menu is still on its navigator, so
+  /// those don't count as leaving.
+  bool get _onPage {
+    if (!mounted) return false;
+    BuildContext? at = context;
+    while (at != null) {
+      if (ModalRoute.isActiveOf(at) == false) return false;
+      at = at.findAncestorStateOfType<NavigatorState>()?.context;
+    }
+    return true;
+  }
+
+  /// The app's own messenger, the root one that MaterialApp provides. An
+  /// action notes it before it waits on the backend, while the page's
+  /// `context` can still look it up: it outlives the page, so a failure that
+  /// lands after the admin has left can still be reported (#388).
+  ScaffoldMessengerState? _appMessenger() =>
+      context.findRootAncestorStateOfType<ScaffoldMessengerState>();
+
   /// Reports a failure of an action on a bundle or draft the admin has moved
-  /// on from (#386). The editor holds another one now, so this can't go
-  /// under it (#385). A snack bar names the bundle instead: [failed] says
-  /// what failed for which bundle ("Could not save "Exam apps"."), and the
-  /// reason follows, [reason] when the caller knows it (a 409) or else
-  /// [describeApiError]'s, with the calm admin wording for a 403. It lands
-  /// while the admin is on another bundle, so it stays until they close it.
-  /// [onReopen], given when the unsaved edit can be put back in the editor,
-  /// is its action.
+  /// on from: another bundle or a new draft (#386), or another page (#388).
+  /// It can't go under the editor (#385), so a snack bar names the bundle
+  /// instead: [failed] says what failed for which bundle ("Could not save
+  /// "Exam apps"."), and the reason follows, [reason] when the caller knows it
+  /// (a 409) or else [describeApiError]'s, with the calm admin wording for a
+  /// 403. It lands while the admin is elsewhere, so it stays until they close
+  /// it.
+  ///
+  /// With the admin still on the page, it goes through the page's messenger,
+  /// and [onReopen], given when the unsaved edit can be put back in the
+  /// editor, is its action. With the admin gone from the page, it goes
+  /// through [app], the app's messenger noted before the action waited
+  /// ([_appMessenger]), and has no Reopen: the draft and the editor it would
+  /// go back in went with the page. [l10n] was noted then too, as `context`
+  /// can't be used once the page is gone.
   void _reportLateFailure(
+    AppLocalizations l10n,
+    ScaffoldMessengerState? app,
     String failed,
     Object error, {
     String? reason,
     VoidCallback? onReopen,
   }) {
-    final l10n = AppLocalizations.of(context);
     final why =
         reason ??
         describeApiError(
@@ -314,15 +350,23 @@ class _BundlesPageState extends State<BundlesPage> {
           generic: l10n.bundlesTryAgain,
           notAuthorized: l10n.apiError403Admin,
         ).text;
-    _messenger.currentState?.showSnackBar(
-      SnackBar(
-        content: Text('$failed $why'),
-        persist: true,
-        showCloseIcon: true,
-        action: onReopen == null
-            ? null
-            : SnackBarAction(label: l10n.bundlesReopen, onPressed: onReopen),
-      ),
+    final notice = Text('$failed $why');
+    if (_onPage) {
+      _messenger.currentState?.showSnackBar(
+        SnackBar(
+          content: notice,
+          persist: true,
+          showCloseIcon: true,
+          action: onReopen == null
+              ? null
+              : SnackBarAction(label: l10n.bundlesReopen, onPressed: onReopen),
+        ),
+      );
+      return;
+    }
+    if (app == null || !app.mounted) return;
+    app.showSnackBar(
+      SnackBar(content: notice, persist: true, showCloseIcon: true),
     );
   }
 
@@ -399,6 +443,7 @@ class _BundlesPageState extends State<BundlesPage> {
     }
 
     final generation = _editorGeneration;
+    final app = _appMessenger();
     // The bundle this Save updates, or null for a new draft. A failure that
     // lands after the admin has moved on names it, and can put the draft
     // back in the editor (#386).
@@ -411,6 +456,8 @@ class _BundlesPageState extends State<BundlesPage> {
       final saved = bundle == null
           ? await widget.bundles.create(name, entries)
           : await widget.bundles.update(bundle.id, name, entries);
+      // A Save that succeeds after the admin has left the page needs no
+      // notice: the catalogue shows its new version when they come back.
       if (!mounted) return;
       // If the admin has moved on, the editor holds another bundle; the
       // catalogue reload still shows the saved one's new version.
@@ -424,7 +471,6 @@ class _BundlesPageState extends State<BundlesPage> {
       }
       await _refreshList();
     } catch (e) {
-      if (!mounted) return;
       // A 409 is the one failure the admin can fix here: another bundle has
       // that name.
       final nameTaken = e is ApiException && e.statusCode == 409;
@@ -435,14 +481,17 @@ class _BundlesPageState extends State<BundlesPage> {
               generic: l10n.bundlesSaveError,
               notAuthorized: l10n.apiError403Admin,
             );
-      if (_editorStillOn(generation)) {
+      if (_onPage && _editorStillOn(generation)) {
         setState(() => _error = error);
       } else {
         // The failure belongs to the bundle or draft the admin has left, not
-        // the one in the editor now (#385), but the admin must still learn
-        // the Save didn't go through. The draft it sent can go back in the
-        // editor, so the edit isn't lost (#386).
+        // the one in the editor now (#385), or to a page the admin has left
+        // (#388), but the admin must still learn the Save didn't go through.
+        // On the page, the draft it sent can go back in the editor, so the
+        // edit isn't lost (#386).
         _reportLateFailure(
+          l10n,
+          app,
           l10n.bundlesSaveFailedFor(bundle?.name ?? name),
           e,
           reason: nameTaken ? l10n.bundlesNameTakenBy(name) : null,
@@ -459,6 +508,7 @@ class _BundlesPageState extends State<BundlesPage> {
     final selected = _selected;
     if (selected == null) return;
     final generation = _editorGeneration;
+    final app = _appMessenger();
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -483,13 +533,13 @@ class _BundlesPageState extends State<BundlesPage> {
     });
     try {
       await widget.bundles.archive(selected.id);
+      // Nothing to say after the admin has left the page (#388).
       if (!mounted) return;
       // Only clear the editor if it still holds the archived bundle (#385).
       if (_editorStillOn(generation)) _clearEditor();
       await _refreshList();
     } catch (e) {
-      if (!mounted) return;
-      if (_editorStillOn(generation)) {
+      if (_onPage && _editorStillOn(generation)) {
         setState(
           () => _error = describeApiError(
             e,
@@ -498,9 +548,15 @@ class _BundlesPageState extends State<BundlesPage> {
           ),
         );
       } else {
-        // The admin has moved on (#385); say which bundle wasn't archived
-        // (#386). There's no edit to put back: its row is still in the list.
-        _reportLateFailure(l10n.bundlesArchiveFailedFor(selected.name), e);
+        // The admin has moved on, to another bundle (#385) or another page
+        // (#388); say which bundle wasn't archived (#386). There's no edit
+        // to put back: its row is still in the list.
+        _reportLateFailure(
+          l10n,
+          app,
+          l10n.bundlesArchiveFailedFor(selected.name),
+          e,
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -512,6 +568,7 @@ class _BundlesPageState extends State<BundlesPage> {
     final selected = _selected;
     if (selected == null) return;
     final generation = _editorGeneration;
+    final app = _appMessenger();
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -539,16 +596,16 @@ class _BundlesPageState extends State<BundlesPage> {
     });
     try {
       await widget.bundles.hardDelete(selected.id);
+      // Nothing to say after the admin has left the page (#388).
       if (!mounted) return;
       // Only clear the editor if it still holds the deleted bundle (#385).
       if (_editorStillOn(generation)) _clearEditor();
       await _refreshList();
     } catch (e) {
-      if (!mounted) return;
       // A 409: a session started with this bundle since the list loaded, and
       // a used bundle can only be archived.
       final used = e is ApiException && e.statusCode == 409;
-      if (_editorStillOn(generation)) {
+      if (_onPage && _editorStillOn(generation)) {
         setState(
           () => _error = used
               ? ApiErrorMessage(l10n.bundlesDeleteUsedError)
@@ -559,9 +616,12 @@ class _BundlesPageState extends State<BundlesPage> {
                 ),
         );
       } else {
-        // The admin has moved on (#385); say which bundle wasn't deleted
-        // (#386). There's no edit to put back: its row is still in the list.
+        // The admin has moved on, to another bundle (#385) or another page
+        // (#388); say which bundle wasn't deleted (#386). There's no edit to
+        // put back: its row is still in the list.
         _reportLateFailure(
+          l10n,
+          app,
           l10n.bundlesDeleteFailedFor(selected.name),
           e,
           reason: used ? l10n.bundlesUsedArchiveInstead : null,

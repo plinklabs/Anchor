@@ -7,6 +7,7 @@ import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/bundles_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:plink_design_system/plink_design_system.dart';
 
@@ -28,6 +29,12 @@ import 'package:plink_design_system/plink_design_system.dart';
 // other was still loading, and a late B overwrote C's failed-open notice
 // (#384). New bundle and Reopen move the editor too, so a pending open can't
 // replace what they put there either.
+//
+// #388: an action that fails after the admin has left the page (Home, or
+// Admins in the admin sub-nav) must still be reported, naming its bundle. The
+// page's own messenger went with the page, so the notice goes on the app's,
+// with no Reopen: the draft went with the page. That includes a failure that
+// lands while the page is still animating out, mounted but already left.
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -235,6 +242,59 @@ Future<_FakeBundles> _pumpPage(
   );
   await tester.pumpAndSettle();
   return bundles;
+}
+
+/// Pumps the page the way the app routes it (#388): at `/admin/bundles`, in
+/// the admin area's shell, in the app shell, whose Scaffold shows the snack
+/// bars of MaterialApp's messenger, the app's. `/` stands in for Home, and
+/// `/admin/admins` for the admin sub-nav's Admins. Going to either animates
+/// the page out, mounted, before it is disposed, as in the app.
+Future<(_FakeBundles, GoRouter)> _pumpRouted(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(1400, 1000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+
+  final bundles = _FakeBundles();
+  final router = GoRouter(
+    initialLocation: '/admin/bundles',
+    routes: [
+      ShellRoute(
+        builder: (context, state, child) => Scaffold(body: child),
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) => const Scaffold(body: Text('Home')),
+          ),
+          ShellRoute(
+            builder: (context, state, child) => child,
+            routes: [
+              GoRoute(
+                path: '/admin/bundles',
+                builder: (context, state) =>
+                    BundlesPage(bundles: bundles, sessions: _FakeSessions()),
+              ),
+              GoRoute(
+                path: '/admin/admins',
+                builder: (context, state) =>
+                    const Scaffold(body: Text('Admins')),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  );
+  await tester.pumpWidget(
+    MaterialApp.router(
+      theme: PlinkTheme.paper.copyWith(splashFactory: NoSplash.splashFactory),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      routerConfig: router,
+    ),
+  );
+  await tester.pumpAndSettle();
+  return (bundles, router);
 }
 
 Future<void> _tap(WidgetTester tester, Finder finder) async {
@@ -1232,4 +1292,358 @@ void main() {
       },
     );
   });
+
+  group('an action that fails after the admin left the page is reported on '
+      'the app, naming its bundle, with no Reopen (#388)', () {
+    testWidgets(
+      'a Save on A failing with 500 after the admin went Home: the app\'s '
+      'notice names A, and stays until closed',
+      (tester) async {
+        final (bundles, router) = await _pumpRouted(tester);
+        final gate = await _startAction(
+          tester,
+          bundles,
+          'Save',
+          error: ApiException(500, 'System.Exception: boom'),
+        );
+
+        await _leave(tester, router, '/');
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(find.text('Home'), findsOneWidget);
+        expect(_notice(_lateSaveExamApps), findsOneWidget);
+        expect(_reopen, findsNothing);
+        expect(find.textContaining('System.'), findsNothing);
+        expect(tester.takeException(), isNull);
+
+        // The admin may be anywhere by now, so it waits for them.
+        await tester.pump(const Duration(seconds: 30));
+        expect(_notice(_lateSaveExamApps), findsOneWidget);
+        await _tap(
+          tester,
+          find.descendant(
+            of: find.byType(SnackBar),
+            matching: find.byIcon(Icons.close),
+          ),
+        );
+        expect(find.byType(SnackBar), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a Save on A failing with 409 after the admin went to Admins: the '
+      'notice names A and the name that is taken',
+      (tester) async {
+        final (bundles, router) = await _pumpRouted(tester);
+        await _tap(tester, _row('Exam apps'));
+        await tester.enterText(_nameField, 'Reading list');
+        final gate = await _startAction(
+          tester,
+          bundles,
+          'Save',
+          error: ApiException(
+            409,
+            '{"title":"A bundle with that name already exists."}',
+          ),
+          open: false,
+        );
+
+        await _leave(tester, router, '/admin/admins');
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(find.text('Admins'), findsOneWidget);
+        expect(
+          _notice(
+            'Could not save "Exam apps". Another bundle is already called '
+            '"Reading list".',
+          ),
+          findsOneWidget,
+        );
+        expect(_reopen, findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'a Create of a new draft failing with 403 after the admin went Home: '
+      'the notice names the draft, in the admin wording',
+      (tester) async {
+        final (bundles, router) = await _pumpRouted(tester);
+        await _tap(tester, _newButton);
+        await tester.enterText(_nameField, 'Draft');
+        await tester.enterText(
+          find.widgetWithText(TextField, 'e.g. *.geogebra.org'),
+          'example.org',
+        );
+        final gate = await _startAction(
+          tester,
+          bundles,
+          'Save',
+          error: ApiException(403, ''),
+          open: false,
+        );
+
+        await _leave(tester, router, '/');
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice(
+            'Could not save "Draft". Your account doesn\'t have admin '
+            'access. Ask an administrator to grant it.',
+          ),
+          findsOneWidget,
+        );
+        expect(_reopen, findsNothing);
+        expect(find.textContaining('ApiException'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'an Archive failing after the admin went Home: the notice names it',
+      (tester) async {
+        final (bundles, router) = await _pumpRouted(tester);
+        final gate = await _startAction(
+          tester,
+          bundles,
+          'Archive',
+          error: http.ClientException(
+            'Failed to fetch',
+            Uri.parse('http://localhost'),
+          ),
+        );
+
+        await _leave(tester, router, '/');
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice('Could not archive "Lab tools". Please try again.'),
+          findsOneWidget,
+        );
+        expect(_reopen, findsNothing);
+        expect(find.textContaining('Failed to fetch'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'a Delete of A failing with 500 after the admin went Home: the notice '
+      'names A',
+      (tester) async {
+        final (bundles, router) = await _pumpRouted(tester);
+        final gate = await _startAction(
+          tester,
+          bundles,
+          'Delete',
+          error: ApiException(500, 'System.Exception: boom'),
+        );
+
+        await _leave(tester, router, '/');
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice('Could not delete "Exam apps". Please try again.'),
+          findsOneWidget,
+        );
+        expect(_reopen, findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'a Delete of A failing with 409 after the admin went to Admins: the '
+      'notice names A and says to archive it',
+      (tester) async {
+        final (bundles, router) = await _pumpRouted(tester);
+        final gate = await _startAction(
+          tester,
+          bundles,
+          'Delete',
+          error: ApiException(409, ''),
+        );
+
+        await _leave(tester, router, '/admin/admins');
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice(
+            'Could not delete "Exam apps". A session has used it. Archive it '
+            'instead.',
+          ),
+          findsOneWidget,
+        );
+        expect(_reopen, findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    // The page stays mounted while it animates out, though the admin has
+    // already left it: a failure that lands then must not show on the page,
+    // under its editor or as its notice, as both go with it.
+    for (final (action, location, notice) in [
+      ('Save', '/', _lateSaveExamApps),
+      (
+        'Archive',
+        '/admin/admins',
+        'Could not archive "Lab tools". Please try again.',
+      ),
+      ('Delete', '/', 'Could not delete "Exam apps". Please try again.'),
+    ]) {
+      testWidgets(
+        '${_an(action)} failing while the page animates out after the admin '
+        'went to $location: the app\'s notice names it',
+        (tester) async {
+          final (bundles, router) = await _pumpRouted(tester);
+          final gate = await _startAction(
+            tester,
+            bundles,
+            action,
+            error: ApiException(500, 'System.Exception: boom'),
+          );
+
+          await _startLeaving(tester, router, location);
+          gate.complete();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+          // Still mid-way: the page is on screen, and shows nothing.
+          expect(find.byType(BundlesPage), findsOneWidget);
+          _expectNoActionError();
+
+          await tester.pumpAndSettle();
+
+          expect(find.byType(BundlesPage), findsNothing);
+          expect(_notice(notice), findsOneWidget);
+          expect(_reopen, findsNothing);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
+    for (final action in ['Save', 'Archive', 'Delete']) {
+      for (final animatingOut in [false, true]) {
+        testWidgets('${_an(action)} that succeeds after the admin left'
+            '${animatingOut ? ', while the page animates out' : ''}, shows no '
+            'notice', (tester) async {
+          final (bundles, router) = await _pumpRouted(tester);
+          final gate = await _startAction(tester, bundles, action);
+
+          if (animatingOut) {
+            await _startLeaving(tester, router, '/');
+          } else {
+            await _leave(tester, router, '/');
+          }
+          gate.complete();
+          await tester.pumpAndSettle();
+
+          expect(find.text('Home'), findsOneWidget);
+          expect(find.byType(SnackBar), findsNothing);
+          expect(tester.takeException(), isNull);
+          // The request ran to the end.
+          switch (action) {
+            case 'Save':
+              expect(bundles.store.first.version, 3);
+            case 'Archive':
+              expect(bundles.store.last.isArchived, isTrue);
+            case 'Delete':
+              expect(
+                bundles.store.map((b) => b.name),
+                isNot(contains('Exam apps')),
+              );
+          }
+        });
+      }
+    }
+
+    testWidgets(
+      'a Save on A failing after the admin left and came back: the app\'s '
+      'notice names A, and the new page is left alone',
+      (tester) async {
+        final (bundles, router) = await _pumpRouted(tester);
+        final gate = await _startAction(
+          tester,
+          bundles,
+          'Save',
+          error: ApiException(500, 'System.Exception: boom'),
+        );
+
+        await _leave(tester, router, '/admin/admins');
+        router.go('/admin/bundles');
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Select a bundle, or start a new one.'),
+          findsOneWidget,
+        );
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(_notice(_lateSaveExamApps), findsOneWidget);
+        expect(_reopen, findsNothing);
+        expect(
+          find.text('Select a bundle, or start a new one.'),
+          findsOneWidget,
+        );
+        _expectNoActionError();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+}
+
+/// [action] (Save, Archive or Delete) with its article, for a test's name.
+String _an(String action) => action == 'Archive' ? 'an $action' : 'a $action';
+
+/// Starts [action] (Save, Archive or Delete) and leaves it waiting on the
+/// backend until the test completes the gate it returns, then failing with
+/// [error] if given. Save and Delete are on Exam apps, Archive on Lab tools,
+/// as only a bundle a session has used offers Archive. With [open] false, the
+/// test has put the draft to save in the editor itself.
+Future<Completer<void>> _startAction(
+  WidgetTester tester,
+  _FakeBundles bundles,
+  String action, {
+  Object? error,
+  bool open = true,
+}) async {
+  if (open) {
+    await _tap(tester, _row(action == 'Archive' ? 'Lab tools' : 'Exam apps'));
+  }
+  final gate = bundles.gate = Completer<void>();
+  bundles.writeError = error;
+  if (action == 'Save') {
+    await _tapInFlight(tester, _saveButton);
+  } else {
+    await _confirm(tester, action, settle: false);
+  }
+  return gate;
+}
+
+/// Goes to [location] and lets the page animate out: it is gone.
+Future<void> _leave(
+  WidgetTester tester,
+  GoRouter router,
+  String location,
+) async {
+  router.go(location);
+  await tester.pumpAndSettle();
+  expect(find.byType(BundlesPage), findsNothing);
+}
+
+/// Goes to [location] and stops while the page is still animating out: the
+/// admin has left it, but it is still mounted.
+Future<void> _startLeaving(
+  WidgetTester tester,
+  GoRouter router,
+  String location,
+) async {
+  router.go(location);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 100));
+  expect(find.byType(BundlesPage), findsOneWidget);
 }
