@@ -6,6 +6,7 @@ import '../api/sessions_api.dart';
 import '../bundles/bundle_file_io.dart';
 import '../bundles/bundle_format.dart';
 import '../l10n/app_localizations.dart';
+import '../widgets/api_error_text.dart';
 
 /// Admin-only catalogue editor for bundles (#75), redesigned to the paper
 /// treatment (AD5, #170).
@@ -42,13 +43,55 @@ class BundlesPage extends StatefulWidget {
 }
 
 class _BundlesPageState extends State<BundlesPage> {
-  bool _loading = false;
   bool _denied = false;
   bool _includeArchived = false;
   List<BundleSummary>? _list;
   BundleDetail? _selected;
   bool _isNewDraft = false;
-  String? _error;
+
+  /// A failure of the editor's own actions (validation, save, archive,
+  /// delete), drawn in the editor under the tester. It belongs to the bundle
+  /// or draft the editor holds, and goes when the editor leaves it (#385).
+  ApiErrorMessage? _error;
+
+  /// A failed catalogue load: `me()` or `list()` (#384). Drawn in the list
+  /// pane, where the catalogue goes, so it shows whether or not a bundle is
+  /// open, and a catalogue that never loaded doesn't read as "No bundles.".
+  ApiErrorMessage? _loadError;
+
+  /// A failed open of one bundle (#384) and the row it was for, which Retry
+  /// opens again. Drawn in the editor pane in place of the select-a-bundle
+  /// placeholder.
+  ApiErrorMessage? _openError;
+  BundleSummary? _openFailed;
+
+  /// The open the admin asked for last (#387). Each open ([_openBundle],
+  /// including a failed open's Retry) takes the next number, and New bundle
+  /// and Reopen move it on too ([_supersedeOpen]), since they move the editor
+  /// themselves. An open whose `get()` answers with the number moved on was
+  /// superseded: it leaves the editor, [_opening] and a failed-open notice
+  /// alone, so clicking B and then C ends on C even when B answers last.
+  int _openRequest = 0;
+
+  /// Whether the open the admin asked for last ([_openRequest]) is still
+  /// waiting on `get()`. An earlier open that answers meanwhile doesn't turn
+  /// it off (#387).
+  bool _opening = false;
+
+  /// Which bundle or draft the editor holds, bumped each time it leaves one
+  /// ([_leaveEditor]). Save, Archive and Delete note it before they wait on
+  /// the backend, and when the answer lands after the admin has opened
+  /// another bundle or started a new one ([_editorStillOn]), they leave that
+  /// editor alone: a slow Save on A that fails must not show its error under
+  /// B, and one that succeeds must not put A back in the editor (#385). A
+  /// failure is reported naming A instead ([_reportLateFailure], #386).
+  int _editorGeneration = 0;
+
+  /// The page's own messenger, so its snack bars go with the page: a late
+  /// failure's Reopen ([_reportLateFailure]) can't be tapped once the page,
+  /// and with it the draft it puts back, is gone (#386).
+  final GlobalKey<ScaffoldMessengerState> _messenger =
+      GlobalKey<ScaffoldMessengerState>();
 
   // Editor draft state (separate so cancellable).
   final TextEditingController _nameController = TextEditingController();
@@ -89,16 +132,28 @@ class _BundlesPageState extends State<BundlesPage> {
       // Read l10n here (not before the first await): _bootstrap runs from
       // initState, where depending on an inherited widget is illegal until the
       // first frame. By the catch, the element is mounted and context is valid.
+      final l10n = AppLocalizations.of(context);
       setState(
-        () => _error = AppLocalizations.of(context).bundlesLoadError('$e'),
+        () => _loadError = describeApiError(
+          e,
+          generic: l10n.bundlesLoadListError,
+          notAuthorized: l10n.apiError403Admin,
+        ),
       );
     }
+  }
+
+  /// Retry after a failed catalogue load. Runs the whole bootstrap again, as
+  /// the failure may have been the admin check (`me()`) rather than the list.
+  void _retryLoad() {
+    setState(() => _loadError = null);
+    _bootstrap();
   }
 
   Future<void> _refreshList() async {
     final l10n = AppLocalizations.of(context);
     setState(() {
-      _loading = true;
+      _loadError = null;
       _error = null;
     });
     try {
@@ -116,36 +171,77 @@ class _BundlesPageState extends State<BundlesPage> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesLoadListError('$e'));
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      setState(
+        () => _loadError = describeApiError(
+          e,
+          generic: l10n.bundlesLoadListError,
+          notAuthorized: l10n.apiError403Admin,
+        ),
+      );
     }
   }
 
   Future<void> _openBundle(BundleSummary summary) async {
     final l10n = AppLocalizations.of(context);
-    setState(() => _loading = true);
+    // This open supersedes any the admin asked for before it (#387).
+    final request = ++_openRequest;
+    setState(() {
+      _opening = true;
+      _openError = null;
+      _openFailed = null;
+    });
     try {
       final detail = await widget.bundles.get(summary.id);
-      if (!mounted) return;
+      // The admin has since asked for another bundle, New bundle or Reopen:
+      // that one owns the editor and the spinner now (#387).
+      if (!mounted || request != _openRequest) return;
       setState(() {
+        _leaveEditor();
+        _opening = false;
         _selected = detail;
         _isNewDraft = false;
         _nameController.text = detail.name;
         _entries = detail.entries.map(_EntryRow.fromEntry).toList();
-        _testController.clear();
-        _testResult = null;
       });
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = l10n.bundlesLoadOneError('$e'));
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      // A superseded open's failure isn't the admin's concern any more: it
+      // must not replace what they asked for since, or that one's failed-open
+      // notice. It needs no notice of its own either, as nothing of theirs
+      // was lost: the row is still there to open again (#387).
+      if (!mounted || request != _openRequest) return;
+      // The admin asked to leave whatever was open for this bundle, as a
+      // successful open would have. Say why it didn't open where the editor
+      // goes, not under another bundle's editor or nowhere at all.
+      _clearEditor();
+      setState(() {
+        _opening = false;
+        _openError = describeApiError(
+          e,
+          generic: l10n.bundlesLoadOneError,
+          notAuthorized: l10n.apiError403Admin,
+        );
+        _openFailed = summary;
+      });
     }
+  }
+
+  /// Drops any open still waiting on `get()`, because the admin has moved
+  /// the editor some other way (New bundle, Reopen): when it answers, it
+  /// finds [_openRequest] moved on and leaves the editor alone (#387). Call
+  /// inside setState.
+  ///
+  /// [_clearEditor] doesn't call this. Its one caller that can run with an
+  /// open pending is the catalogue reload finding the held bundle gone, and
+  /// the admin didn't ask for that: the open they asked for still lands.
+  void _supersedeOpen() {
+    _openRequest++;
+    _opening = false;
   }
 
   void _startNew() {
     setState(() {
+      _supersedeOpen();
+      _leaveEditor();
       _selected = null;
       _isNewDraft = true;
       _nameController.text = '';
@@ -156,19 +252,101 @@ class _BundlesPageState extends State<BundlesPage> {
           value: '',
         ),
       ];
-      _testController.clear();
-      _testResult = null;
     });
   }
 
   void _clearEditor() {
     setState(() {
+      _leaveEditor();
       _selected = null;
       _isNewDraft = false;
       _nameController.text = '';
       _entries = [];
-      _testController.clear();
-      _testResult = null;
+    });
+  }
+
+  /// The editor leaves the bundle or draft it held, for another one or for
+  /// nothing. Call inside setState. What belonged to the one it leaves goes
+  /// with it: the error from its Save, Archive or Delete (#385), any of those
+  /// still waiting on the backend, a failed open, and the tester's probe and
+  /// result. A failed catalogue load ([_loadError]) is about the list, not a
+  /// bundle, so it stays.
+  void _leaveEditor() {
+    _editorGeneration++;
+    _error = null;
+    _openError = null;
+    _openFailed = null;
+    _testController.clear();
+    _testResult = null;
+  }
+
+  /// Whether the answer to an action of the editor (Save, Archive, Delete)
+  /// that noted [generation] before it waited on the backend is still for
+  /// the bundle or draft the admin is on: the editor holds the same one, and
+  /// the admin hasn't asked to open another ([_opening], which is only ever
+  /// about the open they asked for last, #387). If not, a success leaves the
+  /// editor alone (#385), and a failure is reported naming its bundle
+  /// (#386), not shown under an editor that holds, or is about to hold,
+  /// another bundle.
+  bool _editorStillOn(int generation) =>
+      generation == _editorGeneration && !_opening;
+
+  /// Reports a failure of an action on a bundle or draft the admin has moved
+  /// on from (#386). The editor holds another one now, so this can't go
+  /// under it (#385). A snack bar names the bundle instead: [failed] says
+  /// what failed for which bundle ("Could not save "Exam apps"."), and the
+  /// reason follows, [reason] when the caller knows it (a 409) or else
+  /// [describeApiError]'s, with the calm admin wording for a 403. It lands
+  /// while the admin is on another bundle, so it stays until they close it.
+  /// [onReopen], given when the unsaved edit can be put back in the editor,
+  /// is its action.
+  void _reportLateFailure(
+    String failed,
+    Object error, {
+    String? reason,
+    VoidCallback? onReopen,
+  }) {
+    final l10n = AppLocalizations.of(context);
+    final why =
+        reason ??
+        describeApiError(
+          error,
+          generic: l10n.bundlesTryAgain,
+          notAuthorized: l10n.apiError403Admin,
+        ).text;
+    _messenger.currentState?.showSnackBar(
+      SnackBar(
+        content: Text('$failed $why'),
+        persist: true,
+        showCloseIcon: true,
+        action: onReopen == null
+            ? null
+            : SnackBarAction(label: l10n.bundlesReopen, onPressed: onReopen),
+      ),
+    );
+  }
+
+  /// Puts a Save's draft back in the editor after the Save failed with the
+  /// admin on another bundle (#386): the bundle it was for ([bundle], null
+  /// for a new draft) with the name and entries the Save sent, and [error],
+  /// what the editor would have shown had the admin stayed. Reopen is the
+  /// admin's latest ask, so an open still pending can't replace the draft
+  /// when it answers (#387).
+  void _reopenDraft(
+    BundleDetail? bundle,
+    String name,
+    List<BundleEntry> entries,
+    ApiErrorMessage error,
+  ) {
+    if (!mounted) return;
+    setState(() {
+      _supersedeOpen();
+      _leaveEditor();
+      _selected = bundle;
+      _isNewDraft = bundle == null;
+      _nameController.text = name;
+      _entries = entries.map(_EntryRow.fromEntry).toList();
+      _error = error;
     });
   }
 
@@ -194,19 +372,21 @@ class _BundlesPageState extends State<BundlesPage> {
     final l10n = AppLocalizations.of(context);
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = l10n.bundlesNameRequired);
+      setState(() => _error = ApiErrorMessage(l10n.bundlesNameRequired));
       return;
     }
     final entries = <BundleEntry>[];
     for (final row in _entries) {
       final value = row.controller.text.trim();
       if (value.isEmpty) {
-        setState(() => _error = l10n.bundlesEntryValueRequired);
+        setState(
+          () => _error = ApiErrorMessage(l10n.bundlesEntryValueRequired),
+        );
         return;
       }
       final validation = _validateEntry(l10n, row.kind, row.matchType, value);
       if (validation != null) {
-        setState(() => _error = validation);
+        setState(() => _error = ApiErrorMessage(validation));
         return;
       }
       entries.add(
@@ -214,32 +394,61 @@ class _BundlesPageState extends State<BundlesPage> {
       );
     }
     if (entries.isEmpty) {
-      setState(() => _error = l10n.bundlesEntryAtLeastOne);
+      setState(() => _error = ApiErrorMessage(l10n.bundlesEntryAtLeastOne));
       return;
     }
 
+    final generation = _editorGeneration;
+    // The bundle this Save updates, or null for a new draft. A failure that
+    // lands after the admin has moved on names it, and can put the draft
+    // back in the editor (#386).
+    final bundle = _isNewDraft ? null : _selected;
     setState(() {
       _saving = true;
       _error = null;
     });
     try {
-      BundleDetail saved;
-      if (_isNewDraft || _selected == null) {
-        saved = await widget.bundles.create(name, entries);
-      } else {
-        saved = await widget.bundles.update(_selected!.id, name, entries);
-      }
+      final saved = bundle == null
+          ? await widget.bundles.create(name, entries)
+          : await widget.bundles.update(bundle.id, name, entries);
       if (!mounted) return;
-      setState(() {
-        _selected = saved;
-        _isNewDraft = false;
-        _nameController.text = saved.name;
-        _entries = saved.entries.map(_EntryRow.fromEntry).toList();
-      });
+      // If the admin has moved on, the editor holds another bundle; the
+      // catalogue reload still shows the saved one's new version.
+      if (_editorStillOn(generation)) {
+        setState(() {
+          _selected = saved;
+          _isNewDraft = false;
+          _nameController.text = saved.name;
+          _entries = saved.entries.map(_EntryRow.fromEntry).toList();
+        });
+      }
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesSaveError('$e'));
+      // A 409 is the one failure the admin can fix here: another bundle has
+      // that name.
+      final nameTaken = e is ApiException && e.statusCode == 409;
+      final error = nameTaken
+          ? ApiErrorMessage(l10n.bundlesNameTaken)
+          : describeApiError(
+              e,
+              generic: l10n.bundlesSaveError,
+              notAuthorized: l10n.apiError403Admin,
+            );
+      if (_editorStillOn(generation)) {
+        setState(() => _error = error);
+      } else {
+        // The failure belongs to the bundle or draft the admin has left, not
+        // the one in the editor now (#385), but the admin must still learn
+        // the Save didn't go through. The draft it sent can go back in the
+        // editor, so the edit isn't lost (#386).
+        _reportLateFailure(
+          l10n.bundlesSaveFailedFor(bundle?.name ?? name),
+          e,
+          reason: nameTaken ? l10n.bundlesNameTakenBy(name) : null,
+          onReopen: () => _reopenDraft(bundle, name, entries, error),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -249,6 +458,7 @@ class _BundlesPageState extends State<BundlesPage> {
     final l10n = AppLocalizations.of(context);
     final selected = _selected;
     if (selected == null) return;
+    final generation = _editorGeneration;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -274,11 +484,24 @@ class _BundlesPageState extends State<BundlesPage> {
     try {
       await widget.bundles.archive(selected.id);
       if (!mounted) return;
-      _clearEditor();
+      // Only clear the editor if it still holds the archived bundle (#385).
+      if (_editorStillOn(generation)) _clearEditor();
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesArchiveError('$e'));
+      if (_editorStillOn(generation)) {
+        setState(
+          () => _error = describeApiError(
+            e,
+            generic: l10n.bundlesArchiveError,
+            notAuthorized: l10n.apiError403Admin,
+          ),
+        );
+      } else {
+        // The admin has moved on (#385); say which bundle wasn't archived
+        // (#386). There's no edit to put back: its row is still in the list.
+        _reportLateFailure(l10n.bundlesArchiveFailedFor(selected.name), e);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -288,6 +511,7 @@ class _BundlesPageState extends State<BundlesPage> {
     final l10n = AppLocalizations.of(context);
     final selected = _selected;
     if (selected == null) return;
+    final generation = _editorGeneration;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -316,11 +540,33 @@ class _BundlesPageState extends State<BundlesPage> {
     try {
       await widget.bundles.hardDelete(selected.id);
       if (!mounted) return;
-      _clearEditor();
+      // Only clear the editor if it still holds the deleted bundle (#385).
+      if (_editorStillOn(generation)) _clearEditor();
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.bundlesDeleteError('$e'));
+      // A 409: a session started with this bundle since the list loaded, and
+      // a used bundle can only be archived.
+      final used = e is ApiException && e.statusCode == 409;
+      if (_editorStillOn(generation)) {
+        setState(
+          () => _error = used
+              ? ApiErrorMessage(l10n.bundlesDeleteUsedError)
+              : describeApiError(
+                  e,
+                  generic: l10n.bundlesDeleteError,
+                  notAuthorized: l10n.apiError403Admin,
+                ),
+        );
+      } else {
+        // The admin has moved on (#385); say which bundle wasn't deleted
+        // (#386). There's no edit to put back: its row is still in the list.
+        _reportLateFailure(
+          l10n.bundlesDeleteFailedFor(selected.name),
+          e,
+          reason: used ? l10n.bundlesUsedArchiveInstead : null,
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -413,7 +659,13 @@ class _BundlesPageState extends State<BundlesPage> {
       _fileIo.downloadJson('bundles.json', exportBundlesToJson(data));
       _snack(l10n.bundlesExported(data.length));
     } catch (e) {
-      _snack(l10n.bundlesExportError('$e'));
+      _snack(
+        describeApiError(
+          e,
+          generic: l10n.bundlesExportError,
+          notAuthorized: l10n.apiError403Admin,
+        ).text,
+      );
     } finally {
       if (mounted) setState(() => _porting = false);
     }
@@ -457,7 +709,13 @@ class _BundlesPageState extends State<BundlesPage> {
             updated++;
           }
         } catch (e) {
-          failures.add('"${bundle.name}": $e');
+          failures.add(
+            describeApiError(
+              e,
+              generic: l10n.bundlesImportOneError(bundle.name),
+              notAuthorized: l10n.apiError403Admin,
+            ).text,
+          );
         }
       }
 
@@ -475,7 +733,13 @@ class _BundlesPageState extends State<BundlesPage> {
         );
       }
     } catch (e) {
-      _snack(l10n.bundlesImportError('$e'));
+      _snack(
+        describeApiError(
+          e,
+          generic: l10n.bundlesImportError,
+          notAuthorized: l10n.apiError403Admin,
+        ).text,
+      );
     } finally {
       if (mounted) setState(() => _porting = false);
     }
@@ -483,9 +747,7 @@ class _BundlesPageState extends State<BundlesPage> {
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    _messenger.currentState?.showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _showImportErrors(List<String> errors, {String? title}) async {
@@ -531,20 +793,23 @@ class _BundlesPageState extends State<BundlesPage> {
       );
     }
 
-    return Scaffold(
-      backgroundColor: PlinkColors.paper,
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(width: 300, child: _buildList()),
-          // A vertical hairline between the panes — the system separates with
-          // rules, never shadows.
-          const SizedBox(
-            width: PlinkBorders.width,
-            child: ColoredBox(color: PlinkColors.hairline),
-          ),
-          Expanded(child: _buildEditor()),
-        ],
+    return ScaffoldMessenger(
+      key: _messenger,
+      child: Scaffold(
+        backgroundColor: PlinkColors.paper,
+        body: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(width: 300, child: _buildList()),
+            // A vertical hairline between the panes — the system separates
+            // with rules, never shadows.
+            const SizedBox(
+              width: PlinkBorders.width,
+              child: ColoredBox(color: PlinkColors.hairline),
+            ),
+            Expanded(child: _buildEditor()),
+          ],
+        ),
       ),
     );
   }
@@ -639,30 +904,66 @@ class _BundlesPageState extends State<BundlesPage> {
           ),
         ),
         const _Hairline(),
-        Expanded(
-          child: _loading && list == null
-              ? const Center(child: CircularProgressIndicator())
-              : list == null || list.isEmpty
-              ? Center(
-                  child: Text(
-                    AppLocalizations.of(context).bundlesNoBundles,
-                    style: _monoLabel(PlinkColors.muted),
-                  ),
-                )
-              : ListView.separated(
-                  padding: EdgeInsets.zero,
-                  itemCount: list.length,
-                  separatorBuilder: (_, _) => const _Hairline(),
-                  itemBuilder: (context, i) {
-                    final b = list[i];
-                    return _BundleRow(
-                      summary: b,
-                      selected: _selected?.id == b.id,
-                      onTap: () => _openBundle(b),
-                    );
-                  },
+        Expanded(child: _buildCatalogue(list)),
+      ],
+    );
+  }
+
+  Widget _buildCatalogue(List<BundleSummary>? list) {
+    final loadError = _loadError;
+    if (list == null) {
+      // No catalogue yet: the load failed, so say so, or it is still running.
+      // Only a list that actually loaded can be "No bundles." (#384).
+      return Center(
+        child: loadError == null
+            ? const CircularProgressIndicator()
+            : Padding(
+                padding: const EdgeInsets.all(PlinkSpacing.s4),
+                child: _LoadFailure(
+                  message: loadError,
+                  retryKey: const Key('bundles-load-retry-button'),
+                  onRetry: _retryLoad,
                 ),
+              ),
+      );
+    }
+    final rows = list.isEmpty
+        ? Center(
+            child: Text(
+              AppLocalizations.of(context).bundlesNoBundles,
+              style: _monoLabel(PlinkColors.muted),
+            ),
+          )
+        : ListView.separated(
+            padding: EdgeInsets.zero,
+            itemCount: list.length,
+            separatorBuilder: (_, _) => const _Hairline(),
+            itemBuilder: (context, i) {
+              final b = list[i];
+              return _BundleRow(
+                summary: b,
+                selected: _selected?.id == b.id,
+                onTap: () => _openBundle(b),
+              );
+            },
+          );
+    if (loadError == null) return rows;
+    // A reload failed with a catalogue already on screen (the archived toggle,
+    // or the reload after a save): keep the rows, and say above them that the
+    // reload failed.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(PlinkSpacing.s4),
+          child: _LoadFailure(
+            message: loadError,
+            retryKey: const Key('bundles-load-retry-button'),
+            onRetry: _retryLoad,
+          ),
         ),
+        const _Hairline(),
+        Expanded(child: rows),
       ],
     );
   }
@@ -670,14 +971,28 @@ class _BundlesPageState extends State<BundlesPage> {
   Widget _buildEditor() {
     final l10n = AppLocalizations.of(context);
     if (_selected == null && !_isNewDraft) {
+      final openError = _openError;
+      final openFailed = _openFailed;
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(PlinkSpacing.s6),
-          child: Text(
-            l10n.bundlesSelectOrNew,
-            style: _monoLabel(PlinkColors.muted),
-            textAlign: TextAlign.center,
-          ),
+          child: _opening
+              ? const CircularProgressIndicator()
+              // A bundle that failed to open says so here, where its editor
+              // would be, not as the select-a-bundle placeholder (#384).
+              : openError != null
+              ? _LoadFailure(
+                  message: openError,
+                  retryKey: const Key('bundles-open-retry-button'),
+                  onRetry: openFailed == null
+                      ? null
+                      : () => _openBundle(openFailed),
+                )
+              : Text(
+                  l10n.bundlesSelectOrNew,
+                  style: _monoLabel(PlinkColors.muted),
+                  textAlign: TextAlign.center,
+                ),
         ),
       );
     }
@@ -750,12 +1065,7 @@ class _BundlesPageState extends State<BundlesPage> {
               _buildTester(),
               const SizedBox(height: PlinkSpacing.s6),
               if (_error != null) ...[
-                Text(
-                  _error!,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                ),
+                ApiErrorText(_error!),
                 const SizedBox(height: PlinkSpacing.s4),
               ],
               Row(
@@ -1037,6 +1347,41 @@ TextStyle _monoSpec(Color color, double size) => TextStyle(
   height: 1.4,
   fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
 );
+
+/// A failed load, the way Home, Classes and History show one (#278, #384):
+/// the human sentence from [describeApiError], centred, with a calm ink Retry.
+/// A 403 is the no-admin-access notice, which a retry can't clear, so it gets
+/// no Retry.
+class _LoadFailure extends StatelessWidget {
+  const _LoadFailure({
+    required this.message,
+    required this.retryKey,
+    required this.onRetry,
+  });
+
+  final ApiErrorMessage message;
+  final Key retryKey;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ApiErrorText(message, textAlign: TextAlign.center),
+        if (!message.isAuthorization && onRetry != null) ...[
+          const SizedBox(height: PlinkSpacing.s3),
+          // Calm ink: retrying a fetch is never the magenta spark.
+          OutlinedButton(
+            key: retryKey,
+            onPressed: onRetry,
+            child: Text(AppLocalizations.of(context).actionRetry),
+          ),
+        ],
+      ],
+    );
+  }
+}
 
 /// One catalogue row — a hairline instrument line. The bundle name reads first;
 /// its version is a mono spec chip and an archived bundle wears a muted badge.

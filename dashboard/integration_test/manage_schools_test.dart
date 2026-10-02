@@ -77,11 +77,16 @@ class _FakeSchools extends SchoolsApi {
 
   final List<(String, bool)> calls = [];
 
+  /// What setActive throws, when a test sets it (#383).
+  Object? setActiveError;
+
   @override
   Future<List<School>> listSchools() async => schools;
 
   @override
   Future<School> setActive(String name, bool isActive) async {
+    final error = setActiveError;
+    if (error != null) throw error;
     calls.add((name, isActive));
     final updated = School(name: name, isActive: isActive);
     schools = [
@@ -154,4 +159,41 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'a failed toggle reads as a sentence, never the raw exception (#383)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final schools = _FakeSchools()
+        ..setActiveError = ApiException(500, 'System.Exception: boom');
+      await tester.pumpWidget(_app(schools));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav-admin')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('admin-nav-schools')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('school-toggle-Sint-Maria')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Could not update Sint-Maria. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('ApiException'), findsNothing);
+      expect(find.textContaining('System.'), findsNothing);
+      // The switch stays on: the change didn't persist.
+      expect(
+        tester
+            .widget<Switch>(find.byKey(const Key('school-toggle-Sint-Maria')))
+            .value,
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

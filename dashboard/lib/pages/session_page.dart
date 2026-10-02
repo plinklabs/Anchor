@@ -10,6 +10,7 @@ import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
 import '../l10n/app_localizations.dart';
 import '../realtime/session_hub_client.dart';
+import '../widgets/api_error_text.dart';
 
 class SessionPage extends StatefulWidget {
   const SessionPage({
@@ -56,6 +57,8 @@ class _SessionPageState extends State<SessionPage> {
   String? _joinError;
   // Whether the live feed is getting through; null until it first reports.
   SessionHubLinkState? _link;
+  // The session belongs to another teacher: the backend answered 403 (#382).
+  bool _notYours = false;
   SessionDetail? _detail;
   List<UnblockRequestSummary> _pendingRequests = const [];
   final Set<String> _approving = {};
@@ -80,11 +83,14 @@ class _SessionPageState extends State<SessionPage> {
 
   Future<void> _bootstrap() async {
     await _loadDetail();
+    // Another teacher's session (#382): the page shows that and asks for
+    // nothing else. The hub would refuse the join (#366) and the other loads
+    // would answer 403 too.
+    if (!mounted || _notYours) return;
     // Old bookmarks / direct links to /session/:id of a session that has since
     // ended would otherwise hit Hub.JoinSession and surface a scary exception.
     // The past-session view at /history/:id is the read-only review surface
     // for these — redirect there before touching the hub.
-    if (!mounted) return;
     if (_ended) {
       context.go('/history/${widget.sessionId}');
       return;
@@ -123,7 +129,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _bundleError = l10n.sessionUpdateBundlesError('$e'));
+      final line = _failureText(e, l10n.sessionUpdateBundlesError, l10n);
+      setState(() => _bundleError = line);
     } finally {
       if (mounted) setState(() => _updatingBundles = false);
     }
@@ -140,9 +147,10 @@ class _SessionPageState extends State<SessionPage> {
         // summary panel only ever renders during the live-end transition.
         if (detail.endedAt != null) _ended = true;
       });
-    } catch (_) {
-      // Non-fatal: the live event stream still works without the detail block.
-      // The join-code panel just won't render.
+    } catch (e) {
+      if (_isNotYours(e)) _showNotYours();
+      // Otherwise non-fatal: the live event stream still works without the
+      // detail block. The join-code panel just won't render.
     }
   }
 
@@ -151,10 +159,44 @@ class _SessionPageState extends State<SessionPage> {
       final list = await widget.sessions.unblockRequests(widget.sessionId);
       if (!mounted) return;
       setState(() => _pendingRequests = list);
-    } catch (_) {
-      // Non-fatal: the panel just stays empty on initial load. Subsequent
-      // UnblockRequested pushes will still populate it.
+    } catch (e) {
+      if (_isNotYours(e)) _showNotYours();
+      // Otherwise non-fatal: the panel just stays empty on initial load.
+      // Subsequent UnblockRequested pushes will still populate it.
     }
+  }
+
+  /// Whether [error] is the backend refusing this session to the signed-in
+  /// teacher: since #369 the detail and the unblock requests answer 403 to
+  /// anyone but the teacher who owns it.
+  static bool _isNotYours(Object error) =>
+      error is ApiException && error.statusCode == 403;
+
+  /// What the page shows when one of the teacher's own requests fails (#383):
+  /// [generic], the action's human sentence, never the raw exception, through
+  /// the helper the other pages use (#278). A 403 is the backend refusing this
+  /// session to the signed-in teacher (#369), whichever request it answers, so
+  /// the page shows the notice it shows for a 403 on the loads (#382) in place
+  /// of the live view, and there is no line to show: null.
+  String? _failureText(Object error, String generic, AppLocalizations l10n) {
+    final message = describeApiError(
+      error,
+      generic: generic,
+      notAuthorized: l10n.sessionNotYours,
+    );
+    if (!message.isAuthorization) return message.text;
+    _showNotYours();
+    return null;
+  }
+
+  /// The session belongs to another teacher (#382): show the calm notice in
+  /// place of the live view, and stop the live feed. It never gives up on its
+  /// own (#370), and every reconnect would rejoin and re-fetch (#365), only to
+  /// be refused again.
+  void _showNotYours() {
+    if (!mounted || _notYours) return;
+    setState(() => _notYours = true);
+    unawaited(_hub.disconnect());
   }
 
   Future<void> _approveHost(UnblockRequestSummary summary) async {
@@ -179,7 +221,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _unblockError = l10n.sessionApproveError('$e'));
+      final line = _failureText(e, l10n.sessionApproveError, l10n);
+      setState(() => _unblockError = line);
     } finally {
       if (mounted) setState(() => _approving.remove(summary.host));
     }
@@ -201,7 +244,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _unblockError = l10n.sessionApproveError('$e'));
+      final line = _failureText(e, l10n.sessionApproveError, l10n);
+      setState(() => _unblockError = line);
     } finally {
       if (mounted) setState(() => _approving.remove(summary.host));
     }
@@ -272,7 +316,10 @@ class _SessionPageState extends State<SessionPage> {
       await _hub.joinSession(widget.sessionId);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _joinError = l10n.sessionConnectError('$e'));
+      // The hub refused the join (a HubException) or the connection went
+      // while it ran: either way a sentence, never the raw text (#383).
+      final line = _failureText(e, l10n.sessionConnectError, l10n);
+      setState(() => _joinError = line);
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
@@ -288,7 +335,7 @@ class _SessionPageState extends State<SessionPage> {
   /// invocation only after OnConnectedAsync, so the join can't race the
   /// reconnect's own setup.
   Future<void> _rejoinAfterReconnect() async {
-    if (_ended) return;
+    if (_ended || _notYours) return;
     try {
       await _hub.joinSession(widget.sessionId);
       if (mounted) setState(() => _joinError = null);
@@ -305,7 +352,9 @@ class _SessionPageState extends State<SessionPage> {
   /// for as long as the page is open; one that closed doesn't. Once it's
   /// back, [_rejoinAfterReconnect] catches the page up.
   void _restartHub() {
-    if (_ended || _link != SessionHubLinkState.disconnected) return;
+    if (_ended || _notYours || _link != SessionHubLinkState.disconnected) {
+      return;
+    }
     _hub.restart();
   }
 
@@ -329,7 +378,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.sessionEndError('$e'));
+      final line = _failureText(e, l10n.sessionEndError, l10n);
+      setState(() => _error = line);
     } finally {
       if (mounted) setState(() => _ending = false);
     }
@@ -389,7 +439,8 @@ class _SessionPageState extends State<SessionPage> {
       context.go('/');
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.sessionEndError('$e'));
+      final line = _failureText(e, l10n.sessionEndError, l10n);
+      setState(() => _error = line);
     } finally {
       if (mounted) setState(() => _ending = false);
     }
@@ -419,6 +470,27 @@ class _SessionPageState extends State<SessionPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Another teacher's session (#382): the calm notice the other pages show
+    // for a 403 (#278), with none of the owner's controls. The shell's nav is
+    // the way back.
+    if (_notYours) {
+      return Scaffold(
+        backgroundColor: PlinkColors.paper,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(PlinkSpacing.s6),
+            child: ApiErrorText(
+              ApiErrorMessage(
+                AppLocalizations.of(context).sessionNotYours,
+                isAuthorization: true,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+    }
+
     final TextTheme text = Theme.of(context).textTheme;
     final String className = _detail?.className ?? '';
     final String headline = className.isEmpty

@@ -10,6 +10,7 @@ import 'package:anchor_dashboard/main.dart';
 import 'package:anchor_dashboard/realtime/session_hub_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:plink_design_system/plink_design_system.dart';
 
 import 'support/e2e_binding.dart';
@@ -30,7 +31,9 @@ import 'support/e2e_binding.dart';
 //   - after a hub reconnect the page joins its session again and catches up on
 //     what it missed while offline (#365),
 //   - while the hub connection is down the page says live updates are paused,
-//     and a closed connection can be reconnected from the page (#370).
+//     and a closed connection can be reconnected from the page (#370),
+//   - a failed join, approval, bundle change or End reads as a sentence, never
+//     the raw exception (#383).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -151,11 +154,17 @@ class _StubHub extends SessionHubClient {
     reconnect();
   }
 
+  /// What JoinSession throws, e.g. the hub refusing it with a HubException
+  /// (#383).
+  Object? joinError;
+
   @override
   Future<void> connect() async {}
   @override
   Future<void> joinSession(String sessionId, {String? joinCode}) async {
     joinCalls++;
+    final error = joinError;
+    if (error != null) throw error;
     _inSessionGroup = true;
   }
 
@@ -188,6 +197,10 @@ class _FakeSessions extends SessionsApi {
   // How often the page fetched the detail and the pending list (#365).
   int getSessionCalls = 0;
   int unblockRequestsCalls = 0;
+  // What the teacher's own actions throw, when a test sets it (#383).
+  Object? endError;
+  Object? approveError;
+  Object? updateBundlesError;
 
   @override
   Future<MeResponse> me() async =>
@@ -237,11 +250,19 @@ class _FakeSessions extends SessionsApi {
   }
 
   @override
+  Future<void> endSession(String sessionId) async {
+    final error = endError;
+    if (error != null) throw error;
+  }
+
+  @override
   Future<void> approveUnblock(
     String sessionId,
     String userId,
     String host,
   ) async {
+    final error = approveError;
+    if (error != null) throw error;
     perStudentApprovals.add((userId, host));
   }
 
@@ -259,6 +280,8 @@ class _FakeSessions extends SessionsApi {
     List<String> bundleIds,
   ) async {
     updateBundlesCalls.add(bundleIds);
+    final error = updateBundlesError;
+    if (error != null) throw error;
     sessionBundles = [
       for (final id in bundleIds) SessionBundleInfo(id: id, name: id),
     ];
@@ -289,9 +312,13 @@ typedef _Harness = ({
 
 /// Boots the real app authenticated, then drives the real Home → Start-session
 /// navigation to land on the live session view. Returns the fakes so the test
-/// can push events and inspect recorded calls.
-Future<_Harness> _bootToLiveSession(WidgetTester tester) async {
-  final hub = _StubHub();
+/// can push events and inspect recorded calls. [joinError] is what the hub's
+/// JoinSession throws when the page opens.
+Future<_Harness> _bootToLiveSession(
+  WidgetTester tester, {
+  Object? joinError,
+}) async {
+  final hub = _StubHub()..joinError = joinError;
   final sessions = _FakeSessions();
   final bundles = _FakeBundles();
   final tokens = AuthTokenStore()
@@ -679,5 +706,119 @@ void main() {
     // The composition holds under the real shell + real Fraunces / Space Mono
     // at this window size — no RenderFlex overflow or other exception.
     expect(tester.takeException(), isNull);
+  });
+
+  group('a failed action reads as a sentence, never the raw exception', () {
+    void bigWindow(WidgetTester tester) {
+      // Room for the pending-requests and bundles panels under the roster.
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    }
+
+    void expectNoRawError() {
+      for (final raw in const [
+        'ApiException',
+        'HubException',
+        'Exception',
+        'Failed to fetch',
+        'JoinSession',
+        'System.',
+      ]) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+    }
+
+    testWidgets('the hub refusing JoinSession (#383)', (tester) async {
+      bigWindow(tester);
+      await _bootToLiveSession(
+        tester,
+        // What signalr_core throws for a HubException from the hub.
+        joinError: Exception(
+          "An unexpected error occurred invoking 'JoinSession' on the "
+          'server. HubException: Session not found or already ended.',
+        ),
+      );
+
+      expect(
+        find.text(
+          'Could not connect to the live feed for this session. Reload the '
+          'page to try again.',
+        ),
+        findsOneWidget,
+      );
+      expectNoRawError();
+      expect(find.text('LIVE'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('approving, changing bundles and ending fail in turn (#383)', (
+      tester,
+    ) async {
+      bigWindow(tester);
+      final h = await _bootToLiveSession(tester);
+      final offline = http.ClientException(
+        'Failed to fetch',
+        Uri.parse('http://localhost/sessions/$_sessionId/unblock'),
+      );
+
+      // A student asks for a site; approving it fails while offline.
+      final now = DateTime(2026, 6, 12, 9, 20);
+      h.sessions.pending = [
+        UnblockRequestSummary(
+          host: 'chat.example.com',
+          count: 1,
+          firstRequestedAt: now,
+          latestRequestedAt: now,
+          requesters: [
+            UnblockRequestRequester(
+              userId: 'Ada',
+              displayName: 'Ada',
+              requestedAt: now,
+            ),
+          ],
+        ),
+      ];
+      h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+      await tester.pumpAndSettle();
+      h.sessions.approveError = offline;
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Approve'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Could not approve the request. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.text('chat.example.com'), findsOneWidget);
+      expectNoRawError();
+
+      // Changing the allowed bundles answers 500.
+      h.sessions.updateBundlesError = ApiException(
+        500,
+        'System.InvalidOperationException: boom',
+      );
+      await tester.tap(find.widgetWithText(FilterChip, 'Math'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Could not update the allowed bundles. Please try again.'),
+        findsOneWidget,
+      );
+      expectNoRawError();
+
+      // Ending the session answers 500; it's still live.
+      h.sessions.endError = ApiException(500, 'System.Exception: boom');
+      await tester.tap(find.widgetWithText(OutlinedButton, 'End session'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Failed to end session. Please try again.'),
+        findsOneWidget,
+      );
+      expect(find.text('LIVE'), findsOneWidget);
+      expectNoRawError();
+      expect(tester.takeException(), isNull);
+    });
   });
 }

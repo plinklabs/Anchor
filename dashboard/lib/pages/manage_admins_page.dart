@@ -4,6 +4,7 @@ import 'package:plink_design_system/plink_design_system.dart';
 import '../api/admins_api.dart';
 import '../api/sessions_api.dart' show ApiException;
 import '../l10n/app_localizations.dart';
+import '../widgets/api_error_text.dart';
 
 /// Admin-only "Manage admins" sub-tab (#300), in the paper treatment (AD5).
 ///
@@ -23,7 +24,7 @@ class ManageAdminsPage extends StatefulWidget {
 
 class _ManageAdminsPageState extends State<ManageAdminsPage> {
   bool _loading = false;
-  String? _error;
+  ApiErrorMessage? _error;
   List<AdminUser>? _admins;
 
   final TextEditingController _searchController = TextEditingController();
@@ -62,7 +63,13 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
       setState(() => _admins = list);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.adminsLoadError('$e'));
+      setState(
+        () => _error = describeApiError(
+          e,
+          generic: l10n.adminsLoadError,
+          notAuthorized: l10n.apiError403Admin,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -90,7 +97,11 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
     } catch (e) {
       if (!mounted || seq != _searchSeq) return;
       setState(() {
-        _error = l10n.adminsSearchError('$e');
+        _error = describeApiError(
+          e,
+          generic: l10n.adminsSearchError,
+          notAuthorized: l10n.apiError403Admin,
+        );
         _searching = false;
       });
     }
@@ -116,7 +127,11 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
     } catch (e) {
       if (!mounted) return;
       setState(
-        () => _error = l10n.adminsPromoteError(candidate.displayName, '$e'),
+        () => _error = describeApiError(
+          e,
+          generic: l10n.adminsPromoteError(candidate.displayName),
+          notAuthorized: l10n.apiError403Admin,
+        ),
       );
     } finally {
       if (mounted) setState(() => _busy.remove(candidate.id));
@@ -160,8 +175,12 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
       // The last-admin guard (409) is the expected, explainable failure here —
       // give it a human message rather than echoing the raw exception.
       final message = e is ApiException && e.statusCode == 409
-          ? l10n.adminsLastAdminError
-          : l10n.adminsRemoveError(admin.displayName, '$e');
+          ? ApiErrorMessage(l10n.adminsLastAdminError)
+          : describeApiError(
+              e,
+              generic: l10n.adminsRemoveError(admin.displayName),
+              notAuthorized: l10n.apiError403Admin,
+            );
       setState(() => _error = message);
     } finally {
       if (mounted) setState(() => _busy.remove(admin.id));
@@ -189,13 +208,7 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
                 _buildAddControl(),
                 const SizedBox(height: PlinkSpacing.s7),
                 if (_error != null) ...[
-                  Text(
-                    _error!,
-                    key: const Key('manage-admins-error'),
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
+                  ApiErrorText(_error!, key: const Key('manage-admins-error')),
                   const SizedBox(height: PlinkSpacing.s4),
                 ],
                 Text(

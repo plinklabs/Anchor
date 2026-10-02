@@ -236,6 +236,12 @@ abstract class AppLocalizations {
   /// **'Signing in is taking longer than expected. Please try again.'**
   String get loginTimeoutError;
 
+  /// No description provided for @loginError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not sign you in. Please try again.'**
+  String get loginError;
+
   /// No description provided for @shellNavHome.
   ///
   /// In en, this message translates to:
@@ -307,6 +313,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your account isn\'t set up as a teacher yet. Ask an administrator to grant access.'**
   String get apiError403;
+
+  /// Shown on an admin page when the API refuses the signed-in user admin access (a 403).
+  ///
+  /// In en, this message translates to:
+  /// **'Your account doesn\'t have admin access. Ask an administrator to grant it.'**
+  String get apiError403Admin;
 
   /// No description provided for @homeLoadError.
   ///
@@ -659,14 +671,14 @@ abstract class AppLocalizations {
   /// No description provided for @sessionUpdateBundlesError.
   ///
   /// In en, this message translates to:
-  /// **'Failed to update bundles: {error}'**
-  String sessionUpdateBundlesError(String error);
+  /// **'Could not update the allowed bundles. Please try again.'**
+  String get sessionUpdateBundlesError;
 
   /// No description provided for @sessionApproveError.
   ///
   /// In en, this message translates to:
-  /// **'Approve failed: {error}'**
-  String sessionApproveError(String error);
+  /// **'Could not approve the request. Please try again.'**
+  String get sessionApproveError;
 
   /// No description provided for @sessionCopiedCode.
   ///
@@ -677,14 +689,14 @@ abstract class AppLocalizations {
   /// No description provided for @sessionConnectError.
   ///
   /// In en, this message translates to:
-  /// **'Could not connect to live stream: {error}'**
-  String sessionConnectError(String error);
+  /// **'Could not connect to the live feed for this session. Reload the page to try again.'**
+  String get sessionConnectError;
 
   /// No description provided for @sessionEndError.
   ///
   /// In en, this message translates to:
-  /// **'Failed to end session: {error}'**
-  String sessionEndError(String error);
+  /// **'Failed to end session. Please try again.'**
+  String get sessionEndError;
 
   /// No description provided for @sessionLeaveTitle.
   ///
@@ -842,6 +854,12 @@ abstract class AppLocalizations {
   /// **'More approval options'**
   String get sessionMoreApprovalOptions;
 
+  /// Shown on a live or past session page when the session belongs to another teacher, so the API refuses it with a 403 (#369, #382).
+  ///
+  /// In en, this message translates to:
+  /// **'This session isn\'t available to you. Only the teacher who started it can open it.'**
+  String get sessionNotYours;
+
   /// No description provided for @sessionApproveWholeClass.
   ///
   /// In en, this message translates to:
@@ -878,23 +896,17 @@ abstract class AppLocalizations {
   /// **'Copy code'**
   String get sessionCopyCode;
 
-  /// No description provided for @bundlesLoadError.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not load: {error}'**
-  String bundlesLoadError(String error);
-
   /// No description provided for @bundlesLoadListError.
   ///
   /// In en, this message translates to:
-  /// **'Could not load bundles: {error}'**
-  String bundlesLoadListError(String error);
+  /// **'Could not load bundles. Please try again.'**
+  String get bundlesLoadListError;
 
   /// No description provided for @bundlesLoadOneError.
   ///
   /// In en, this message translates to:
-  /// **'Failed to load bundle: {error}'**
-  String bundlesLoadOneError(String error);
+  /// **'Could not load this bundle. Please try again.'**
+  String get bundlesLoadOneError;
 
   /// No description provided for @bundlesNameRequired.
   ///
@@ -917,8 +929,14 @@ abstract class AppLocalizations {
   /// No description provided for @bundlesSaveError.
   ///
   /// In en, this message translates to:
-  /// **'Save failed: {error}'**
-  String bundlesSaveError(String error);
+  /// **'Could not save the bundle. Please try again.'**
+  String get bundlesSaveError;
+
+  /// No description provided for @bundlesNameTaken.
+  ///
+  /// In en, this message translates to:
+  /// **'A bundle with that name already exists. Choose another name.'**
+  String get bundlesNameTaken;
 
   /// No description provided for @bundlesArchiveTitle.
   ///
@@ -941,8 +959,8 @@ abstract class AppLocalizations {
   /// No description provided for @bundlesArchiveError.
   ///
   /// In en, this message translates to:
-  /// **'Archive failed: {error}'**
-  String bundlesArchiveError(String error);
+  /// **'Could not archive the bundle. Please try again.'**
+  String get bundlesArchiveError;
 
   /// No description provided for @bundlesDeleteTitle.
   ///
@@ -959,8 +977,56 @@ abstract class AppLocalizations {
   /// No description provided for @bundlesDeleteError.
   ///
   /// In en, this message translates to:
-  /// **'Delete failed: {error}'**
-  String bundlesDeleteError(String error);
+  /// **'Could not delete the bundle. Please try again.'**
+  String get bundlesDeleteError;
+
+  /// No description provided for @bundlesDeleteUsedError.
+  ///
+  /// In en, this message translates to:
+  /// **'A session has used this bundle, so it can\'t be deleted. Archive it instead.'**
+  String get bundlesDeleteUsedError;
+
+  /// Starts a notice for a Save that failed after the admin opened another bundle (#386); a reason sentence follows.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save \"{name}\".'**
+  String bundlesSaveFailedFor(String name);
+
+  /// Starts a notice for an Archive that failed after the admin opened another bundle (#386); a reason sentence follows.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not archive \"{name}\".'**
+  String bundlesArchiveFailedFor(String name);
+
+  /// Starts a notice for a Delete that failed after the admin opened another bundle (#386); a reason sentence follows.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not delete \"{name}\".'**
+  String bundlesDeleteFailedFor(String name);
+
+  /// No description provided for @bundlesTryAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Please try again.'**
+  String get bundlesTryAgain;
+
+  /// No description provided for @bundlesNameTakenBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Another bundle is already called \"{name}\".'**
+  String bundlesNameTakenBy(String name);
+
+  /// No description provided for @bundlesUsedArchiveInstead.
+  ///
+  /// In en, this message translates to:
+  /// **'A session has used it. Archive it instead.'**
+  String get bundlesUsedArchiveInstead;
+
+  /// Puts a draft whose Save failed after the admin moved on back in the editor (#386).
+  ///
+  /// In en, this message translates to:
+  /// **'Reopen'**
+  String get bundlesReopen;
 
   /// No description provided for @bundlesTestNoMatch.
   ///
@@ -989,8 +1055,8 @@ abstract class AppLocalizations {
   /// No description provided for @bundlesExportError.
   ///
   /// In en, this message translates to:
-  /// **'Export failed: {error}'**
-  String bundlesExportError(String error);
+  /// **'Could not export the bundles. Please try again.'**
+  String get bundlesExportError;
 
   /// No description provided for @bundlesImported.
   ///
@@ -1007,8 +1073,14 @@ abstract class AppLocalizations {
   /// No description provided for @bundlesImportError.
   ///
   /// In en, this message translates to:
-  /// **'Import failed: {error}'**
-  String bundlesImportError(String error);
+  /// **'Could not import the bundles. Please try again.'**
+  String get bundlesImportError;
+
+  /// No description provided for @bundlesImportOneError.
+  ///
+  /// In en, this message translates to:
+  /// **'\"{name}\" could not be saved.'**
+  String bundlesImportOneError(String name);
 
   /// No description provided for @bundlesImportRejected.
   ///
@@ -1259,20 +1331,20 @@ abstract class AppLocalizations {
   /// No description provided for @adminsLoadError.
   ///
   /// In en, this message translates to:
-  /// **'Could not load admins: {error}'**
-  String adminsLoadError(String error);
+  /// **'Could not load admins. Please try again.'**
+  String get adminsLoadError;
 
   /// No description provided for @adminsSearchError.
   ///
   /// In en, this message translates to:
-  /// **'Search failed: {error}'**
-  String adminsSearchError(String error);
+  /// **'Search failed. Please try again.'**
+  String get adminsSearchError;
 
   /// No description provided for @adminsPromoteError.
   ///
   /// In en, this message translates to:
-  /// **'Could not promote {name}: {error}'**
-  String adminsPromoteError(String name, String error);
+  /// **'Could not promote {name}. Please try again.'**
+  String adminsPromoteError(String name);
 
   /// No description provided for @adminsRemoveTitle.
   ///
@@ -1295,8 +1367,8 @@ abstract class AppLocalizations {
   /// No description provided for @adminsRemoveError.
   ///
   /// In en, this message translates to:
-  /// **'Could not remove {name}: {error}'**
-  String adminsRemoveError(String name, String error);
+  /// **'Could not remove {name}. Please try again.'**
+  String adminsRemoveError(String name);
 
   /// No description provided for @adminsCurrentAdmins.
   ///
@@ -1343,14 +1415,14 @@ abstract class AppLocalizations {
   /// No description provided for @schoolsLoadError.
   ///
   /// In en, this message translates to:
-  /// **'Could not load schools: {error}'**
-  String schoolsLoadError(String error);
+  /// **'Could not load schools. Please try again.'**
+  String get schoolsLoadError;
 
   /// No description provided for @schoolsUpdateError.
   ///
   /// In en, this message translates to:
-  /// **'Could not update {name}: {error}'**
-  String schoolsUpdateError(String name, String error);
+  /// **'Could not update {name}. Please try again.'**
+  String schoolsUpdateError(String name);
 
   /// No description provided for @schoolsHeader.
   ///
@@ -1397,8 +1469,8 @@ abstract class AppLocalizations {
   /// No description provided for @pastLoadError.
   ///
   /// In en, this message translates to:
-  /// **'Could not load past session: {error}'**
-  String pastLoadError(String error);
+  /// **'Could not load this past session. Please try again.'**
+  String get pastLoadError;
 
   /// No description provided for @pastNotAvailable.
   ///
