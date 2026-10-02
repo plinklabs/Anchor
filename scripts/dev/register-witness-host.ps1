@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Registers (or unregisters) the Anchor witness native-messaging host for Edge
     in HKCU — no admin required (#146 part 1).

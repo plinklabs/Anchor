@@ -1,0 +1,51 @@
+name: Scripts CI
+
+# Check the repo's PowerShell scripts (#363): comment-based help that Get-Help
+# actually recognizes, with a .PARAMETER entry for every parameter; a UTF-8 BOM
+# on any file with non-ASCII text, which Windows PowerShell 5.1 misreads
+# otherwise; and no parse errors. All of it lives in
+# scripts/ci/check-ps-scripts.ps1, so `pwsh scripts/ci/check-ps-scripts.ps1`
+# gives the same result locally. scripts/ci/test-check-ps-scripts.ps1 first
+# proves each rule still fails a fixture that breaks it, so a checker that
+# passes everything fails here instead.
+#
+# The script checks every tracked PowerShell file, not just the changed ones,
+# so the path filter catches a PowerShell file wherever it lives: the two
+# script folders plus any *.ps1, *.psm1 or *.psd1 elsewhere. Wired into the CI
+# Gate: keep its `scripts` filter identical to the pull_request paths below.
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'agent/scripts/**'
+      - '**/*.ps1'
+      - '**/*.psm1'
+      - '**/*.psd1'
+      - '.github/workflows/scripts-ci.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'scripts/**'
+      - 'agent/scripts/**'
+      - '**/*.ps1'
+      - '**/*.psm1'
+      - '**/*.psd1'
+      - '.github/workflows/scripts-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Self-test the checker
+        shell: pwsh
+        run: ./scripts/ci/test-check-ps-scripts.ps1
+
+      - name: Check PowerShell scripts
+        shell: pwsh
+        run: ./scripts/ci/check-ps-scripts.ps1

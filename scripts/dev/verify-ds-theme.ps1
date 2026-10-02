@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Runs the agent's `--verify-ds-theme` self-test and reports whether the
     design-system WinUI binding is correctly wired into the agent (#164 / AF3).

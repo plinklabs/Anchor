@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Launches the agent's `--show-test-traymenu` self-test, screenshots the
     brand-styled tray context menu (AA4, #176) via BitBlt+CAPTUREBLT, and prints

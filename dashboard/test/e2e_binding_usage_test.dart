@@ -9,10 +9,13 @@ import 'package:flutter_test/flutter_test.dart';
 /// (integration_test/support/e2e_binding.dart), which pins the language the
 /// app sees. CI's runner is en-US, so a file that skipped the pin would still
 /// pass there and only fail on a Dutch machine; this check catches it in CI.
+/// The same call starts each test at one window size on every host (#376).
 void main() {
+  // Recursive, like Dashboard E2E, which drives every
+  // integration_test/**/*_test.dart (#376).
   final files =
       Directory('integration_test')
-          .listSync()
+          .listSync(recursive: true)
           .whereType<File>()
           .where((f) => f.path.endsWith('_test.dart'))
           .toList()
@@ -31,7 +34,8 @@ void main() {
         contains(RegExp(r'void main\(\) \{\s+ensureE2eBinding\(')),
         reason:
             '$name must call ensureE2eBinding() first in main() so its copy '
-            "doesn't depend on the host's language (#371).",
+            "and layout don't depend on the host's language or window "
+            '(#371, #376).',
       );
       expect(
         source,
@@ -40,7 +44,8 @@ void main() {
         ),
         reason:
             '$name initializes the binding itself, which skips the locale '
-            'pin; call ensureE2eBinding() instead (#371).',
+            'pin and the window size; call ensureE2eBinding() instead '
+            '(#371, #376).',
       );
     });
   }

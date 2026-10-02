@@ -153,26 +153,5 @@ jobs:
           }
           Write-Output "setup.ps1 deploy parameters all declared by the template: $($passed -join ', ')"
 
-      # `Get-Help ./scripts/setup.ps1` is the operator's parameter reference.
-      # PowerShell silently drops a script's comment-based help when a comment
-      # such as `#Requires` sits on the line directly above `<#`, and Get-Help
-      # then shows only the bare syntax (#349). Get-Help reads the same parse
-      # as GetHelpContent(), so check that, plus a description per parameter
-      # (stacked `.PARAMETER` lines leave all but the last one empty).
-      - name: Assert setup.ps1 comment-based help is recognized
-        shell: pwsh
-        run: |
-          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path scripts/setup.ps1), [ref]$null, [ref]$null)
-          $help = $ast.GetHelpContent()
-          if (-not $help -or [string]::IsNullOrWhiteSpace($help.Synopsis)) {
-            Write-Output '::error::Get-Help finds no comment-based help in setup.ps1; keep a blank line between #Requires and <#'
-            exit 1
-          }
-          $params = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
-          $undocumented = @($params | Where-Object { [string]::IsNullOrWhiteSpace($help.Parameters[$_.ToUpperInvariant()]) })
-          if ($undocumented) {
-            Write-Output "::error::setup.ps1 parameters with no .PARAMETER help: $($undocumented -join ', ')"
-            exit 1
-          }
-          Write-Output "setup.ps1 help recognized; all $($params.Count) parameters documented."
+      # setup.ps1's comment-based help (`Get-Help ./scripts/setup.ps1`, #349)
+      # is checked by scripts-ci.yml, together with every other script (#363).
