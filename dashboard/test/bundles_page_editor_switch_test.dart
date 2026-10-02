@@ -21,6 +21,13 @@ import 'package:plink_design_system/plink_design_system.dart';
 // #386: an action on A that fails after the admin has moved on must still be
 // reported, and since it can't go under B's editor, a notice on the page says
 // which bundle it was for. A failed Save offers its draft back (Reopen).
+//
+// #387: only the open the admin asked for last may set the editor. Since
+// 79b55eb (#75) clicking B and then C, with B's get() answering last, left B
+// in the editor, the first open to answer turned the spinner off while the
+// other was still loading, and a late B overwrote C's failed-open notice
+// (#384). New bundle and Reopen move the editor too, so a pending open can't
+// replace what they put there either.
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -59,6 +66,8 @@ BundleDetail _detail(
 /// it, so the test can switch bundles while the write is in flight, and then
 /// throws [writeError] if a test set one. An open waits on [getGate] the same
 /// way, so a write can answer while the next bundle is still opening (#386).
+/// With [holdOpens], each open waits in [heldOpens] for the test to answer
+/// it ([_answerOpen]), so opens can answer in any order (#387).
 class _FakeBundles extends BundlesApi {
   _FakeBundles() : super(_dummyClient());
 
@@ -73,6 +82,8 @@ class _FakeBundles extends BundlesApi {
   Object? writeError;
   Completer<void>? gate;
   Completer<void>? getGate;
+  bool holdOpens = false;
+  final heldOpens = <String, Completer<BundleDetail>>{};
 
   Future<void> _write() async {
     final gate = this.gate;
@@ -100,6 +111,10 @@ class _FakeBundles extends BundlesApi {
 
   @override
   Future<BundleDetail> get(String id) async {
+    if (holdOpens) {
+      final held = heldOpens[id] = Completer<BundleDetail>();
+      return held.future;
+    }
     final getGate = this.getGate;
     if (getGate != null) await getGate.future;
     final error = getError;
@@ -287,6 +302,47 @@ Finder _notice(String text) =>
 final _reopen = find.widgetWithText(SnackBarAction, 'Reopen');
 
 const _lateSaveExamApps = 'Could not save "Exam apps". Please try again.';
+
+/// The editor pane's spinner while an open is pending: with a catalogue
+/// loaded and nothing saving, the only one on the page.
+final _spinner = find.byType(CircularProgressIndicator);
+
+/// Answers the held open of bundle [id] (#387): with the bundle, or with
+/// [error]. Pumps rather than settles, since another open's spinner may
+/// still be on.
+Future<void> _answerOpen(
+  WidgetTester tester,
+  _FakeBundles bundles,
+  String id, {
+  Object? error,
+}) async {
+  final held = bundles.heldOpens.remove(id)!;
+  if (error == null) {
+    held.complete(bundles.store.firstWhere((b) => b.id == id));
+  } else {
+    held.completeError(error);
+  }
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
+}
+
+/// Whether [name]'s catalogue row is drawn as the selected one.
+bool _rowSelected(WidgetTester tester, String name) =>
+    tester
+        .widget<ColoredBox>(
+          find
+              .descendant(of: _row(name), matching: find.byType(ColoredBox))
+              .first,
+        )
+        .color ==
+    PlinkColors.paper2;
+
+/// No failed open shows where the editor goes, and no notice on the page.
+void _expectNoOpenFailure() {
+  expect(find.text(_oneSentence), findsNothing);
+  expect(_openRetry, findsNothing);
+  expect(find.byType(SnackBar), findsNothing);
+}
 
 void main() {
   group('opening another bundle or a new draft clears the editor error of '
@@ -918,6 +974,261 @@ void main() {
         expect(find.byType(SnackBar), findsNothing);
         expect(_reopen, findsNothing);
         expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
+  group('only the open the admin asked for last sets the editor (#387)', () {
+    testWidgets(
+      'B then C, C answering first and B second: the editor shows C, and C\'s '
+      'row is the selected one',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        bundles.holdOpens = true;
+        await _tapInFlight(tester, _row('Exam apps'));
+        await _tapInFlight(tester, _row('Reading list'));
+
+        await _answerOpen(tester, bundles, 'b2');
+        _expectReadingListEditor(tester);
+
+        await _answerOpen(tester, bundles, 'b1');
+        await tester.pumpAndSettle();
+
+        _expectReadingListEditor(tester);
+        expect(_rowSelected(tester, 'Reading list'), isTrue);
+        expect(_rowSelected(tester, 'Exam apps'), isFalse);
+        _expectNoOpenFailure();
+      },
+    );
+
+    testWidgets('B then C, B failing after C opened: C stays, with no error', (
+      tester,
+    ) async {
+      final bundles = await _pumpPage(tester);
+      bundles.holdOpens = true;
+      await _tapInFlight(tester, _row('Exam apps'));
+      await _tapInFlight(tester, _row('Reading list'));
+      await _answerOpen(tester, bundles, 'b2');
+
+      await _answerOpen(
+        tester,
+        bundles,
+        'b1',
+        error: ApiException(500, 'System.Exception: boom'),
+      );
+      await tester.pumpAndSettle();
+
+      _expectReadingListEditor(tester);
+      expect(_rowSelected(tester, 'Reading list'), isTrue);
+      _expectNoOpenFailure();
+      _expectNoActionError();
+    });
+
+    testWidgets(
+      'B then C, C failing: C\'s failed-open notice stays when B answers '
+      'late, and its Retry opens C',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        bundles.holdOpens = true;
+        await _tapInFlight(tester, _row('Exam apps'));
+        await _tapInFlight(tester, _row('Reading list'));
+        await _answerOpen(
+          tester,
+          bundles,
+          'b2',
+          error: ApiException(500, 'System.Exception: boom'),
+        );
+        expect(find.text(_oneSentence), findsOneWidget);
+
+        await _answerOpen(tester, bundles, 'b1');
+        await tester.pumpAndSettle();
+
+        expect(find.text(_oneSentence), findsOneWidget);
+        expect(_openRetry, findsOneWidget);
+        expect(_saveButton, findsNothing);
+        expect(find.text('*.geogebra.org'), findsNothing);
+        expect(_rowSelected(tester, 'Exam apps'), isFalse);
+
+        await _tapInFlight(tester, _openRetry);
+        await _answerOpen(tester, bundles, 'b2');
+        await tester.pumpAndSettle();
+
+        _expectReadingListEditor(tester);
+        _expectNoOpenFailure();
+      },
+    );
+
+    testWidgets(
+      'Retry on C\'s failed open is a new open: B answering after it, late, '
+      'doesn\'t replace it',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        bundles.holdOpens = true;
+        await _tapInFlight(tester, _row('Exam apps'));
+        await _tapInFlight(tester, _row('Reading list'));
+        await _answerOpen(
+          tester,
+          bundles,
+          'b2',
+          error: http.ClientException(
+            'Failed to fetch',
+            Uri.parse('http://localhost'),
+          ),
+        );
+
+        await _tapInFlight(tester, _openRetry);
+        expect(_spinner, findsOneWidget);
+        await _answerOpen(tester, bundles, 'b1');
+
+        expect(_spinner, findsOneWidget);
+        expect(_saveButton, findsNothing);
+
+        await _answerOpen(tester, bundles, 'b2');
+        await tester.pumpAndSettle();
+
+        _expectReadingListEditor(tester);
+        _expectNoOpenFailure();
+      },
+    );
+
+    for (final bFails in [false, true]) {
+      testWidgets('the spinner stays on until C answers, though B '
+          '${bFails ? 'fails' : 'answers'} first', (tester) async {
+        final bundles = await _pumpPage(tester);
+        bundles.holdOpens = true;
+        await _tapInFlight(tester, _row('Exam apps'));
+        await _tapInFlight(tester, _row('Reading list'));
+        expect(_spinner, findsOneWidget);
+
+        await _answerOpen(
+          tester,
+          bundles,
+          'b1',
+          error: bFails ? ApiException(500, 'System.Exception: boom') : null,
+        );
+
+        expect(_spinner, findsOneWidget);
+        expect(_saveButton, findsNothing);
+        expect(find.text('*.geogebra.org'), findsNothing);
+        _expectNoOpenFailure();
+
+        await _answerOpen(tester, bundles, 'b2');
+        // Settling proves the spinner is gone.
+        await tester.pumpAndSettle();
+
+        expect(_spinner, findsNothing);
+        _expectReadingListEditor(tester);
+        _expectNoOpenFailure();
+      });
+    }
+
+    for (final openFails in [false, true]) {
+      testWidgets(
+        'Reopen keeps the draft it put back when an open asked for before it '
+        '${openFails ? 'fails' : 'answers'} late',
+        (tester) async {
+          final bundles = await _pumpPage(tester);
+          await _tap(tester, _row('Exam apps'));
+          await tester.enterText(_nameField, 'Exam apps (spring)');
+          final gate = bundles.gate = Completer<void>();
+          bundles.writeError = ApiException(500, 'System.Exception: boom');
+          await _tapInFlight(tester, _saveButton);
+          await _tapInFlight(tester, _row('Reading list'));
+          gate.complete();
+          await tester.pumpAndSettle();
+          expect(_notice(_lateSaveExamApps), findsOneWidget);
+
+          // Lab tools is still opening when the admin taps Reopen.
+          bundles.holdOpens = true;
+          await _tapInFlight(tester, _row('Lab tools'));
+          await _tap(tester, _reopen);
+          expect(_editorName(tester), 'Exam apps (spring)');
+
+          await _answerOpen(
+            tester,
+            bundles,
+            'b3',
+            error: openFails
+                ? ApiException(500, 'System.Exception: boom')
+                : null,
+          );
+          await tester.pumpAndSettle();
+
+          expect(_editorName(tester), 'Exam apps (spring)');
+          expect(find.text('*.geogebra.org'), findsOneWidget);
+          expect(find.text('*.labs.example'), findsNothing);
+          expect(
+            find.descendant(of: _saveButton, matching: find.text('Save')),
+            findsOneWidget,
+          );
+          // The error Reopen put back with the draft stays with it.
+          expect(find.text(_saveSentence), findsOneWidget);
+          expect(_rowSelected(tester, 'Exam apps'), isTrue);
+          expect(_rowSelected(tester, 'Lab tools'), isFalse);
+          _expectNoOpenFailure();
+        },
+      );
+    }
+
+    for (final openFails in [false, true]) {
+      testWidgets('New bundle keeps its draft when an open asked for before it '
+          '${openFails ? 'fails' : 'answers'} late', (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        bundles.holdOpens = true;
+        await _tapInFlight(tester, _row('Reading list'));
+
+        await _tap(tester, _newButton);
+        _expectNewDraft(tester);
+        await tester.enterText(_nameField, 'Draft');
+
+        await _answerOpen(
+          tester,
+          bundles,
+          'b2',
+          error: openFails ? ApiException(500, 'System.Exception: boom') : null,
+        );
+        await tester.pumpAndSettle();
+
+        expect(_editorName(tester), 'Draft');
+        expect(find.text('*.example.com'), findsNothing);
+        expect(find.text('*.geogebra.org'), findsNothing);
+        expect(
+          find.descendant(of: _saveButton, matching: find.text('Create')),
+          findsOneWidget,
+        );
+        expect(_rowSelected(tester, 'Reading list'), isFalse);
+        _expectNoOpenFailure();
+        _expectNoActionError();
+      });
+    }
+
+    testWidgets(
+      'a catalogue reload that clears the editor of an archived bundle keeps '
+      'the open the admin asked for',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Lab tools'));
+        final gate = bundles.gate = Completer<void>();
+        await _confirm(tester, 'Archive', settle: false);
+        bundles.holdOpens = true;
+        await _tapInFlight(tester, _row('Reading list'));
+
+        // The Archive succeeds while Reading list is opening. The reload
+        // leaves Lab tools out, which clears its editor, but the admin asked
+        // for Reading list, so it is still on its way.
+        gate.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(_row('Lab tools'), findsNothing);
+        expect(_spinner, findsOneWidget);
+
+        await _answerOpen(tester, bundles, 'b2');
+        await tester.pumpAndSettle();
+
+        _expectReadingListEditor(tester);
+        _expectNoOpenFailure();
+        _expectNoActionError();
       },
     );
   });

@@ -26,7 +26,9 @@ import 'support/e2e_binding.dart';
 // page's failure paths: an import that can't save a bundle (#383), a
 // catalogue or a bundle that fails to load (#384), a failed Save that must
 // stay with its bundle when the admin moves on (#385), and that must still be
-// reported, naming its bundle, with the edit there to reopen (#386).
+// reported, naming its bundle, with the edit there to reopen (#386). And two
+// opens that answer out of order, where only the last one asked for may set
+// the editor (#387).
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -75,6 +77,21 @@ class _FakeBundles extends BundlesApi {
   Object? updateError;
   Completer<void>? updateGate;
 
+  /// With [holdOpens], each get waits in [heldOpens] for the test to answer
+  /// it, by bundle id, so opens can answer out of order (#387).
+  bool holdOpens = false;
+  final heldOpens = <String, Completer<BundleDetail>>{};
+
+  /// Answers the held open of [id] with the bundle, or fails it with [error].
+  void answerOpen(String id, {Object? error}) {
+    final held = heldOpens.remove(id)!;
+    if (error == null) {
+      held.complete(_store.firstWhere((b) => b.id == id));
+    } else {
+      held.completeError(error);
+    }
+  }
+
   @override
   Future<List<BundleSummary>> list({bool includeArchived = false}) async {
     final error = listError;
@@ -93,6 +110,10 @@ class _FakeBundles extends BundlesApi {
 
   @override
   Future<BundleDetail> get(String id) async {
+    if (holdOpens) {
+      final held = heldOpens[id] = Completer<BundleDetail>();
+      return held.future;
+    }
     final error = getError;
     if (error != null) throw error;
     return _store.firstWhere((b) => b.id == id);
@@ -622,6 +643,125 @@ void main() {
       expect(find.byKey(const Key('bundles-save-button')), findsNothing);
       expect(find.text(lateSave), findsNothing);
       expect(reopen, findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'two opens answering out of order leave the editor on the bundle clicked '
+    'last, and New bundle keeps its draft over a late open (#387)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      BundleDetail bundle(String id, String name, String domain) =>
+          BundleDetail(
+            id: id,
+            name: name,
+            version: 1,
+            isArchived: false,
+            hasBeenUsed: false,
+            entries: [
+              BundleEntry(
+                kind: BundleEntryKind.domain,
+                value: domain,
+                matchType: BundleEntryMatchType.wildcard,
+              ),
+            ],
+          );
+      final bundles = _FakeBundles(<BundleDetail>[
+        bundle('b1', 'Exam apps', '*.geogebra.org'),
+        bundle('b2', 'Reading list', '*.example.com'),
+      ]);
+      final tokens = AuthTokenStore()
+        ..setSession(
+          token: 'fake-token',
+          account: const AccountInfo(
+            homeAccountId: 'home-1',
+            username: 'admin@school.example',
+            displayName: 'Admin',
+            department: null,
+          ),
+        );
+      await tester.pumpWidget(
+        AnchorDashboard(
+          tokens: tokens,
+          auth: _FakeAuth(),
+          api: _dummyClient(),
+          sessions: _FakeSessions(),
+          bundles: bundles,
+          classes: ClassesApi(_dummyClient()),
+          apiBaseUrl: Uri.parse('http://localhost'),
+          bundleFileIo: _FakeFileIo(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav-admin')));
+      await tester.pumpAndSettle();
+
+      const openSentence = 'Could not load this bundle. Please try again.';
+      final save = find.byKey(const Key('bundles-save-button'));
+      final spinner = find.byType(CircularProgressIndicator);
+      Finder row(String name) => find.widgetWithText(InkWell, name);
+      String editorName() => tester
+          .widget<TextField>(find.widgetWithText(TextField, 'Name'))
+          .controller!
+          .text;
+
+      /// Taps or answers, then pumps: an open's spinner never settles.
+      Future<void> pumpAfter(FutureOr<void> Function() action) async {
+        await action();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      // The admin clicks Exam apps and then Reading list. Reading list
+      // answers first, Exam apps last: the editor stays on Reading list.
+      bundles.holdOpens = true;
+      await pumpAfter(() => tester.tap(row('Exam apps')));
+      await pumpAfter(() => tester.tap(row('Reading list')));
+      expect(spinner, findsOneWidget);
+
+      await pumpAfter(() => bundles.answerOpen('b2'));
+      expect(editorName(), 'Reading list');
+      await pumpAfter(() => bundles.answerOpen('b1'));
+      await tester.pumpAndSettle();
+
+      expect(editorName(), 'Reading list');
+      expect(find.text('*.example.com'), findsOneWidget);
+      expect(find.text('*.geogebra.org'), findsNothing);
+      expect(spinner, findsNothing);
+
+      // The admin clicks Exam apps, then New bundle before it answers, and
+      // Exam apps fails late: the new draft stays, with no failed open.
+      await pumpAfter(() => tester.tap(row('Exam apps')));
+      await tester.tap(find.byKey(const Key('bundles-new-button')));
+      await tester.pumpAndSettle();
+      expect(editorName(), '');
+      await tester.enterText(find.widgetWithText(TextField, 'Name'), 'Draft');
+
+      await pumpAfter(
+        () => bundles.answerOpen(
+          'b1',
+          error: http.ClientException(
+            'Failed to fetch',
+            Uri.parse('http://localhost'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(editorName(), 'Draft');
+      expect(
+        find.descendant(of: save, matching: find.text('Create')),
+        findsOneWidget,
+      );
+      expect(find.text('*.geogebra.org'), findsNothing);
+      expect(find.text(openSentence), findsNothing);
+      expect(find.byKey(const Key('bundles-open-retry-button')), findsNothing);
+      expect(find.textContaining('Failed to fetch'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

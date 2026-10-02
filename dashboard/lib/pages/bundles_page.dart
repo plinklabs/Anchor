@@ -64,6 +64,18 @@ class _BundlesPageState extends State<BundlesPage> {
   /// placeholder.
   ApiErrorMessage? _openError;
   BundleSummary? _openFailed;
+
+  /// The open the admin asked for last (#387). Each open ([_openBundle],
+  /// including a failed open's Retry) takes the next number, and New bundle
+  /// and Reopen move it on too ([_supersedeOpen]), since they move the editor
+  /// themselves. An open whose `get()` answers with the number moved on was
+  /// superseded: it leaves the editor, [_opening] and a failed-open notice
+  /// alone, so clicking B and then C ends on C even when B answers last.
+  int _openRequest = 0;
+
+  /// Whether the open the admin asked for last ([_openRequest]) is still
+  /// waiting on `get()`. An earlier open that answers meanwhile doesn't turn
+  /// it off (#387).
   bool _opening = false;
 
   /// Which bundle or draft the editor holds, bumped each time it leaves one
@@ -171,6 +183,8 @@ class _BundlesPageState extends State<BundlesPage> {
 
   Future<void> _openBundle(BundleSummary summary) async {
     final l10n = AppLocalizations.of(context);
+    // This open supersedes any the admin asked for before it (#387).
+    final request = ++_openRequest;
     setState(() {
       _opening = true;
       _openError = null;
@@ -178,21 +192,29 @@ class _BundlesPageState extends State<BundlesPage> {
     });
     try {
       final detail = await widget.bundles.get(summary.id);
-      if (!mounted) return;
+      // The admin has since asked for another bundle, New bundle or Reopen:
+      // that one owns the editor and the spinner now (#387).
+      if (!mounted || request != _openRequest) return;
       setState(() {
         _leaveEditor();
+        _opening = false;
         _selected = detail;
         _isNewDraft = false;
         _nameController.text = detail.name;
         _entries = detail.entries.map(_EntryRow.fromEntry).toList();
       });
     } catch (e) {
-      if (!mounted) return;
+      // A superseded open's failure isn't the admin's concern any more: it
+      // must not replace what they asked for since, or that one's failed-open
+      // notice. It needs no notice of its own either, as nothing of theirs
+      // was lost: the row is still there to open again (#387).
+      if (!mounted || request != _openRequest) return;
       // The admin asked to leave whatever was open for this bundle, as a
       // successful open would have. Say why it didn't open where the editor
       // goes, not under another bundle's editor or nowhere at all.
       _clearEditor();
       setState(() {
+        _opening = false;
         _openError = describeApiError(
           e,
           generic: l10n.bundlesLoadOneError,
@@ -200,13 +222,25 @@ class _BundlesPageState extends State<BundlesPage> {
         );
         _openFailed = summary;
       });
-    } finally {
-      if (mounted) setState(() => _opening = false);
     }
+  }
+
+  /// Drops any open still waiting on `get()`, because the admin has moved
+  /// the editor some other way (New bundle, Reopen): when it answers, it
+  /// finds [_openRequest] moved on and leaves the editor alone (#387). Call
+  /// inside setState.
+  ///
+  /// [_clearEditor] doesn't call this. Its one caller that can run with an
+  /// open pending is the catalogue reload finding the held bundle gone, and
+  /// the admin didn't ask for that: the open they asked for still lands.
+  void _supersedeOpen() {
+    _openRequest++;
+    _opening = false;
   }
 
   void _startNew() {
     setState(() {
+      _supersedeOpen();
       _leaveEditor();
       _selected = null;
       _isNewDraft = true;
@@ -249,7 +283,8 @@ class _BundlesPageState extends State<BundlesPage> {
   /// Whether the answer to an action of the editor (Save, Archive, Delete)
   /// that noted [generation] before it waited on the backend is still for
   /// the bundle or draft the admin is on: the editor holds the same one, and
-  /// the admin hasn't asked to open another. If not, a success leaves the
+  /// the admin hasn't asked to open another ([_opening], which is only ever
+  /// about the open they asked for last, #387). If not, a success leaves the
   /// editor alone (#385), and a failure is reported naming its bundle
   /// (#386), not shown under an editor that holds, or is about to hold,
   /// another bundle.
@@ -294,7 +329,9 @@ class _BundlesPageState extends State<BundlesPage> {
   /// Puts a Save's draft back in the editor after the Save failed with the
   /// admin on another bundle (#386): the bundle it was for ([bundle], null
   /// for a new draft) with the name and entries the Save sent, and [error],
-  /// what the editor would have shown had the admin stayed.
+  /// what the editor would have shown had the admin stayed. Reopen is the
+  /// admin's latest ask, so an open still pending can't replace the draft
+  /// when it answers (#387).
   void _reopenDraft(
     BundleDetail? bundle,
     String name,
@@ -303,6 +340,7 @@ class _BundlesPageState extends State<BundlesPage> {
   ) {
     if (!mounted) return;
     setState(() {
+      _supersedeOpen();
       _leaveEditor();
       _selected = bundle;
       _isNewDraft = bundle == null;
