@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Anchor.Api.Users;
 using Anchor.Domain.Classes;
 using Anchor.Domain.Users;
@@ -583,6 +584,9 @@ public sealed record ClassMembershipImportResult(
     string? Detail,
     string? Upn = null);
 
+// By name on the wire: the dashboard reads "Added", "AlreadyMember", … and took
+// the numeric form for an unknown status, so every row read as not found (#393).
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ClassMembershipImportStatus
 {
     Added,

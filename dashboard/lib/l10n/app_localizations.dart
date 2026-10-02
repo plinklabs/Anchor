@@ -1088,6 +1088,12 @@ abstract class AppLocalizations {
   /// **'Import rejected'**
   String get bundlesImportRejected;
 
+  /// Opens the list of what an import could not do (the bundles it could not save, or why its file was rejected), from the notice shown when the import finished after the admin left the Bundles page (#392).
+  ///
+  /// In en, this message translates to:
+  /// **'Details'**
+  String get bundlesImportDetails;
+
   /// No description provided for @bundlesAdminRequired.
   ///
   /// In en, this message translates to:

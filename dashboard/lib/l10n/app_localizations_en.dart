@@ -615,6 +615,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bundlesImportRejected => 'Import rejected';
 
   @override
+  String get bundlesImportDetails => 'Details';
+
+  @override
   String get bundlesAdminRequired => 'Admin access required.';
 
   @override

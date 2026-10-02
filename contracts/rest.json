@@ -1,0 +1,335 @@
+{
+  "_about": [
+    "The REST API as the teacher dashboard relies on it (#393): each route the dashboard calls (dashboard/lib/api/), the query parameters it sends, the request body the backend binds and the response fields the dashboard reads. The session hub has its own file, session-hub.json (#390).",
+    "Both sides test against this file. Backend CI (RestContractTests) finds the routes in the app's API description, describes each request body and response through the app's own JSON settings (the response from what a call in the test host actually returned, checked against the body that went over the wire), and fails when that differs from this file. Dashboard CI (dashboard/test/contract/) calls each lib/api method against a fake backend that serves a response built from this file, and checks the method, path, query and body it sends, that it parses every response this file allows, and that it reads exactly the response fields listed here.",
+    "So a backend change to a route, a field name, a type or an enum value the dashboard depends on fails Backend CI until this file says so, and that change to this file runs the dashboard's tests against it.",
+    "Routes are \"METHOD path\", the path relative to the API's base URL as the backend's route template has it. Routes only the agent and the extension call are listed under notCovered.",
+    "A shape is an object of fields, a list written as [element], or a type: string, number, boolean, date-time (an ISO 8601 string) or the name of an enum under enums, whose values are as they go over the wire. A type ending in ? may be null. Field names are as they go over the wire (camelCase).",
+    "response: the fields the dashboard reads. The backend may send more; adding a field is safe. A route without one is a route whose response body the dashboard ignores.",
+    "request: every field the backend binds from the body. The dashboard sends each one not marked ? and may leave out the others, and sends nothing else.",
+    "query: the query parameters the dashboard sends, all of which the backend binds. The backend may take more."
+  ],
+  "enums": {
+    "UserRole": ["Student", "Teacher", "Admin"],
+    "EventKind": [
+      "ForegroundChange",
+      "BlockedUrl",
+      "UnblockRequest",
+      "HeartbeatLost",
+      "AgentReconnected",
+      "AgentKilled",
+      "ManualLeave",
+      "JoinDeclined",
+      "UnblockApproved",
+      "TamperDetected"
+    ],
+    "ClassMembershipRole": ["Member", "Teacher"],
+    "ClassMembershipImportStatus": ["Added", "AlreadyMember", "NotFoundInEntra", "WrongSchool"],
+    "BundleEntryKind": ["Domain", "App"],
+    "BundleEntryMatchType": ["Exact", "Wildcard", "Suffix", "SignedPublisher"]
+  },
+  "routes": {
+    "GET me": {
+      "response": { "id": "string", "displayName": "string", "role": "UserRole" }
+    },
+    "POST me/promote": {
+      "request": { "userId": "string" }
+    },
+    "POST me/demote": {
+      "request": { "userId": "string" }
+    },
+
+    "GET sessions/history": {
+      "query": ["limit", "offset"],
+      "response": [
+        {
+          "id": "string",
+          "classId": "string",
+          "className": "string",
+          "startedAt": "date-time",
+          "endedAt": "date-time"
+        }
+      ]
+    },
+    "GET sessions/active": {
+      "response": [{ "id": "string", "classId": "string", "startedAt": "date-time" }]
+    },
+    "GET sessions/{id}": {
+      "response": {
+        "id": "string",
+        "classId": "string",
+        "className": "string",
+        "joinCode": "string",
+        "startedAt": "date-time",
+        "endedAt": "date-time?",
+        "summaries": [
+          {
+            "userId": "string",
+            "kind": "EventKind",
+            "count": "number",
+            "firstAt": "date-time",
+            "lastAt": "date-time"
+          }
+        ],
+        "recentEvents": [
+          {
+            "id": "string",
+            "userId": "string",
+            "kind": "EventKind",
+            "payloadJson": "string",
+            "occurredAt": "date-time"
+          }
+        ],
+        "participants": [
+          {
+            "userId": "string",
+            "displayName": "string",
+            "joinedAt": "date-time?",
+            "declinedAt": "date-time?",
+            "leftAt": "date-time?",
+            "state": "string",
+            "tampered": "boolean"
+          }
+        ],
+        "bundles": [{ "id": "string", "name": "string" }],
+        "grants": [
+          {
+            "userId": "string",
+            "displayName": "string",
+            "host": "string",
+            "grantedAt": "date-time"
+          }
+        ]
+      }
+    },
+    "POST sessions": {
+      "request": { "classId": "string", "bundleIds": ["string"] },
+      "response": {
+        "id": "string",
+        "classId": "string",
+        "joinCode": "string",
+        "startedAt": "date-time"
+      }
+    },
+    "POST sessions/{id}/end": {},
+    "PUT sessions/{id}/bundles": {
+      "request": { "bundleIds": ["string"] },
+      "response": { "bundles": [{ "id": "string", "name": "string" }] }
+    },
+    "GET sessions/{id}/unblock-requests": {
+      "response": [
+        {
+          "host": "string",
+          "count": "number",
+          "firstRequestedAt": "date-time",
+          "latestRequestedAt": "date-time",
+          "requesters": [
+            { "userId": "string", "displayName": "string", "requestedAt": "date-time" }
+          ]
+        }
+      ]
+    },
+    "POST sessions/{id}/unblock": {
+      "request": { "userId": "string?", "host": "string", "scope": "string?" }
+    },
+
+    "GET classes": {
+      "response": [
+        {
+          "id": "string",
+          "name": "string",
+          "schoolYear": "string",
+          "schoolTag": "string?",
+          "classCode": "string?"
+        }
+      ]
+    },
+    "POST classes": {
+      "request": {
+        "name": "string",
+        "schoolYear": "string",
+        "schoolTag": "string?",
+        "classCode": "string?"
+      },
+      "response": {
+        "id": "string",
+        "name": "string",
+        "schoolYear": "string",
+        "schoolTag": "string?",
+        "classCode": "string?"
+      }
+    },
+    "PATCH classes/{id}": {
+      "request": { "schoolTag": "string?", "classCode": "string?" },
+      "response": {
+        "id": "string",
+        "name": "string",
+        "schoolYear": "string",
+        "schoolTag": "string?",
+        "classCode": "string?"
+      }
+    },
+    "DELETE classes/{id}": {},
+    "GET classes/{id}/members": {
+      "response": {
+        "id": "string",
+        "name": "string",
+        "schoolYear": "string",
+        "schoolTag": "string?",
+        "classCode": "string?",
+        "members": [
+          {
+            "userId": "string",
+            "entraOid": "string",
+            "displayName": "string",
+            "userRole": "UserRole",
+            "membershipRole": "ClassMembershipRole",
+            "joinedAt": "date-time"
+          }
+        ]
+      }
+    },
+    "POST classes/{id}/members": {
+      "request": {
+        "entraOid": "string",
+        "displayName": "string?",
+        "role": "ClassMembershipRole?"
+      },
+      "response": {
+        "entraOid": "string?",
+        "upn": "string?",
+        "userId": "string?",
+        "status": "ClassMembershipImportStatus",
+        "detail": "string?"
+      }
+    },
+    "DELETE classes/{id}/members/{userId}": {},
+    "POST classes/{id}/members/import": {
+      "request": { "rows": [{ "upn": "string", "role": "ClassMembershipRole?" }] },
+      "response": {
+        "results": [
+          {
+            "entraOid": "string?",
+            "upn": "string?",
+            "userId": "string?",
+            "status": "ClassMembershipImportStatus",
+            "detail": "string?"
+          }
+        ]
+      }
+    },
+    "POST classes/{id}/members/bulk-import": {
+      "response": {
+        "results": [
+          {
+            "entraOid": "string?",
+            "upn": "string?",
+            "userId": "string?",
+            "status": "ClassMembershipImportStatus",
+            "detail": "string?"
+          }
+        ]
+      }
+    },
+
+    "GET directory/schools": {
+      "response": ["string"]
+    },
+    "GET users/search": {
+      "query": ["q", "top", "company"],
+      "response": [
+        {
+          "entraOid": "string",
+          "displayName": "string",
+          "upn": "string?",
+          "company": "string?",
+          "department": "string?"
+        }
+      ]
+    },
+
+    "GET bundles": {
+      "query": ["includeArchived"],
+      "response": [
+        {
+          "id": "string",
+          "name": "string",
+          "version": "number",
+          "isArchived": "boolean",
+          "hasBeenUsed": "boolean"
+        }
+      ]
+    },
+    "GET bundles/{id}": {
+      "response": {
+        "id": "string",
+        "name": "string",
+        "version": "number",
+        "isArchived": "boolean",
+        "hasBeenUsed": "boolean",
+        "entries": [
+          { "kind": "BundleEntryKind", "value": "string", "matchType": "BundleEntryMatchType" }
+        ]
+      }
+    },
+    "POST bundles": {
+      "request": {
+        "name": "string",
+        "entries": [
+          { "kind": "BundleEntryKind", "value": "string", "matchType": "BundleEntryMatchType" }
+        ]
+      },
+      "response": {
+        "id": "string",
+        "name": "string",
+        "version": "number",
+        "isArchived": "boolean",
+        "hasBeenUsed": "boolean",
+        "entries": [
+          { "kind": "BundleEntryKind", "value": "string", "matchType": "BundleEntryMatchType" }
+        ]
+      }
+    },
+    "PUT bundles/{id}": {
+      "request": {
+        "name": "string",
+        "entries": [
+          { "kind": "BundleEntryKind", "value": "string", "matchType": "BundleEntryMatchType" }
+        ]
+      },
+      "response": {
+        "id": "string",
+        "name": "string",
+        "version": "number",
+        "isArchived": "boolean",
+        "hasBeenUsed": "boolean",
+        "entries": [
+          { "kind": "BundleEntryKind", "value": "string", "matchType": "BundleEntryMatchType" }
+        ]
+      }
+    },
+    "DELETE bundles/{id}": {
+      "query": ["hard"]
+    },
+
+    "GET admin/users/admins": {
+      "response": [
+        { "id": "string", "displayName": "string", "entraOid": "string", "role": "UserRole" }
+      ]
+    },
+    "GET admin/users/candidates": {
+      "query": ["query"],
+      "response": [
+        { "id": "string", "displayName": "string", "entraOid": "string", "role": "UserRole" }
+      ]
+    },
+    "GET admin/schools": {
+      "response": [{ "name": "string", "isActive": "boolean" }]
+    },
+    "POST admin/schools/activation": {
+      "request": { "name": "string?", "isActive": "boolean" },
+      "response": { "name": "string", "isActive": "boolean" }
+    }
+  },
+  "notCovered": ["GET sessions/rejoinable", "POST sessions/join-by-code"]
+}

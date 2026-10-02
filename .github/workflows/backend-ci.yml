@@ -1,14 +1,19 @@
 name: Backend CI
 
+# contracts/**: the session hub (#390) and REST (#393) contracts.
+# SessionHubContractTests and RestContractTests check the backend against them,
+# and Dashboard CI / Deploy checks the dashboard.
 on:
   push:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'contracts/**'
       - '.github/workflows/backend-ci.yml'
   pull_request:
     paths:
       - 'backend/**'
+      - 'contracts/**'
       - '.github/workflows/backend-ci.yml'
 
 jobs:

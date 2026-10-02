@@ -89,7 +89,9 @@ class _BundlesPageState extends State<BundlesPage> {
 
   /// The page's own messenger, so its snack bars go with the page: a late
   /// failure's Reopen ([_reportLateFailure]) can't be tapped once the page,
-  /// and with it the draft it puts back, is gone (#386).
+  /// and with it the draft it puts back, is gone (#386). A failure that lands
+  /// after the admin has left the page goes to the app's messenger instead
+  /// (#388), as does the outcome of an Import or Export all (#392).
   final GlobalKey<ScaffoldMessengerState> _messenger =
       GlobalKey<ScaffoldMessengerState>();
 
@@ -291,22 +293,80 @@ class _BundlesPageState extends State<BundlesPage> {
   bool _editorStillOn(int generation) =>
       generation == _editorGeneration && !_opening;
 
+  /// Whether the admin is still on this page (#388): it is mounted, and
+  /// neither its route nor a route around it (the admin area's, the app
+  /// shell's) has been taken off its navigator. Going to another page (Home,
+  /// or Admins in the admin sub-nav) takes one off at once, but the page stays
+  /// mounted while it animates out, so a failure that lands then would show
+  /// on a page the admin has already left, and go with it.
+  ///
+  /// A route under a dialog or a dropdown menu is still on its navigator, so
+  /// those don't count as leaving.
+  bool get _onPage {
+    if (!mounted) return false;
+    BuildContext? at = context;
+    while (at != null) {
+      if (ModalRoute.isActiveOf(at) == false) return false;
+      at = at.findAncestorStateOfType<NavigatorState>()?.context;
+    }
+    return true;
+  }
+
+  /// The app's own messenger, the root one that MaterialApp provides. An
+  /// action notes it before it waits on the backend, while the page's
+  /// `context` can still look it up: it outlives the page, so a failure that
+  /// lands after the admin has left can still be reported (#388).
+  ScaffoldMessengerState? _appMessenger() =>
+      context.findRootAncestorStateOfType<ScaffoldMessengerState>();
+
+  /// The app's root navigator. An Import notes it with the app's messenger
+  /// ([_appMessenger]) before it waits, so that a notice of what it could
+  /// not do, landing after the admin has left the page, can open the list
+  /// over whichever page they are on (#392).
+  NavigatorState? _rootNavigator() =>
+      Navigator.maybeOf(context, rootNavigator: true);
+
+  /// Shows a snack bar where the admin is (#388, #392), which [build] makes,
+  /// told whether that is still this page ([_onPage]). If it is, it goes
+  /// through the page's own messenger, and goes with the page (#386). If the
+  /// admin has left, that messenger is gone or going with the page, so it
+  /// goes through [app], the app's messenger the action noted before it
+  /// waited on the backend ([_appMessenger]).
+  void _tell(
+    ScaffoldMessengerState? app,
+    SnackBar Function(bool onPage) build,
+  ) {
+    if (_onPage) {
+      _messenger.currentState?.showSnackBar(build(true));
+    } else if (app != null && app.mounted) {
+      app.showSnackBar(build(false));
+    }
+  }
+
   /// Reports a failure of an action on a bundle or draft the admin has moved
-  /// on from (#386). The editor holds another one now, so this can't go
-  /// under it (#385). A snack bar names the bundle instead: [failed] says
-  /// what failed for which bundle ("Could not save "Exam apps"."), and the
-  /// reason follows, [reason] when the caller knows it (a 409) or else
-  /// [describeApiError]'s, with the calm admin wording for a 403. It lands
-  /// while the admin is on another bundle, so it stays until they close it.
-  /// [onReopen], given when the unsaved edit can be put back in the editor,
-  /// is its action.
+  /// on from: another bundle or a new draft (#386), or another page (#388).
+  /// It can't go under the editor (#385), so a snack bar names the bundle
+  /// instead: [failed] says what failed for which bundle ("Could not save
+  /// "Exam apps"."), and the reason follows, [reason] when the caller knows it
+  /// (a 409) or else [describeApiError]'s, with the calm admin wording for a
+  /// 403. It lands while the admin is elsewhere, so it stays until they close
+  /// it.
+  ///
+  /// With the admin still on the page, it goes through the page's messenger,
+  /// and [onReopen], given when the unsaved edit can be put back in the
+  /// editor, is its action. With the admin gone from the page, it goes
+  /// through [app], the app's messenger noted before the action waited
+  /// ([_appMessenger]), and has no Reopen: the draft and the editor it would
+  /// go back in went with the page. [l10n] was noted then too, as `context`
+  /// can't be used once the page is gone.
   void _reportLateFailure(
+    AppLocalizations l10n,
+    ScaffoldMessengerState? app,
     String failed,
     Object error, {
     String? reason,
     VoidCallback? onReopen,
   }) {
-    final l10n = AppLocalizations.of(context);
     final why =
         reason ??
         describeApiError(
@@ -314,14 +374,15 @@ class _BundlesPageState extends State<BundlesPage> {
           generic: l10n.bundlesTryAgain,
           notAuthorized: l10n.apiError403Admin,
         ).text;
-    _messenger.currentState?.showSnackBar(
-      SnackBar(
+    _tell(
+      app,
+      (onPage) => SnackBar(
         content: Text('$failed $why'),
         persist: true,
         showCloseIcon: true,
-        action: onReopen == null
-            ? null
-            : SnackBarAction(label: l10n.bundlesReopen, onPressed: onReopen),
+        action: onPage && onReopen != null
+            ? SnackBarAction(label: l10n.bundlesReopen, onPressed: onReopen)
+            : null,
       ),
     );
   }
@@ -399,6 +460,7 @@ class _BundlesPageState extends State<BundlesPage> {
     }
 
     final generation = _editorGeneration;
+    final app = _appMessenger();
     // The bundle this Save updates, or null for a new draft. A failure that
     // lands after the admin has moved on names it, and can put the draft
     // back in the editor (#386).
@@ -411,6 +473,8 @@ class _BundlesPageState extends State<BundlesPage> {
       final saved = bundle == null
           ? await widget.bundles.create(name, entries)
           : await widget.bundles.update(bundle.id, name, entries);
+      // A Save that succeeds after the admin has left the page needs no
+      // notice: the catalogue shows its new version when they come back.
       if (!mounted) return;
       // If the admin has moved on, the editor holds another bundle; the
       // catalogue reload still shows the saved one's new version.
@@ -424,7 +488,6 @@ class _BundlesPageState extends State<BundlesPage> {
       }
       await _refreshList();
     } catch (e) {
-      if (!mounted) return;
       // A 409 is the one failure the admin can fix here: another bundle has
       // that name.
       final nameTaken = e is ApiException && e.statusCode == 409;
@@ -435,14 +498,17 @@ class _BundlesPageState extends State<BundlesPage> {
               generic: l10n.bundlesSaveError,
               notAuthorized: l10n.apiError403Admin,
             );
-      if (_editorStillOn(generation)) {
+      if (_onPage && _editorStillOn(generation)) {
         setState(() => _error = error);
       } else {
         // The failure belongs to the bundle or draft the admin has left, not
-        // the one in the editor now (#385), but the admin must still learn
-        // the Save didn't go through. The draft it sent can go back in the
-        // editor, so the edit isn't lost (#386).
+        // the one in the editor now (#385), or to a page the admin has left
+        // (#388), but the admin must still learn the Save didn't go through.
+        // On the page, the draft it sent can go back in the editor, so the
+        // edit isn't lost (#386).
         _reportLateFailure(
+          l10n,
+          app,
           l10n.bundlesSaveFailedFor(bundle?.name ?? name),
           e,
           reason: nameTaken ? l10n.bundlesNameTakenBy(name) : null,
@@ -459,6 +525,7 @@ class _BundlesPageState extends State<BundlesPage> {
     final selected = _selected;
     if (selected == null) return;
     final generation = _editorGeneration;
+    final app = _appMessenger();
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -483,13 +550,13 @@ class _BundlesPageState extends State<BundlesPage> {
     });
     try {
       await widget.bundles.archive(selected.id);
+      // Nothing to say after the admin has left the page (#388).
       if (!mounted) return;
       // Only clear the editor if it still holds the archived bundle (#385).
       if (_editorStillOn(generation)) _clearEditor();
       await _refreshList();
     } catch (e) {
-      if (!mounted) return;
-      if (_editorStillOn(generation)) {
+      if (_onPage && _editorStillOn(generation)) {
         setState(
           () => _error = describeApiError(
             e,
@@ -498,9 +565,15 @@ class _BundlesPageState extends State<BundlesPage> {
           ),
         );
       } else {
-        // The admin has moved on (#385); say which bundle wasn't archived
-        // (#386). There's no edit to put back: its row is still in the list.
-        _reportLateFailure(l10n.bundlesArchiveFailedFor(selected.name), e);
+        // The admin has moved on, to another bundle (#385) or another page
+        // (#388); say which bundle wasn't archived (#386). There's no edit
+        // to put back: its row is still in the list.
+        _reportLateFailure(
+          l10n,
+          app,
+          l10n.bundlesArchiveFailedFor(selected.name),
+          e,
+        );
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -512,6 +585,7 @@ class _BundlesPageState extends State<BundlesPage> {
     final selected = _selected;
     if (selected == null) return;
     final generation = _editorGeneration;
+    final app = _appMessenger();
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -539,16 +613,16 @@ class _BundlesPageState extends State<BundlesPage> {
     });
     try {
       await widget.bundles.hardDelete(selected.id);
+      // Nothing to say after the admin has left the page (#388).
       if (!mounted) return;
       // Only clear the editor if it still holds the deleted bundle (#385).
       if (_editorStillOn(generation)) _clearEditor();
       await _refreshList();
     } catch (e) {
-      if (!mounted) return;
       // A 409: a session started with this bundle since the list loaded, and
       // a used bundle can only be archived.
       final used = e is ApiException && e.statusCode == 409;
-      if (_editorStillOn(generation)) {
+      if (_onPage && _editorStillOn(generation)) {
         setState(
           () => _error = used
               ? ApiErrorMessage(l10n.bundlesDeleteUsedError)
@@ -559,9 +633,12 @@ class _BundlesPageState extends State<BundlesPage> {
                 ),
         );
       } else {
-        // The admin has moved on (#385); say which bundle wasn't deleted
-        // (#386). There's no edit to put back: its row is still in the list.
+        // The admin has moved on, to another bundle (#385) or another page
+        // (#388); say which bundle wasn't deleted (#386). There's no edit to
+        // put back: its row is still in the list.
         _reportLateFailure(
+          l10n,
+          app,
           l10n.bundlesDeleteFailedFor(selected.name),
           e,
           reason: used ? l10n.bundlesUsedArchiveInstead : null,
@@ -626,11 +703,17 @@ class _BundlesPageState extends State<BundlesPage> {
   /// Downloads every bundle in the current view as one envelope JSON file. The
   /// list only carries summaries, so this fetches each bundle's entries (N+1,
   /// fine for an admin catalogue of a handful of bundles).
+  ///
+  /// It runs to the end after the admin has left the page, and the file still
+  /// downloads. Its sentence then goes on the app's messenger, noted with the
+  /// strings before it waits, as `context` can't be used once the page is
+  /// gone (#392).
   Future<void> _exportAll() async {
     final l10n = AppLocalizations.of(context);
+    final app = _appMessenger();
     final list = _list;
     if (list == null || list.isEmpty) {
-      _snack(l10n.bundlesNothingToExport);
+      _snack(app, l10n.bundlesNothingToExport);
       return;
     }
     setState(() {
@@ -657,14 +740,16 @@ class _BundlesPageState extends State<BundlesPage> {
         );
       }
       _fileIo.downloadJson('bundles.json', exportBundlesToJson(data));
-      _snack(l10n.bundlesExported(data.length));
+      _snack(app, l10n.bundlesExported(data.length));
     } catch (e) {
       _snack(
+        app,
         describeApiError(
           e,
           generic: l10n.bundlesExportError,
           notAuthorized: l10n.apiError403Admin,
         ).text,
+        failed: true,
       );
     } finally {
       if (mounted) setState(() => _porting = false);
@@ -673,21 +758,37 @@ class _BundlesPageState extends State<BundlesPage> {
 
   /// Picks a JSON file, validates it, and upserts each bundle by name: an
   /// existing name (archived or not) is updated, a new one is created.
+  ///
+  /// It runs to the end after the admin has left the page, and its outcome
+  /// goes where they are then: the count, or what it could not do
+  /// ([_reportImportErrors]). The app's messenger and root navigator, and the
+  /// strings, are noted before it waits, on the file and then on the backend,
+  /// as `context` can't be used once the page is gone (#392).
   Future<void> _import() async {
     final l10n = AppLocalizations.of(context);
+    final app = _appMessenger();
+    final root = _rootNavigator();
     final raw = await _fileIo.pickJsonFile();
     if (raw == null) return; // No file chosen.
 
     final parsed = parseBundlesJson(raw);
     if (!parsed.ok) {
-      await _showImportErrors(parsed.errors);
+      await _reportImportErrors(
+        l10n,
+        app,
+        root,
+        parsed.errors,
+        title: l10n.bundlesImportRejected,
+      );
       return;
     }
 
-    setState(() {
-      _porting = true;
-      _error = null;
-    });
+    if (mounted) {
+      setState(() {
+        _porting = true;
+        _error = null;
+      });
+    }
     try {
       // Match by name across the whole catalogue (including archived) so an
       // archived bundle is updated/un-archived in place rather than duplicated —
@@ -719,11 +820,20 @@ class _BundlesPageState extends State<BundlesPage> {
         }
       }
 
-      await _refreshList();
+      // The catalogue shows what the import did, on a page the admin is still
+      // on. One they have left must not be touched, and loads the catalogue
+      // again when they come back (#392).
+      if (_onPage) await _refreshList();
       if (failures.isEmpty) {
-        _snack(l10n.bundlesImported(parsed.bundles.length, created, updated));
+        _snack(
+          app,
+          l10n.bundlesImported(parsed.bundles.length, created, updated),
+        );
       } else {
-        await _showImportErrors(
+        await _reportImportErrors(
+          l10n,
+          app,
+          root,
           failures,
           title: l10n.bundlesImportedWithFailures(
             failures.length,
@@ -734,28 +844,93 @@ class _BundlesPageState extends State<BundlesPage> {
       }
     } catch (e) {
       _snack(
+        app,
         describeApiError(
           e,
           generic: l10n.bundlesImportError,
           notAuthorized: l10n.apiError403Admin,
         ).text,
+        failed: true,
       );
     } finally {
       if (mounted) setState(() => _porting = false);
     }
   }
 
-  void _snack(String message) {
-    if (!mounted) return;
-    _messenger.currentState?.showSnackBar(SnackBar(content: Text(message)));
+  /// An Import's or Export all's sentence, where the admin is ([_tell]): on
+  /// the page, or on the app's messenger, [app], once they have left it
+  /// (#392). One that says the action [failed] then stays until they close
+  /// it, as it lands while they are busy elsewhere. On the page, each goes
+  /// after a moment, as before.
+  void _snack(
+    ScaffoldMessengerState? app,
+    String message, {
+    bool failed = false,
+  }) {
+    _tell(
+      app,
+      (onPage) => SnackBar(
+        content: Text(message),
+        persist: failed && !onPage,
+        showCloseIcon: failed && !onPage,
+      ),
+    );
   }
 
-  Future<void> _showImportErrors(List<String> errors, {String? title}) async {
-    if (!mounted) return;
+  /// Lists what an import could not do under [title]: each bundle it could
+  /// not save (#383), or why the file was rejected. With the admin on the
+  /// page, in a dialog, as before.
+  ///
+  /// Once they have left it, a dialog can't open on the page, so [title]
+  /// goes on the app's messenger, [app], and stays until they close it. Its
+  /// Details opens the list from the app's root navigator, [root], over
+  /// whichever page they are on by then (#392). [errors] and [title] were
+  /// worded with [l10n], noted before the import waited, and the dialog
+  /// looks up its own strings where it opens, so nothing reads the page's
+  /// `context` once the page is gone.
+  Future<void> _reportImportErrors(
+    AppLocalizations l10n,
+    ScaffoldMessengerState? app,
+    NavigatorState? root,
+    List<String> errors, {
+    required String title,
+  }) async {
+    if (_onPage) {
+      await _showImportErrors(context, errors, title: title);
+      return;
+    }
+    _tell(
+      app,
+      (_) => SnackBar(
+        content: Text(title),
+        persist: true,
+        showCloseIcon: true,
+        action: root == null
+            ? null
+            : SnackBarAction(
+                label: l10n.bundlesImportDetails,
+                onPressed: () {
+                  if (root.mounted) {
+                    _showImportErrors(root.context, errors, title: title);
+                  }
+                },
+              ),
+      ),
+    );
+  }
+
+  /// The dialog that lists an import's [errors] under [title], opened from
+  /// [context]: the page's, or the app's root navigator's once the admin has
+  /// left the page (#392). It reads its strings from its own context.
+  static Future<void> _showImportErrors(
+    BuildContext context,
+    List<String> errors, {
+    required String title,
+  }) async {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title ?? AppLocalizations.of(ctx).bundlesImportRejected),
+        title: Text(title),
         content: SizedBox(
           width: 460,
           child: SingleChildScrollView(

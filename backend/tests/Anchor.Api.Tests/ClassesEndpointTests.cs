@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json.Nodes;
 using Anchor.Api.Controllers;
 using Anchor.Api.Tests.FakeAuth;
 using Anchor.Api.Users;
@@ -317,6 +319,36 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
         // Roster should contain the new member exactly once.
         var roster = await client.GetFromJsonAsync<ClassMembersResponse>($"/classes/{scenario.Class.Id}/members");
         Assert.Single(roster!.Members, m => m.UserId == outsider.Id);
+    }
+
+    [Fact]
+    public async Task POST_class_members_takes_the_role_and_gives_the_status_by_name_as_the_dashboard_does()
+    {
+        // The dashboard sends "role":"Member" and reads the status and the
+        // membership role by name. Both were numbers on the wire, so adding a
+        // student from the dashboard answered 400 (#393).
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var outsider = await TestSeed.AddUserAsync(_factory, UserRole.Student, "Outsider By Name");
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsync(
+            $"/classes/{scenario.Class.Id}/members",
+            new StringContent(
+                $$"""{"entraOid":"{{outsider.EntraOid}}","role":"Member"}""",
+                Encoding.UTF8,
+                "application/json"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var result = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;
+        Assert.Equal("Added", result["status"]!.GetValue<string>());
+
+        var roster = JsonNode.Parse(await client.GetStringAsync($"/classes/{scenario.Class.Id}/members"))!;
+        var member = Assert.Single(
+            roster["members"]!.AsArray(),
+            m => m!["userId"]!.GetValue<string>() == outsider.Id.ToString());
+        Assert.Equal("Member", member!["membershipRole"]!.GetValue<string>());
     }
 
     [Fact]

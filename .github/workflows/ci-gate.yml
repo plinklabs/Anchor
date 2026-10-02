@@ -48,6 +48,7 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - 'contracts/**'
               - '.github/workflows/backend-ci.yml'
             agent:
               - 'agent/**'
@@ -58,6 +59,7 @@ jobs:
               - '.github/workflows/dashboard-e2e.yml'
             dashboard_deploy:
               - 'dashboard/**'
+              - 'contracts/**'
               - '.github/workflows/dashboard-deploy.yml'
             extension:
               - 'extension/**'
