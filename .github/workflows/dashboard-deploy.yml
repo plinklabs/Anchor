@@ -1,14 +1,19 @@
 name: Dashboard CI / Deploy
 
+# contracts/**: the session hub contract (#390). The tests in test/contract/
+# check the dashboard against it, and Backend CI checks the backend. A change
+# to it alone also redeploys the (unchanged) dashboard from main.
 on:
   push:
     branches: [main]
     paths:
       - 'dashboard/**'
+      - 'contracts/**'
       - '.github/workflows/dashboard-deploy.yml'
   pull_request:
     paths:
       - 'dashboard/**'
+      - 'contracts/**'
       - '.github/workflows/dashboard-deploy.yml'
 
 jobs:

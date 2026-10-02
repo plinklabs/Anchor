@@ -5,8 +5,10 @@ name: Dashboard E2E
 # dashboard/** alone and a backend-only change can't change it. Backend paths
 # would rerun the same result at three 4-minute shards a PR, and a green run
 # would look like proof that the dashboard still fits the backend. It isn't.
-# A backend change to what the dashboard receives or calls (hub events, their
-# routing and payloads, REST DTOs) needs a contract test both sides run (#390).
+# A backend change to what the dashboard receives or calls needs a contract
+# test both sides run instead: contracts/session-hub.json pins the hub's events,
+# their routing and payloads, which Backend CI and Dashboard CI / Deploy both
+# test (#390). REST DTOs aren't pinned yet (#393).
 on:
   push:
     branches: [main]
