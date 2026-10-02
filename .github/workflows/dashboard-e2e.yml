@@ -7,8 +7,9 @@ name: Dashboard E2E
 # would look like proof that the dashboard still fits the backend. It isn't.
 # A backend change to what the dashboard receives or calls needs a contract
 # test both sides run instead: contracts/session-hub.json pins the hub's events,
-# their routing and payloads, which Backend CI and Dashboard CI / Deploy both
-# test (#390). REST DTOs aren't pinned yet (#393).
+# their routing and payloads (#390), and contracts/rest.json the REST routes,
+# bodies and response fields (#393), which Backend CI and Dashboard CI / Deploy
+# both test.
 on:
   push:
     branches: [main]

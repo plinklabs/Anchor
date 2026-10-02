@@ -1,8 +1,9 @@
 name: Dashboard CI / Deploy
 
-# contracts/**: the session hub contract (#390). The tests in test/contract/
-# check the dashboard against it, and Backend CI checks the backend. A change
-# to it alone also redeploys the (unchanged) dashboard from main.
+# contracts/**: the session hub (#390) and REST (#393) contracts. The tests in
+# test/contract/ check the dashboard against them, and Backend CI checks the
+# backend. A change to them alone also redeploys the (unchanged) dashboard
+# from main.
 on:
   push:
     branches: [main]

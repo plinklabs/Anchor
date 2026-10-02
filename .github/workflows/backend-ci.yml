@@ -1,7 +1,8 @@
 name: Backend CI
 
-# contracts/**: the session hub contract (#390). SessionHubContractTests checks
-# the backend against it, and Dashboard CI / Deploy checks the dashboard.
+# contracts/**: the session hub (#390) and REST (#393) contracts.
+# SessionHubContractTests and RestContractTests check the backend against them,
+# and Dashboard CI / Deploy checks the dashboard.
 on:
   push:
     branches: [main]
