@@ -91,7 +91,7 @@ class _BundlesPageState extends State<BundlesPage> {
   /// failure's Reopen ([_reportLateFailure]) can't be tapped once the page,
   /// and with it the draft it puts back, is gone (#386). A failure that lands
   /// after the admin has left the page goes to the app's messenger instead
-  /// (#388).
+  /// (#388), as does the outcome of an Import or Export all (#392).
   final GlobalKey<ScaffoldMessengerState> _messenger =
       GlobalKey<ScaffoldMessengerState>();
 
@@ -319,6 +319,30 @@ class _BundlesPageState extends State<BundlesPage> {
   ScaffoldMessengerState? _appMessenger() =>
       context.findRootAncestorStateOfType<ScaffoldMessengerState>();
 
+  /// The app's root navigator. An Import notes it with the app's messenger
+  /// ([_appMessenger]) before it waits, so that a notice of what it could
+  /// not do, landing after the admin has left the page, can open the list
+  /// over whichever page they are on (#392).
+  NavigatorState? _rootNavigator() =>
+      Navigator.maybeOf(context, rootNavigator: true);
+
+  /// Shows a snack bar where the admin is (#388, #392), which [build] makes,
+  /// told whether that is still this page ([_onPage]). If it is, it goes
+  /// through the page's own messenger, and goes with the page (#386). If the
+  /// admin has left, that messenger is gone or going with the page, so it
+  /// goes through [app], the app's messenger the action noted before it
+  /// waited on the backend ([_appMessenger]).
+  void _tell(
+    ScaffoldMessengerState? app,
+    SnackBar Function(bool onPage) build,
+  ) {
+    if (_onPage) {
+      _messenger.currentState?.showSnackBar(build(true));
+    } else if (app != null && app.mounted) {
+      app.showSnackBar(build(false));
+    }
+  }
+
   /// Reports a failure of an action on a bundle or draft the admin has moved
   /// on from: another bundle or a new draft (#386), or another page (#388).
   /// It can't go under the editor (#385), so a snack bar names the bundle
@@ -350,23 +374,16 @@ class _BundlesPageState extends State<BundlesPage> {
           generic: l10n.bundlesTryAgain,
           notAuthorized: l10n.apiError403Admin,
         ).text;
-    final notice = Text('$failed $why');
-    if (_onPage) {
-      _messenger.currentState?.showSnackBar(
-        SnackBar(
-          content: notice,
-          persist: true,
-          showCloseIcon: true,
-          action: onReopen == null
-              ? null
-              : SnackBarAction(label: l10n.bundlesReopen, onPressed: onReopen),
-        ),
-      );
-      return;
-    }
-    if (app == null || !app.mounted) return;
-    app.showSnackBar(
-      SnackBar(content: notice, persist: true, showCloseIcon: true),
+    _tell(
+      app,
+      (onPage) => SnackBar(
+        content: Text('$failed $why'),
+        persist: true,
+        showCloseIcon: true,
+        action: onPage && onReopen != null
+            ? SnackBarAction(label: l10n.bundlesReopen, onPressed: onReopen)
+            : null,
+      ),
     );
   }
 
@@ -686,11 +703,17 @@ class _BundlesPageState extends State<BundlesPage> {
   /// Downloads every bundle in the current view as one envelope JSON file. The
   /// list only carries summaries, so this fetches each bundle's entries (N+1,
   /// fine for an admin catalogue of a handful of bundles).
+  ///
+  /// It runs to the end after the admin has left the page, and the file still
+  /// downloads. Its sentence then goes on the app's messenger, noted with the
+  /// strings before it waits, as `context` can't be used once the page is
+  /// gone (#392).
   Future<void> _exportAll() async {
     final l10n = AppLocalizations.of(context);
+    final app = _appMessenger();
     final list = _list;
     if (list == null || list.isEmpty) {
-      _snack(l10n.bundlesNothingToExport);
+      _snack(app, l10n.bundlesNothingToExport);
       return;
     }
     setState(() {
@@ -717,14 +740,16 @@ class _BundlesPageState extends State<BundlesPage> {
         );
       }
       _fileIo.downloadJson('bundles.json', exportBundlesToJson(data));
-      _snack(l10n.bundlesExported(data.length));
+      _snack(app, l10n.bundlesExported(data.length));
     } catch (e) {
       _snack(
+        app,
         describeApiError(
           e,
           generic: l10n.bundlesExportError,
           notAuthorized: l10n.apiError403Admin,
         ).text,
+        failed: true,
       );
     } finally {
       if (mounted) setState(() => _porting = false);
@@ -733,21 +758,37 @@ class _BundlesPageState extends State<BundlesPage> {
 
   /// Picks a JSON file, validates it, and upserts each bundle by name: an
   /// existing name (archived or not) is updated, a new one is created.
+  ///
+  /// It runs to the end after the admin has left the page, and its outcome
+  /// goes where they are then: the count, or what it could not do
+  /// ([_reportImportErrors]). The app's messenger and root navigator, and the
+  /// strings, are noted before it waits, on the file and then on the backend,
+  /// as `context` can't be used once the page is gone (#392).
   Future<void> _import() async {
     final l10n = AppLocalizations.of(context);
+    final app = _appMessenger();
+    final root = _rootNavigator();
     final raw = await _fileIo.pickJsonFile();
     if (raw == null) return; // No file chosen.
 
     final parsed = parseBundlesJson(raw);
     if (!parsed.ok) {
-      await _showImportErrors(parsed.errors);
+      await _reportImportErrors(
+        l10n,
+        app,
+        root,
+        parsed.errors,
+        title: l10n.bundlesImportRejected,
+      );
       return;
     }
 
-    setState(() {
-      _porting = true;
-      _error = null;
-    });
+    if (mounted) {
+      setState(() {
+        _porting = true;
+        _error = null;
+      });
+    }
     try {
       // Match by name across the whole catalogue (including archived) so an
       // archived bundle is updated/un-archived in place rather than duplicated —
@@ -779,11 +820,20 @@ class _BundlesPageState extends State<BundlesPage> {
         }
       }
 
-      await _refreshList();
+      // The catalogue shows what the import did, on a page the admin is still
+      // on. One they have left must not be touched, and loads the catalogue
+      // again when they come back (#392).
+      if (_onPage) await _refreshList();
       if (failures.isEmpty) {
-        _snack(l10n.bundlesImported(parsed.bundles.length, created, updated));
+        _snack(
+          app,
+          l10n.bundlesImported(parsed.bundles.length, created, updated),
+        );
       } else {
-        await _showImportErrors(
+        await _reportImportErrors(
+          l10n,
+          app,
+          root,
           failures,
           title: l10n.bundlesImportedWithFailures(
             failures.length,
@@ -794,28 +844,93 @@ class _BundlesPageState extends State<BundlesPage> {
       }
     } catch (e) {
       _snack(
+        app,
         describeApiError(
           e,
           generic: l10n.bundlesImportError,
           notAuthorized: l10n.apiError403Admin,
         ).text,
+        failed: true,
       );
     } finally {
       if (mounted) setState(() => _porting = false);
     }
   }
 
-  void _snack(String message) {
-    if (!mounted) return;
-    _messenger.currentState?.showSnackBar(SnackBar(content: Text(message)));
+  /// An Import's or Export all's sentence, where the admin is ([_tell]): on
+  /// the page, or on the app's messenger, [app], once they have left it
+  /// (#392). One that says the action [failed] then stays until they close
+  /// it, as it lands while they are busy elsewhere. On the page, each goes
+  /// after a moment, as before.
+  void _snack(
+    ScaffoldMessengerState? app,
+    String message, {
+    bool failed = false,
+  }) {
+    _tell(
+      app,
+      (onPage) => SnackBar(
+        content: Text(message),
+        persist: failed && !onPage,
+        showCloseIcon: failed && !onPage,
+      ),
+    );
   }
 
-  Future<void> _showImportErrors(List<String> errors, {String? title}) async {
-    if (!mounted) return;
+  /// Lists what an import could not do under [title]: each bundle it could
+  /// not save (#383), or why the file was rejected. With the admin on the
+  /// page, in a dialog, as before.
+  ///
+  /// Once they have left it, a dialog can't open on the page, so [title]
+  /// goes on the app's messenger, [app], and stays until they close it. Its
+  /// Details opens the list from the app's root navigator, [root], over
+  /// whichever page they are on by then (#392). [errors] and [title] were
+  /// worded with [l10n], noted before the import waited, and the dialog
+  /// looks up its own strings where it opens, so nothing reads the page's
+  /// `context` once the page is gone.
+  Future<void> _reportImportErrors(
+    AppLocalizations l10n,
+    ScaffoldMessengerState? app,
+    NavigatorState? root,
+    List<String> errors, {
+    required String title,
+  }) async {
+    if (_onPage) {
+      await _showImportErrors(context, errors, title: title);
+      return;
+    }
+    _tell(
+      app,
+      (_) => SnackBar(
+        content: Text(title),
+        persist: true,
+        showCloseIcon: true,
+        action: root == null
+            ? null
+            : SnackBarAction(
+                label: l10n.bundlesImportDetails,
+                onPressed: () {
+                  if (root.mounted) {
+                    _showImportErrors(root.context, errors, title: title);
+                  }
+                },
+              ),
+      ),
+    );
+  }
+
+  /// The dialog that lists an import's [errors] under [title], opened from
+  /// [context]: the page's, or the app's root navigator's once the admin has
+  /// left the page (#392). It reads its strings from its own context.
+  static Future<void> _showImportErrors(
+    BuildContext context,
+    List<String> errors, {
+    required String title,
+  }) async {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title ?? AppLocalizations.of(ctx).bundlesImportRejected),
+        title: Text(title),
         content: SizedBox(
           width: 460,
           child: SingleChildScrollView(

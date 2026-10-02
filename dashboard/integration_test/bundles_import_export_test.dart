@@ -30,7 +30,9 @@ import 'support/e2e_binding.dart';
 // reported, naming its bundle, with the edit there to reopen (#386). And two
 // opens that answer out of order, where only the last one asked for may set
 // the editor (#387). And a Save, Archive or Delete that fails after the admin
-// has left the page for another, which the app still reports (#388).
+// has left the page for another, which the app still reports (#388), as it
+// does the outcome of an Import or Export all, with the list of what an
+// import could not save a tap away (#392).
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -67,8 +69,11 @@ class _FakeBundles extends BundlesApi {
   _FakeBundles(this._store) : super(_dummyClient());
   final List<BundleDetail> _store;
 
-  /// What create throws, when a test sets it (#383).
+  /// What create throws, when a test sets it (#383), after waiting on
+  /// [createGate] while a test holds it, so the admin can leave the page
+  /// mid-import (#392).
   Object? createError;
+  Completer<void>? createGate;
 
   /// What list and get throw, when a test sets them (#384).
   Object? listError;
@@ -130,6 +135,8 @@ class _FakeBundles extends BundlesApi {
 
   @override
   Future<BundleDetail> create(String name, List<BundleEntry> entries) async {
+    final gate = createGate;
+    if (gate != null) await gate.future;
     final error = createError;
     if (error != null) throw error;
     final detail = BundleDetail(
@@ -994,6 +1001,204 @@ void main() {
       await tester.tap(find.byKey(const Key('nav-admin')));
       await tester.pumpAndSettle();
       expect(row('Exam apps (spring)'), findsOneWidget);
+
+      expect(find.textContaining('ApiException'), findsNothing);
+      expect(find.textContaining('System.'), findsNothing);
+      expect(find.textContaining('Failed to fetch'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'an Import or Export all that finishes after the admin left the page is '
+    'reported on the app, and Details lists what the import could not save '
+    '(#392)',
+    (tester) async {
+      final bundles = _FakeBundles(<BundleDetail>[
+        BundleDetail(
+          id: 'b1',
+          name: 'Exam apps',
+          version: 1,
+          isArchived: false,
+          hasBeenUsed: false,
+          entries: [
+            BundleEntry(
+              kind: BundleEntryKind.domain,
+              value: '*.geogebra.org',
+              matchType: BundleEntryMatchType.wildcard,
+            ),
+          ],
+        ),
+      ]);
+      final fileIo = _FakeFileIo(
+        pickResult:
+            '{"name":"Reading list","entries":[{"kind":"Domain","value":"example.com","matchType":"Exact"}]}',
+      );
+      final tokens = AuthTokenStore()
+        ..setSession(
+          token: 'fake-token',
+          account: const AccountInfo(
+            homeAccountId: 'home-1',
+            username: 'admin@school.example',
+            displayName: 'Admin',
+            department: null,
+          ),
+        );
+      await tester.pumpWidget(
+        AnchorDashboard(
+          tokens: tokens,
+          auth: _FakeAuth(),
+          api: _dummyClient(),
+          sessions: _FakeSessions(),
+          bundles: bundles,
+          classes: ClassesApi(_dummyClient()),
+          admins: _FakeAdmins(),
+          apiBaseUrl: Uri.parse('http://localhost'),
+          bundleFileIo: fileIo,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      const withOneFailure = 'Imported with 1 failure (0 created, 0 updated)';
+      const readingListFailed = '• "Reading list" could not be saved.';
+      final importButton = find.byKey(const Key('bundles-import-button'));
+      final exportAll = find.byKey(const Key('bundles-export-all-button'));
+      final home = find.byKey(const Key('nav-home'));
+      final admins = find.byKey(const Key('admin-nav-admins'));
+      final details = find.widgetWithText(SnackBarAction, 'Details');
+      final dialog = find.byType(AlertDialog);
+      Finder notice(String text) =>
+          find.descendant(of: find.byType(SnackBar), matching: find.text(text));
+
+      /// Opens the Bundles page and starts [action] (Import or Export all),
+      /// which the backend holds until the test answers.
+      Future<void> start(Finder action) async {
+        await tester.tap(find.byKey(const Key('nav-admin')));
+        await tester.pumpAndSettle();
+        await tester.tap(action);
+        await tester.pump();
+      }
+
+      /// Leaves the page through [nav]. With [animatingOut], stops one frame
+      /// in: the page is animating out, still mounted, but already left.
+      Future<void> leave(Finder nav, {bool animatingOut = false}) async {
+        await tester.tap(nav);
+        await tester.pump();
+        if (animatingOut) {
+          expect(importButton, findsOneWidget);
+        } else {
+          await tester.pumpAndSettle();
+          expect(importButton, findsNothing);
+        }
+      }
+
+      /// The app's notice gives the import's outcome on the page the admin
+      /// went to, and Details lists the bundle it could not save.
+      Future<void> expectOutcomeThenList() async {
+        expect(importButton, findsNothing);
+        expect(notice(withOneFailure), findsOneWidget);
+        expect(dialog, findsNothing);
+        await tester.tap(details);
+        await tester.pumpAndSettle();
+        expect(
+          find.descendant(of: dialog, matching: find.text(withOneFailure)),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: dialog, matching: find.text(readingListFailed)),
+          findsOneWidget,
+        );
+        await tester.tap(find.widgetWithText(TextButton, 'Close'));
+        await tester.pumpAndSettle();
+        expect(dialog, findsNothing);
+        expect(find.byType(SnackBar), findsNothing);
+      }
+
+      /// A success goes after a moment; the test doesn't wait for it.
+      Future<void> dismissNotice() async {
+        tester
+            .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger).first)
+            .hideCurrentSnackBar();
+        await tester.pumpAndSettle();
+        expect(find.byType(SnackBar), findsNothing);
+      }
+
+      // The admin imports a file, and goes Home before the backend answers.
+      // Reading list can't be saved: Home gives the outcome, and the list.
+      bundles.createError = ApiException(500, 'System.Exception: boom');
+      var gate = bundles.createGate = Completer<void>();
+      await start(importButton);
+      await leave(home);
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('01 · HOME'), findsOneWidget);
+      await expectOutcomeThenList();
+
+      // The same, landing while the page animates out on the way to Admins:
+      // no dialog over the page the admin has left.
+      gate = bundles.createGate = Completer<void>();
+      await start(importButton);
+      await leave(admins, animatingOut: true);
+      gate.complete();
+      await tester.pump();
+      expect(dialog, findsNothing);
+      await tester.pumpAndSettle();
+      await expectOutcomeThenList();
+
+      // An Export all that fails while the page animates out to Admins.
+      bundles.holdOpens = true;
+      await start(exportAll);
+      await leave(admins, animatingOut: true);
+      bundles.answerOpen(
+        'b1',
+        error: http.ClientException(
+          'Failed to fetch',
+          Uri.parse('http://localhost'),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(importButton, findsNothing);
+      expect(
+        notice('Could not export the bundles. Please try again.'),
+        findsOneWidget,
+      );
+      expect(fileIo.downloadedName, isNull);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SnackBar),
+          matching: find.byIcon(Icons.close),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // An Export all that succeeds after Home: the file downloads, and the
+      // app says so.
+      await start(exportAll);
+      await leave(home);
+      bundles.answerOpen('b1');
+      await tester.pumpAndSettle();
+      expect(fileIo.downloadedName, 'bundles.json');
+      expect(notice('Exported 1 bundle.'), findsOneWidget);
+      await dismissNotice();
+      bundles.holdOpens = false;
+
+      // An Import that saves Reading list after Home: the count, and the
+      // catalogue has it when the admin comes back.
+      bundles.createError = null;
+      gate = bundles.createGate = Completer<void>();
+      await start(importButton);
+      await leave(home);
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(
+        notice('Imported 1 bundle (1 created, 0 updated).'),
+        findsOneWidget,
+      );
+      await dismissNotice();
+      await tester.tap(find.byKey(const Key('nav-admin')));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(InkWell, 'Reading list'), findsOneWidget);
 
       expect(find.textContaining('ApiException'), findsNothing);
       expect(find.textContaining('System.'), findsNothing);

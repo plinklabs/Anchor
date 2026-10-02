@@ -625,6 +625,9 @@ class AppLocalizationsNl extends AppLocalizations {
   String get bundlesImportRejected => 'Import geweigerd';
 
   @override
+  String get bundlesImportDetails => 'Details';
+
+  @override
   String get bundlesAdminRequired => 'Beheerderstoegang vereist.';
 
   @override
