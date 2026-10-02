@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     End-to-end verification of the heartbeat-ping feature (#32), fully headless.
 

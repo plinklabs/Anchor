@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Launches the agent's `--show-test-toast` self-test, screenshots the toast
     window via BitBlt+CAPTUREBLT, and prints the captured rect.

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Launches the agent's `--show-test-guided-install` self-test, screenshots the
     guided-install fallback window (#211) via BitBlt+CAPTUREBLT, and prints the

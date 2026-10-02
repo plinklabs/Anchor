@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     One-command dev loop for the FocusAgent (#131) — the agent-side analog of
     `npm run dev:extension`.

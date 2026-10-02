@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Launches the agent's `--show-test-overlay` self-test, screenshots the
     focus-enforcement overlay via BitBlt+CAPTUREBLT, and prints the captured
