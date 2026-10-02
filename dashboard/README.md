@@ -26,6 +26,17 @@ All `--dart-define` values are optional and default to the development values ba
 
 The Entra app registration must include `http://localhost:5173` as an SPA redirect URI (matching `--web-port 5173` above). Entra treats `http://localhost` loopback as valid on any port for SPA/public clients, so sign-in works even before you pin the port — but the backend CORS policy does not, which is why the port still has to match.
 
+## Integration tests
+
+The Dashboard E2E workflow (`.github/workflows/dashboard-e2e.yml`) drives every `integration_test/**/*_test.dart` file in headless Chrome, so a new file runs in CI without being listed anywhere (#376). Helpers under `integration_test/support/` aren't tests. Every file starts with `ensureE2eBinding()`, which pins the language (see [Localization](#localization-i18n)) and starts each test at 1400×1000; a test that needs another window size sets `tester.view.physicalSize` itself. To run one file locally, start a chromedriver that matches your Chrome, then:
+
+```bash
+chromedriver --port=4444 &
+flutter drive --driver=test_driver/integration_test.dart \
+  --target=integration_test/home_test.dart \
+  -d web-server --browser-name=chrome --headless
+```
+
 ## Routes
 
 - `/login` — Microsoft sign-in via MSAL.js (popup flow). A signed-out visit to another page goes to `/login?from=<page>`, and signing in returns to that page instead of `/`. Only a known in-app path is honored; anything else (another site, another scheme, an unknown page) signs in to `/`.

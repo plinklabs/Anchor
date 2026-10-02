@@ -88,12 +88,14 @@ jobs:
           wait-interval: 20
           allowed-conclusions: success
 
+      # Dashboard E2E runs as parallel shards, one check each, named
+      # "Dashboard E2E (1/3)" and so on (#376), so this waits for all of them.
       - name: Wait for Dashboard E2E
         if: steps.changes.outputs.dashboard_e2e == 'true'
         uses: lewagon/wait-on-check-action@v1.8.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          check-name: Dashboard E2E
+          check-regexp: '^Dashboard E2E \(\d+/\d+\)$'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 20
           allowed-conclusions: success

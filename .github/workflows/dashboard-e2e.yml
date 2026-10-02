@@ -17,13 +17,31 @@ concurrency:
 
 jobs:
   e2e:
-    name: Dashboard E2E
     # Linux runner: the dashboard is Flutter Web, and the GitHub-hosted ubuntu
     # image ships Google Chrome + a matching chromedriver (under $CHROMEWEBDRIVER),
     # which is all `flutter drive` needs for a real-browser run. No backend: the
     # dashboard is MSAL-only and can't be dev-impersonated, so the suite boots the
     # real app against fake APIs + a stubbed SignalR feed (#132).
+    #
+    # Every integration_test/**/*_test.dart file runs, found by name, so a new
+    # one runs without being added here (#376). Each file says in its own header
+    # what it drives. No file needs its own flags: the Dutch locale
+    # (dutch_locale_test.dart) and the window size
+    # (integration_test/support/e2e_binding.dart) are set in test code, so one
+    # `flutter drive` command fits every file.
+    #
+    # The files are split across parallel shards by their place in the sorted
+    # list. One `flutter drive` takes about 30 s, so all 18 files in one job
+    # would take about 10 minutes, longer than any other check; three shards
+    # take about 4. Add a number to `shard` to add a shard. The CI Gate waits
+    # for every job named "Dashboard E2E (n/total)".
+    name: Dashboard E2E (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     defaults:
       run:
         working-directory: dashboard
@@ -39,115 +57,65 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Boots the real app from an unauthenticated state and drives the sign-in
-      # flow, including the #303 stalled-silent-step → retryable-error path
-      # (#308). chromedriver is started in-step so it outlives into the drive;
-      # $CHROMEWEBDRIVER is preset on the GitHub-hosted ubuntu image.
-      - name: Run login e2e (web, headless Chrome)
+      # Drives each of this shard's files in headless Chrome. A failing file
+      # doesn't stop the rest: each one runs, the log names every failure (an
+      # error annotation plus the job summary), and the step fails at the end.
+      # `timeout` bounds a file that hangs. chromedriver is started once for
+      # the shard and every `flutter drive` reuses it.
+      - name: Run e2e files (web, headless Chrome)
+        env:
+          SHARD_INDEX: ${{ strategy.job-index }}
+          SHARD_TOTAL: ${{ strategy.job-total }}
         run: |
+          mapfile -t all < <(find integration_test -type f -name '*_test.dart' | LC_ALL=C sort)
+          if [ "${#all[@]}" -eq 0 ]; then
+            echo "::error::No integration_test/**/*_test.dart files found."
+            exit 1
+          fi
+          files=()
+          for i in "${!all[@]}"; do
+            if [ $(( i % SHARD_TOTAL )) -eq "$SHARD_INDEX" ]; then
+              files+=("${all[$i]}")
+            fi
+          done
+          echo "Shard $(( SHARD_INDEX + 1 ))/$SHARD_TOTAL runs ${#files[@]} of ${#all[@]} files:"
+          printf '  %s\n' "${files[@]}"
+
           "$CHROMEWEBDRIVER/chromedriver" --port=4444 &
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/login_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
 
-      # Boots AnchorDashboard in headless Chrome and drives the live-session view:
-      # a SignalR roster transition, an unblock-request push, a UI bundle PUT, and
-      # the event feed. A fresh `flutter drive` reuses the chromedriver started above.
-      - name: Run live-session e2e (web, headless Chrome)
-        run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/live_session_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
+          {
+            echo "### Dashboard E2E shard $(( SHARD_INDEX + 1 ))/$SHARD_TOTAL"
+            echo
+            echo "| File | Result | Time |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=()
+          for file in "${files[@]}"; do
+            echo "::group::$file"
+            start=$SECONDS
+            if timeout --kill-after=30s 10m flutter drive \
+                --driver=test_driver/integration_test.dart \
+                --target="$file" \
+                -d web-server \
+                --browser-name=chrome \
+                --headless; then
+              result=passed
+            else
+              code=$?
+              result="FAILED (exit $code)"
+              if [ "$code" -eq 124 ]; then result="FAILED (timed out after 10 min)"; fi
+              failed+=("$file")
+            fi
+            echo "::endgroup::"
+            if [ "$result" != passed ]; then
+              echo "::error file=dashboard/$file,title=Dashboard E2E::$file $result"
+            fi
+            echo "| \`$file\` | $result | $(( SECONDS - start )) s |" >> "$GITHUB_STEP_SUMMARY"
+          done
 
-      # Every other e2e pins the app to English (ensureE2eBinding, #371); this
-      # one boots it with a Dutch (nl-BE) browser language and walks sign-in
-      # into the shell, proving the Dutch copy renders with the real fonts and
-      # that the pin drives the app's language in a real browser.
-      - name: Run Dutch-locale e2e (web, headless Chrome)
-        run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/dutch_locale_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
-
-      # Boots the real app at a deep route (a reload on Classes, a link to a past
-      # session) with a cached MSAL session, and expects that page and that URL
-      # once the session restore resolves, not Home (#378). Signed out, it expects
-      # /login?from=<page>, then that page after sign-in, and Home for a `from`
-      # that points at another site (#379). A link to another teacher's past or
-      # live session shows the calm not-available notice, never a raw 403, and
-      # the live page never opens the hub (#382).
-      - name: Run deep-link e2e (web, headless Chrome)
-        run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/deep_link_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
-
-      # Boots the real app and drives Home → History → open a past session,
-      # asserting the archive reads in the muted paper register (AD7, #172).
-      # A fresh `flutter drive` reuses the chromedriver started above.
-      - name: Run history-archive e2e (web, headless Chrome)
-        run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/history_archive_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
-
-      # Boots the real app as a teacher whose Teacher role isn't provisioned yet
-      # and walks Home → Classes → History, asserting each 403 surfaces the calm
-      # not-authorized notice rather than a raw `ApiException(403):` (#278).
-      - name: Run graceful-403 e2e (web, headless Chrome)
-        run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/graceful_403_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
-
-      # Boots the real app as an admin and drives the Admin → Admins sub-tab:
-      # search a signed-in user, promote them, then remove an admin (#300).
-      - name: Run manage-admins e2e (web, headless Chrome)
-        run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/manage_admins_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
-
-      # Boots the real app as an admin and drives the Admin → Schools sub-tab:
-      # render the schools list and deactivate one via its toggle (#301).
-      - name: Run manage-schools e2e (web, headless Chrome)
-        run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/manage_schools_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
-
-      # Boots the real app as an admin and drives Admin → Bundles import/export:
-      # import a JSON file (fake file-IO seam), see the new bundle listed, then
-      # export it back to JSON (#304).
-      - name: Run bundles import/export e2e (web, headless Chrome)
-        run: |
-          flutter drive \
-            --driver=test_driver/integration_test.dart \
-            --target=integration_test/bundles_import_export_test.dart \
-            -d web-server \
-            --browser-name=chrome \
-            --headless
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "${#failed[@]} of ${#files[@]} files failed:"
+            printf '  %s\n' "${failed[@]}"
+            exit 1
+          fi
+          echo "All ${#files[@]} files passed."
