@@ -1,5 +1,12 @@
 name: Dashboard E2E
 
+# Paths: the dashboard and this file only, on purpose (#368). The suite never
+# builds or calls the backend (see the job's comment), so its result depends on
+# dashboard/** alone and a backend-only change can't change it. Backend paths
+# would rerun the same result at three 4-minute shards a PR, and a green run
+# would look like proof that the dashboard still fits the backend. It isn't.
+# A backend change to what the dashboard receives or calls (hub events, their
+# routing and payloads, REST DTOs) needs a contract test both sides run (#390).
 on:
   push:
     branches: [main]

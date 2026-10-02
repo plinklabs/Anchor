@@ -16,7 +16,10 @@ name: CI Gate
 #
 # Keep the filters below in lock-step with the `on.pull_request.paths` of each
 # referenced workflow — if a workflow's filter changes, change the matching
-# filter here too, or the gate will wait for a check that never runs.
+# filter here too, or the gate will wait for a check that never runs. The step
+# "Check the filters match their workflows" enforces this (#368): each filter
+# must list its workflow's own file and be identical to that workflow's
+# pull_request paths, and every workflow with pull_request paths needs a filter.
 
 on:
   pull_request:
@@ -31,6 +34,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Fails the gate when a filter below has drifted from its workflow's
+      # paths (see the header). Run the same command from the repo root to
+      # check locally.
+      - name: Check the filters match their workflows
+        run: python3 .github/scripts/check-gate-filters.py
 
       - name: Detect changed areas
         id: changes
