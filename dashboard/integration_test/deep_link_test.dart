@@ -17,6 +17,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 
 import 'support/e2e_binding.dart';
 
@@ -307,7 +308,7 @@ void main() {
       expect(find.byType(HomePage), findsNothing);
       expect(find.byKey(const Key('login-headline')), findsNothing);
       // In a browser, the URL bar still holds the route after the restore.
-      if (kIsWeb) expect(Uri.base.fragment, '/classes');
+      _expectAt(tester, '/classes');
       expect(tester.takeException(), isNull);
     },
   );
@@ -322,7 +323,7 @@ void main() {
     expect(find.text('PAST SESSION'), findsOneWidget);
     expect(find.text('Math 101'), findsWidgets);
     expect(find.byType(HomePage), findsNothing);
-    if (kIsWeb) expect(Uri.base.fragment, '/history/s-past');
+    _expectAt(tester, '/history/s-past');
     expect(tester.takeException(), isNull);
   });
 
@@ -340,7 +341,7 @@ void main() {
       expect(tokens.isAuthenticated, isFalse);
       expect(find.byKey(const Key('login-headline')), findsOneWidget);
       expect(find.byType(PastSessionPage), findsNothing);
-      if (kIsWeb) _expectLoginFrom('/history/s-past');
+      _expectLoginFrom(tester, '/history/s-past');
 
       await _signIn(tester);
 
@@ -349,7 +350,7 @@ void main() {
       expect(find.text('PAST SESSION'), findsOneWidget);
       expect(find.text('Math 101'), findsWidgets);
       expect(find.byType(HomePage), findsNothing);
-      if (kIsWeb) expect(Uri.base.fragment, '/history/s-past');
+      _expectAt(tester, '/history/s-past');
       expect(tester.takeException(), isNull);
     },
   );
@@ -366,14 +367,14 @@ void main() {
 
       expect(tokens.isAuthenticated, isFalse);
       expect(find.byKey(const Key('login-headline')), findsOneWidget);
-      if (kIsWeb) _expectLoginFrom('/classes');
+      _expectLoginFrom(tester, '/classes');
 
       await _signIn(tester);
 
       expect(find.byType(ClassesPage), findsOneWidget);
       expect(find.text('02 · CLASSES'), findsOneWidget);
       expect(find.byType(HomePage), findsNothing);
-      if (kIsWeb) expect(Uri.base.fragment, '/classes');
+      _expectAt(tester, '/classes');
       expect(tester.takeException(), isNull);
     },
   );
@@ -404,7 +405,7 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(sessions.getSessionCalls, 1);
       expect(sessions.unblockRequestsCalls, 1);
-      if (kIsWeb) expect(Uri.base.fragment, '/history/s-other');
+      _expectAt(tester, '/history/s-other');
       expect(tester.takeException(), isNull);
 
       // The way back: the shell's nav, as on every other page.
@@ -447,7 +448,7 @@ void main() {
       expect(hub.restartCalls, 0);
       expect(sessions.getSessionCalls, 1);
       expect(sessions.unblockRequestsCalls, 0);
-      if (kIsWeb) expect(Uri.base.fragment, '/session/s-other');
+      _expectAt(tester, '/session/s-other');
       expect(tester.takeException(), isNull);
 
       // The way back: the shell's nav.
@@ -476,9 +477,11 @@ void main() {
       expect(tokens.isAuthenticated, isTrue);
       expect(find.byType(HomePage), findsOneWidget);
       expect(find.byType(ClassesPage), findsNothing);
+      _expectAt(tester, '/');
       if (kIsWeb) {
+        // The page never left for the other site, and its URL doesn't name it.
         expect(Uri.base.origin, origin);
-        expect(Uri.base.fragment, '/');
+        expect(Uri.base.toString(), isNot(contains('evil.example')));
       }
       expect(tester.takeException(), isNull);
     },
@@ -491,9 +494,40 @@ Future<void> _signIn(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-/// In a browser: the URL is /login, holding [from] as the page to return to.
-void _expectLoginFrom(String from) {
-  final location = Uri.parse(Uri.base.fragment);
-  expect(location.path, '/login');
-  expect(location.queryParameters['from'], from);
+/// The router is on /login, holding [from] as the page to return to, and in a
+/// browser so is the URL.
+void _expectLoginFrom(WidgetTester tester, String from) {
+  for (final String location in <String>[
+    _routerLocation(tester),
+    if (kIsWeb) _browserLocation(),
+  ]) {
+    final Uri uri = Uri.parse(location);
+    expect(uri.path, '/login', reason: location);
+    expect(uri.queryParameters['from'], from, reason: location);
+  }
+}
+
+/// The app is at [location]: the router's current location, and in a browser
+/// also the page URL.
+void _expectAt(WidgetTester tester, String location) {
+  expect(_routerLocation(tester), location);
+  if (kIsWeb) expect(_browserLocation(), location);
+}
+
+/// The location the app's router is on.
+String _routerLocation(WidgetTester tester) {
+  final BuildContext context = tester.element(find.byType(Scaffold).first);
+  return GoRouter.of(
+    context,
+  ).routerDelegate.currentConfiguration.uri.toString();
+}
+
+/// The app location the browser URL holds, read the way Flutter's hash URL
+/// strategy reads it (#379). That strategy writes Home (`/`) as the bare page
+/// URL, with no `#` at all (flutter/flutter#127608), and reads a missing or
+/// empty hash back as `/`. So on Home a raw `Uri.base.fragment` is '' in
+/// Chrome, while every other route keeps its `#/...`.
+String _browserLocation() {
+  final String fragment = Uri.base.fragment;
+  return fragment.isEmpty ? '/' : fragment;
 }
