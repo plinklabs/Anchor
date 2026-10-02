@@ -522,6 +522,36 @@ class AppLocalizationsEn extends AppLocalizations {
       'A session has used this bundle, so it can\'t be deleted. Archive it instead.';
 
   @override
+  String bundlesSaveFailedFor(String name) {
+    return 'Could not save \"$name\".';
+  }
+
+  @override
+  String bundlesArchiveFailedFor(String name) {
+    return 'Could not archive \"$name\".';
+  }
+
+  @override
+  String bundlesDeleteFailedFor(String name) {
+    return 'Could not delete \"$name\".';
+  }
+
+  @override
+  String get bundlesTryAgain => 'Please try again.';
+
+  @override
+  String bundlesNameTakenBy(String name) {
+    return 'Another bundle is already called \"$name\".';
+  }
+
+  @override
+  String get bundlesUsedArchiveInstead =>
+      'A session has used it. Archive it instead.';
+
+  @override
+  String get bundlesReopen => 'Reopen';
+
+  @override
   String bundlesTestNoMatch(String probe) {
     return 'No entry matches \"$probe\".';
   }

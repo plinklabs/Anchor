@@ -986,6 +986,48 @@ abstract class AppLocalizations {
   /// **'A session has used this bundle, so it can\'t be deleted. Archive it instead.'**
   String get bundlesDeleteUsedError;
 
+  /// Starts a notice for a Save that failed after the admin opened another bundle (#386); a reason sentence follows.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save \"{name}\".'**
+  String bundlesSaveFailedFor(String name);
+
+  /// Starts a notice for an Archive that failed after the admin opened another bundle (#386); a reason sentence follows.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not archive \"{name}\".'**
+  String bundlesArchiveFailedFor(String name);
+
+  /// Starts a notice for a Delete that failed after the admin opened another bundle (#386); a reason sentence follows.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not delete \"{name}\".'**
+  String bundlesDeleteFailedFor(String name);
+
+  /// No description provided for @bundlesTryAgain.
+  ///
+  /// In en, this message translates to:
+  /// **'Please try again.'**
+  String get bundlesTryAgain;
+
+  /// No description provided for @bundlesNameTakenBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Another bundle is already called \"{name}\".'**
+  String bundlesNameTakenBy(String name);
+
+  /// No description provided for @bundlesUsedArchiveInstead.
+  ///
+  /// In en, this message translates to:
+  /// **'A session has used it. Archive it instead.'**
+  String get bundlesUsedArchiveInstead;
+
+  /// Puts a draft whose Save failed after the admin moved on back in the editor (#386).
+  ///
+  /// In en, this message translates to:
+  /// **'Reopen'**
+  String get bundlesReopen;
+
   /// No description provided for @bundlesTestNoMatch.
   ///
   /// In en, this message translates to:

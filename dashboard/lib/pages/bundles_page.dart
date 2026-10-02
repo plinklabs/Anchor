@@ -69,10 +69,17 @@ class _BundlesPageState extends State<BundlesPage> {
   /// Which bundle or draft the editor holds, bumped each time it leaves one
   /// ([_leaveEditor]). Save, Archive and Delete note it before they wait on
   /// the backend, and when the answer lands after the admin has opened
-  /// another bundle or started a new one, they leave that editor alone: a
-  /// slow Save on A that fails must not show its error under B, and one that
-  /// succeeds must not put A back in the editor (#385).
+  /// another bundle or started a new one ([_editorStillOn]), they leave that
+  /// editor alone: a slow Save on A that fails must not show its error under
+  /// B, and one that succeeds must not put A back in the editor (#385). A
+  /// failure is reported naming A instead ([_reportLateFailure], #386).
   int _editorGeneration = 0;
+
+  /// The page's own messenger, so its snack bars go with the page: a late
+  /// failure's Reopen ([_reportLateFailure]) can't be tapped once the page,
+  /// and with it the draft it puts back, is gone (#386).
+  final GlobalKey<ScaffoldMessengerState> _messenger =
+      GlobalKey<ScaffoldMessengerState>();
 
   // Editor draft state (separate so cancellable).
   final TextEditingController _nameController = TextEditingController();
@@ -239,6 +246,72 @@ class _BundlesPageState extends State<BundlesPage> {
     _testResult = null;
   }
 
+  /// Whether the answer to an action of the editor (Save, Archive, Delete)
+  /// that noted [generation] before it waited on the backend is still for
+  /// the bundle or draft the admin is on: the editor holds the same one, and
+  /// the admin hasn't asked to open another. If not, a success leaves the
+  /// editor alone (#385), and a failure is reported naming its bundle
+  /// (#386), not shown under an editor that holds, or is about to hold,
+  /// another bundle.
+  bool _editorStillOn(int generation) =>
+      generation == _editorGeneration && !_opening;
+
+  /// Reports a failure of an action on a bundle or draft the admin has moved
+  /// on from (#386). The editor holds another one now, so this can't go
+  /// under it (#385). A snack bar names the bundle instead: [failed] says
+  /// what failed for which bundle ("Could not save "Exam apps"."), and the
+  /// reason follows, [reason] when the caller knows it (a 409) or else
+  /// [describeApiError]'s, with the calm admin wording for a 403. It lands
+  /// while the admin is on another bundle, so it stays until they close it.
+  /// [onReopen], given when the unsaved edit can be put back in the editor,
+  /// is its action.
+  void _reportLateFailure(
+    String failed,
+    Object error, {
+    String? reason,
+    VoidCallback? onReopen,
+  }) {
+    final l10n = AppLocalizations.of(context);
+    final why =
+        reason ??
+        describeApiError(
+          error,
+          generic: l10n.bundlesTryAgain,
+          notAuthorized: l10n.apiError403Admin,
+        ).text;
+    _messenger.currentState?.showSnackBar(
+      SnackBar(
+        content: Text('$failed $why'),
+        persist: true,
+        showCloseIcon: true,
+        action: onReopen == null
+            ? null
+            : SnackBarAction(label: l10n.bundlesReopen, onPressed: onReopen),
+      ),
+    );
+  }
+
+  /// Puts a Save's draft back in the editor after the Save failed with the
+  /// admin on another bundle (#386): the bundle it was for ([bundle], null
+  /// for a new draft) with the name and entries the Save sent, and [error],
+  /// what the editor would have shown had the admin stayed.
+  void _reopenDraft(
+    BundleDetail? bundle,
+    String name,
+    List<BundleEntry> entries,
+    ApiErrorMessage error,
+  ) {
+    if (!mounted) return;
+    setState(() {
+      _leaveEditor();
+      _selected = bundle;
+      _isNewDraft = bundle == null;
+      _nameController.text = name;
+      _entries = entries.map(_EntryRow.fromEntry).toList();
+      _error = error;
+    });
+  }
+
   void _addEntry(BundleEntryKind kind) {
     setState(() {
       _entries.add(
@@ -288,21 +361,22 @@ class _BundlesPageState extends State<BundlesPage> {
     }
 
     final generation = _editorGeneration;
+    // The bundle this Save updates, or null for a new draft. A failure that
+    // lands after the admin has moved on names it, and can put the draft
+    // back in the editor (#386).
+    final bundle = _isNewDraft ? null : _selected;
     setState(() {
       _saving = true;
       _error = null;
     });
     try {
-      BundleDetail saved;
-      if (_isNewDraft || _selected == null) {
-        saved = await widget.bundles.create(name, entries);
-      } else {
-        saved = await widget.bundles.update(_selected!.id, name, entries);
-      }
+      final saved = bundle == null
+          ? await widget.bundles.create(name, entries)
+          : await widget.bundles.update(bundle.id, name, entries);
       if (!mounted) return;
       // If the admin has moved on, the editor holds another bundle; the
       // catalogue reload still shows the saved one's new version.
-      if (generation == _editorGeneration) {
+      if (_editorStillOn(generation)) {
         setState(() {
           _selected = saved;
           _isNewDraft = false;
@@ -313,20 +387,30 @@ class _BundlesPageState extends State<BundlesPage> {
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      // The failure belongs to the bundle or draft the admin has left, not
-      // the one in the editor now (#385).
-      if (generation != _editorGeneration) return;
       // A 409 is the one failure the admin can fix here: another bundle has
       // that name.
-      setState(
-        () => _error = e is ApiException && e.statusCode == 409
-            ? ApiErrorMessage(l10n.bundlesNameTaken)
-            : describeApiError(
-                e,
-                generic: l10n.bundlesSaveError,
-                notAuthorized: l10n.apiError403Admin,
-              ),
-      );
+      final nameTaken = e is ApiException && e.statusCode == 409;
+      final error = nameTaken
+          ? ApiErrorMessage(l10n.bundlesNameTaken)
+          : describeApiError(
+              e,
+              generic: l10n.bundlesSaveError,
+              notAuthorized: l10n.apiError403Admin,
+            );
+      if (_editorStillOn(generation)) {
+        setState(() => _error = error);
+      } else {
+        // The failure belongs to the bundle or draft the admin has left, not
+        // the one in the editor now (#385), but the admin must still learn
+        // the Save didn't go through. The draft it sent can go back in the
+        // editor, so the edit isn't lost (#386).
+        _reportLateFailure(
+          l10n.bundlesSaveFailedFor(bundle?.name ?? name),
+          e,
+          reason: nameTaken ? l10n.bundlesNameTakenBy(name) : null,
+          onReopen: () => _reopenDraft(bundle, name, entries, error),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -363,18 +447,23 @@ class _BundlesPageState extends State<BundlesPage> {
       await widget.bundles.archive(selected.id);
       if (!mounted) return;
       // Only clear the editor if it still holds the archived bundle (#385).
-      if (generation == _editorGeneration) _clearEditor();
+      if (_editorStillOn(generation)) _clearEditor();
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      if (generation != _editorGeneration) return;
-      setState(
-        () => _error = describeApiError(
-          e,
-          generic: l10n.bundlesArchiveError,
-          notAuthorized: l10n.apiError403Admin,
-        ),
-      );
+      if (_editorStillOn(generation)) {
+        setState(
+          () => _error = describeApiError(
+            e,
+            generic: l10n.bundlesArchiveError,
+            notAuthorized: l10n.apiError403Admin,
+          ),
+        );
+      } else {
+        // The admin has moved on (#385); say which bundle wasn't archived
+        // (#386). There's no edit to put back: its row is still in the list.
+        _reportLateFailure(l10n.bundlesArchiveFailedFor(selected.name), e);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -414,22 +503,32 @@ class _BundlesPageState extends State<BundlesPage> {
       await widget.bundles.hardDelete(selected.id);
       if (!mounted) return;
       // Only clear the editor if it still holds the deleted bundle (#385).
-      if (generation == _editorGeneration) _clearEditor();
+      if (_editorStillOn(generation)) _clearEditor();
       await _refreshList();
     } catch (e) {
       if (!mounted) return;
-      if (generation != _editorGeneration) return;
       // A 409: a session started with this bundle since the list loaded, and
       // a used bundle can only be archived.
-      setState(
-        () => _error = e is ApiException && e.statusCode == 409
-            ? ApiErrorMessage(l10n.bundlesDeleteUsedError)
-            : describeApiError(
-                e,
-                generic: l10n.bundlesDeleteError,
-                notAuthorized: l10n.apiError403Admin,
-              ),
-      );
+      final used = e is ApiException && e.statusCode == 409;
+      if (_editorStillOn(generation)) {
+        setState(
+          () => _error = used
+              ? ApiErrorMessage(l10n.bundlesDeleteUsedError)
+              : describeApiError(
+                  e,
+                  generic: l10n.bundlesDeleteError,
+                  notAuthorized: l10n.apiError403Admin,
+                ),
+        );
+      } else {
+        // The admin has moved on (#385); say which bundle wasn't deleted
+        // (#386). There's no edit to put back: its row is still in the list.
+        _reportLateFailure(
+          l10n.bundlesDeleteFailedFor(selected.name),
+          e,
+          reason: used ? l10n.bundlesUsedArchiveInstead : null,
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -610,9 +709,7 @@ class _BundlesPageState extends State<BundlesPage> {
 
   void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    _messenger.currentState?.showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _showImportErrors(List<String> errors, {String? title}) async {
@@ -658,20 +755,23 @@ class _BundlesPageState extends State<BundlesPage> {
       );
     }
 
-    return Scaffold(
-      backgroundColor: PlinkColors.paper,
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(width: 300, child: _buildList()),
-          // A vertical hairline between the panes — the system separates with
-          // rules, never shadows.
-          const SizedBox(
-            width: PlinkBorders.width,
-            child: ColoredBox(color: PlinkColors.hairline),
-          ),
-          Expanded(child: _buildEditor()),
-        ],
+    return ScaffoldMessenger(
+      key: _messenger,
+      child: Scaffold(
+        backgroundColor: PlinkColors.paper,
+        body: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(width: 300, child: _buildList()),
+            // A vertical hairline between the panes — the system separates
+            // with rules, never shadows.
+            const SizedBox(
+              width: PlinkBorders.width,
+              child: ColoredBox(color: PlinkColors.hairline),
+            ),
+            Expanded(child: _buildEditor()),
+          ],
+        ),
       ),
     );
   }

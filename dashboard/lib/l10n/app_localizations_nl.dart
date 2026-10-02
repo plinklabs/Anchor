@@ -532,6 +532,36 @@ class AppLocalizationsNl extends AppLocalizations {
       'Een sessie heeft deze bundel gebruikt, dus je kunt hem niet verwijderen. Archiveer hem in de plaats.';
 
   @override
+  String bundlesSaveFailedFor(String name) {
+    return 'Kon \"$name\" niet opslaan.';
+  }
+
+  @override
+  String bundlesArchiveFailedFor(String name) {
+    return 'Kon \"$name\" niet archiveren.';
+  }
+
+  @override
+  String bundlesDeleteFailedFor(String name) {
+    return 'Kon \"$name\" niet verwijderen.';
+  }
+
+  @override
+  String get bundlesTryAgain => 'Probeer het opnieuw.';
+
+  @override
+  String bundlesNameTakenBy(String name) {
+    return 'Er bestaat al een andere bundel met de naam \"$name\".';
+  }
+
+  @override
+  String get bundlesUsedArchiveInstead =>
+      'Een sessie heeft hem gebruikt. Archiveer hem in de plaats.';
+
+  @override
+  String get bundlesReopen => 'Opnieuw openen';
+
+  @override
   String bundlesTestNoMatch(String probe) {
     return 'Geen item komt overeen met \"$probe\".';
   }

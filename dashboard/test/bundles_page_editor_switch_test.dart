@@ -17,6 +17,10 @@ import 'package:plink_design_system/plink_design_system.dart';
 // had failed. An action on A that answers after the admin has moved on must
 // not land on B's editor either, failed or not. A failed catalogue reload
 // (#384) is about the list, not a bundle, so it stays where it is.
+//
+// #386: an action on A that fails after the admin has moved on must still be
+// reported, and since it can't go under B's editor, a notice on the page says
+// which bundle it was for. A failed Save offers its draft back (Reopen).
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -53,7 +57,8 @@ BundleDetail _detail(
 /// Three bundles: two never used (so the editor offers Delete) and one a
 /// session has used (Archive). Each write waits on [gate] while a test holds
 /// it, so the test can switch bundles while the write is in flight, and then
-/// throws [writeError] if a test set one.
+/// throws [writeError] if a test set one. An open waits on [getGate] the same
+/// way, so a write can answer while the next bundle is still opening (#386).
 class _FakeBundles extends BundlesApi {
   _FakeBundles() : super(_dummyClient());
 
@@ -67,6 +72,7 @@ class _FakeBundles extends BundlesApi {
   Object? getError;
   Object? writeError;
   Completer<void>? gate;
+  Completer<void>? getGate;
 
   Future<void> _write() async {
     final gate = this.gate;
@@ -94,6 +100,8 @@ class _FakeBundles extends BundlesApi {
 
   @override
   Future<BundleDetail> get(String id) async {
+    final getGate = this.getGate;
+    if (getGate != null) await getGate.future;
     final error = getError;
     if (error != null) throw error;
     return store.firstWhere((b) => b.id == id);
@@ -183,19 +191,31 @@ final _openRetry = find.byKey(const Key('bundles-open-retry-button'));
 /// A catalogue row, not the editor's name field showing the same name.
 Finder _row(String name) => find.widgetWithText(InkWell, name);
 
-Future<_FakeBundles> _pumpPage(WidgetTester tester) async {
+/// Pumps the page. With [showPage], the page is shown while it is true and
+/// another page while it is false, so a test can leave the page.
+Future<_FakeBundles> _pumpPage(
+  WidgetTester tester, {
+  ValueNotifier<bool>? showPage,
+}) async {
   tester.view.physicalSize = const Size(1400, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
   final bundles = _FakeBundles();
+  final page = BundlesPage(bundles: bundles, sessions: _FakeSessions());
   await tester.pumpWidget(
     MaterialApp(
       theme: PlinkTheme.paper.copyWith(splashFactory: NoSplash.splashFactory),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: BundlesPage(bundles: bundles, sessions: _FakeSessions()),
+      home: showPage == null
+          ? page
+          : ValueListenableBuilder<bool>(
+              valueListenable: showPage,
+              builder: (context, show, _) =>
+                  show ? page : const Scaffold(body: Text('Another page')),
+            ),
     ),
   );
   await tester.pumpAndSettle();
@@ -259,6 +279,14 @@ void _expectNewDraft(WidgetTester tester) {
     findsOneWidget,
   );
 }
+
+/// A notice on the page that says an action failed, with [text].
+Finder _notice(String text) =>
+    find.descendant(of: find.byType(SnackBar), matching: find.text(text));
+
+final _reopen = find.widgetWithText(SnackBarAction, 'Reopen');
+
+const _lateSaveExamApps = 'Could not save "Exam apps". Please try again.';
 
 void main() {
   group('opening another bundle or a new draft clears the editor error of '
@@ -535,6 +563,361 @@ void main() {
 
         _expectReadingListEditor(tester);
         _expectNoActionError();
+      },
+    );
+  });
+
+  group('an action on A that fails after the admin moved on is reported, '
+      'naming A, and not under the editor (#386)', () {
+    testWidgets(
+      'a slow Save on A answering 500 after B opened: a notice names A, and '
+      'B\'s editor keeps its state',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(500, 'System.Exception: boom');
+        await _tapInFlight(tester, _saveButton);
+
+        await _tapInFlight(tester, _row('Reading list'));
+        // The admin is already editing B when A's Save answers.
+        await tester.enterText(_nameField, 'Reading list (spring)');
+        await tester.pump();
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(_notice(_lateSaveExamApps), findsOneWidget);
+        expect(_reopen, findsOneWidget);
+        expect(_editorName(tester), 'Reading list (spring)');
+        expect(find.text('*.example.com'), findsOneWidget);
+        expect(find.text('*.geogebra.org'), findsNothing);
+        _expectNoActionError();
+        expect(find.textContaining('System.'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a slow Save on A answering 409 after New bundle: the notice names A '
+      'and the name that is taken',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        await tester.enterText(_nameField, 'Reading list');
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(
+          409,
+          '{"title":"A bundle with that name already exists."}',
+        );
+        await _tapInFlight(tester, _saveButton);
+
+        await _tapInFlight(tester, _newButton);
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice(
+            'Could not save "Exam apps". Another bundle is already called '
+            '"Reading list".',
+          ),
+          findsOneWidget,
+        );
+        _expectNewDraft(tester);
+        _expectNoActionError();
+      },
+    );
+
+    testWidgets(
+      'a slow Save on A answering 403 after B opened: the calm admin wording, '
+      'naming A',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(403, '');
+        await _tapInFlight(tester, _saveButton);
+
+        await _tapInFlight(tester, _row('Reading list'));
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice(
+            'Could not save "Exam apps". Your account doesn\'t have admin '
+            'access. Ask an administrator to grant it.',
+          ),
+          findsOneWidget,
+        );
+        _expectReadingListEditor(tester);
+        _expectNoActionError();
+        expect(find.textContaining('ApiException'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'a slow Create of a new draft failing after A opened: the notice names '
+      'the draft, and Reopen puts the draft back',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _newButton);
+        await tester.enterText(_nameField, 'Draft');
+        await tester.enterText(
+          find.widgetWithText(TextField, 'e.g. *.geogebra.org'),
+          'example.org',
+        );
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(500, 'System.Exception: boom');
+        await _tapInFlight(tester, _saveButton);
+
+        await _tapInFlight(tester, _row('Exam apps'));
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice('Could not save "Draft". Please try again.'),
+          findsOneWidget,
+        );
+        expect(_editorName(tester), 'Exam apps');
+        expect(find.text('*.geogebra.org'), findsOneWidget);
+        _expectNoActionError();
+
+        await _tap(tester, _reopen);
+
+        expect(find.byType(SnackBar), findsNothing);
+        expect(_editorName(tester), 'Draft');
+        expect(find.text('example.org'), findsOneWidget);
+        expect(find.text('*.geogebra.org'), findsNothing);
+        expect(
+          find.descendant(of: _saveButton, matching: find.text('Create')),
+          findsOneWidget,
+        );
+        expect(find.text(_saveSentence), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'Reopen puts a failed Save\'s edit back in the editor, with its error, '
+      'and it can be saved',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        await tester.enterText(_nameField, 'Exam apps (spring)');
+        await tester.enterText(
+          find.widgetWithText(TextField, '*.geogebra.org'),
+          '*.desmos.com',
+        );
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(500, 'System.Exception: boom');
+        await _tapInFlight(tester, _saveButton);
+
+        await _tapInFlight(tester, _row('Reading list'));
+
+        gate.complete();
+        await tester.pumpAndSettle();
+        expect(_notice(_lateSaveExamApps), findsOneWidget);
+        _expectReadingListEditor(tester);
+
+        await _tap(tester, _reopen);
+
+        expect(find.byType(SnackBar), findsNothing);
+        expect(_editorName(tester), 'Exam apps (spring)');
+        expect(find.text('*.desmos.com'), findsOneWidget);
+        expect(find.text('*.example.com'), findsNothing);
+        expect(
+          find.descendant(of: _saveButton, matching: find.text('Save')),
+          findsOneWidget,
+        );
+        // The error it would have shown had the admin stayed on Exam apps.
+        expect(find.text(_saveSentence), findsOneWidget);
+
+        bundles.gate = null;
+        bundles.writeError = null;
+        await _tap(tester, _saveButton);
+
+        expect(bundles.store.first.name, 'Exam apps (spring)');
+        expect(bundles.store.first.entries.single.value, '*.desmos.com');
+        expect(_row('Exam apps (spring)'), findsOneWidget);
+        _expectNoActionError();
+      },
+    );
+
+    testWidgets(
+      'a slow Archive failing after B opened: a notice names it, with no '
+      'Reopen',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Lab tools'));
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = http.ClientException(
+          'Failed to fetch',
+          Uri.parse('http://localhost'),
+        );
+        await _confirm(tester, 'Archive', settle: false);
+
+        await _tapInFlight(tester, _row('Reading list'));
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice('Could not archive "Lab tools". Please try again.'),
+          findsOneWidget,
+        );
+        expect(_reopen, findsNothing);
+        _expectReadingListEditor(tester);
+        _expectNoActionError();
+        expect(_row('Lab tools'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'a slow Delete of A failing after New bundle: a notice names A',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(500, 'System.Exception: boom');
+        await _confirm(tester, 'Delete', settle: false);
+
+        await _tapInFlight(tester, _newButton);
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice('Could not delete "Exam apps". Please try again.'),
+          findsOneWidget,
+        );
+        expect(_reopen, findsNothing);
+        _expectNewDraft(tester);
+        _expectNoActionError();
+        expect(_row('Exam apps'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'a slow Delete of A answering 409 after B opened: the notice names A '
+      'and says to archive it',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(409, '');
+        await _confirm(tester, 'Delete', settle: false);
+
+        await _tapInFlight(tester, _row('Reading list'));
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(
+          _notice(
+            'Could not delete "Exam apps". A session has used it. Archive it '
+            'instead.',
+          ),
+          findsOneWidget,
+        );
+        _expectReadingListEditor(tester);
+        _expectNoActionError();
+      },
+    );
+
+    testWidgets(
+      'a Save on A failing while B is still opening is reported naming A, '
+      'not left under A\'s editor for B\'s open to clear',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(500, 'System.Exception: boom');
+        await _tapInFlight(tester, _saveButton);
+
+        final getGate = bundles.getGate = Completer<void>();
+        await _tapInFlight(tester, _row('Reading list'));
+        // Reading list hasn't opened yet: the editor still shows Exam apps.
+        expect(_editorName(tester), 'Exam apps');
+
+        gate.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+
+        expect(_notice(_lateSaveExamApps), findsOneWidget);
+        _expectNoActionError();
+
+        getGate.complete();
+        await tester.pumpAndSettle();
+
+        _expectReadingListEditor(tester);
+        _expectNoActionError();
+        expect(_notice(_lateSaveExamApps), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'a slow Save on A that succeeds after B opened shows no notice and no '
+      'error',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        final gate = bundles.gate = Completer<void>();
+        await _tapInFlight(tester, _saveButton);
+
+        await _tapInFlight(tester, _row('Reading list'));
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(find.byType(SnackBar), findsNothing);
+        _expectReadingListEditor(tester);
+        _expectNoActionError();
+      },
+    );
+
+    testWidgets(
+      'a Save that fails while the editor still holds its bundle shows under '
+      'the editor, not as a notice',
+      (tester) async {
+        final bundles = await _pumpPage(tester);
+        await _tap(tester, _row('Exam apps'));
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(500, 'System.Exception: boom');
+        await _tapInFlight(tester, _saveButton);
+
+        gate.complete();
+        await tester.pumpAndSettle();
+
+        expect(find.text(_saveSentence), findsOneWidget);
+        expect(find.byType(SnackBar), findsNothing);
+        expect(_editorName(tester), 'Exam apps');
+      },
+    );
+
+    testWidgets(
+      'the notice goes with the page, so Reopen can\'t outlive the draft it '
+      'puts back',
+      (tester) async {
+        final showPage = ValueNotifier<bool>(true);
+        addTearDown(showPage.dispose);
+        final bundles = await _pumpPage(tester, showPage: showPage);
+        await _tap(tester, _row('Exam apps'));
+        final gate = bundles.gate = Completer<void>();
+        bundles.writeError = ApiException(500, 'System.Exception: boom');
+        await _tapInFlight(tester, _saveButton);
+        await _tapInFlight(tester, _row('Reading list'));
+        gate.complete();
+        await tester.pumpAndSettle();
+        expect(_notice(_lateSaveExamApps), findsOneWidget);
+
+        showPage.value = false;
+        await tester.pumpAndSettle();
+
+        expect(find.text('Another page'), findsOneWidget);
+        expect(find.byType(SnackBar), findsNothing);
+        expect(_reopen, findsNothing);
+        expect(tester.takeException(), isNull);
       },
     );
   });

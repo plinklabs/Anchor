@@ -24,8 +24,9 @@ import 'support/e2e_binding.dart';
 // admin actually sees and triggers — navigating to Bundles, importing a file,
 // the result, and exporting — runs against the real composed app. So do the
 // page's failure paths: an import that can't save a bundle (#383), a
-// catalogue or a bundle that fails to load (#384), and a failed Save that
-// must stay with its bundle when the admin moves on (#385).
+// catalogue or a bundle that fails to load (#384), a failed Save that must
+// stay with its bundle when the admin moves on (#385), and that must still be
+// reported, naming its bundle, with the edit there to reopen (#386).
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -495,6 +496,132 @@ void main() {
       expect(find.text(nameTaken), findsNothing);
       expect(find.textContaining('ApiException'), findsNothing);
       expect(find.textContaining('System.'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a Save that fails after the admin opened another bundle is reported '
+    'naming its bundle, Reopen puts the edit back, and the notice goes with '
+    'the page (#386)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      BundleDetail bundle(String id, String name, String domain) =>
+          BundleDetail(
+            id: id,
+            name: name,
+            version: 1,
+            isArchived: false,
+            hasBeenUsed: false,
+            entries: [
+              BundleEntry(
+                kind: BundleEntryKind.domain,
+                value: domain,
+                matchType: BundleEntryMatchType.wildcard,
+              ),
+            ],
+          );
+      final bundles = _FakeBundles(<BundleDetail>[
+        bundle('b1', 'Exam apps', '*.geogebra.org'),
+        bundle('b2', 'Reading list', '*.example.com'),
+      ]);
+      final tokens = AuthTokenStore()
+        ..setSession(
+          token: 'fake-token',
+          account: const AccountInfo(
+            homeAccountId: 'home-1',
+            username: 'admin@school.example',
+            displayName: 'Admin',
+            department: null,
+          ),
+        );
+      await tester.pumpWidget(
+        AnchorDashboard(
+          tokens: tokens,
+          auth: _FakeAuth(),
+          api: _dummyClient(),
+          sessions: _FakeSessions(),
+          bundles: bundles,
+          classes: ClassesApi(_dummyClient()),
+          apiBaseUrl: Uri.parse('http://localhost'),
+          bundleFileIo: _FakeFileIo(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('nav-admin')));
+      await tester.pumpAndSettle();
+
+      const saveSentence = 'Could not save the bundle. Please try again.';
+      final save = find.byKey(const Key('bundles-save-button'));
+      final nameField = find.widgetWithText(TextField, 'Name');
+      final reopen = find.widgetWithText(SnackBarAction, 'Reopen');
+      Finder row(String name) => find.widgetWithText(InkWell, name);
+      String editorName() =>
+          tester.widget<TextField>(nameField).controller!.text;
+
+      /// Saves the editor's draft, which the backend answers slowly and then
+      /// with a 500, and opens Reading list before the answer lands. The Save
+      /// spinner never settles, so pump while the Save is in flight.
+      Future<void> saveThenOpenReadingList() async {
+        final gate = bundles.updateGate = Completer<void>();
+        bundles.updateError = ApiException(500, 'System.Exception: boom');
+        await tester.tap(save);
+        await tester.pump();
+        await tester.tap(row('Reading list'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(editorName(), 'Reading list');
+        gate.complete();
+        await tester.pumpAndSettle();
+      }
+
+      // The admin renames Exam apps and saves, then opens Reading list; the
+      // Save fails. Reading list's editor shows no error, and a notice names
+      // Exam apps.
+      await tester.tap(row('Exam apps'));
+      await tester.pumpAndSettle();
+      await tester.enterText(nameField, 'Exam apps (spring)');
+      await saveThenOpenReadingList();
+
+      expect(
+        find.text('Could not save "Exam apps". Please try again.'),
+        findsOneWidget,
+      );
+      expect(editorName(), 'Reading list');
+      expect(find.text('*.example.com'), findsOneWidget);
+      expect(find.text(saveSentence), findsNothing);
+      expect(find.textContaining('System.'), findsNothing);
+
+      // Reopen puts the edit back, with the error it would have shown, and
+      // it saves once the backend answers.
+      await tester.tap(reopen);
+      await tester.pumpAndSettle();
+      expect(editorName(), 'Exam apps (spring)');
+      expect(find.text('*.geogebra.org'), findsOneWidget);
+      expect(find.text(saveSentence), findsOneWidget);
+      expect(reopen, findsNothing);
+
+      bundles.updateGate = null;
+      bundles.updateError = null;
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(row('Exam apps (spring)'), findsOneWidget);
+      expect(find.text(saveSentence), findsNothing);
+
+      // Another late failure, and the admin leaves the page: the notice, and
+      // its Reopen, go with it.
+      await saveThenOpenReadingList();
+      const lateSave = 'Could not save "Exam apps (spring)". Please try again.';
+      expect(find.text(lateSave), findsOneWidget);
+      await tester.tap(find.byKey(const Key('nav-home')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('bundles-save-button')), findsNothing);
+      expect(find.text(lateSave), findsNothing);
+      expect(reopen, findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
