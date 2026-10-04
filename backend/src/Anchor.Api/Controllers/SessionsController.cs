@@ -66,6 +66,7 @@ public sealed class SessionsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<StartSessionResponse>> Start(
         [FromBody] StartSessionRequest request,
         CancellationToken cancellationToken)
@@ -86,6 +87,11 @@ public sealed class SessionsController : ControllerBase
             cancellationToken);
         if (!callerTeaches)
             return Forbid();
+
+        // An archived class is out of use (#395): Home's picker no longer
+        // offers it, and a stale page or another client can't start one either.
+        if (@class.IsArchived)
+            return Conflict(new { error = "class is archived; restore it before starting a session" });
 
         var bundleIds = (request.BundleIds ?? Array.Empty<Guid>()).Distinct().ToArray();
         if (bundleIds.Length > 0)

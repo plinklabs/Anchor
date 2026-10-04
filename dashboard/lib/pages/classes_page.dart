@@ -20,8 +20,14 @@ import 'add_student_search.dart';
 /// Magenta is the single spark, reserved for the constructive commits a teacher
 /// makes here: Save (the scope binding), Create (a new class), and the Add
 /// confirmation inside the student search. Every other affordance — New class,
-/// Import CSV, Populate from Graph, Delete / Remove — stays calm ink so the page
-/// reads like an instrument, not a console of buttons.
+/// Import CSV, Populate from Graph, Archive / Restore, Delete / Remove — stays
+/// calm ink so the page reads like an instrument, not a console of buttons.
+///
+/// Last year's classes are archived rather than kept in the list forever
+/// (#395): an archived class leaves the list and Home's class picker, and comes
+/// back with the Archived switch above the list, to restore it. Deleting a
+/// class with sessions deletes them too, so that dialog says how many and asks
+/// for the class's name first.
 ///
 /// Purely presentational: the roster/scope/import logic (validation, scope
 /// gating per #96, CSV parse, bulk import) is untouched.
@@ -45,6 +51,11 @@ class _ClassesPageState extends State<ClassesPage> {
   bool _loadingSchools = false;
   bool _savingCodes = false;
   bool _bulkImporting = false;
+  bool _changingArchive = false;
+
+  /// Whether the list shows archived classes too (#395). Off, it lists what
+  /// Home's picker offers.
+  bool _showArchived = false;
   ApiErrorMessage? _error;
   // Kept separate from [_error] (which carries class/roster failures): a failed
   // school-tag load is non-blocking, so it surfaces inline next to the School
@@ -85,16 +96,34 @@ class _ClassesPageState extends State<ClassesPage> {
       _error = null;
     });
     try {
-      final list = await widget.sessions.classes();
+      // Archived classes only when asked for (#395): the default list is the
+      // one Home's picker gets, which leaves them out.
+      final list = _showArchived
+          ? await widget.classes.listIncludingArchived()
+          : await widget.sessions.classes();
       if (!mounted) return;
+      final previous = _selected;
+      ClassSummary? kept;
+      for (final c in list) {
+        if (c.id == previous?.id) kept = c;
+      }
       setState(() {
         _classes = list;
-        if (_selected == null && list.isNotEmpty) {
+        // The Archived switch reloads the list: keep the class in the roster
+        // pane (and any unsaved scope edit) when it is still listed.
+        if (kept != null) {
+          _selected = kept;
+        } else if (list.isNotEmpty) {
           _selectClass(list.first, refreshRoster: false);
+        } else {
+          _selected = null;
+          _roster = null;
+          _lastImportResults = null;
         }
       });
-      if (_selected != null) {
-        await _loadRoster(_selected!);
+      final selected = _selected;
+      if (selected != null && selected.id != previous?.id) {
+        await _loadRoster(selected);
       }
     } catch (e) {
       if (!mounted) return;
@@ -203,16 +232,39 @@ class _ClassesPageState extends State<ClassesPage> {
     _selectClass(created);
   }
 
-  Future<void> _deleteClass() async {
+  void _toggleArchived(bool show) {
+    setState(() => _showArchived = show);
+    _loadClasses();
+  }
+
+  /// Takes a class out of the list and selects the first one left.
+  void _dropClass(String classId) {
+    setState(() {
+      _classes = _classes
+          ?.where((c) => c.id != classId)
+          .toList(growable: false);
+      _selected = null;
+      _roster = null;
+      _lastImportResults = null;
+      _error = null;
+    });
+    final remaining = _classes;
+    if (remaining != null && remaining.isNotEmpty) {
+      _selectClass(remaining.first);
+    }
+  }
+
+  Future<void> _archiveClass() async {
     final klass = _selected;
     if (klass == null) return;
     final l10n = AppLocalizations.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(l10n.classesDeleteClass),
-        content: Text(
-          l10n.classesDeleteClassBody(klass.name, klass.schoolYear),
+        title: Text(l10n.classesArchiveTitle),
+        content: SizedBox(
+          width: 460,
+          child: Text(l10n.classesArchiveBody(klass.name, klass.schoolYear)),
         ),
         actions: [
           TextButton(
@@ -220,40 +272,105 @@ class _ClassesPageState extends State<ClassesPage> {
             child: Text(l10n.actionCancel),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(ctx).colorScheme.error,
-            ),
+            key: const Key('classes-archive-confirm-button'),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(l10n.actionDelete),
+            child: Text(l10n.classesArchive),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
+    await _setArchived(klass, archived: true);
+  }
+
+  Future<void> _restoreClass() async {
+    final klass = _selected;
+    if (klass == null) return;
+    await _setArchived(klass, archived: false);
+  }
+
+  Future<void> _setArchived(
+    ClassSummary klass, {
+    required bool archived,
+  }) async {
+    final l10n = AppLocalizations.of(context);
+    setState(() {
+      _changingArchive = true;
+      _error = null;
+    });
     try {
-      await widget.classes.deleteClass(klass.id);
+      final updated = archived
+          ? await widget.classes.archiveClass(klass.id)
+          : await widget.classes.unarchiveClass(klass.id);
       if (!mounted) return;
-      setState(() {
-        _classes = _classes
-            ?.where((c) => c.id != klass.id)
-            .toList(growable: false);
-        _selected = null;
-        _roster = null;
-        _lastImportResults = null;
-        _error = null;
-      });
-      final remaining = _classes;
-      if (remaining != null && remaining.isNotEmpty) {
-        _selectClass(remaining.first);
+      if (updated.isArchived && !_showArchived) {
+        // Out of the list, as it is out of Home's picker.
+        _dropClass(updated.id);
+      } else {
+        setState(() {
+          _classes = _classes
+              ?.map((c) => c.id == updated.id ? updated : c)
+              .toList(growable: false);
+          if (_selected?.id == updated.id) _selected = updated;
+        });
       }
     } catch (e) {
       if (!mounted) return;
       setState(
         () => _error = describeApiError(
           e,
-          generic: l10n.classesDeleteError,
+          generic: archived
+              ? l10n.classesArchiveError
+              : l10n.classesRestoreError,
           notAuthorized: l10n.apiError403,
         ),
+      );
+    } finally {
+      if (mounted) setState(() => _changingArchive = false);
+    }
+  }
+
+  Future<void> _deleteClass() async {
+    final klass = _selected;
+    if (klass == null) return;
+    final l10n = AppLocalizations.of(context);
+    final choice = await showDialog<_DeleteChoice>(
+      context: context,
+      builder: (_) => _DeleteClassDialog(klass: klass),
+    );
+    if (choice == _DeleteChoice.archive) {
+      await _setArchived(klass, archived: true);
+      return;
+    }
+    if (choice != _DeleteChoice.delete) return;
+    // Only a delete the teacher confirmed with the session count in front of
+    // them takes sessions with it (#395). Without the flag the backend refuses
+    // a class that has sessions after all.
+    final includeSessions = klass.sessionCount > 0;
+    try {
+      await widget.classes.deleteClass(
+        klass.id,
+        includeSessions: includeSessions,
+      );
+      if (!mounted) return;
+      _dropClass(klass.id);
+    } catch (e) {
+      if (!mounted) return;
+      // A 409: with sessions, one of them is still running; without, one
+      // started since the list loaded, so the dialog didn't count it.
+      final conflict = e is ApiException && e.statusCode == 409;
+      setState(
+        () => _error = conflict
+            ? ApiErrorMessage(
+                includeSessions
+                    ? l10n.classesDeleteRunningError
+                    : l10n.classesDeleteHasSessionsError,
+              )
+            : describeApiError(
+                e,
+                generic: l10n.classesDeleteError,
+                notAuthorized: l10n.apiError403,
+              ),
       );
     }
   }
@@ -451,6 +568,8 @@ class _ClassesPageState extends State<ClassesPage> {
               classes: _classes,
               selected: _selected,
               loading: _loadingClasses,
+              showArchived: _showArchived,
+              onToggleArchived: _toggleArchived,
               onSelect: _selectClass,
               onCreate: _createClass,
             ),
@@ -480,6 +599,9 @@ class _ClassesPageState extends State<ClassesPage> {
                 : _RosterPane(
                     klass: _selected!,
                     onDeleteClass: _deleteClass,
+                    onArchiveClass: _archiveClass,
+                    onRestoreClass: _restoreClass,
+                    changingArchive: _changingArchive,
                     roster: _roster,
                     schools: _schools,
                     loadingSchools: _loadingSchools,
@@ -514,6 +636,8 @@ class _ClassList extends StatelessWidget {
     required this.classes,
     required this.selected,
     required this.loading,
+    required this.showArchived,
+    required this.onToggleArchived,
     required this.onSelect,
     required this.onCreate,
   });
@@ -521,6 +645,8 @@ class _ClassList extends StatelessWidget {
   final List<ClassSummary>? classes;
   final ClassSummary? selected;
   final bool loading;
+  final bool showArchived;
+  final void Function(bool) onToggleArchived;
   final void Function(ClassSummary) onSelect;
   final Future<void> Function() onCreate;
 
@@ -538,9 +664,30 @@ class _ClassList extends StatelessWidget {
             PlinkSpacing.s4,
             PlinkSpacing.s3,
           ),
-          child: Text(
-            l10n.classesListHeader,
-            style: monoLabel(PlinkColors.ink60),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  l10n.classesListHeader,
+                  style: monoLabel(PlinkColors.ink60),
+                ),
+              ),
+              // The way back to archived classes (#395), as on the Bundles
+              // page: a quiet switch on the header line.
+              Text(l10n.badgeArchived, style: monoLabel(PlinkColors.muted)),
+              const SizedBox(width: PlinkSpacing.s2),
+              Tooltip(
+                message: l10n.classesShowArchived,
+                child: Transform.scale(
+                  scale: 0.8,
+                  child: Switch(
+                    key: const Key('classes-show-archived'),
+                    value: showArchived,
+                    onChanged: onToggleArchived,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
         Padding(
@@ -657,6 +804,11 @@ class _ClassRow extends StatelessWidget {
                 ),
               ),
             ),
+            if (summary.isArchived)
+              Padding(
+                padding: const EdgeInsets.only(right: PlinkSpacing.s4),
+                child: PlinkBadge(AppLocalizations.of(context).badgeArchived),
+              ),
           ],
         ),
       ),
@@ -668,6 +820,9 @@ class _RosterPane extends StatelessWidget {
   const _RosterPane({
     required this.klass,
     required this.onDeleteClass,
+    required this.onArchiveClass,
+    required this.onRestoreClass,
+    required this.changingArchive,
     required this.roster,
     required this.schools,
     required this.loadingSchools,
@@ -693,6 +848,9 @@ class _RosterPane extends StatelessWidget {
 
   final ClassSummary klass;
   final Future<void> Function() onDeleteClass;
+  final Future<void> Function() onArchiveClass;
+  final Future<void> Function() onRestoreClass;
+  final bool changingArchive;
   final ClassMembersResponse? roster;
   final List<String>? schools;
   final bool loadingSchools;
@@ -730,21 +888,68 @@ class _RosterPane extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          // A Wrap, not a Row: with Archive beside Delete (#395), the actions
+          // drop under the title in a narrow pane instead of overflowing it.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: PlinkSpacing.s3,
+            runSpacing: PlinkSpacing.s3,
             children: [
-              Expanded(
-                child: Text(
-                  '${klass.name} (${klass.schoolYear})',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(color: PlinkColors.ink),
-                ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      '${klass.name} (${klass.schoolYear})',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.titleLarge?.copyWith(color: PlinkColors.ink),
+                    ),
+                  ),
+                  if (klass.isArchived) ...[
+                    const SizedBox(width: PlinkSpacing.s3),
+                    PlinkBadge(l10n.badgeArchived),
+                  ],
+                ],
               ),
-              // Calm ink — the destructive action never wears the spark.
-              OutlinedButton.icon(
-                icon: const Icon(Icons.delete_outline, size: 18),
-                label: Text(l10n.classesDeleteClass),
-                onPressed: () => onDeleteClass(),
+              Wrap(
+                spacing: PlinkSpacing.s2,
+                runSpacing: PlinkSpacing.s2,
+                children: [
+                  // Archive is the reversible way out of the lists (#395); an
+                  // archived class offers Restore in its place. Calm ink, like
+                  // Delete.
+                  OutlinedButton.icon(
+                    key: Key(
+                      klass.isArchived
+                          ? 'classes-restore-button'
+                          : 'classes-archive-button',
+                    ),
+                    icon: Icon(
+                      klass.isArchived
+                          ? Icons.unarchive_outlined
+                          : Icons.archive_outlined,
+                      size: 18,
+                    ),
+                    label: Text(
+                      klass.isArchived
+                          ? l10n.classesRestore
+                          : l10n.classesArchive,
+                    ),
+                    onPressed: changingArchive
+                        ? null
+                        : () => klass.isArchived
+                              ? onRestoreClass()
+                              : onArchiveClass(),
+                  ),
+                  // Calm ink — the destructive action never wears the spark.
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: Text(l10n.classesDeleteClass),
+                    onPressed: () => onDeleteClass(),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1201,11 +1406,20 @@ class _NewClassDialogState extends State<_NewClassDialog> {
       if (!mounted) return;
       setState(() {
         _saving = false;
-        _error = describeApiError(
-          e,
-          generic: l10n.classesCreateError,
-          notAuthorized: l10n.apiError403,
-        );
+        // The name and year belong to an archived class (#395): say so, so
+        // the teacher restores it rather than retrying.
+        _error = isArchivedClassConflict(e)
+            ? ApiErrorMessage(
+                l10n.classesCreateArchivedClash(
+                  _name.text.trim(),
+                  _schoolYear.text.trim(),
+                ),
+              )
+            : describeApiError(
+                e,
+                generic: l10n.classesCreateError,
+                notAuthorized: l10n.apiError403,
+              );
       });
     }
   }
@@ -1292,6 +1506,102 @@ class _NewClassDialogState extends State<_NewClassDialog> {
                   ),
                 )
               : Text(l10n.actionCreate),
+        ),
+      ],
+    );
+  }
+}
+
+/// What the teacher chose in [_DeleteClassDialog].
+enum _DeleteChoice { delete, archive }
+
+/// Confirms deleting a class (#395). A class without sessions gets a plain
+/// confirm. One with sessions says how many go with it, and the students'
+/// activity data with them, offers Archive as the way that keeps them, and
+/// enables Delete only once the teacher has typed the class's name.
+class _DeleteClassDialog extends StatefulWidget {
+  const _DeleteClassDialog({required this.klass});
+
+  final ClassSummary klass;
+
+  @override
+  State<_DeleteClassDialog> createState() => _DeleteClassDialogState();
+}
+
+class _DeleteClassDialogState extends State<_DeleteClassDialog> {
+  final _typedName = TextEditingController();
+
+  @override
+  void dispose() {
+    _typedName.dispose();
+    super.dispose();
+  }
+
+  bool get _hasSessions => widget.klass.sessionCount > 0;
+
+  bool get _confirmed =>
+      !_hasSessions || _typedName.text.trim() == widget.klass.name;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final klass = widget.klass;
+    return AlertDialog(
+      title: Text(l10n.classesDeleteClass),
+      content: !_hasSessions
+          ? Text(l10n.classesDeleteClassBody(klass.name, klass.schoolYear))
+          : SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    l10n.classesDeleteWithSessionsBody(
+                      klass.sessionCount,
+                      klass.name,
+                      klass.schoolYear,
+                    ),
+                  ),
+                  if (!klass.isArchived) ...[
+                    const SizedBox(height: PlinkSpacing.s3),
+                    Text(l10n.classesDeleteArchiveInstead),
+                  ],
+                  const SizedBox(height: PlinkSpacing.s4),
+                  TextField(
+                    key: const Key('classes-delete-type-name'),
+                    controller: _typedName,
+                    autofocus: true,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: l10n.classesDeleteTypeName(klass.name),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(l10n.actionCancel),
+        ),
+        if (_hasSessions && !klass.isArchived)
+          OutlinedButton(
+            key: const Key('classes-delete-archive-instead'),
+            onPressed: () => Navigator.of(context).pop(_DeleteChoice.archive),
+            child: Text(l10n.classesArchive),
+          ),
+        FilledButton(
+          key: const Key('classes-delete-confirm-button'),
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+          onPressed: _confirmed
+              ? () => Navigator.of(context).pop(_DeleteChoice.delete)
+              : null,
+          child: Text(
+            _hasSessions ? l10n.classesDeleteWithSessions : l10n.actionDelete,
+          ),
         ),
       ],
     );

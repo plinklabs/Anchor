@@ -75,6 +75,30 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task POST_sessions_for_an_archived_class_returns_409_until_it_is_restored()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.PostAsync($"/classes/{scenario.Class.Id}/archive", null)).StatusCode);
+
+        var refused = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            Assert.False(await db.Sessions.AnyAsync(s => s.ClassId == scenario.Class.Id));
+        }
+
+        await client.PostAsync($"/classes/{scenario.Class.Id}/unarchive", null);
+        var started = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
+        Assert.Equal(HttpStatusCode.Created, started.StatusCode);
+    }
+
+    [Fact]
     public async Task POST_sessions_with_unknown_bundle_returns_400()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
@@ -1144,6 +1168,24 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         // Class name comes from a join, not the live class lookup the dashboard
         // already has — exposing it here saves the page an extra round trip.
         Assert.Equal(scenario.Class.Name, body[0].ClassName);
+    }
+
+    [Fact]
+    public async Task GET_sessions_history_keeps_the_sessions_of_an_archived_class()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.PostAsync($"/classes/{scenario.Class.Id}/archive", null)).StatusCode);
+
+        // Archiving is not deleting (#395): the past session still lists.
+        var body = await client.GetFromJsonAsync<List<SessionHistoryEntry>>("/sessions/history");
+        Assert.Equal(scenario.Class.Name, Assert.Single(body!, e => e.Id == session.Id).ClassName);
     }
 
     [Fact]

@@ -174,9 +174,34 @@ final _calls = <_Call>[
     (j) => ClassSummary.fromJson(_map(j)),
   ),
   _Call(
+    'GET classes',
+    'ClassesApi.listIncludingArchived',
+    (a) => a.classes.listIncludingArchived(),
+    (j) => _list(j, ClassSummary.fromJson),
+  ),
+  _Call(
+    'POST classes/{id}/archive',
+    'ClassesApi.archiveClass',
+    (a) => a.classes.archiveClass('p1'),
+    (j) => ClassSummary.fromJson(_map(j)),
+  ),
+  _Call(
+    'POST classes/{id}/unarchive',
+    'ClassesApi.unarchiveClass',
+    (a) => a.classes.unarchiveClass('p1'),
+    (j) => ClassSummary.fromJson(_map(j)),
+  ),
+  _Call(
     'DELETE classes/{id}',
     'ClassesApi.deleteClass',
     (a) => a.classes.deleteClass('p1'),
+  ),
+  _Call(
+    'DELETE classes/{id}',
+    'ClassesApi.deleteClass',
+    (a) => a.classes.deleteClass('p1', includeSessions: true),
+    null,
+    'sessions included',
   ),
   _Call(
     'GET classes/{id}/members',

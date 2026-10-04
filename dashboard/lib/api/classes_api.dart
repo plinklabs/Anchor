@@ -133,6 +133,19 @@ class ClassMembershipImportResult {
       );
 }
 
+/// Whether [error] is the backend's 409 for a new class whose name and school
+/// year belong to an archived class (#395): the teacher restores that class
+/// instead of making a new one.
+bool isArchivedClassConflict(Object error) {
+  if (error is! ApiException || error.statusCode != 409) return false;
+  try {
+    final body = jsonDecode(error.message);
+    return body is Map<String, dynamic> && body['archived'] == true;
+  } on FormatException {
+    return false;
+  }
+}
+
 class ImportRow {
   ImportRow({required this.upn, this.role = 'Member'});
 
@@ -169,10 +182,45 @@ class ClassesApi {
     return ClassSummary.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
+  /// The classes the caller teaches, archived ones too (#395), for the Classes
+  /// page's archived view. `SessionsApi.classes` leaves them out.
+  Future<List<ClassSummary>> listIncludingArchived() async {
+    final res = await _client.get('classes?includeArchived=true');
+    _ensureOk(res);
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list
+        .map((e) => ClassSummary.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  /// Archives a class the caller teaches (#395): it leaves Home's picker and
+  /// no session starts for it; its roster and sessions stay.
+  Future<ClassSummary> archiveClass(String classId) async {
+    final res = await _client.post('classes/$classId/archive');
+    _ensureOk(res);
+    return ClassSummary.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  /// Restores an archived class (#395).
+  Future<ClassSummary> unarchiveClass(String classId) async {
+    final res = await _client.post('classes/$classId/unarchive');
+    _ensureOk(res);
+    return ClassSummary.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
   /// Deletes a class the caller teaches. The backend refuses (409) when the
-  /// class has session history.
-  Future<void> deleteClass(String classId) async {
-    final res = await _client.delete('classes/$classId');
+  /// class has sessions, unless [includeSessions] is set: then the class's
+  /// sessions, and the students' activity data under them, go too (#395).
+  /// With it, the backend still refuses while one of them is running.
+  Future<void> deleteClass(
+    String classId, {
+    bool includeSessions = false,
+  }) async {
+    final res = await _client.delete(
+      includeSessions
+          ? 'classes/$classId?includeSessions=true'
+          : 'classes/$classId',
+    );
     _ensureOk(res);
   }
 
