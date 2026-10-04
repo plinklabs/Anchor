@@ -203,12 +203,70 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String classesDeleteClassBody(String name, String year) {
-    return '$name ($year) verwijderen? Dit verwijdert de klas en haar klaslijst. Klassen met afgelopen sessies kunnen niet worden verwijderd.';
+    return '$name ($year) verwijderen? Dit verwijdert de klas en haar klaslijst.';
   }
 
   @override
   String get classesDeleteError =>
       'Kon de klas niet verwijderen. Probeer het opnieuw.';
+
+  @override
+  String classesDeleteWithSessionsBody(int count, String name, String year) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$name ($year) heeft $count sessies. Als je de klas verwijdert, verdwijnen die sessies ook, en daarmee de activiteitsgegevens van de leerlingen. Dit kan niet ongedaan worden gemaakt.',
+      one:
+          '$name ($year) heeft 1 sessie. Als je de klas verwijdert, verdwijnt die sessie ook, en daarmee de activiteitsgegevens van de leerlingen. Dit kan niet ongedaan worden gemaakt.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get classesDeleteArchiveInstead =>
+      'Wil je de klas alleen uit je lijsten halen? Archiveer ze dan: de sessies blijven bewaard en je kunt de klas later herstellen.';
+
+  @override
+  String classesDeleteTypeName(String name) {
+    return 'Typ $name om te bevestigen';
+  }
+
+  @override
+  String get classesDeleteWithSessions => 'Klas en sessies verwijderen';
+
+  @override
+  String get classesDeleteRunningError =>
+      'Er loopt nog een sessie van deze klas. Beëindig ze en verwijder dan de klas.';
+
+  @override
+  String get classesDeleteHasSessionsError =>
+      'Intussen is er een sessie voor deze klas gestart. Laad de pagina opnieuw en probeer het nog eens.';
+
+  @override
+  String get classesArchive => 'Archiveren';
+
+  @override
+  String get classesArchiveTitle => 'Klas archiveren?';
+
+  @override
+  String classesArchiveBody(String name, String year) {
+    return '$name ($year) verdwijnt uit je klassenlijst en uit de klaskeuze op het startscherm, en er kan geen sessie meer voor starten. De klaslijst en afgelopen sessies blijven bewaard. Je kunt de klas herstellen onder Gearchiveerd, boven de klassenlijst.';
+  }
+
+  @override
+  String get classesArchiveError =>
+      'Kon de klas niet archiveren. Probeer het opnieuw.';
+
+  @override
+  String get classesRestore => 'Herstellen';
+
+  @override
+  String get classesRestoreError =>
+      'Kon de klas niet herstellen. Probeer het opnieuw.';
+
+  @override
+  String get classesShowArchived => 'Gearchiveerde klassen tonen';
 
   @override
   String get classesSaveCodesError =>
@@ -306,6 +364,11 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get classesCreateError =>
       'Kon de klas niet aanmaken. Probeer het opnieuw.';
+
+  @override
+  String classesCreateArchivedClash(String name, String year) {
+    return '$name ($year) bestaat al en is gearchiveerd. Herstel die klas: zet Gearchiveerd aan boven de klassenlijst.';
+  }
 
   @override
   String get classesNameLabel => 'Naam';

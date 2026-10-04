@@ -6,6 +6,8 @@ using Anchor.Api.Controllers;
 using Anchor.Api.Tests.FakeAuth;
 using Anchor.Api.Users;
 using Anchor.Domain.Classes;
+using Anchor.Domain.Events;
+using Anchor.Domain.Sessions;
 using Anchor.Domain.Users;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -225,6 +227,317 @@ public sealed class ClassesEndpointTests : IClassFixture<AnchorApiFactory>
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
         Assert.True(await db.Classes.AnyAsync(c => c.Id == scenario.Class.Id));
+    }
+
+    // ------- Archiving a class, and deleting it with its sessions (#395) -------
+
+    [Fact]
+    public async Task GET_classes_leaves_archived_classes_out_unless_asked_for_them()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var archived = await client.PostAsync($"/classes/{scenario.Class.Id}/archive", null);
+        Assert.Equal(HttpStatusCode.OK, archived.StatusCode);
+        Assert.True((await archived.Content.ReadFromJsonAsync<ClassSummary>())!.IsArchived);
+
+        // Home's class picker asks without the flag, so it never offers it.
+        var active = await client.GetFromJsonAsync<List<ClassSummary>>("/classes");
+        Assert.DoesNotContain(active!, c => c.Id == scenario.Class.Id);
+
+        // The Classes page asks for archived classes too, to show and restore them.
+        var all = await client.GetFromJsonAsync<List<ClassSummary>>("/classes?includeArchived=true");
+        Assert.True(Assert.Single(all!, c => c.Id == scenario.Class.Id).IsArchived);
+
+        var restored = await client.PostAsync($"/classes/{scenario.Class.Id}/unarchive", null);
+        Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
+        Assert.False((await restored.Content.ReadFromJsonAsync<ClassSummary>())!.IsArchived);
+        active = await client.GetFromJsonAsync<List<ClassSummary>>("/classes");
+        Assert.False(Assert.Single(active!, c => c.Id == scenario.Class.Id).IsArchived);
+    }
+
+    [Fact]
+    public async Task POST_class_archive_and_unarchive_are_idempotent_and_keep_the_roster()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        for (var i = 0; i < 2; i++)
+        {
+            var response = await client.PostAsync($"/classes/{scenario.Class.Id}/archive", null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.True((await response.Content.ReadFromJsonAsync<ClassSummary>())!.IsArchived);
+        }
+
+        // Archived, the class keeps its roster.
+        var roster = await client.GetFromJsonAsync<ClassMembersResponse>($"/classes/{scenario.Class.Id}/members");
+        Assert.Equal(3, roster!.Members.Count);
+
+        for (var i = 0; i < 2; i++)
+        {
+            var response = await client.PostAsync($"/classes/{scenario.Class.Id}/unarchive", null);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.False((await response.Content.ReadFromJsonAsync<ClassSummary>())!.IsArchived);
+        }
+    }
+
+    [Fact]
+    public async Task POST_class_archive_is_403_for_a_class_the_caller_does_not_teach_and_404_for_a_missing_one()
+    {
+        var owned = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, owned.Teacher);
+
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.PostAsync($"/classes/{other.Class.Id}/archive", null)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await client.PostAsync($"/classes/{other.Class.Id}/unarchive", null)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.NotFound,
+            (await client.PostAsync($"/classes/{Guid.NewGuid()}/archive", null)).StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        Assert.False((await db.Classes.SingleAsync(c => c.Id == other.Class.Id)).IsArchived);
+    }
+
+    [Fact]
+    public async Task GET_classes_counts_every_session_of_the_class_whoever_started_it()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var colleague = await AddColleagueAsync(scenario.Class.Id);
+        var students = new[] { scenario.Students[0].Id };
+        await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, students, ended: true);
+        await TestSeed.AddSessionAsync(_factory, colleague.Id, scenario.Class.Id, students, ended: true);
+        await TestSeed.AddSessionAsync(_factory, colleague.Id, scenario.Class.Id, students);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var classes = await client.GetFromJsonAsync<List<ClassSummary>>("/classes");
+        Assert.Equal(3, Assert.Single(classes!, c => c.Id == scenario.Class.Id).SessionCount);
+
+        var created = await client.PostAsJsonAsync(
+            "/classes", new CreateClassRequest("Fresh-" + Guid.NewGuid().ToString("N")[..6], "2025-2026"));
+        Assert.Equal(0, (await created.Content.ReadFromJsonAsync<ClassSummary>())!.SessionCount);
+    }
+
+    [Fact]
+    public async Task POST_classes_409_says_when_the_class_with_that_name_is_archived()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var request = new CreateClassRequest(scenario.Class.Name, scenario.Class.SchoolYear);
+
+        var activeClash = await client.PostAsJsonAsync("/classes", request);
+        Assert.Equal(HttpStatusCode.Conflict, activeClash.StatusCode);
+        Assert.False((await activeClash.Content.ReadFromJsonAsync<JsonObject>())!["archived"]!.GetValue<bool>());
+
+        await client.PostAsync($"/classes/{scenario.Class.Id}/archive", null);
+
+        // The unique (SchoolYear, Name) index still covers the archived class;
+        // the 409 says so, so the teacher restores it instead (the dashboard
+        // reads "archived").
+        var archivedClash = await client.PostAsJsonAsync("/classes", request);
+        Assert.Equal(HttpStatusCode.Conflict, archivedClash.StatusCode);
+        var body = (await archivedClash.Content.ReadFromJsonAsync<JsonObject>())!;
+        Assert.True(body["archived"]!.GetValue<bool>());
+        Assert.Contains("archived", body["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task DELETE_class_with_includeSessions_deletes_its_sessions_and_everything_under_them()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var colleague = await AddColleagueAsync(scenario.Class.Id);
+        var studentIds = scenario.Students.Select(s => s.Id).ToList();
+        var bundle = await TestSeed.AddBundleAsync(_factory, "Bundle-" + Guid.NewGuid().ToString("N")[..6]);
+        var own = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, studentIds, ended: true);
+        // Any teacher of the class may delete it, sessions a colleague started included.
+        var colleagues = await TestSeed.AddSessionAsync(_factory, colleague.Id, scenario.Class.Id, studentIds, ended: true);
+        await AddSessionDataAsync(own.Id, scenario.Students[0].Id, bundle.Id);
+        await AddSessionDataAsync(colleagues.Id, scenario.Students[1].Id, bundle.Id);
+
+        // Another class's session, which must stay.
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var kept = await TestSeed.AddSessionAsync(
+            _factory, other.Teacher.Id, other.Class.Id, new[] { other.Students[0].Id }, ended: true);
+        await AddSessionDataAsync(kept.Id, other.Students[0].Id);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.DeleteAsync($"/classes/{scenario.Class.Id}?includeSessions=true");
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var gone = new[] { own.Id, colleagues.Id };
+        Assert.False(await db.Classes.AnyAsync(c => c.Id == scenario.Class.Id));
+        Assert.False(await db.ClassMemberships.AnyAsync(m => m.ClassId == scenario.Class.Id));
+        Assert.False(await db.Sessions.AnyAsync(s => gone.Contains(s.Id)));
+        Assert.False(await db.SessionParticipants.AnyAsync(p => gone.Contains(p.SessionId)));
+        Assert.False(await db.Events.AnyAsync(e => gone.Contains(e.SessionId)));
+        // The per-student activity counts (the privacy reason for #395).
+        Assert.False(await db.SessionEventSummaries.AnyAsync(s => gone.Contains(s.SessionId)));
+        Assert.False(await db.SessionUnblockGrants.AnyAsync(g => gone.Contains(g.SessionId)));
+        Assert.False(await db.SessionWideUnblockGrants.AnyAsync(g => gone.Contains(g.SessionId)));
+        Assert.False(await db.SessionBundles.AnyAsync(sb => gone.Contains(sb.SessionId)));
+
+        // The people and the bundle stay; so does the other class's session.
+        Assert.Equal(3, await db.Users.CountAsync(u => studentIds.Contains(u.Id) || u.Id == colleague.Id));
+        Assert.True(await db.Bundles.AnyAsync(b => b.Id == bundle.Id));
+        Assert.True(await db.Sessions.AnyAsync(s => s.Id == kept.Id));
+        Assert.True(await db.SessionEventSummaries.AnyAsync(s => s.SessionId == kept.Id));
+        Assert.True(await db.Events.AnyAsync(e => e.SessionId == kept.Id));
+    }
+
+    [Fact]
+    public async Task DELETE_class_with_includeSessions_refuses_while_a_session_of_the_class_runs()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var students = new[] { scenario.Students[0].Id };
+        var ended = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, students, ended: true);
+        var running = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, students);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.DeleteAsync($"/classes/{scenario.Class.Id}?includeSessions=true");
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("running", (await response.Content.ReadFromJsonAsync<JsonObject>())!["error"]!.GetValue<string>());
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        Assert.True(await db.Classes.AnyAsync(c => c.Id == scenario.Class.Id));
+        Assert.Equal(2, await db.Sessions.CountAsync(s => s.Id == ended.Id || s.Id == running.Id));
+    }
+
+    [Fact]
+    public async Task DELETE_class_with_includeSessions_is_403_for_a_class_the_caller_does_not_teach()
+    {
+        var owned = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, other.Teacher.Id, other.Class.Id, new[] { other.Students[0].Id }, ended: true);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, owned.Teacher);
+
+        var response = await client.DeleteAsync($"/classes/{other.Class.Id}?includeSessions=true");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        Assert.True(await db.Sessions.AnyAsync(s => s.Id == session.Id));
+    }
+
+    [Fact]
+    public async Task DELETE_class_with_includeSessions_deletes_a_class_without_sessions_too()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.DeleteAsync($"/classes/{scenario.Class.Id}?includeSessions=true");
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_bundle_used_only_in_a_deleted_class_sessions_reads_as_unused_and_can_be_deleted_for_good()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var bundle = await TestSeed.AddBundleAsync(_factory, "Bundle-" + Guid.NewGuid().ToString("N")[..6]);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { scenario.Students[0].Id }, ended: true);
+        await AddSessionDataAsync(session.Id, scenario.Students[0].Id, bundle.Id);
+        var admin = await TestSeed.AddUserAsync(_factory, UserRole.Admin, "Admin " + Guid.NewGuid().ToString("N")[..6]);
+
+        using var teacher = _factory.CreateClient();
+        TestAuth.SetTeacher(teacher, scenario.Teacher);
+        using var adminClient = _factory.CreateClient();
+        TestAuth.SetAdmin(adminClient, admin);
+
+        Assert.True((await teacher.GetFromJsonAsync<BundleDetail>($"/bundles/{bundle.Id}"))!.HasBeenUsed);
+
+        var deleted = await teacher.DeleteAsync($"/classes/{scenario.Class.Id}?includeSessions=true");
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+
+        // HasBeenUsed comes from SessionBundles, which went with the sessions.
+        Assert.False((await teacher.GetFromJsonAsync<BundleDetail>($"/bundles/{bundle.Id}"))!.HasBeenUsed);
+        var hardDelete = await adminClient.DeleteAsync($"/bundles/{bundle.Id}?hard=true");
+        Assert.Equal(HttpStatusCode.NoContent, hardDelete.StatusCode);
+    }
+
+    /// Makes a new teacher a Teacher of the class too: a colleague.
+    private async Task<User> AddColleagueAsync(Guid classId)
+    {
+        var colleague = await TestSeed.AddUserAsync(
+            _factory, UserRole.Teacher, "Colleague " + Guid.NewGuid().ToString("N")[..6]);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        db.ClassMemberships.Add(new ClassMembership
+        {
+            ClassId = classId,
+            UserId = colleague.Id,
+            Role = ClassMembershipRole.Teacher,
+        });
+        await db.SaveChangesAsync();
+        return colleague;
+    }
+
+    /// Fills in what a session leaves behind for a student: an event, its
+    /// activity count, an unblock grant, a whole-class grant and, given one, a
+    /// bundle.
+    private async Task AddSessionDataAsync(Guid sessionId, Guid studentId, Guid? bundleId = null)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var at = DateTimeOffset.UtcNow;
+        db.Events.Add(new Event
+        {
+            SessionId = sessionId,
+            UserId = studentId,
+            Kind = EventKind.BlockedUrl,
+            PayloadJson = "{}",
+            OccurredAt = at,
+        });
+        db.SessionEventSummaries.Add(new SessionEventSummary
+        {
+            SessionId = sessionId,
+            UserId = studentId,
+            Kind = EventKind.BlockedUrl,
+            Count = 3,
+            FirstAt = at,
+            LastAt = at,
+        });
+        db.SessionUnblockGrants.Add(new SessionUnblockGrant
+        {
+            SessionId = sessionId,
+            UserId = studentId,
+            Host = "example.com",
+            GrantedAt = at,
+        });
+        db.SessionWideUnblockGrants.Add(new SessionWideUnblockGrant
+        {
+            SessionId = sessionId,
+            Host = "example.org",
+            GrantedAt = at,
+        });
+        if (bundleId is { } id)
+            db.SessionBundles.Add(new SessionBundle { SessionId = sessionId, BundleId = id });
+        await db.SaveChangesAsync();
     }
 
     [Fact]

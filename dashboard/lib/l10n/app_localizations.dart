@@ -437,7 +437,7 @@ abstract class AppLocalizations {
   /// No description provided for @classesDeleteClassBody.
   ///
   /// In en, this message translates to:
-  /// **'Delete {name} ({year})? This removes the class and its roster. Classes with past sessions cannot be deleted.'**
+  /// **'Delete {name} ({year})? This removes the class and its roster.'**
   String classesDeleteClassBody(String name, String year);
 
   /// No description provided for @classesDeleteError.
@@ -445,6 +445,84 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not delete class. Please try again.'**
   String get classesDeleteError;
+
+  /// The delete dialog for a class with sessions (#395).
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{{name} ({year}) has 1 session. Deleting the class deletes it too, and with it the students\' activity data. This can\'t be undone.} other{{name} ({year}) has {count} sessions. Deleting the class deletes them too, and with them the students\' activity data. This can\'t be undone.}}'**
+  String classesDeleteWithSessionsBody(int count, String name, String year);
+
+  /// No description provided for @classesDeleteArchiveInstead.
+  ///
+  /// In en, this message translates to:
+  /// **'Only want it out of your lists? Archive it instead: its sessions stay, and you can restore it later.'**
+  String get classesDeleteArchiveInstead;
+
+  /// No description provided for @classesDeleteTypeName.
+  ///
+  /// In en, this message translates to:
+  /// **'Type {name} to confirm'**
+  String classesDeleteTypeName(String name);
+
+  /// No description provided for @classesDeleteWithSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete class and sessions'**
+  String get classesDeleteWithSessions;
+
+  /// No description provided for @classesDeleteRunningError.
+  ///
+  /// In en, this message translates to:
+  /// **'A session of this class is still running. End it, then delete the class.'**
+  String get classesDeleteRunningError;
+
+  /// No description provided for @classesDeleteHasSessionsError.
+  ///
+  /// In en, this message translates to:
+  /// **'A session was started for this class since the page loaded. Reload the page and try again.'**
+  String get classesDeleteHasSessionsError;
+
+  /// No description provided for @classesArchive.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive'**
+  String get classesArchive;
+
+  /// No description provided for @classesArchiveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive class?'**
+  String get classesArchiveTitle;
+
+  /// No description provided for @classesArchiveBody.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} ({year}) leaves your class list and the class picker on Home, and no session can start for it. Its roster and past sessions stay. You can restore it under Archived, above the class list.'**
+  String classesArchiveBody(String name, String year);
+
+  /// No description provided for @classesArchiveError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not archive the class. Please try again.'**
+  String get classesArchiveError;
+
+  /// No description provided for @classesRestore.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore'**
+  String get classesRestore;
+
+  /// No description provided for @classesRestoreError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not restore the class. Please try again.'**
+  String get classesRestoreError;
+
+  /// No description provided for @classesShowArchived.
+  ///
+  /// In en, this message translates to:
+  /// **'Show archived classes'**
+  String get classesShowArchived;
 
   /// No description provided for @classesSaveCodesError.
   ///
@@ -607,6 +685,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not create class. Please try again.'**
   String get classesCreateError;
+
+  /// No description provided for @classesCreateArchivedClash.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} ({year}) already exists and is archived. Restore it instead: switch on Archived above the class list.'**
+  String classesCreateArchivedClash(String name, String year);
 
   /// No description provided for @classesNameLabel.
   ///

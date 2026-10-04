@@ -417,6 +417,9 @@ public sealed class RestContractTests : IClassFixture<RestContractTests.Contract
         var created = await Call(teacher, "POST classes", [],
             new CreateClassRequest($"Contract {suffix}", "2025-2026", school, "3B"));
         await Call(teacher, "PATCH classes/{id}", [Id(created)], new UpdateClassRequest(school, "3C"));
+        await Call(teacher, "POST classes/{id}/archive", [Id(created)]);
+        await Call(teacher, "GET classes", [], query: "includeArchived=true");
+        await Call(teacher, "POST classes/{id}/unarchive", [Id(created)]);
         await Call(teacher, "GET classes/{id}/members", [classId]);
         await Call(teacher, "POST classes/{id}/members", [classId],
             new AddClassMemberRequest(Guid.NewGuid(), "Placeholder", ClassMembershipRole.Member));

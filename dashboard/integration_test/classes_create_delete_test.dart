@@ -101,7 +101,10 @@ class _FakeClasses extends ClassesApi {
   }
 
   @override
-  Future<void> deleteClass(String classId) async {
+  Future<void> deleteClass(
+    String classId, {
+    bool includeSessions = false,
+  }) async {
     _store.removeWhere((c) => c.id == classId);
   }
 }

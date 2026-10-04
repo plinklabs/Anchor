@@ -200,11 +200,69 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String classesDeleteClassBody(String name, String year) {
-    return 'Delete $name ($year)? This removes the class and its roster. Classes with past sessions cannot be deleted.';
+    return 'Delete $name ($year)? This removes the class and its roster.';
   }
 
   @override
   String get classesDeleteError => 'Could not delete class. Please try again.';
+
+  @override
+  String classesDeleteWithSessionsBody(int count, String name, String year) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$name ($year) has $count sessions. Deleting the class deletes them too, and with them the students\' activity data. This can\'t be undone.',
+      one:
+          '$name ($year) has 1 session. Deleting the class deletes it too, and with it the students\' activity data. This can\'t be undone.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get classesDeleteArchiveInstead =>
+      'Only want it out of your lists? Archive it instead: its sessions stay, and you can restore it later.';
+
+  @override
+  String classesDeleteTypeName(String name) {
+    return 'Type $name to confirm';
+  }
+
+  @override
+  String get classesDeleteWithSessions => 'Delete class and sessions';
+
+  @override
+  String get classesDeleteRunningError =>
+      'A session of this class is still running. End it, then delete the class.';
+
+  @override
+  String get classesDeleteHasSessionsError =>
+      'A session was started for this class since the page loaded. Reload the page and try again.';
+
+  @override
+  String get classesArchive => 'Archive';
+
+  @override
+  String get classesArchiveTitle => 'Archive class?';
+
+  @override
+  String classesArchiveBody(String name, String year) {
+    return '$name ($year) leaves your class list and the class picker on Home, and no session can start for it. Its roster and past sessions stay. You can restore it under Archived, above the class list.';
+  }
+
+  @override
+  String get classesArchiveError =>
+      'Could not archive the class. Please try again.';
+
+  @override
+  String get classesRestore => 'Restore';
+
+  @override
+  String get classesRestoreError =>
+      'Could not restore the class. Please try again.';
+
+  @override
+  String get classesShowArchived => 'Show archived classes';
 
   @override
   String get classesSaveCodesError =>
@@ -300,6 +358,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get classesCreateError => 'Could not create class. Please try again.';
+
+  @override
+  String classesCreateArchivedClash(String name, String year) {
+    return '$name ($year) already exists and is archived. Restore it instead: switch on Archived above the class list.';
+  }
 
   @override
   String get classesNameLabel => 'Name';
