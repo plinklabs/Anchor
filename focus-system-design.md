@@ -45,7 +45,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 │  └─────────────┬───────────────────┘    │
 │                │                        │
 │  ┌─────────────▼───────────────────┐    │
-│  │ Azure SQL (Serverless)          │    │
+│  │ Azure SQL (Standard S0)         │    │
 │  │ • users, classes, sessions      │    │
 │  │ • allowlists, events            │    │
 │  └─────────────────────────────────┘    │
@@ -66,8 +66,8 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 | Browser extension | Edge (Chromium) extension, TypeScript | Single browser to support; observes URLs and active tab from inside Edge. |
 | Backend API | ASP.NET Core on Azure App Service | Pairs naturally with the C# agent, shared models, mature SignalR support. |
 | Realtime channel | SignalR | Push from teacher → student agents (start/stop session), report from student → backend (foreground events, URL events). |
-| Database | Azure SQL, Serverless tier | Data is relational; serverless tier auto-pauses outside school hours; cheap and EF Core works well. |
-| Event log overflow | Prune raw events > 30 days, keep summaries | Avoids growing the SQL DB unboundedly. Revisit later if analytics needs grow. |
+| Database | Azure SQL, Standard S0 (DTU) | Data is relational and EF Core works well. Started on the serverless tier for its auto-pause, but connected agents keep the database awake through the school day, so a fixed-price tier is cheaper at rollout scale (#341). |
+| Event log overflow | Prune raw events > 14 days, keep summaries | Avoids growing the SQL DB unboundedly and keeps no more per-event student data than reviewing recent lessons needs (#345). Revisit later if analytics needs grow. |
 | Teacher dashboard | Flutter Web on Azure Static Web Apps | Developer is already productive in Flutter; internal tool so initial-load weight is acceptable. |
 | Auth | Microsoft Entra ID | Students and teachers already have school accounts; Edge and the agent can auth silently via WAM. |
 
@@ -91,15 +91,16 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 
 ### 5.2 During a focus session
 
-- Receives a `SessionStart` message via SignalR with the allowlist for this session.
+- Receives a `SessionStart` message via SignalR with the allowlist for this session. An agent that wasn't connected when the session started (asleep, off the network, or still connecting) asks the backend for it as soon as it connects, and carries on as if the message had arrived (#356). The extension does the same.
 - Shows a brief join confirmation: *"Mr. De Vos started a focus session. Joining in 5s. [Cancel]"*. Decline is logged.
 - Once joined:
   - Subscribes to `EVENT_SYSTEM_FOREGROUND` via `SetWinEventHook`.
   - On every foreground change, identifies the app (process name, executable path, signed publisher).
   - If the new foreground app is **on the allowlist**: report and do nothing.
   - If the new foreground app is **not on the allowlist**: report the event, minimize that window (`ShowWindow` with `SW_MINIMIZE`), and bring the agent's overlay (or the most recently allowed app) back to the foreground.
+  - The report names the app (process name, signed publisher) and whether it was blocked. It never includes the window title or the executable path: titles carry document names, chat partners and search terms, and paths carry the Windows user name (#345).
 - Edge is treated as one allowlisted "app" while the extension is responsible for URL-level filtering inside it.
-- When the session ends (teacher action, timer expiry, or class period end): unsubscribes from hooks, hides overlay, returns to idle.
+- When the session ends (teacher action, or the backend ending a session still running four hours after it started, #345): unsubscribes from hooks, hides overlay, returns to idle. An agent that was offline when the session ended (asleep, or off the network) asks the backend whether its session is still on as soon as it reconnects, and returns to idle if not (#354). The extension does the same.
 
 ### 5.3 Native interop layer
 
@@ -196,7 +197,7 @@ Event                (id, session_id, user_id, kind, payload_json, occurred_at)
                                 heartbeat_lost, agent_killed, manual_leave }
 ```
 
-Events older than 30 days are pruned. Aggregated counts per session per student are kept indefinitely for reporting.
+Events older than 14 days are pruned once their session has ended. Aggregated counts per session per student are kept indefinitely for reporting. A session the teacher forgets to end is ended automatically four hours after it started, so its events are summarised and pruned like any other (#345).
 
 ## 10. Auth flow
 

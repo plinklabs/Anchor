@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import 'api/admins_api.dart';
@@ -107,19 +108,31 @@ class AnchorDashboard extends StatefulWidget {
 }
 
 class _AnchorDashboardState extends State<AnchorDashboard> {
-  late final _router = buildRouter(
-    tokens: widget.tokens,
-    auth: widget.auth,
-    sessions: widget.sessions,
-    bundles: widget.bundles,
-    classes: widget.classes,
-    admins: widget.admins ?? AdminsApi(widget.api),
-    schools: widget.schools ?? SchoolsApi(widget.api),
-    apiBaseUrl: widget.apiBaseUrl,
-    hubClientFactory: widget.hubClientFactory,
-    bundleFileIo: widget.bundleFileIo,
-    loginSilentTimeout: widget.loginSilentTimeout,
-  );
+  // Built in initState, before the boot gate below renders anything (#378).
+  // GoRouter reads the location the page was loaded at (a deep link, or the
+  // page being reloaded) from `platformDispatcher.defaultRouteName` when it is
+  // constructed, and the web engine resets that to `/` as soon as anything
+  // talks to the navigation channel. Building it first means it holds the
+  // requested location before the gate and the session restore run.
+  late final GoRouter _router;
+
+  @override
+  void initState() {
+    super.initState();
+    _router = buildRouter(
+      tokens: widget.tokens,
+      auth: widget.auth,
+      sessions: widget.sessions,
+      bundles: widget.bundles,
+      classes: widget.classes,
+      admins: widget.admins ?? AdminsApi(widget.api),
+      schools: widget.schools ?? SchoolsApi(widget.api),
+      apiBaseUrl: widget.apiBaseUrl,
+      hubClientFactory: widget.hubClientFactory,
+      bundleFileIo: widget.bundleFileIo,
+      loginSilentTimeout: widget.loginSilentTimeout,
+    );
+  }
 
   // Rehydrate the session from MSAL before the router runs, so a reload (or a
   // reopened tab) with a still-valid cached session lands straight on the app
@@ -188,13 +201,20 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
         if (snapshot.connectionState != ConnectionState.done) {
           // Quiet boot gate while we check for a restorable session, so a
           // reload never flashes the login page before rehydration resolves.
+          //
+          // `builder`, not `home` (#378): an app with a `home` builds a
+          // Navigator, which reports `/` to the engine. On web that rewrites
+          // the URL and makes the engine forget the location the page was
+          // loaded at, so every deep link and every reload opened Home. With
+          // only a `builder` there is no Navigator, and the URL is left for
+          // the router.
           return MaterialApp(
             title: 'Anchor',
             theme: _theme,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
             localeResolutionCallback: _resolveLocale,
-            home: const Scaffold(
+            builder: (context, _) => const Scaffold(
               backgroundColor: PlinkColors.paper,
               body: Center(child: CircularProgressIndicator()),
             ),

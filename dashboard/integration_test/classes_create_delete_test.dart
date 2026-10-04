@@ -5,9 +5,11 @@ import 'package:anchor_dashboard/api/classes_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/main.dart';
+import 'package:anchor_dashboard/pages/classes_page.dart' show schoolYearFor;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for creating and deleting a class from the Classes page (#152).
 //
@@ -99,13 +101,16 @@ class _FakeClasses extends ClassesApi {
   }
 
   @override
-  Future<void> deleteClass(String classId) async {
+  Future<void> deleteClass(
+    String classId, {
+    bool includeSessions = false,
+  }) async {
     _store.removeWhere((c) => c.id == classId);
   }
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets(
     'teacher creates a class then deletes it from the Classes page (#152)',
@@ -155,13 +160,24 @@ void main() {
       await tester.tap(find.widgetWithText(OutlinedButton, 'New class'));
       await tester.pumpAndSettle();
       expect(find.widgetWithText(AlertDialog, 'New class'), findsOneWidget);
+
+      // The dialog fills in the school year running today, so work that out
+      // the way the dialog does. A hard-coded year went stale when the next
+      // one started on 1 August 2026 (#375).
+      final schoolYear = schoolYearFor(DateTime.now());
+      final schoolYearField = find.widgetWithText(TextField, 'School year');
+      expect(
+        tester.widget<TextField>(schoolYearField).controller!.text,
+        schoolYear,
+      );
+
       await tester.enterText(find.widgetWithText(TextField, 'Name'), '4B');
       await tester.pump();
       await tester.tap(find.widgetWithText(ElevatedButton, 'Create'));
       await tester.pumpAndSettle();
 
       // The new class is selected and its roster header is showing.
-      expect(find.text('4B (2025-2026)'), findsOneWidget);
+      expect(find.text('4B ($schoolYear)'), findsOneWidget);
 
       // Delete it again, through the confirm dialog.
       await tester.tap(find.widgetWithText(OutlinedButton, 'Delete class'));
@@ -172,7 +188,7 @@ void main() {
 
       // Back to the original class auto-selected; the deleted one is gone, and
       // no overflow or other exception fired during the dialog flow.
-      expect(find.text('4B (2025-2026)'), findsNothing);
+      expect(find.text('4B ($schoolYear)'), findsNothing);
       expect(find.text('3A (2025-2026)'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

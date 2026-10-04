@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Launches the agent's `--show-test-toast` self-test, screenshots the toast
     window via BitBlt+CAPTUREBLT, and prints the captured rect.
@@ -23,6 +23,23 @@
     `agent/src/FocusAgent.App/bin/x64/Debug/verify-toast.png` and writes the
     measured outer-rect to stdout. Toast self-test runs ~5s + 1.5s buffer;
     this script waits up to 8s for the HWND and captures partway through.
+
+.PARAMETER SkipBuild
+    Skip the agent build (agent\FocusAgent.sln, x64) and run the existing
+    FocusAgent.App.exe.
+
+.PARAMETER OutPath
+    Where to save the PNG. Default
+    agent\src\FocusAgent.App\bin\x64\Debug\verify-toast.png; a missing
+    folder is created.
+
+.PARAMETER WaitForHwndMs
+    How long to wait for the toast window to appear before failing, in
+    milliseconds. Default 8000.
+
+.PARAMETER CaptureAfterMs
+    How long to wait after the window appears before capturing it, in
+    milliseconds. Default 2000. Keep it inside the toast's ~5s countdown.
 #>
 
 param(

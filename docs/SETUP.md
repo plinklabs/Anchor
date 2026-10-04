@@ -31,11 +31,19 @@ One Azure resource group containing:
 | --- | --- | --- | --- |
 | Resource group | — | — | `anchor-rg` |
 | SQL logical server | Azure SQL | — | `anchor-sql-<suffix>` |
-| SQL database | Azure SQL DB | GP Serverless, 0.5–2 vCores | `anchordb` |
-| App Service (backend API) | App Service | F1 Free, Linux | `anchor-api-<suffix>` |
-| App Service Plan | App Service Plan | F1 Free, Linux | `ASP-anchorrg-b49b` |
-| SignalR Service | SignalR | Free | `anchor-signalr` |
+| SQL database | Azure SQL DB | Standard S0 (10 DTU), 250 GB max | `anchordb` |
+| App Service (backend API) | App Service | Basic B1, Linux, Always On | `anchor-api-<suffix>` |
+| App Service Plan | App Service Plan | Basic B1, Linux | `ASP-anchorrg-b49b` |
 | Static Web App (dashboard) | Static Web App | Free | `anchor-dashboard` |
+
+The App Service plan and database tiers are sized for a school rollout (~1,000
+students, ~300 in a session at once) and cost ~€24/month together; see
+[Production tiers and scaling](../infra/README.md#production-tiers-and-scaling)
+for why, and for the S1 fallback.
+
+There is no Azure SignalR Service: realtime runs in-process on the App Service.
+The service only becomes relevant if the backend scales out to more than one
+instance — see [Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
 
 Plus **three Entra ID (Azure AD) app registrations** — these are *not* deployed by
 Bicep; they are created in Entra and their IDs are passed *into* the deploy:
@@ -396,8 +404,8 @@ user/group →** pick the user **→ role `Teacher`**.
 ## Step 4 — Deploy the infrastructure (Bicep)
 
 This is the direct-Bicep deploy from `infra/README.md`. It creates the SQL server
-+ database, App Service + plan, SignalR, and the Static Web App, and wires the
-Entra/CORS values as App Service application settings.
++ database, App Service + plan, and the Static Web App, and wires the Entra/CORS
+values as App Service application settings.
 
 ```bash
 az deployment group create \
@@ -429,11 +437,11 @@ edits; the defaults reproduce the live `arcadia` deployment. (Full table in
 | `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin (`Cors__AllowedOrigins__0`). |
 | `sqlServerName` / `sqlDatabaseName` | `anchor-sql-<suffix>` / `anchordb` | Override to reuse manually-created resources. |
 | `appServiceName` / `appServicePlanName` | `anchor-api-<suffix>` / `ASP-anchorrg-b49b` | Backend App Service + plan. |
-| `signalrName` / `staticWebAppName` | `anchor-signalr` / `anchor-dashboard` | SignalR + dashboard SWA. |
+| `staticWebAppName` | `anchor-dashboard` | Dashboard SWA. |
 
 > **Portal fallback (no CLI).** If `az` gives you trouble, create each resource by
 > hand following the [portal walk-through in `infra/README.md`](../infra/README.md#alternative-manual-setup-via-the-azure-portal)
-> (SQL DB, App Service, SignalR, Static Web App), then add the App Service
+> (SQL DB, App Service, Static Web App), then add the App Service
 > application settings from [Step 6](#step-6--app-service-application-settings)
 > manually — Bicep would otherwise have wired them.
 
@@ -486,9 +494,9 @@ az ad app permission add --id "$SPA_CLIENT_ID" \
 ## Step 6 — App Service application settings
 
 The Bicep deploy already set most of these (`ASPNETCORE_ENVIRONMENT`,
-`Azure__SignalR__ConnectionString`, `AzureAd__Instance`, `AzureAd__TenantId`,
-`AzureAd__ClientId`, `AzureAd__Audience`, `Cors__AllowedOrigins__0`, and the
-`DefaultConnection` connection string). If you used the **portal fallback** in
+`AzureAd__Instance`, `AzureAd__TenantId`, `AzureAd__ClientId`,
+`AzureAd__Audience`, `Cors__AllowedOrigins__0`, and the `DefaultConnection`
+connection string). If you used the **portal fallback** in
 Step 4, add them yourself now — see the table in
 [`docs/RELEASE.md`](RELEASE.md#azure-app-service--application-settings). The
 double-underscore form maps to .NET nested keys (`AzureAd__TenantId` →
@@ -643,6 +651,11 @@ gh variable set AGENT_CLIENT_ID   --repo OWNER/REPO --body "$AGENT_CLIENT_ID"
 > with `WAM_provider_error_…` (`0xCAA2000x`) (#271). The agent shares
 > `ENTRA_TENANT_ID` and `API_SCOPE`, only the client id differs.
 
+> **No variable for the agent's update feed.** `agent-release.yml` bakes the
+> repository running the release (`github.repository`) into the agent as its
+> update source, so agents installed from your fork's `Setup.exe` update from your
+> fork's Releases, not upstream's (#360).
+
 > **`API_SCOPE` form.** With **two** app registrations the script sets
 > `<entraAudience>/access_as_user` (i.e. `api://<api-client-id>/access_as_user`) —
 > the scope you exposed in Step 3a. When the SPA and API **share** one
@@ -668,8 +681,11 @@ gh variable set AGENT_CLIENT_ID   --repo OWNER/REPO --body "$AGENT_CLIENT_ID"
    - dashboard: a push under `dashboard/**` builds and uploads to the Static Web
      App.
 
-EF Core migrations apply on app startup in non-Development environments, so there
-is no separate migration step.
+The backend deploy applies the EF Core migrations to the database before it
+deploys the new build, so the first backend deploy creates the schema on the
+empty database; there is no separate migration step to run. It needs the SQL
+server's "Allow Azure services and resources to access this server" setting
+(the template's `AllowAzureServices` rule), which the App Service needs anyway.
 
 ---
 

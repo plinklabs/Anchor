@@ -21,6 +21,15 @@ name: Backend Deploy
 # and the App Service name come from repo Actions variables so a fork deploys to
 # its own `anchor-api-<school>` resource with no source edits, mirroring the
 # dashboard-deploy convention (#202); `scripts/setup.ps1` provisions them.
+#
+# Database migrations run HERE, before the new build goes live — not at app
+# startup (#344). An EF Core migrations bundle is applied to the production
+# database first; if it fails, the job stops before the deploy step and the
+# running build keeps serving. No extra secret or role is needed: the bundle
+# connects with the App Service's own `DefaultConnection` string, which the
+# deploy identity can read through its Website Contributor role, and GitHub's
+# Ubuntu runners run in Azure, so the SQL server's "Allow Azure services" rule
+# (AllowAzureServices in infra/main.bicep) admits them.
 
 on:
   workflow_run:
@@ -31,6 +40,12 @@ on:
 permissions:
   contents: read
   id-token: write   # request the OIDC token for azure/login
+
+# One deploy at a time, in order: two runs must never migrate the same database
+# concurrently, and a newer commit must not be deployed under an older one.
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
@@ -60,12 +75,52 @@ jobs:
           --configuration Release
           --output ${{ runner.temp }}/publish
 
+      # dotnet-ef is pinned in backend/dotnet-tools.json; keep it on the same
+      # version as the EF Core packages.
+      - name: Build migrations bundle
+        run: |
+          dotnet tool restore
+          dotnet ef migrations bundle \
+            --project src/Anchor.Infrastructure/Anchor.Infrastructure.csproj \
+            --startup-project src/Anchor.Api/Anchor.Api.csproj \
+            --configuration Release \
+            --output "$RUNNER_TEMP/efbundle" \
+            --force
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Applies pending migrations (none → no-op) before the deploy, so a
+      # failure stops the job here and the running build is left untouched.
+      - name: Apply database migrations
+        env:
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+        run: |
+          set -euo pipefail
+          # The deploy identity only sees this site, so look its resource
+          # group up by name (as azure/webapps-deploy does).
+          rg=$(az resource list --name "$WEBAPP_NAME" --resource-type Microsoft.Web/sites \
+            --query "[0].resourceGroup" -o tsv)
+          if [ -z "$rg" ]; then
+            echo "::error::App Service '$WEBAPP_NAME' not found (check vars.AZURE_WEBAPP_NAME and the deploy identity's role)"
+            exit 1
+          fi
+          conn=$(az webapp config connection-string list -g "$rg" -n "$WEBAPP_NAME" \
+            --query "[?name=='DefaultConnection'].value | [0]" -o tsv)
+          if [ -z "$conn" ]; then
+            echo "::error::App Service '$WEBAPP_NAME' has no DefaultConnection connection string"
+            exit 1
+          fi
+          # Escape workflow-command data so a '%' in the secret masks verbatim.
+          mask() { local v=${1//%/%25}; v=${v//$'\r'/%0D}; echo "::add-mask::${v//$'\n'/%0A}"; }
+          mask "$conn"
+          password=$(printf '%s' "$conn" | sed -n 's/.*[Pp]assword=\([^;]*\).*/\1/p')
+          if [ -n "$password" ]; then mask "$password"; fi
+          "$RUNNER_TEMP/efbundle" --connection "$conn"
 
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3

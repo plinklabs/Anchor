@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Regenerates the curated student-facing agent screenshots embedded on the
     Anchor website (#251), writing the named PNG set into `website/assets/`.

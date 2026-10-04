@@ -229,6 +229,9 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
+            // The background loops would race the single in-memory SQLite
+            // connection below.
+            AnchorApiFactory.DisableBackgroundServices(builder);
 
             // Program.cs's Development path requires ConnectionStrings:DefaultConnection
             // before we override the DbContext below.
@@ -236,10 +239,6 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
                 new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:DefaultConnection"] = "Data Source=:memory:",
-                    // The monitor scans tracker state on a timer; here it would
-                    // race the shared in-memory SQLite connection. Tests that
-                    // need it drive HeartbeatMonitor.ScanOnceAsync directly.
-                    ["Heartbeat:EnableMonitor"] = "false",
                     // Stub AzureAd so MicrosoftIdentityWeb's option binding succeeds;
                     // we never actually validate a real token in these tests.
                     ["AzureAd:Instance"] = "https://login.microsoftonline.com/",
@@ -291,7 +290,10 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
                 return Task.CompletedTask;
             }
 
-            public Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default)
+            public Task SessionEndedAsync(
+                Guid sessionId,
+                IReadOnlyCollection<Guid> recipientUserIds,
+                CancellationToken cancellationToken = default)
             {
                 SessionEndedCalls.Add(sessionId);
                 return Task.CompletedTask;

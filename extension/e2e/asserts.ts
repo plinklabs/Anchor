@@ -15,8 +15,9 @@ export async function expectRedirectedToBlockPage(
   page: Page,
   ext: LoadedExtension,
   blockedHost: string,
+  timeout = 15_000,
 ): Promise<void> {
-  await expect.poll(() => page.url(), { timeout: 15_000 }).toContain('block-page.html');
+  await expect.poll(() => page.url(), { timeout }).toContain('block-page.html');
   expect(page.url().startsWith(ext.blockPagePrefix)).toBe(true);
   await expect(page.locator('[data-blocked-url]')).toContainText(blockedHost);
 }

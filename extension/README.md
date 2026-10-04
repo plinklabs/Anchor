@@ -141,12 +141,35 @@ from the dropped Microsoft Store / Partner Center *app* account):
      secret).
    - secret `EDGE_ADDONS_CLIENT_ID` — the API client ID.
    - secret `EDGE_ADDONS_API_KEY` — the API key.
+   - variable `EDGE_ADDONS_KEY_ROTATED` — today's date, so the 72-day expiry can
+     be warned about (see below).
 
    ```powershell
-   gh variable set EDGE_ADDONS_PRODUCT_ID --body "<product-id>"
-   gh secret   set EDGE_ADDONS_CLIENT_ID --body "<client-id>"
-   gh secret   set EDGE_ADDONS_API_KEY   --body "<api-key>"
+   gh variable set EDGE_ADDONS_PRODUCT_ID  --body "<product-id>"
+   gh secret   set EDGE_ADDONS_CLIENT_ID   --body "<client-id>"
+   gh secret   set EDGE_ADDONS_API_KEY     --body "<api-key>"
+   gh variable set EDGE_ADDONS_KEY_ROTATED --body "$(Get-Date -Format yyyy-MM-dd)"
    ```
+
+#### The API key expires every 72 days
+
+This is the single most common way a release fails to ship. The key does **not**
+renew on use, its lifetime **cannot be changed**, and there is **no API to rotate
+it** ([upstream request][edge-key-issue], still open). Renew it in Partner Center
+→ *Publish API* → **Create API credentials**, then update **both** secrets:
+
+> The renew button regenerates the **Client ID** as well as the key. Updating
+> only `EDGE_ADDONS_API_KEY` leaves a mismatched pair, and the publish fails with
+> a bare `403` that looks nothing like an expiry. Always set both, then bump
+> `EDGE_ADDONS_KEY_ROTATED` to the new date.
+
+[`edge-key-expiry.yml`](../.github/workflows/edge-key-expiry.yml) warns weekly
+once the key is inside 14 days of expiry, and a failed publish is diagnosed
+automatically ([`diagnose-publish-failure.mjs`](scripts/diagnose-publish-failure.mjs))
+so the log says whether to wait out a review or rotate credentials — the two look
+identical otherwise. Details: [`docs/RELEASE.md`](../docs/RELEASE.md#rotating-the-edge-add-ons-api-key-every-72-days).
+
+[edge-key-issue]: https://github.com/microsoft/MicrosoftEdge-Extensions/issues/272
 
 If those three are **not** set, the release workflow still builds, packages, and
 uploads the ZIP as a workflow artifact, and prints manual-submit instructions —
@@ -279,6 +302,15 @@ whatever the box had, on close and on process exit, so a run never leaves your
 agent unregistered from Edge. `hermetic-witness.spec.ts` drives that exact
 situation — a registered host trying to push a foreign backend URL — and proves
 none of it reaches the extension under test.
+
+**Pinned to English (#364).** The block page and popup render in the browser UI
+language (see [Localization](#localization-i18n)), and Edge takes that from the
+host's Windows display language unless told otherwise. So `loadExtension()`
+always launches Edge with `--lang` set to `DEFAULT_LOCALE` (`en-US`, what the CI
+runner has, in [`e2e/config.ts`](e2e/config.ts)), and specs that assert English
+copy pass on a Dutch or any other dev box too. A spec that needs another language
+asks for it with `loadExtension({ locale: '<lang>' })`, as `i18n-dutch.spec.ts`
+does.
 
 Prerequisites: Node ≥ 22 (the harness is TypeScript run via Node's built-in type
 stripping), Microsoft Edge, and the .NET SDK on `PATH` (the harness builds and

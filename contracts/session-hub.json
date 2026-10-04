@@ -1,0 +1,57 @@
+{
+  "_about": [
+    "The session hub as the teacher dashboard relies on it (#390): the events the dashboard listens for, who each one goes to, what its payload carries, and the hub methods the dashboard calls.",
+    "Both sides test against this file. Backend CI (SessionHubContractTests) drives the real hub, broadcaster and SessionEnder, records where each event is sent and what it carries, and fails when that differs from this file. Dashboard CI (dashboard/test/contract/) checks that SessionHubClient handles every event and sends the methods in this shape, and that the live page ignores an event that reaches the teacher's user group naming another session.",
+    "So a backend change to an event's routing or payload fails Backend CI until this file says so, and that change to this file runs the dashboard's tests against it.",
+    "It covers the dashboard's slice of the hub only. The agent and the extension use more of it, listed under notCovered, and this file doesn't describe those.",
+    "A message carries one argument: an object with \"fields\", or a bare value that \"argument\" names. Field names are as they go over the wire (camelCase)."
+  ],
+  "hub": "/hubs/session",
+  "audiences": {
+    "session": "The session group, session:{sessionId}. Only the owning teacher's connections join it, through JoinSession (#366), and a reconnected connection is out of it until it joins again.",
+    "teacher": "The session teacher's user group, user:{teacherId}. Each of the teacher's connections joins it on connect (OnConnectedAsync), so it also hears about the teacher's other sessions.",
+    "participants": "The user groups of the session's participants, user:{userId}."
+  },
+  "events": {
+    "SessionStarted": {
+      "fields": ["sessionId", "classId", "startedAt", "joinCode", "apps", "domains"],
+      "audience": ["teacher", "participants"]
+    },
+    "SessionEnded": {
+      "argument": "sessionId",
+      "audience": ["teacher", "participants"]
+    },
+    "ParticipantStateChanged": {
+      "fields": ["sessionId", "userId", "displayName", "state", "at"],
+      "audience": ["session"]
+    },
+    "UnblockRequested": {
+      "fields": ["sessionId", "userId", "userDisplayName", "host", "url", "requestedAt"],
+      "audience": ["session"]
+    },
+    "TamperDetected": {
+      "fields": ["sessionId", "userId", "userDisplayName", "kind", "detectedAt"],
+      "audience": ["session"]
+    },
+    "HeartbeatLost": {
+      "fields": ["sessionId", "userId", "lastSeenAt"],
+      "audience": ["session"]
+    },
+    "AgentReconnected": {
+      "fields": ["sessionId", "userId", "reconnectedAt"],
+      "audience": ["session"]
+    }
+  },
+  "methods": {
+    "JoinSession": {
+      "fields": ["sessionId", "joinCode"]
+    },
+    "LeaveSession": {
+      "argument": "sessionId"
+    }
+  },
+  "notCovered": {
+    "events": ["SessionBundlesUpdated", "AllowlistAmended"],
+    "methods": ["DeclineSession", "Heartbeat", "ExtensionHeartbeat", "IsInSession", "GetStartedSession", "ReportEvent"]
+  }
+}

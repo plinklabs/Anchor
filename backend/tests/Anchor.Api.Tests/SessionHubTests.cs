@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using Anchor.Api.Controllers;
 using Anchor.Api.Realtime;
 using Anchor.Api.Tests.FakeAuth;
+using Anchor.Domain.Bundles;
 using Anchor.Domain.Classes;
 using Anchor.Domain.Events;
 using Anchor.Domain.Sessions;
@@ -12,6 +14,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 
 namespace Anchor.Api.Tests;
 
@@ -364,39 +367,199 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         Assert.True(tracker.TryGet(session.Id, student.Id, out _));
 
         var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
-        await broadcaster.SessionEndedAsync(session.Id);
+        await broadcaster.SessionEndedAsync(session.Id, new[] { student.Id });
 
         Assert.False(tracker.TryGet(session.Id, student.Id, out _));
     }
 
     [Fact]
-    public async Task SessionEnded_broadcast_reaches_joined_clients_only()
+    public async Task Ending_a_session_reaches_its_teacher_and_participants_once_even_on_a_connection_that_never_joined_it()
     {
-        var (joiner, session) = await SeedSessionWithStudentAsync();
-        var outsider = await SeedUserAsync(UserRole.Student, "Outsider");
+        // #354: SignalR keeps no group membership across a reconnect, and the
+        // agent joins the session group once. A student whose agent joined and
+        // then reconnected, or whose extension's service worker was revived,
+        // holds a connection that never joined the session group, and must
+        // still hear the session end. A connection that did join must not hear
+        // it twice.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var outsider = await TestSeed.AddUserAsync(_factory, UserRole.Student, "Outsider");
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var startResponse = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
+        startResponse.EnsureSuccessStatusCode();
+        var sessionId = (await startResponse.Content.ReadFromJsonAsync<StartSessionResponse>())!.Id;
 
-        await using var joined = BuildConnection(joiner.EntraOid, "Student");
+        await using var joined = BuildConnection(scenario.Students[0].EntraOid, "Student");
+        await using var reconnected = BuildConnection(scenario.Students[1].EntraOid, "Student");
+        await using var teacher = BuildConnection(scenario.Teacher.EntraOid, "Teacher");
         await using var outside = BuildConnection(outsider.EntraOid, "Student");
-        await joined.StartAsync();
+        var ended = new[] { joined, reconnected, teacher, outside }
+            .Select(connection => new EndedListener(connection, sessionId))
+            .ToArray();
+
+        await joined.StartAndAwaitOnConnectedAsync();
+        await JoinAsync(joined, sessionId);
+        // The second student joined on a connection that has since dropped...
+        await using (var dropped = BuildConnection(scenario.Students[1].EntraOid, "Student"))
+        {
+            await dropped.StartAsync();
+            await JoinAsync(dropped, sessionId);
+        }
+        // ...and is back on a new one, which only joined its user group.
+        await reconnected.StartAndAwaitOnConnectedAsync();
+        // The teacher's live page subscribes to its own session.
+        await teacher.StartAndAwaitOnConnectedAsync();
+        await JoinAsync(teacher, sessionId);
+        await outside.StartAndAwaitOnConnectedAsync();
+
+        var endResponse = await client.PostAsync($"/sessions/{sessionId}/end", content: null);
+        endResponse.EnsureSuccessStatusCode();
+
+        await Task.WhenAll(ended.Take(3).Select(e => e.First.WaitAsync(TimeSpan.FromSeconds(5))));
+        // Room for a duplicate, or a stray delivery to the outsider, to arrive.
+        await Task.Delay(500);
+        Assert.Equal(new[] { 1, 1, 1, 0 }, ended.Select(e => e.Count).ToArray());
+    }
+
+    [Fact]
+    public async Task IsInSession_is_true_for_a_joined_participant_of_a_running_session()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        Assert.False(await connection.InvokeAsync<bool>("IsInSession", session.Id));
+        await JoinAsync(connection, session.Id);
+        Assert.True(await connection.InvokeAsync<bool>("IsInSession", session.Id));
+    }
+
+    [Fact]
+    public async Task IsInSession_is_false_once_the_session_has_ended_also_on_a_new_connection()
+    {
+        // #354: what a reconnecting agent or extension asks, because the
+        // SessionEnded broadcast went out while it was offline.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var student = scenario.Students[0];
+        var session = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        await using var before = BuildConnection(student.EntraOid, "Student");
+        await before.StartAsync();
+        await JoinAsync(before, session.Id);
+        Assert.True(await before.InvokeAsync<bool>("IsInSession", session.Id));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsync($"/sessions/{session.Id}/end", content: null);
+        response.EnsureSuccessStatusCode();
+
+        Assert.False(await before.InvokeAsync<bool>("IsInSession", session.Id));
+        await using var after = BuildConnection(student.EntraOid, "Student");
+        await after.StartAsync();
+        Assert.False(await after.InvokeAsync<bool>("IsInSession", session.Id));
+    }
+
+    [Fact]
+    public async Task IsInSession_is_false_after_leaving_and_for_anyone_outside_the_session()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+        var stranger = await SeedUserAsync(UserRole.Student, "Outsider");
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await using var outside = BuildConnection(stranger.EntraOid, "Student");
+        await connection.StartAsync();
         await outside.StartAsync();
+        await JoinAsync(connection, session.Id);
 
-        var joinedSignal = new TaskCompletionSource<Guid>();
-        var outsideSignal = new TaskCompletionSource<Guid>();
-        joined.On<Guid>(nameof(ISessionHubClient.SessionEnded), id => joinedSignal.TrySetResult(id));
-        outside.On<Guid>(nameof(ISessionHubClient.SessionEnded), id => outsideSignal.TrySetResult(id));
+        await connection.InvokeAsync("LeaveSession", session.Id);
 
-        await joined.InvokeAsync<JoinSessionResult>(
-            "JoinSession",
-            new JoinSessionRequest(session.Id, JoinCode: null));
+        Assert.False(await connection.InvokeAsync<bool>("IsInSession", session.Id));
+        Assert.False(await outside.InvokeAsync<bool>("IsInSession", session.Id));
+        Assert.False(await outside.InvokeAsync<bool>("IsInSession", Guid.NewGuid()));
+    }
 
-        var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
-        await broadcaster.SessionEndedAsync(session.Id);
+    [Fact]
+    public async Task GetStartedSession_returns_a_session_started_straight_after_the_connection_opened()
+    {
+        // #356: what a client asks right after it connects. Its start completed
+        // on the handshake reply, before the server joined it to its user group,
+        // so the SessionStarted broadcast may have found the group empty.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var bundle = await TestSeed.AddBundleAsync(_factory, "Bundle-" + Guid.NewGuid().ToString("N")[..6]);
+        await TestSeed.AddBundleEntryAsync(
+            _factory, bundle.Id, BundleEntryKind.Domain, "started-session.example", BundleEntryMatchType.Suffix);
+        await using var connection = BuildConnection(scenario.Students[0].EntraOid, "Student");
+        await connection.StartAsync();
 
-        var received = await joinedSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(session.Id, received);
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsJsonAsync(
+            "/sessions", new StartSessionRequest(scenario.Class.Id, new[] { bundle.Id }));
+        response.EnsureSuccessStatusCode();
+        var started = (await response.Content.ReadFromJsonAsync<StartSessionResponse>())!;
 
-        var outsiderGotIt = await Task.WhenAny(outsideSignal.Task, Task.Delay(500)) == outsideSignal.Task;
-        Assert.False(outsiderGotIt, "Client outside the session group should not receive SessionEnded.");
+        var payload = await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession");
+
+        Assert.NotNull(payload);
+        Assert.Equal(started.Id, payload.SessionId);
+        Assert.Equal(scenario.Class.Id, payload.ClassId);
+        Assert.Equal(started.JoinCode, payload.JoinCode);
+        // The allowlist the SessionStarted broadcast carried.
+        Assert.Contains(payload.Domains, d => d.Value == "started-session.example");
+    }
+
+    [Fact]
+    public async Task GetStartedSession_returns_the_latest_running_session_joined_or_not()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);
+        var student = scenario.Students[0];
+        var older = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        Assert.Equal(older.Id, (await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession"))?.SessionId);
+        // Joining doesn't take it out: a client that never heard of it (an
+        // agent when the extension joined) still needs it.
+        await JoinAsync(connection, older.Id);
+        Assert.Equal(older.Id, (await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession"))?.SessionId);
+
+        // Seeded a few invocations later, so it started later.
+        var newer = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id });
+        Assert.True(newer.StartedAt > older.StartedAt);
+
+        Assert.Equal(newer.Id, (await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession"))?.SessionId);
+    }
+
+    [Fact]
+    public async Task GetStartedSession_is_null_once_declined_left_or_ended_and_for_anyone_outside_the_session()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 3);
+        var (declining, leaving, staying) = (scenario.Students[0], scenario.Students[1], scenario.Students[2]);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToArray());
+        var outsider = await TestSeed.AddUserAsync(_factory, UserRole.Student, "Outsider");
+        await using var declined = BuildConnection(declining.EntraOid, "Student");
+        await using var left = BuildConnection(leaving.EntraOid, "Student");
+        await using var stays = BuildConnection(staying.EntraOid, "Student");
+        await using var outside = BuildConnection(outsider.EntraOid, "Student");
+        await using var teacher = BuildConnection(scenario.Teacher.EntraOid, "Teacher");
+        foreach (var connection in new[] { declined, left, stays, outside, teacher })
+            await connection.StartAsync();
+
+        await declined.InvokeAsync("DeclineSession", new DeclineSessionRequest(session.Id, Reason: null));
+        await JoinAsync(left, session.Id);
+        await left.InvokeAsync("LeaveSession", session.Id);
+
+        Assert.Null(await declined.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
+        Assert.Null(await left.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
+        Assert.Null(await outside.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
+        // The teacher runs the session; there's nothing for them to join.
+        Assert.Null(await teacher.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
+        Assert.Equal(session.Id, (await stays.InvokeAsync<SessionStartedPayload?>("GetStartedSession"))?.SessionId);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var response = await client.PostAsync($"/sessions/{session.Id}/end", content: null);
+        response.EnsureSuccessStatusCode();
+
+        Assert.Null(await stays.InvokeAsync<SessionStartedPayload?>("GetStartedSession"));
     }
 
     [Fact]
@@ -557,6 +720,76 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task Roster_signals_about_a_student_reach_the_owning_teacher_and_no_student()
+    {
+        // #366: the session group carries the teacher's roster feed: a
+        // student's name with their joins and leaves, the URLs they ask to
+        // open, their tamper flags, their agent going quiet. Every student's
+        // agent and extension calls JoinSession, so while that subscribed them
+        // to the group, each student's device received the whole class's feed.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var startResponse = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
+        startResponse.EnsureSuccessStatusCode();
+        var sessionId = (await startResponse.Content.ReadFromJsonAsync<StartSessionResponse>())!.Id;
+        var student = scenario.Students[0];
+
+        await using var teacher = BuildConnection(scenario.Teacher.EntraOid, "Teacher");
+        await using var classmate = BuildConnection(scenario.Students[1].EntraOid, "Student");
+        await using var own = BuildConnection(student.EntraOid, "Student");
+        var teacherFeed = new RosterFeed(teacher);
+        var classmateFeed = new RosterFeed(classmate);
+        var ownFeed = new RosterFeed(own);
+
+        // The teacher's live page subscribes to its session; the classmate's
+        // agent or extension joins it the way they do on SessionStarted.
+        await teacher.StartAndAwaitOnConnectedAsync();
+        await JoinAsync(teacher, sessionId);
+        await classmate.StartAndAwaitOnConnectedAsync();
+        await JoinAsync(classmate, sessionId);
+        await own.StartAndAwaitOnConnectedAsync();
+
+        // Every roster signal about the student, raised the way production
+        // raises it.
+        await JoinAsync(own, sessionId);
+        await own.InvokeAsync("ReportEvent", new ReportEventRequest(
+            sessionId, nameof(EventKind.UnblockRequest),
+            """{"url":"https://reddit.com/r/aww","host":"reddit.com"}""", OccurredAt: null));
+        await own.InvokeAsync("ReportEvent", new ReportEventRequest(
+            sessionId, nameof(EventKind.TamperDetected), """{"kind":"inprivate_opened"}""", OccurredAt: null));
+        // HeartbeatLost and AgentReconnected come from the heartbeat monitor:
+        // the student's agent goes quiet past the timeout, then pings again.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var tracker = new HeartbeatTracker();
+        var monitor = ActivatorUtilities.CreateInstance<HeartbeatMonitor>(_factory.Services, tracker, (TimeProvider)clock);
+        tracker.Record(sessionId, student.Id, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromMinutes(5));
+        await monitor.ScanOnceAsync(CancellationToken.None);
+        tracker.Record(sessionId, student.Id, clock.GetUtcNow());
+        await monitor.ScanOnceAsync(CancellationToken.None);
+        await own.InvokeAsync("LeaveSession", sessionId);
+
+        // A connection receives its messages in the order they were sent.
+        await teacherFeed.WaitForAsync(student.Id, "ParticipantStateChanged:Left", TimeSpan.FromSeconds(5));
+        Assert.Equal(
+            new[]
+            {
+                "ParticipantStateChanged:Joined",
+                "UnblockRequested",
+                "TamperDetected",
+                "HeartbeatLost",
+                "AgentReconnected",
+                "ParticipantStateChanged:Left",
+            },
+            teacherFeed.About(student.Id));
+        // Room for a stray delivery to a student's connection to arrive.
+        await Task.Delay(500);
+        Assert.Empty(classmateFeed.All);
+        Assert.Empty(ownFeed.All);
+    }
+
+    [Fact]
     public async Task SessionStarted_REST_call_reaches_roster_members_only()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
@@ -573,9 +806,13 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         studentB.On<SessionStartedPayload>(nameof(ISessionHubClient.SessionStarted), p => signalB.TrySetResult(p));
         outsideConn.On<SessionStartedPayload>(nameof(ISessionHubClient.SessionStarted), p => signalOutsider.TrySetResult(p));
 
-        await studentA.StartAsync();
-        await studentB.StartAsync();
-        await outsideConn.StartAsync();
+        // SessionStarted goes to user groups, which a connection joins only in
+        // OnConnectedAsync (#355). The outsider needs the wait too: without it
+        // the negative check below can pass because its connection isn't in
+        // any group yet, not because the routing kept the message away.
+        await studentA.StartAndAwaitOnConnectedAsync();
+        await studentB.StartAndAwaitOnConnectedAsync();
+        await outsideConn.StartAndAwaitOnConnectedAsync();
 
         using var client = _factory.CreateClient();
         TestAuth.SetTeacher(client, scenario.Teacher);
@@ -593,6 +830,70 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
 
         var outsiderGotIt = await Task.WhenAny(signalOutsider.Task, Task.Delay(500)) == signalOutsider.Task;
         Assert.False(outsiderGotIt, "User outside the class roster should not receive SessionStarted.");
+    }
+
+    private static Task<JoinSessionResult> JoinAsync(HubConnection connection, Guid sessionId) =>
+        connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(sessionId, JoinCode: null));
+
+    /// <summary>Counts the SessionEnded messages a connection receives for one session.</summary>
+    private sealed class EndedListener
+    {
+        private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _count;
+
+        public EndedListener(HubConnection connection, Guid sessionId)
+        {
+            connection.On<Guid>(nameof(ISessionHubClient.SessionEnded), id =>
+            {
+                if (id != sessionId) return;
+                Interlocked.Increment(ref _count);
+                _first.TrySetResult();
+            });
+        }
+
+        public Task First => _first.Task;
+
+        public int Count => Volatile.Read(ref _count);
+    }
+
+    /// <summary>
+    /// The roster signals a connection receives, as (student, signal), where a
+    /// signal is the message name, or <c>ParticipantStateChanged:{state}</c>.
+    /// </summary>
+    private sealed class RosterFeed
+    {
+        private readonly ConcurrentQueue<(Guid UserId, string Signal)> _received = new();
+
+        public RosterFeed(HubConnection connection)
+        {
+            connection.On<ParticipantStateChangedPayload>(nameof(ISessionHubClient.ParticipantStateChanged),
+                p => _received.Enqueue((p.UserId, $"{nameof(ISessionHubClient.ParticipantStateChanged)}:{p.State}")));
+            connection.On<UnblockRequestedPayload>(nameof(ISessionHubClient.UnblockRequested),
+                p => _received.Enqueue((p.UserId, nameof(ISessionHubClient.UnblockRequested))));
+            connection.On<TamperDetectedPayload>(nameof(ISessionHubClient.TamperDetected),
+                p => _received.Enqueue((p.UserId, nameof(ISessionHubClient.TamperDetected))));
+            connection.On<HeartbeatLostPayload>(nameof(ISessionHubClient.HeartbeatLost),
+                p => _received.Enqueue((p.UserId, nameof(ISessionHubClient.HeartbeatLost))));
+            connection.On<AgentReconnectedPayload>(nameof(ISessionHubClient.AgentReconnected),
+                p => _received.Enqueue((p.UserId, nameof(ISessionHubClient.AgentReconnected))));
+        }
+
+        public IReadOnlyList<(Guid UserId, string Signal)> All => _received.ToArray();
+
+        public string[] About(Guid userId) =>
+            _received.Where(r => r.UserId == userId).Select(r => r.Signal).ToArray();
+
+        public async Task WaitForAsync(Guid userId, string signal, TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (!About(userId).Contains(signal))
+            {
+                if (DateTime.UtcNow > deadline)
+                    throw new TimeoutException($"No {signal} for {userId} within {timeout}; received [{string.Join(", ", About(userId))}].");
+                await Task.Delay(20);
+            }
+        }
     }
 
     private async Task<(User student, Session session)> SeedSessionWithStudentAsync()

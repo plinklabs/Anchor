@@ -8,7 +8,8 @@ import 'package:anchor_dashboard/main.dart';
 import 'package:anchor_dashboard/widgets/anchor_mark.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:integration_test/integration_test.dart';
+
+import 'support/e2e_binding.dart';
 
 // Real-app e2e for the redesigned home page (AD3, #168): boots the actual
 // AnchorDashboard authenticated, with a class to start and a still-running
@@ -84,7 +85,7 @@ class _FakeBundles extends BundlesApi {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  ensureE2eBinding();
 
   testWidgets(
     'home composer + resume card render under the real shell, no overflow (#168)',

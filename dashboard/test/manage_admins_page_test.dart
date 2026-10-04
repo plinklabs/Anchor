@@ -5,6 +5,7 @@ import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/manage_admins_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 // Widget tests for the "Manage admins" page (#300): they drive the page against
 // a scripted fake AdminsApi to prove the list renders, search surfaces
@@ -29,22 +30,30 @@ class _FakeAdmins extends AdminsApi {
   List<AdminUser> admins;
   List<AdminUser> candidates;
   Object? demoteThrows;
+  Object? listThrows;
+  Object? searchThrows;
+  Object? promoteThrows;
 
   final List<String> promoted = [];
   final List<String> demoted = [];
   String? lastQuery;
 
   @override
-  Future<List<AdminUser>> listAdmins() async => admins;
+  Future<List<AdminUser>> listAdmins() async {
+    if (listThrows != null) throw listThrows!;
+    return admins;
+  }
 
   @override
   Future<List<AdminUser>> searchCandidates(String query) async {
     lastQuery = query;
+    if (searchThrows != null) throw searchThrows!;
     return candidates;
   }
 
   @override
   Future<void> promote(String userId) async {
+    if (promoteThrows != null) throw promoteThrows!;
     promoted.add(userId);
     // Mirror the server: the promoted user joins the admin list.
     final match = candidates.where((c) => c.id == userId).toList();
@@ -182,5 +191,117 @@ void main() {
     expect(find.textContaining('last admin'), findsOneWidget);
     // The admin stays in the list — nothing was removed.
     expect(find.text('Alice Admin'), findsOneWidget);
+  });
+
+  // #383: every other failure reads as a sentence, never the raw exception;
+  // a 403 is the calm no-admin-access notice.
+  group('a failed request reads as a sentence (#383)', () {
+    final error = find.descendant(
+      of: find.byKey(const Key('manage-admins-error')),
+      matching: find.byType(Text),
+    );
+
+    void expectNoRawError() {
+      expect(find.textContaining('ApiException'), findsNothing);
+      expect(find.textContaining('boom'), findsNothing);
+    }
+
+    Future<void> search(WidgetTester tester, String query) async {
+      await tester.enterText(
+        find.byKey(const Key('manage-admins-search')),
+        query,
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('loading the admins', (tester) async {
+      _bigWindow(tester);
+      final api = _FakeAdmins(admins: const [])
+        ..listThrows = ApiException(500, 'boom');
+
+      await tester.pumpWidget(_host(api));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(error).data,
+        'Could not load admins. Please try again.',
+      );
+      expectNoRawError();
+    });
+
+    testWidgets('searching', (tester) async {
+      _bigWindow(tester);
+      final api = _FakeAdmins(admins: [_user('a1', 'Alice Admin')])
+        ..searchThrows = ApiException(500, 'boom');
+
+      await tester.pumpWidget(_host(api));
+      await tester.pumpAndSettle();
+      await search(tester, 'tina');
+
+      expect(
+        tester.widget<Text>(error).data,
+        'Search failed. Please try again.',
+      );
+      expectNoRawError();
+    });
+
+    testWidgets('promoting', (tester) async {
+      _bigWindow(tester);
+      final api = _FakeAdmins(
+        admins: [_user('a1', 'Alice Admin')],
+        candidates: [_user('t1', 'Tina Teacher', role: 'Teacher')],
+      )..promoteThrows = ApiException(500, 'boom');
+
+      await tester.pumpWidget(_host(api));
+      await tester.pumpAndSettle();
+      await search(tester, 'tina');
+      await tester.tap(find.byKey(const Key('admin-add-t1')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(error).data,
+        'Could not promote Tina Teacher. Please try again.',
+      );
+      expectNoRawError();
+    });
+
+    testWidgets('removing', (tester) async {
+      _bigWindow(tester);
+      final api = _FakeAdmins(
+        admins: [_user('a1', 'Alice Admin'), _user('a2', 'Bob Admin')],
+        demoteThrows: ApiException(500, 'boom'),
+      );
+
+      await tester.pumpWidget(_host(api));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('admin-remove-a2')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(error).data,
+        'Could not remove Bob Admin. Please try again.',
+      );
+      expectNoRawError();
+    });
+
+    testWidgets('a 403 is the calm no-admin-access notice', (tester) async {
+      _bigWindow(tester);
+      final api = _FakeAdmins(admins: const [])
+        ..listThrows = ApiException(403, '');
+
+      await tester.pumpWidget(_host(api));
+      await tester.pumpAndSettle();
+
+      final text = tester.widget<Text>(error);
+      expect(
+        text.data,
+        "Your account doesn't have admin access. Ask an administrator to "
+        'grant it.',
+      );
+      expect(text.style?.color, PlinkColors.ink60);
+      expectNoRawError();
+    });
   });
 }

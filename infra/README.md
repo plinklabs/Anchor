@@ -1,6 +1,6 @@
 # Anchor — Azure Infrastructure
 
-All resources live in a single resource group. Everything starts on free tiers; upgrade SignalR to Standard when you test with a real class (20+ students). Region defaults to the resource group's region and can be set per resource — see [Regions](#regions).
+All resources live in a single resource group. The backend runs on a Basic B1 App Service plan and Azure SQL Standard S0, sized for a school rollout (~€24/month — see [Production tiers and scaling](#production-tiers-and-scaling)); the Static Web App is on the free tier. Realtime (SignalR) runs in-process on the App Service, so there is no separate SignalR resource — see [Realtime: in-process SignalR](#realtime-in-process-signalr). Region defaults to the resource group's region and can be set per resource — see [Regions](#regions).
 
 ## Recommended: one-command bootstrap (`scripts/setup.ps1`)
 
@@ -57,14 +57,14 @@ consent commands.
 
 `-Location` sets the default region for the resource group and every resource.
 Override individual resources with `-SqlLocation`, `-AppServiceLocation`,
-`-SignalRLocation`, `-StaticWebAppLocation` (each falls back to `-Location`).
-These map straight to the matching Bicep parameters.
+`-StaticWebAppLocation` (each falls back to `-Location`). These map straight to
+the matching Bicep parameters.
 
-- **Why per-resource:** a single region rarely fits. **Static Web Apps** and
-  **SignalR** are offered only in a limited set of regions, so they may need to
-  live apart from your SQL/App Service region. The live `anchor-rg` (`arcadia`)
+- **Why per-resource:** a single region rarely fits. **Static Web Apps** are
+  offered only in a limited set of regions, so the dashboard may need to live
+  apart from your SQL/App Service region. The live `anchor-rg` (`arcadia`)
   deployment is itself split — App Service / plan / SQL in **Belgium Central**,
-  SignalR / Static Web App in **West Europe**.
+  Static Web App in **West Europe**.
 - **Adopt-in-place:** when a resource already exists, the script reads its
   current region and pins it (region is immutable in Azure — a redeploy that
   tried to move it would fail), so you never have to specify regions just to
@@ -139,8 +139,8 @@ az deployment group create \
 ```
 
 The deployment takes ~3 minutes and outputs the resource names + URLs for the
-App Service, SignalR, SQL Server, and Static Web App, plus the Entra/CORS values
-it applied — everything the fork bootstrap (`scripts/setup.ps1`) consumes.
+App Service, SQL Server, and Static Web App, plus the Entra/CORS values it
+applied — everything the fork bootstrap (`scripts/setup.ps1`) consumes.
 
 ### Parameters
 
@@ -158,10 +158,10 @@ resource only when you pass the matching per-resource locations (the
 |---|---|---|
 | `uniqueSuffix` | `arcadia` | Suffix for globally-unique names; drives the resource-name defaults below. |
 | `location` | resource group region | Default region for all resources. |
-| `sqlServerLocation` / `appServiceLocation` / `signalrLocation` / `staticWebAppLocation` | `location` | Per-resource region overrides (App Service plan follows `appServiceLocation`). |
+| `sqlServerLocation` / `appServiceLocation` / `staticWebAppLocation` | `location` | Per-resource region overrides (App Service plan follows `appServiceLocation`). |
 | `sqlServerName` / `sqlDatabaseName` | `anchor-sql-<suffix>` / `anchordb` | SQL logical server + database name. |
 | `appServiceName` / `appServicePlanName` | `anchor-api-<suffix>` / `ASP-anchorrg-b49b` | Backend App Service + plan name. |
-| `signalrName` / `staticWebAppName` | `anchor-signalr` / `anchor-dashboard` | SignalR + dashboard SWA name. |
+| `staticWebAppName` | `anchor-dashboard` | Dashboard SWA name. |
 | `entraTenantId` / `entraClientId` | empty | Entra tenant + API app-registration client ID. Required for a working deploy; applied as App Service settings (`AzureAd__TenantId` / `AzureAd__ClientId`). |
 | `entraAudience` | `api://<entraClientId>` | JWT audience the API validates. |
 | `entraInstance` | current cloud login endpoint | Entra authority. |
@@ -182,8 +182,9 @@ az group delete --name anchor-rg --yes
 #### After teardown — what survives, and recreating
 
 Deleting the resource group removes the Azure resources but **not** everything
-the environment depends on. All resources are free-tier, so deleting and
-recreating costs nothing — but mind these:
+the environment depends on. The B1 plan and the S0 database bill by the hour,
+so deleting stops their charges and recreating costs nothing extra (the
+database's data is gone, of course) — but mind these:
 
 - **Entra app registrations and their admin consent live in Entra ID, not in
   the resource group**, so `az group delete` leaves them untouched (you won't
@@ -241,18 +242,63 @@ so nothing is published and the dashboard URL returns a bare **404** (issue
    and the API's `Cors__AllowedOrigins__0` to it (re-running `scripts/setup.ps1`
    does both), then re-run the deploy.
 
-### Upgrading SignalR for pilot
+### Production tiers and scaling
 
-When you need more than 20 connections, change the SKU in `main.bicep`:
+The template provisions the tiers a school rollout needs: ~1,000 students, ~300
+of them in a session at any time during school hours (#341).
 
-```bicep
-sku: {
-  name: 'Standard_S1'
-  capacity: 1           // 1 unit = 1000 connections
-}
+- **App Service plan: Basic B1 (Linux), with Always On.** F1 caps a Linux app
+  at 5 concurrent WebSockets and 60 CPU-minutes a day, and every student holds
+  two connections (agent + extension). B1 allows ~50k WebSockets per instance,
+  which covers the ~1,600 peak connections with in-process SignalR. Always On
+  keeps the process loaded between requests, so the background services
+  (`HeartbeatMonitor`, `EventPruner`, `SessionAutoEnder`) keep running; F1
+  doesn't offer it.
+- **Azure SQL: Standard S0 (10 DTU), `maxSizeBytes` 250 GB.** Serverless only
+  pays off while the database sleeps most of the time, but every agent or
+  extension (re)connect resolves the user in the database, so with students
+  connected it stays awake through the school day (~€70–240/month at minimum
+  capacity). S0 is a flat price. Estimated storage at rollout scale is ~0.35 GB
+  of raw events (14-day retention, and foreground changes no longer carry window
+  titles or paths, #345) plus ~0.2 GB per school year of session summaries and
+  participants, well inside the 250 GB S0 includes. Sessions a teacher forgets
+  to end are ended four hours after they started, so their events are pruned
+  too. The template sets `maxSizeBytes` explicitly: without it, a deploy applies
+  the tier's default max size (the serverless database got 32 GB that way).
+
+**Load test before go-live** with ~300 simulated students (agent + extension
+heartbeats, ~40 foreground changes per student per hour) to confirm B1 + S0 —
+tracked in #346. If the database runs out of DTUs, move to **S1** (~€31.60/month):
+change the `sku.name` of `sqlDb` in `main.bicep` and redeploy. Moving between
+S0, S1 and S2 is an online operation, and all three include 250 GB. Change the
+template rather than only running `az sql db update`, or the next redeploy
+scales the database back down.
+
+### Realtime: in-process SignalR
+
+The SignalR hub runs inside the API process (`AddSignalR()` in
+`backend/src/Anchor.Api/Program.cs`), so agents, extensions and the dashboard
+connect straight to the App Service. One B1 instance covers that (see above).
+The template provisions no Azure SignalR Service, and a bigger class doesn't
+need one (#343).
+
+The service only becomes relevant if the backend scales out to more than one
+instance: then each instance only reaches the clients connected to it, unless
+the API switches to `AddAzureSignalR()` or a backplane. Scale-out also needs
+shared heartbeat state, because `HeartbeatTracker` and `ActiveParticipantCache`
+live in memory. Add the SignalR resource and its
+`Azure__SignalR__ConnectionString` app setting back together with that code
+change; until then, infra CI fails a template that provisions them.
+
+**Environments deployed before #343** still have an `anchor-signalr` resource
+(Free tier, unused). A redeploy leaves it in place, because the deploy doesn't
+delete resources the template no longer declares, but it drops the
+`Azure__SignalR__ConnectionString` setting from the App Service. Delete the
+resource when convenient:
+
+```bash
+az signalr delete --name anchor-signalr --resource-group anchor-rg
 ```
-
-Then redeploy with the same command.
 
 ---
 
@@ -278,14 +324,11 @@ Then redeploy with the same command.
   - Authentication: SQL authentication
   - Admin login + password — save these somewhere safe
 - Elastic pool: No
-- Workload environment: **Development**
+- Workload environment: **Production**
 - Compute + storage → click **Configure database**:
-  - Service tier: **General Purpose**
-  - Compute tier: **Serverless**
-  - Min vCores: 0.5
-  - Max vCores: 2
-  - Auto-pause delay: 60 minutes
-  - Check **"Use free limit"** if the option appears
+  - Service tier: **Standard (DTU-based)**
+  - DTUs: **S0 (10 DTUs)**
+  - Data max size: **250 GB** (included in S0 — see [Production tiers and scaling](#production-tiers-and-scaling))
 - Backup storage redundancy: **Locally-redundant**
 - **Networking** tab:
   - Connectivity method: Public endpoint
@@ -296,33 +339,27 @@ Then redeploy with the same command.
 - Search **"App Services"** → Create → **Web App**
 - Name: `anchor-api-yourschool` (must be globally unique)
 - Publish: **Code**
-- Runtime stack: **.NET 8 (LTS)**
+- Runtime stack: **.NET 10 (LTS)** — must match the backend's target framework
+  (`net10.0`, the `DOTNETCORE|10.0` that `main.bicep` sets); a build on a host
+  pinned to an older runtime deploys fine but answers 503
 - OS: **Linux**
 - Region: West Europe
-- Pricing plan: Create new → **Free F1**
+- Pricing plan: Create new → **Basic B1**
 
-After creation, go to the app → **Settings → Environment variables**:
+After creation, go to the app → **Settings → Configuration → General settings**
+and turn **Always on** to **On** (it keeps the background services running).
+
+Then go to **Settings → Environment variables**:
 
 Add a **connection string**:
 - Name: `DefaultConnection`
 - Type: SQL Azure
 - Value: `Server=tcp:YOUR-SQL-SERVER.database.windows.net,1433;Database=anchordb;User ID=YOUR-ADMIN;Password=YOUR-PASSWORD;Encrypt=true;TrustServerCertificate=false;`
 
-### 4. SignalR Service
+There is no SignalR Service to create: realtime runs in-process on this App
+Service (see [Realtime: in-process SignalR](#realtime-in-process-signalr)).
 
-- Search **"SignalR Service"** → Create
-- Name: `anchor-signalr`
-- Region: West Europe
-- Pricing tier: **Free** (20 connections — dev only)
-- Service mode: **Default**
-
-After creation:
-1. Go to **Keys**, copy the **primary connection string**
-2. Go to your App Service → **Environment variables** → add app setting:
-   - Name: `Azure__SignalR__ConnectionString` (double underscores)
-   - Value: the connection string you just copied
-
-### 5. Static Web App
+### 4. Static Web App
 
 - Search **"Static Web Apps"** → Create
 - Name: `anchor-dashboard`
@@ -336,17 +373,19 @@ After creation:
 
 Default names below assume `uniqueSuffix=arcadia` (the live `anchor-rg` deployment). Override the parameters to stand up a second environment.
 
-| Resource | Type | Tier | Monthly cost (dev) |
+| Resource | Type | Tier | Monthly cost |
 |---|---|---|---|
 | `anchor-rg` | Resource group | — | €0 |
 | `anchor-sql-arcadia` | SQL Server (logical) | — | €0 |
-| `anchordb` | SQL Database | GP Serverless, 0.5–2 vCores | €0 (free limit) |
-| `anchor-api-arcadia` | App Service | F1 Free | €0 |
-| `ASP-anchorrg-b49b` | App Service Plan | F1 Free, Linux | €0 |
-| `anchor-signalr` | SignalR Service | Free | €0 |
+| `anchordb` | SQL Database | Standard S0 (10 DTU), 250 GB max | ~€12.60 |
+| `anchor-api-arcadia` | App Service | Runs on the plan below, Always On | (in the plan) |
+| `ASP-anchorrg-b49b` | App Service Plan | Basic B1, Linux | ~€11.60 |
 | `anchor-dashboard` | Static Web App | Free | €0 |
 
-**Pilot cost** (Standard SignalR): ~€45/month for SignalR + ~€5–15/month for SQL if it exceeds the free limit.
+**Total:** ~€24/month (list prices, Belgium Central, excl. VAT), or ~€43/month
+if the load test calls for S1 — see [Production tiers and scaling](#production-tiers-and-scaling).
+Realtime runs in-process on the App Service, so there is no SignalR line (see
+[Realtime: in-process SignalR](#realtime-in-process-signalr)).
 
 ---
 
@@ -357,10 +396,9 @@ to populate GitHub secrets/variables, without re-querying Azure:
 
 `resourceGroup`, `location`, `appServiceName`, `appServiceUrl`,
 `staticWebAppName`, `swaUrl`, `sqlServerName`, `sqlServerFqdn`,
-`sqlDatabaseName`, `signalrName`, `signalrHostName`, the resolved per-resource
-regions (`sqlServerLocation` / `appServiceLocation` / `signalrLocation` /
-`staticWebAppLocation`), and the applied `entraTenantId` / `entraClientId` /
-`entraAudience` / `dashboardCorsOrigin`.
+`sqlDatabaseName`, the resolved per-resource regions (`sqlServerLocation` /
+`appServiceLocation` / `staticWebAppLocation`), and the applied
+`entraTenantId` / `entraClientId` / `entraAudience` / `dashboardCorsOrigin`.
 
 ## What's NOT provisioned here
 

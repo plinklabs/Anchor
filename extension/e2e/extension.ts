@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import {
   BACKEND_URL,
   BROWSER_CHANNEL,
+  DEFAULT_LOCALE,
   DIST_PATH,
   HEADLESS,
   MAPPED_HOSTS,
@@ -50,7 +51,8 @@ export interface LoadExtensionOptions {
   /**
    * BCP-47 UI language to launch the browser in (e.g. `nl`). Passed as Chromium's
    * `--lang`, which is what `chrome.i18n` selects its `_locales/<lang>` catalogue
-   * from (#322). Omit for the host default (en on the CI runners).
+   * from (#322). Defaults to DEFAULT_LOCALE (`en-US`), never the host's language,
+   * so a spec renders the same copy on every machine (#364).
    */
   locale?: string;
 }
@@ -80,11 +82,16 @@ export interface LoadedExtension {
   /** Terminate the MV3 service worker and let a browsing event revive it —
    *  the hibernate/revive cycle Chrome performs on its own between event
    *  bursts, which is where worker-memory state is lost (#331). Resolves once
-   *  the new generation has run background.js top-level again. */
-  restartServiceWorker(): Promise<void>;
+   *  the new generation has run background.js top-level again.
+   *  `whileStopped` runs after the worker is gone and before anything revives
+   *  it: no hub connection is open meanwhile, so whatever the backend
+   *  broadcasts then never reaches the extension (#354). */
+  restartServiceWorker(whileStopped?: () => Promise<void>): Promise<void>;
   /** Write settings, cold-restart the SW, and wait for the hub to connect.
-   *  Returns the post-restart service worker. */
-  configure(settings?: ExtensionSettings): Promise<Worker>;
+   *  Returns the post-restart service worker. With `awaitHub: false` it
+   *  returns once the new worker runs, for a spec whose backend can't be
+   *  reached yet (#374). */
+  configure(settings?: ExtensionSettings, options?: { awaitHub?: boolean }): Promise<Worker>;
   /** Read chrome.storage.local restart-safe (#313): re-acquires the live
    *  service worker on every attempt and retries if the MV3 worker idle-
    *  terminates mid-`evaluate` (Playwright throws "Service worker restarted"
@@ -130,19 +137,21 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
 
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-ext-e2e-'));
   const hostRule = MAPPED_HOSTS.map((h) => `MAP ${h} 127.0.0.1`).join(',');
+  const locale = options.locale ?? DEFAULT_LOCALE;
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: BROWSER_CHANNEL,
     headless: HEADLESS,
     // `--lang` sets the browser UI language chrome.i18n reads (#322); `locale`
-    // keeps navigator.language/Accept-Language consistent with it.
-    ...(options.locale ? { locale: options.locale } : {}),
+    // keeps navigator.language/Accept-Language consistent with it. Always set:
+    // left out, Edge takes the host's display language (#364).
+    locale,
     args: [
       `--disable-extensions-except=${DIST_PATH}`,
       `--load-extension=${DIST_PATH}`,
       // Resolve the synthetic test hosts to the local static server so specs
       // never hit the public internet (config.MAPPED_HOSTS).
       `--host-resolver-rules=${hostRule}`,
-      ...(options.locale ? [`--lang=${options.locale}`] : []),
+      `--lang=${locale}`,
     ],
   });
 
@@ -152,7 +161,10 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   const extensionId = new URL(firstWorker.url()).host;
   const blockPagePrefix = `chrome-extension://${extensionId}/block-page.html`;
 
-  async function configure(settings: ExtensionSettings = {}): Promise<Worker> {
+  async function configure(
+    settings: ExtensionSettings = {},
+    { awaitHub = true }: { awaitHub?: boolean } = {},
+  ): Promise<Worker> {
     const backendUrl = settings.backendUrl ?? BACKEND_URL;
     const devImpersonateOid = settings.devImpersonateOid ?? STUDENT_OID;
 
@@ -173,7 +185,9 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     await current.evaluate(() => chrome.runtime.reload()).catch(() => {});
     const worker = await nextWorker;
 
-    await waitForLog('hub connection established', 20_000);
+    if (awaitHub) {
+      await waitForLog('hub connection established', 20_000);
+    }
     return worker;
   }
 
@@ -183,7 +197,7 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   // Target.closeTarget stops the worker (verified: background.js top-level runs
   // again afterwards, while chrome.storage.session survives), and a top-level
   // navigation is the same wake trigger a browsing student provides.
-  async function restartServiceWorker(): Promise<void> {
+  async function restartServiceWorker(whileStopped?: () => Promise<void>): Promise<void> {
     const before = countLogs(WORKER_START_LOG);
     const page = await context.newPage();
     try {
@@ -195,6 +209,12 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
       if (!target) throw new Error('no extension service-worker target to terminate');
       await cdp.send('Target.closeTarget', { targetId: target.targetId });
       await cdp.detach();
+      if (whileStopped) {
+        await whileStopped();
+        if (countLogs(WORKER_START_LOG) !== before) {
+          throw new Error('the service worker came back before the spec revived it');
+        }
+      }
       // The host doesn't resolve, but onBeforeNavigate fires before the request
       // is made — which is all the worker needs to wake.
       await page.goto(`http://${OFFLIST_HOST}/wake`).catch(() => {});

@@ -33,8 +33,19 @@
 .PARAMETER StatusPort
     Loopback port for the agent status endpoint. Default 5295.
 
-.PARAMETER TeacherOid / StudentOid / ClassName
-    Same seeded-dev defaults as verify-session-start.ps1.
+.PARAMETER TeacherOid
+    Seeded Dev Teacher OID the session is started as. Default
+    11111111-1111-1111-1111-111111111111 (matches DevDataSeeder).
+
+.PARAMETER StudentOid
+    Seeded Dev Student OID. Default 22222222-2222-2222-2222-222222222222
+    (matches DevDataSeeder). Not passed to the agent: it impersonates
+    whichever student Dev:ImpersonateOid names in its deployed
+    appsettings.Development.json.
+
+.PARAMETER ClassName
+    Seeded class name to start the session for. Default "3A" (matches
+    DevDataSeeder).
 
 .PARAMETER SkipBuild
     Skip dotnet builds.

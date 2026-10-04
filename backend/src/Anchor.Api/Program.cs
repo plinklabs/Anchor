@@ -121,8 +121,12 @@ builder.Services.AddSingleton<JoinByCodeRateLimiter>();
 builder.Services.AddScoped<ISessionAllowlistExpander, SessionAllowlistExpander>();
 builder.Services.AddSingleton<ISessionBroadcaster, SessionBroadcaster>();
 builder.Services.AddSingleton<HeartbeatTracker>();
+builder.Services.AddSingleton<ActiveParticipantCache>();
 builder.Services.AddSingleton<ParticipantLiveStateResolver>();
 builder.Services.Configure<HeartbeatOptions>(builder.Configuration.GetSection(HeartbeatOptions.SectionName));
+// The Enable* flags of the background services below are read before Build(),
+// so a WebApplicationFactory has to pass them as host settings (UseSetting);
+// ConfigureAppConfiguration only applies at Build(), too late (#353).
 var heartbeatSection = builder.Configuration.GetSection(HeartbeatOptions.SectionName);
 var enableHeartbeatMonitor = heartbeatSection.GetValue<bool?>(nameof(HeartbeatOptions.EnableMonitor)) ?? true;
 if (enableHeartbeatMonitor)
@@ -136,6 +140,17 @@ var enableEventPruner = retentionSection.GetValue<bool?>(nameof(EventRetentionOp
 if (enableEventPruner)
 {
     builder.Services.AddHostedService<EventPruner>();
+}
+
+// Ending a session is shared by the teacher's End and the auto-end of forgotten
+// sessions (#345).
+builder.Services.AddScoped<SessionEnder>();
+builder.Services.Configure<SessionAutoEndOptions>(builder.Configuration.GetSection(SessionAutoEndOptions.SectionName));
+var autoEndSection = builder.Configuration.GetSection(SessionAutoEndOptions.SectionName);
+var enableAutoEnder = autoEndSection.GetValue<bool?>(nameof(SessionAutoEndOptions.EnableAutoEnder)) ?? true;
+if (enableAutoEnder)
+{
+    builder.Services.AddHostedService<SessionAutoEnder>();
 }
 
 const string DashboardCorsPolicy = "DashboardCors";
@@ -161,9 +176,9 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-// Bring the database schema up to date: EnsureCreated + dev seed in Development
-// (SQLite), apply EF Core migrations in non-Development (Azure SQL, issue #205),
-// and no-op under Test (the test host owns its in-memory schema).
+// EnsureCreated + dev seed in Development (SQLite). Everywhere else startup
+// leaves the database alone: the deploy pipeline applies the EF Core migrations
+// to Azure SQL (#344), and the test host owns its in-memory schema.
 await StartupDatabaseInitializer.InitializeAsync(app);
 
 if (!app.Environment.IsDevelopment())

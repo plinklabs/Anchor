@@ -26,9 +26,20 @@ All `--dart-define` values are optional and default to the development values ba
 
 The Entra app registration must include `http://localhost:5173` as an SPA redirect URI (matching `--web-port 5173` above). Entra treats `http://localhost` loopback as valid on any port for SPA/public clients, so sign-in works even before you pin the port — but the backend CORS policy does not, which is why the port still has to match.
 
+## Integration tests
+
+The Dashboard E2E workflow (`.github/workflows/dashboard-e2e.yml`) drives every `integration_test/**/*_test.dart` file in headless Chrome, so a new file runs in CI without being listed anywhere (#376). Helpers under `integration_test/support/` aren't tests. Every file starts with `ensureE2eBinding()`, which pins the language (see [Localization](#localization-i18n)) and starts each test at 1400×1000; a test that needs another window size sets `tester.view.physicalSize` itself. To run one file locally, start a chromedriver that matches your Chrome, then:
+
+```bash
+chromedriver --port=4444 &
+flutter drive --driver=test_driver/integration_test.dart \
+  --target=integration_test/home_test.dart \
+  -d web-server --browser-name=chrome --headless
+```
+
 ## Routes
 
-- `/login` — Microsoft sign-in via MSAL.js (popup flow).
+- `/login` — Microsoft sign-in via MSAL.js (popup flow). A signed-out visit to another page goes to `/login?from=<page>`, and signing in returns to that page instead of `/`. Only a known in-app path is honored; anything else (another site, another scheme, an unknown page) signs in to `/`.
 - `/` — class picker + "Start session" button. Defaults to the class matching the teacher's `department` claim if present, otherwise the first class returned by the API. Sessions start with no bundles (baseline-only enforcement).
 - `/session/:id` — live session view. Opens a SignalR connection to `/hubs/session`, lists incoming events (`SessionStarted`, `SessionEnded`, `UnblockRequested`). Bundles are added/removed here at any time via `PUT /sessions/{id}/bundles`, which pushes the recomputed allowlist to agents/extensions. "End session" button calls `POST /sessions/{id}/end`.
 
@@ -51,6 +62,7 @@ Text(AppLocalizations.of(context).homeHeadline)
 - **Source + fallback locale:** English (`app_en.arb`) is the template. Any missing key falls back to English, and any unsupported browser/OS language falls back to English too (`localeResolutionCallback` in [`lib/main.dart`](lib/main.dart) matches on language code, e.g. `nl-BE` → `nl`, else `en`).
 - **Active language = the browser/OS language**, chosen at startup. There is no in-app language picker (out of scope for now).
 - **Locales shipped:** English (`en`) and Dutch (`nl`, proof of concept).
+- **Integration tests run in English.** `flutter drive` gives Chrome the host's display language, so every test under `integration_test/` starts with `ensureE2eBinding()` ([`integration_test/support/e2e_binding.dart`](integration_test/support/e2e_binding.dart)), which pins the language the app sees to en-US on any host (#371). `test/e2e_binding_usage_test.dart` fails if a test skips it. `integration_test/dutch_locale_test.dart` asks for nl-BE instead and checks the Dutch copy.
 
 ### Add a locale
 

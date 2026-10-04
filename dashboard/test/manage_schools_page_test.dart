@@ -21,16 +21,20 @@ School _school(String name, {bool isActive = true}) =>
     School(name: name, isActive: isActive);
 
 class _FakeSchools extends SchoolsApi {
-  _FakeSchools({required this.schools, this.setActiveThrows})
+  _FakeSchools({required this.schools, this.setActiveThrows, this.listThrows})
     : super(_dummyClient());
 
   List<School> schools;
   Object? setActiveThrows;
+  Object? listThrows;
 
   final List<(String, bool)> calls = [];
 
   @override
-  Future<List<School>> listSchools() async => schools;
+  Future<List<School>> listSchools() async {
+    if (listThrows != null) throw listThrows!;
+    return schools;
+  }
 
   @override
   Future<School> setActive(String name, bool isActive) async {
@@ -129,10 +133,35 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('manage-schools-error')), findsOneWidget);
+    // A sentence naming the school, never the raw exception (#383).
+    expect(
+      find.text('Could not update Sint-Jan. Please try again.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('ApiException'), findsNothing);
+    expect(find.textContaining('boom'), findsNothing);
     // The switch stays on — the change didn't persist.
     final toggle = tester.widget<Switch>(
       find.byKey(const Key('school-toggle-Sint-Jan')),
     );
     expect(toggle.value, isTrue);
+  });
+
+  testWidgets('a failed load reads as a sentence (#383)', (tester) async {
+    _bigWindow(tester);
+    final api = _FakeSchools(
+      schools: const [],
+      listThrows: ApiException(500, 'boom'),
+    );
+
+    await tester.pumpWidget(_host(api));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Could not load schools. Please try again.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('ApiException'), findsNothing);
+    expect(find.textContaining('boom'), findsNothing);
   });
 }

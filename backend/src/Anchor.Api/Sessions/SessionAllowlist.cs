@@ -31,16 +31,20 @@ public static class SessionAllowlist
     };
 
     /// <summary>
-    /// Extra always-allowed apps present ONLY in a Development build (#125),
-    /// so a session can't lock a developer out of their editor. Gated behind
+    /// Extra always-allowed apps present ONLY in a Development build, so a
+    /// session (manual testing or an agent e2e run against a Development
+    /// backend) can't lock a developer out of the windows they work in: VS Code
+    /// (#125) and Claude (#372). Gated behind
     /// <c>IHostEnvironment.IsDevelopment()</c> in <see cref="SessionAllowlistExpander"/>;
     /// a non-Development (Release) build must never receive these. The agent
     /// normalizes process names case-insensitively and strips <c>.exe</c>, so
-    /// "Code" matches <c>Code.exe</c>.
+    /// "Code" matches <c>Code.exe</c> and "claude" matches <c>claude.exe</c> —
+    /// both the Claude desktop app and the Claude Code binary it runs.
     /// </summary>
     public static readonly IReadOnlyList<AllowedAppDto> DevelopmentApps = new[]
     {
         new AllowedAppDto(AllowedAppMatchKinds.ProcessName, "Code"),
+        new AllowedAppDto(AllowedAppMatchKinds.ProcessName, "claude"),
     };
 
     /// <summary>

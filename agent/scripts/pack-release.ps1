@@ -1,4 +1,5 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
+
 <#
 .SYNOPSIS
     Build the agent unpackaged, bake in the per-deployment config, and produce a
@@ -23,7 +24,9 @@
          so the native-messaging path works in the installed agent.
       4. Substitute the #{...}# placeholders in the PUBLISHED
          appsettings.Production.json (never the committed template) from env vars
-         via substitute-config.ps1.
+         via substitute-config.ps1: BACKEND_BASE_URL, AUTH_TENANT_ID,
+         AUTH_CLIENT_ID, AUTH_SCOPE and UPDATE_REPO_URL. Each is required; a
+         missing or blank one fails the build.
       5. `vpk pack` the publish folder into ./artifacts/velopack, with the app
          icon, a success/conclusion page, and the portable bundle suppressed
          (#247). Setup.exe runs the freshly-installed agent automatically — that
@@ -37,11 +40,12 @@
     portable .zip is suppressed (`--noPortable`), since the agent is installed,
     not run portably, and it only adds noise to the release page.
 
-    Auto-update wiring (the agent's UpdateManager pointed at the GitHub Releases
-    feed) and re-homing auto-start to an HKCU Run key are tracked as separate
-    follow-up issues — see the PR for #209. This script + workflow deliver the
-    build/pack/publish half so a tag produces an installable, config-correct
-    agent.
+    Auto-update (#224): the installed agent checks the Releases of the GitHub
+    repository in Update:GithubRepoUrl, which step 4 bakes in from
+    UPDATE_REPO_URL. The workflow sets that to the repository running the
+    release, the same one it uploads this feed to, so a fork's agents update
+    from the fork's Releases and never from upstream's (#360). When running this
+    script locally, set UPDATE_REPO_URL to the repository you will upload to.
 
 .PARAMETER Version
     Override the package version. Defaults to <VersionPrefix> from
@@ -134,7 +138,7 @@ dotnet publish $witProj `
     -o $publishDir
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish (witness host) failed ($LASTEXITCODE)." }
 
-# Bake the per-deployment backend/Entra config into the PUBLISHED copy.
+# Bake the per-deployment backend/Entra/update-feed config into the PUBLISHED copy.
 $publishedProdConfig = Join-Path $publishDir 'appsettings.Production.json'
 & (Join-Path $scriptDir 'substitute-config.ps1') -Path $publishedProdConfig
 

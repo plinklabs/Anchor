@@ -84,8 +84,19 @@ push to main (backend/**) ─▶ Backend CI (build + test) ─▶ [success?] ─
   run, or a successful CI run on another branch, does not deploy.
 - The deploy checks out `workflow_run.head_sha`, so the artifact it publishes is
   the exact commit CI validated — not a later tip of `main`.
-- EF Core migrations apply on app startup in non-Development environments
-  (issue #205), so there is no separate migration step in the workflow.
+- EF Core migrations are applied **by the deploy, before the new build goes
+  live** (#344): the job builds a migrations bundle (`dotnet ef migrations
+  bundle`, with `dotnet-ef` pinned in `backend/dotnet-tools.json`) and runs it
+  against the production database, then deploys. A failed migration fails the
+  job before the deploy step, so the running build keeps serving. The app itself
+  doesn't touch the database at startup. The bundle connects with the App
+  Service's own `DefaultConnection` string, which the deploy identity reads
+  through its Website Contributor role, and reaches Azure SQL through the
+  "Allow Azure services" firewall rule (GitHub's Ubuntu runners run in Azure) —
+  no extra secret, role or firewall rule. Backend CI builds the same bundle on
+  every PR so a broken one is caught before merge.
+- Deploys are serialized (`concurrency: backend-deploy`), so two runs never
+  migrate the database at the same time.
 
 ## Interaction with the PR gate (`ci-gate.yml`)
 
@@ -156,6 +167,14 @@ launches the agent automatically once installed.
   can't serve — reusing it made release sign-in fail with `WAM_provider_error_…`
   (`0xCAA2000x`) (#271). `substitute-config.ps1` fails the build if any required
   value is blank, so a missing variable can't silently ship a dead config — #247.
+- The update feed is baked in the same way, with **nothing to set**: the agent's
+  `Update:GithubRepoUrl` is substituted from `UPDATE_REPO_URL`, which the workflow
+  derives from the repository running the release (`github.repository`) — the
+  same repo it uploads the feed to. A fork's installed agents therefore update
+  from the fork's own Releases, never from upstream's (#360). Agents installed
+  from a fork release built before #360 still check `plinklabs/Anchor`; only a
+  reinstall (uninstall, then run a newer fork `Setup.exe`) moves them onto the
+  fork's feed.
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
 - The agent ships **unsigned** (one SmartScreen "More info → Run anyway" on first
@@ -291,6 +310,10 @@ registration and sets this variable. Unlike the dashboard's silent fall-back, th
 agent pack **fails the build** if any required value is unset or blank
 (`substitute-config.ps1`), so a missing variable can't ship a dead config (#247).
 
+The agent's update feed needs **no variable**: `agent-release.yml` sets
+`UPDATE_REPO_URL` to `https://github.com/<github.repository>` itself, so each
+fork's agents update from that fork's Releases (#360).
+
 #### Extension — Edge Add-ons submission (`extension-release.yml`)
 
 The release workflow submits to the store **only when all three are set**;
@@ -300,11 +323,35 @@ instructions. One-time setup: [`extension/README.md`](../extension/README.md#pub
 | Name | Kind | What it is | If unset |
 | --- | --- | --- | --- |
 | `EDGE_ADDONS_PRODUCT_ID` | variable | Edge Add-ons **product ID** of the canonical listing. | API submit skipped; ZIP uploaded as artifact for manual submit. |
-| `EDGE_ADDONS_CLIENT_ID` | secret | Edge Add-ons **API client ID**. | As above. |
-| `EDGE_ADDONS_API_KEY` | secret | Edge Add-ons **API key**. | As above. |
+| `EDGE_ADDONS_CLIENT_ID` | secret | Edge Add-ons **API client ID**. Regenerated *together with* the API key on every rotation — see below. | As above. |
+| `EDGE_ADDONS_API_KEY` | secret | Edge Add-ons **API key**. Expires 72 days after creation. | As above. |
+| `EDGE_ADDONS_KEY_ROTATED` | variable | Date (`YYYY-MM-DD`) the API credentials were last created, so expiry can be warned about before it bites (#336). | Expiry can't be tracked; the weekly check files an issue saying so. |
 
 > Both client release workflows use the auto-provided `GITHUB_TOKEN`
 > (`agent-release.yml` to upload the Velopack release assets) — no setup needed.
+
+#### Rotating the Edge Add-ons API key (every 72 days)
+
+Microsoft cut Edge Add-ons API key lifetime from two years to **72 days**. The
+key does **not** renew on use, the lifetime **cannot be changed**, and there is
+**no API to rotate it** — the upstream request is still open
+([microsoft/MicrosoftEdge-Extensions#272][edge-key-issue]). So this is a manual
+chore roughly every ten weeks:
+
+1. Partner Center → **Microsoft Edge** → **Publish API** → **Create API credentials**.
+2. Copy **both** the Client ID and the new API key. The same button that renews
+   the key regenerates the **Client ID**, so updating only `EDGE_ADDONS_API_KEY`
+   leaves a mismatched pair — the publish then fails with a `403` that looks
+   nothing like an expiry.
+3. Update `EDGE_ADDONS_CLIENT_ID` **and** `EDGE_ADDONS_API_KEY`.
+4. Set `EDGE_ADDONS_KEY_ROTATED` to today's date.
+
+[`edge-key-expiry.yml`](../.github/workflows/edge-key-expiry.yml) checks the
+recorded date weekly and files (or updates) a rotation issue once the key is
+within 14 days of expiry — a key expires on the calendar's schedule, not the
+repo's, so this can't wait for the next release to notice.
+
+[edge-key-issue]: https://github.com/microsoft/MicrosoftEdge-Extensions/issues/272
 
 ### Azure App Service — application settings
 
@@ -321,11 +368,19 @@ nested configuration keys (`AzureAd__TenantId` → `AzureAd:TenantId`).
 | `AzureAd__Audience` | JWT bearer validation | Usually `api://<api-client-id>`. **Required.** |
 | `AzureAd__ClientCredentials` (e.g. `__0__SourceType`, `__0__ClientSecret`) | OBO token acquisition for Graph directory search | **Required for the user-directory search feature** (the on-behalf-of exchange). Without it the OBO call fails at first use, not at startup. A client secret or certificate on the API app registration. |
 | `Cors__AllowedOrigins__0`, `__1`, … | CORS policy | The dashboard origin(s), e.g. the Static Web App URL. **Required** for the dashboard to call the API from the browser. |
-| `Azure__SignalR__ConnectionString` | (Azure SignalR, when enabled) | Provisioned by Bicep from the SignalR Service primary key. The API currently uses **in-process** SignalR (`AddSignalR()`), so this is dormant until the backend opts into `AddAzureSignalR()`; documented here because the infra provisions it and it is the App Service setting to populate when that switch happens. |
 
-`Heartbeat`, `EventRetention`, and `Logging` have committed defaults in
-`appsettings.json` and only need App Service overrides to tune them — not for a
-baseline deploy.
+There is no SignalR setting: the API runs SignalR **in-process** (`AddSignalR()`)
+and never reads an Azure SignalR connection string, so Bicep provisions none.
+`Azure__SignalR__ConnectionString` only comes back if the backend scales out and
+switches to `AddAzureSignalR()` — see
+[Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
+
+`Heartbeat`, `EventRetention`, `SessionAutoEnd`, and `Logging` have committed
+defaults in `appsettings.json` and only need App Service overrides to tune them —
+not for a baseline deploy. For example, `EventRetention__RawEventDays` (default
+14) sets how many days raw session events are kept, and
+`SessionAutoEnd__MaxDuration` (default `04:00:00`) how long a session may run
+before it is treated as forgotten and ended.
 
 ## Cutting a release
 
@@ -340,9 +395,9 @@ release**.
 1. Merge the change to `main` (through the normal PR + `CI Gate / gate` flow).
 2. The matching leg deploys automatically:
    - **backend** — Backend CI runs on `backend/**`; on success
-     `backend-deploy.yml` publishes the CI-validated commit to the App Service.
-     EF Core migrations apply on app startup (non-Development), so there is no
-     separate migration step.
+     `backend-deploy.yml` applies any new EF Core migrations to the production
+     database, then publishes the CI-validated commit to the App Service. If
+     the migration fails, nothing is deployed.
    - **dashboard** — a push under `dashboard/**` builds with the `vars.*`
      dart-defines and uploads to the Static Web App.
    - **website** — a push under `website/**` mirrors `website/` into the
@@ -383,6 +438,22 @@ re-push.
    listing. If it isn't set, download the `anchor-extension-<version>` artifact and
    upload it by hand at the Edge Add-ons dashboard.
 
+**If the publish fails**, the run diagnoses which of the two causes it was and
+files an issue naming the stranded tag (#336) — a tag-triggered workflow produces
+no PR check, so nothing else would tell you. The packaged ZIP is always attached
+to the run, so recovery never needs a re-tag:
+
+| Cause | Signal | Recovery |
+| --- | --- | --- |
+| A prior submission is still **in review** | Probe authenticates fine; the store refuses the submission | Wait for review to clear, then `gh run rerun <run-id> --failed` |
+| **Credentials rejected** | Probe returns 401/403 | Rotate both credentials (above), then `gh run rerun <run-id> --failed` |
+
+Reviews have taken **over two weeks**. If a stranded release waits long enough
+that newer work has landed, **bump the version and cut a fresh tag** rather than
+re-running the old job — republishing a build you would immediately supersede
+helps nobody. (This is what 0.4.1 did after 0.4.0 was stranded behind the 0.3.0
+review.)
+
 ## Operator checklist (fork bringing up its own cloud)
 
 **Fastest path — one command.** [`scripts/setup.ps1`](../scripts/setup.ps1)
@@ -403,19 +474,18 @@ region(s):
 ```
 
 Useful flags: `-Location` (primary region) plus per-resource overrides
-(`-SqlLocation` / `-AppServiceLocation` / `-SignalRLocation` /
-`-StaticWebAppLocation`); `-SkipInfra` to only (re-)wire GitHub against an
-existing deployment; `-EntraClientId` / `-SpaClientId` to adopt hand-built app
+(`-SqlLocation` / `-AppServiceLocation` / `-StaticWebAppLocation`);
+`-SkipInfra` to only (re-)wire GitHub against an existing deployment;
+`-EntraClientId` / `-SpaClientId` to adopt hand-built app
 registrations. See [infra/README.md](../infra/README.md) for the full flow,
 region constraints, and admin-consent (which the script attempts automatically,
 falling back to a printed command if the runner isn't a tenant admin). The steps
 below remain the fallback when you provision by hand.
 
 1. Provision Azure resources — [`infra/main.bicep`](../infra/main.bicep) (App
-   Service, Azure SQL, SignalR, Static Web App). See [infra/README.md](../infra/README.md).
+   Service, Azure SQL, Static Web App). See [infra/README.md](../infra/README.md).
 2. Configure the **App Service application settings** above (Entra IDs, CORS
-   origins, client credentials). Bicep wires the SQL connection string and SignalR
-   connection string for you.
+   origins, client credentials). Bicep wires the SQL connection string for you.
    - **Entra app roles (authorization).** The backend authorizes entirely on the
      access token's `roles` claim (`RequireRole("Teacher")` / `"Student"`), so the
      API app registration must **define** the `Teacher` and `Student` app roles

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     End-to-end verification of the manual join-by-code path (#34), headless.
 

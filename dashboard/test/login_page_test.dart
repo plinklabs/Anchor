@@ -142,6 +142,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('login-error')), findsOneWidget);
+    // A sentence, never the raw error (#383).
+    expect(
+      find.text('Could not sign you in. Please try again.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('boom'), findsNothing);
+    expect(find.textContaining('Bad state'), findsNothing);
     expect(tokens.isAuthenticated, isFalse);
   });
 

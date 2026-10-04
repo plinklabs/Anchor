@@ -1,5 +1,6 @@
 import { HubClient } from './shared/hub-client';
 import { SessionHeartbeat } from './shared/heartbeat';
+import { catchUpOnConnect } from './shared/session-confirm';
 import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
@@ -79,6 +80,7 @@ async function ensureHub(): Promise<void> {
     onSessionEnded: handleSessionEnded,
     onAllowlistAmended: handleAllowlistAmended,
     onSessionBundlesUpdated: handleSessionBundlesUpdated,
+    onConnected: handleHubConnected,
   };
 
   if (mode === 'none') {
@@ -104,7 +106,8 @@ async function ensureHub(): Promise<void> {
   try {
     await hubClient.start();
   } catch (err) {
-    log.error('hub start failed; will rely on automatic reconnect', err);
+    // The client goes on trying on its own, on the reconnect backoff (#374).
+    log.error('hub start failed; retrying until it connects', err);
   }
   ensureHeartbeat();
 }
@@ -178,6 +181,32 @@ function ensureHeartbeat(): void {
     getActiveSessionId: async () => (await getActiveSession())?.sessionId ?? null,
   });
   heartbeat.start();
+}
+
+// Every (re)connect is a new hub connection, which never receives a SessionEnded
+// the backend sent while the extension was offline — between service-worker
+// generations, or through a network drop. Ask instead, so an ended session
+// doesn't stay in force until the browser restarts (#354). The same goes for a
+// SessionStarted, which also misses a connection in the moment before the
+// backend adds it to the student's user group: ask which session the student is
+// in, so a started one is enforced (#356). The hub client runs this after
+// every connect, however long the outage before it was (#374).
+async function handleHubConnected(): Promise<void> {
+  await catchUpOnConnect({
+    getActiveSessionId: async () => (await getActiveSession())?.sessionId ?? null,
+    isInSession: (sessionId) => {
+      if (!hubClient) return Promise.reject(new Error('no hub client'));
+      return hubClient.isInSession(sessionId);
+    },
+    endSession: handleSessionEnded,
+    getStartedSession: () => {
+      if (!hubClient) return Promise.reject(new Error('no hub client'));
+      return hubClient.getStartedSession();
+    },
+    startSession: async (payload) => {
+      await hubClient?.joinStartedSession(payload);
+    },
+  });
 }
 
 async function handleSessionStarted(payload: SessionStartedPayload): Promise<void> {

@@ -3,8 +3,8 @@
 // actually selects the `_locales/nl` catalogue, so the block page and popup
 // render Dutch — both the static HTML copy (localizeDocument) and the dynamic
 // status strings routed through t(). The English path is covered end-to-end by
-// the theme specs (they assert the English idle headline), which run in the
-// host-default locale.
+// the specs that assert English copy (block-on-start, popup-theme), which run in
+// the harness default locale — en-US, pinned whatever the host language (#364).
 //
 // Neither surface needs a session for this check: the block page renders its
 // static copy from the URL params alone, and the popup shows its idle face when

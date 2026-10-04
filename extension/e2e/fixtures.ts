@@ -1,7 +1,7 @@
 // Playwright fixtures composing the harness pieces. Each test gets a fresh
 // extension (its own Edge profile + service worker, so no cached session
-// leaks between specs); the static server and backend client are cheap and
-// shared per worker.
+// leaks between specs) and a backend client that ends the sessions the test
+// started; the static server is cheap and shared per worker.
 
 import { test as base } from '@playwright/test';
 import { BackendClient } from './backend.ts';
@@ -29,7 +29,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   ],
 
   backend: async ({}, use) => {
-    await use(new BackendClient());
+    const backend = new BackendClient();
+    await use(backend);
+    // A session left running would reach the next spec's fresh extension
+    // through its catch-up on connect (#356).
+    await backend.endStartedSessions();
   },
 
   ext: async ({}, use) => {

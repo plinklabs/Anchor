@@ -7,16 +7,28 @@ public sealed class EventRetentionOptions
     /// <summary>
     /// Raw <see cref="Domain.Events.Event"/> rows older than this are eligible
     /// for pruning once their parent session has ended. Per-session summaries
-    /// are kept indefinitely.
+    /// are kept indefinitely. Two weeks (#345, down from 30 days) keeps last
+    /// week's lessons reviewable event by event on the past-session page while
+    /// holding no more per-event student data than that needs; the per-student
+    /// counts outlive it in the summaries.
     /// </summary>
-    public int RawEventDays { get; set; } = 30;
+    public int RawEventDays { get; set; } = 14;
 
     /// <summary>
-    /// How often <see cref="EventPruner"/> wakes up. 30 days is the cutoff so
-    /// daily is plenty — pruning N hours late costs nothing, the point is
-    /// bounded growth, not freshness (#77).
+    /// How often <see cref="EventPruner"/> wakes up. The cutoff is counted in
+    /// days, so daily is plenty — pruning N hours late costs nothing, the point
+    /// is bounded growth, not freshness (#77).
     /// </summary>
     public int PruneIntervalMinutes { get; set; } = 1440;
+
+    /// <summary>
+    /// UTC hour (0–23) the prune runs at — with the default daily interval,
+    /// once a day at this hour. The pruner never runs at startup (#344); it
+    /// waits for the next scheduled run, so batched deletes stay out of school
+    /// hours and a restart doesn't query the database. 02:00 UTC is 03:00 or
+    /// 04:00 in Belgium.
+    /// </summary>
+    public int PruneHourUtc { get; set; } = 2;
 
     /// <summary>
     /// Rows-per-round on the batched delete. A first-time prune against a
@@ -37,10 +49,15 @@ public sealed class EventRetentionOptions
     /// If a prune scan finds more than this many events under sessions that
     /// have <c>EndedAt = null</c> but are older than the retention window,
     /// the pruner logs a warning instead of silently leaving them. Indicates
-    /// a session that was abandoned without End being called.
+    /// a session that was never ended, by the teacher or the auto-end (#345).
     /// </summary>
     public int OrphanedActiveSessionWarnThreshold { get; set; } = 100;
 
     public TimeSpan RawEventMaxAge => TimeSpan.FromDays(RawEventDays);
-    public TimeSpan PruneInterval => TimeSpan.FromMinutes(PruneIntervalMinutes);
+
+    // Floored at one minute: the pruner divides by it to find the next run.
+    public TimeSpan PruneInterval => TimeSpan.FromMinutes(Math.Max(1, PruneIntervalMinutes));
+
+    // An out-of-range hour wraps instead of failing the background service.
+    public int EffectivePruneHourUtc => ((PruneHourUtc % 24) + 24) % 24;
 }

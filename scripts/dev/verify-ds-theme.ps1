@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Runs the agent's `--verify-ds-theme` self-test and reports whether the
     design-system WinUI binding is correctly wired into the agent (#164 / AF3).
@@ -15,6 +15,10 @@
     Headless: no WAM, hub, backend, or screenshot needed — it's the brush/font
     resource resolution that's under test, and that's gradable from the exit
     code alone.
+
+.PARAMETER SkipBuild
+    Skip the agent build (agent\FocusAgent.sln, x64) and run the existing
+    FocusAgent.App.exe.
 #>
 
 param(

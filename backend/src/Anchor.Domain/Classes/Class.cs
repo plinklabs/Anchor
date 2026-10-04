@@ -16,5 +16,11 @@ public sealed class Class
     /// scoped by [SchoolTag] when querying Graph.
     public string? ClassCode { get; set; }
 
+    /// Hides the class from the teacher's class lists and Home's class picker,
+    /// and refuses new sessions for it, while its roster and session history
+    /// stay (#395). Like <c>Bundle.IsArchived</c>: the reversible way to clear
+    /// last year's classes; deleting one with its sessions is the permanent one.
+    public bool IsArchived { get; set; }
+
     public ICollection<ClassMembership> Memberships { get; init; } = new List<ClassMembership>();
 }

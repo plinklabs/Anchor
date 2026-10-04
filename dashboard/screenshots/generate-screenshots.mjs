@@ -29,6 +29,14 @@ const outDir = join(dashboardDir, '..', 'website', 'assets');
 // Fixed 16:10 desktop frame — a clean, repeatable canvas for the website.
 const VIEWPORT = { width: 1440, height: 900 };
 
+// Fixed browser language (#377). The dashboard follows the browser language
+// (#321), and the Playwright library, unlike Playwright Test, gives a context
+// with no `locale` the host's language, so a Dutch machine wrote Dutch shots.
+// The website that embeds them is English (`<html lang="en">`, alt text that
+// quotes the English copy), so every host shoots in US English.
+// test/screenshot_locale_test.dart keeps every context on this pin.
+const LOCALE = 'en-US';
+
 // The named PNG set. Each entry drives the real app to a route and shoots it.
 // `settle` is extra quiet time after fonts load — the live view replays a fixed
 // event feed and the home view animates its LIVE spark in, so they get a beat
@@ -41,7 +49,9 @@ const SHOTS = [
   // the empty "Select a bundle" pane — real navigation, the way a teacher lands.
   // Flutter web paints to a canvas (no DOM text to target), so click the
   // catalogue row by its stable on-canvas position in this fixed viewport.
-  { name: 'dashboard-bundles', hash: '#/bundles', click: { x: 90, y: 262 }, settle: 700 },
+  // Bundles lives under the Admin tab since #299, so the catalogue sits right
+  // of the admin sub-nav and "Exam apps" is its first row.
+  { name: 'dashboard-bundles', hash: '#/admin/bundles', click: { x: 300, y: 298 }, settle: 700 },
   { name: 'dashboard-classes', hash: '#/classes', settle: 700 },
   { name: 'dashboard-history', hash: '#/history', settle: 600 },
   { name: 'dashboard-past-session', hash: `#/history/demo-past-session-3b`, settle: 700 },
@@ -110,7 +120,11 @@ const browser = await chromium.launch();
 
 try {
   for (const shot of SHOTS) {
-    const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1 });
+    const ctx = await browser.newContext({
+      viewport: VIEWPORT,
+      deviceScaleFactor: 1,
+      locale: LOCALE,
+    });
     const p = await ctx.newPage();
     // Flutter web boots the app at the hash route; loading the URL directly
     // lands the router on the right page on first paint.

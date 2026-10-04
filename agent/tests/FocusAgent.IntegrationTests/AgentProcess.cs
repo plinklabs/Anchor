@@ -78,7 +78,8 @@ internal sealed class AgentProcess : IAsyncDisposable
         int? heartbeatIntervalSeconds = null,
         bool simulateInPrivate = false,
         string? environmentName = null,
-        bool pointBackendViaEnv = true)
+        bool pointBackendViaEnv = true,
+        TimeSpan? reconnectMaxBackoff = null)
     {
         if (!OperatingSystem.IsWindows())
             throw new InvalidOperationException("The agent exe is Windows-only.");
@@ -116,6 +117,10 @@ internal sealed class AgentProcess : IAsyncDisposable
         psi.Environment["Dev__ImpersonateOid"] = impersonateOid;
         if (heartbeatIntervalSeconds is { } hb)
             psi.Environment["Session__HeartbeatIntervalSeconds"] = hb.ToString();
+        // Caps the hub's reconnect backoff (default 30s) so a spec that restarts
+        // the backend doesn't wait out a long retry delay.
+        if (reconnectMaxBackoff is { } backoff)
+            psi.Environment["Realtime__ReconnectMaxBackoff"] = backoff.ToString("c");
 
         var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the agent process.");

@@ -95,17 +95,22 @@ internal sealed class BackendClient
     /// HeartbeatVerifier dev tool).
     /// </summary>
     public async Task<List<string>> GetSessionEventKindsAsync(Guid sessionId, string oid = TestConfig.TeacherOid)
+        => (await GetSessionEventsAsync(sessionId, oid)).Select(e => e.Kind).ToList();
+
+    /// <summary>
+    /// GET /sessions/{id} → the recentEvents, each as its symbolic kind and the
+    /// raw payload JSON the past-session page shows the teacher.
+    /// </summary>
+    public async Task<List<SessionEvent>> GetSessionEventsAsync(Guid sessionId, string oid = TestConfig.TeacherOid)
     {
-        using var res = await SendAsync(HttpMethod.Get, $"/sessions/{sessionId}", oid);
-        res.EnsureSuccessStatusCode();
-        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
-        var kinds = new List<string>();
-        if (doc.RootElement.TryGetProperty("recentEvents", out var events))
+        using var doc = await GetSessionDetailAsync(sessionId, oid);
+        var events = new List<SessionEvent>();
+        if (doc.RootElement.TryGetProperty("recentEvents", out var recent))
         {
-            foreach (var e in events.EnumerateArray())
+            foreach (var e in recent.EnumerateArray())
             {
                 var kindElem = e.GetProperty("kind");
-                kinds.Add(kindElem.ValueKind == JsonValueKind.Number
+                var kind = kindElem.ValueKind == JsonValueKind.Number
                     ? kindElem.GetInt32() switch
                     {
                         0 => "ForegroundChange",
@@ -120,10 +125,29 @@ internal sealed class BackendClient
                         9 => "TamperDetected",
                         var n => $"Unknown({n})",
                     }
-                    : kindElem.GetString() ?? "");
+                    : kindElem.GetString() ?? "";
+                events.Add(new SessionEvent(kind, e.GetProperty("payloadJson").GetString() ?? ""));
             }
         }
-        return kinds;
+        return events;
+    }
+
+    /// <summary>GET /sessions/{id} → endedAt, or null while the session is running.</summary>
+    public async Task<DateTimeOffset?> GetSessionEndedAtAsync(Guid sessionId, string oid = TestConfig.TeacherOid)
+    {
+        using var doc = await GetSessionDetailAsync(sessionId, oid);
+        return doc.RootElement.TryGetProperty("endedAt", out var endedAt) && endedAt.ValueKind == JsonValueKind.String
+            ? endedAt.GetDateTimeOffset()
+            : null;
+    }
+
+    public sealed record SessionEvent(string Kind, string PayloadJson);
+
+    private async Task<JsonDocument> GetSessionDetailAsync(Guid sessionId, string oid)
+    {
+        using var res = await SendAsync(HttpMethod.Get, $"/sessions/{sessionId}", oid);
+        res.EnsureSuccessStatusCode();
+        return JsonDocument.Parse(await res.Content.ReadAsStringAsync());
     }
 
     private async Task<T> GetJsonAsync<T>(string path, string oid)

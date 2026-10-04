@@ -1,3 +1,4 @@
+using Anchor.Api.Sessions;
 using Anchor.Domain.Events;
 using Anchor.Domain.Sessions;
 using Anchor.Domain.Users;
@@ -35,7 +36,9 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     private readonly TimeProvider _clock;
     private readonly IHostEnvironment _env;
     private readonly HeartbeatTracker _heartbeats;
+    private readonly ActiveParticipantCache _activeParticipants;
     private readonly ISessionBroadcaster _broadcaster;
+    private readonly ISessionAllowlistExpander _allowlist;
     private readonly ILogger<SessionHub> _log;
 
     public SessionHub(
@@ -44,7 +47,9 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         TimeProvider clock,
         IHostEnvironment env,
         HeartbeatTracker heartbeats,
+        ActiveParticipantCache activeParticipants,
         ISessionBroadcaster broadcaster,
+        ISessionAllowlistExpander allowlist,
         ILogger<SessionHub> log)
     {
         _db = db;
@@ -52,10 +57,16 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         _clock = clock;
         _env = env;
         _heartbeats = heartbeats;
+        _activeParticipants = activeParticipants;
         _broadcaster = broadcaster;
+        _allowlist = allowlist;
         _log = log;
     }
 
+    /// <summary>
+    /// The session group: the owning teacher's roster feed. Only their
+    /// connections join it, through <see cref="JoinSession"/> (#366).
+    /// </summary>
     public static string GroupName(Guid sessionId) => $"session:{sessionId:D}";
 
     public static string UserGroupName(Guid userId) => $"user:{userId:D}";
@@ -124,12 +135,24 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         }
 
         await _db.SaveChangesAsync(ct);
-        await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(session.Id), ct);
+        if (participant is not null)
+            _activeParticipants.Update(participant);
 
-        // Tell the teacher's roster a member just joined (#100). The owning
-        // teacher isn't a participant, so their own subscribe doesn't emit.
-        if (!isOwningTeacher)
+        if (isOwningTeacher)
         {
+            // Only the owning teacher's connections subscribe to the session
+            // group (#366): it carries their roster feed, with each student's
+            // name, the URLs they ask to open and their tamper flags. A
+            // student's join records them as joined without subscribing them;
+            // what their agent and extension listen for goes to their user group.
+            // The teacher's join changes nothing else, so calling it again,
+            // from the same connection or a new one, only (re)subscribes it.
+            await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(session.Id), ct);
+        }
+        else
+        {
+            // Tell the teacher's roster a member just joined (#100). The owning
+            // teacher isn't a participant, so their own subscribe doesn't emit.
             await _broadcaster.ParticipantStateChangedAsync(
                 new ParticipantStateChangedPayload(
                     session.Id, user.Id, user.DisplayName,
@@ -152,6 +175,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             var leftAt = _clock.GetUtcNow();
             participant.LeftAt = leftAt;
             await _db.SaveChangesAsync(ct);
+            _activeParticipants.Update(participant);
 
             await _broadcaster.ParticipantStateChangedAsync(
                 new ParticipantStateChangedPayload(
@@ -233,17 +257,74 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         // The hub is the only liveness witness, so we don't want a stale or
         // finished session keeping participant slots warm. Confirm the
         // participant is actively joined before recording the ping — mirrors
-        // ReportEvent's check.
-        var isActiveParticipant = await _db.SessionParticipants.AsNoTracking().AnyAsync(
-            p => p.SessionId == sessionId &&
-                 p.UserId == user.Id &&
-                 p.JoinedAt != null &&
-                 p.LeftAt == null,
-            ct);
-        if (!isActiveParticipant)
+        // ReportEvent's check. Answered from memory (#342): this runs on every
+        // ping from every agent and extension.
+        if (!await _activeParticipants.IsActiveAsync(_db.SessionParticipants.AsNoTracking(), sessionId, user.Id, ct))
             throw new HubException("Not an active participant of this session.");
 
         _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow(), source);
+    }
+
+    /// <summary>
+    /// Whether the caller is still in the session: it hasn't ended and the
+    /// caller is an active participant — the condition under which
+    /// <see cref="Heartbeat"/> and <see cref="ReportEvent"/> accept the caller's
+    /// calls for it. The agent and the extension ask after every reconnect
+    /// (#354): <c>SessionEnded</c> reaches only the connections open when it is
+    /// sent, so a session that ended while a client was offline — a network
+    /// drop, a backend restart, a laptop asleep through the automatic end —
+    /// would otherwise stay in force on that client. Read from the database
+    /// rather than <see cref="ActiveParticipantCache"/>: it runs once per
+    /// reconnect, not per ping, and decides whether the student leaves focus
+    /// mode.
+    /// </summary>
+    public async Task<bool> IsInSession(Guid sessionId)
+    {
+        var ct = Context.ConnectionAborted;
+        var user = await ResolveCurrentUserAsync(ct);
+        return await _db.SessionParticipants.AsNoTracking()
+            .AnyAsync(ActiveParticipantCache.IsActive(sessionId, user.Id), ct);
+    }
+
+    /// <summary>
+    /// The running session the caller is a participant of and hasn't declined
+    /// or left, as the <see cref="SessionStartedPayload"/> its start sent, or
+    /// null; the most recently started one if there are several. The start-side
+    /// counterpart of <see cref="IsInSession"/>: the agent and the extension
+    /// ask after every (re)connect and handle the answer as a
+    /// <c>SessionStarted</c> they missed (#356). That broadcast goes to the
+    /// user group, so it reaches only the connections in it when it is sent:
+    /// not a client that was offline then, and not one that had only just
+    /// connected, because a client's start completes on the handshake reply,
+    /// which the server sends before <see cref="OnConnectedAsync"/> adds the
+    /// connection to its user group. An invocation is dispatched only once
+    /// OnConnectedAsync has finished, so a session saved before this query runs
+    /// is in its answer, and any later one's broadcast finds the connection in
+    /// its group.
+    /// </summary>
+    public async Task<SessionStartedPayload?> GetStartedSession()
+    {
+        var ct = Context.ConnectionAborted;
+        var user = await ResolveCurrentUserAsync(ct);
+
+        var rows = await _db.SessionParticipants.AsNoTracking()
+            .Where(p => p.UserId == user.Id &&
+                        p.DeclinedAt == null &&
+                        p.LeftAt == null &&
+                        p.Session!.EndedAt == null)
+            .Select(p => new { p.Session!.Id, p.Session.ClassId, p.Session.StartedAt, p.Session.JoinCode })
+            .ToListAsync(ct);
+        // SQLite (dev + tests) can't ORDER BY a DateTimeOffset; sort in memory,
+        // as /sessions/rejoinable does.
+        var latest = rows.MaxBy(s => s.StartedAt);
+        if (latest is null)
+            return null;
+
+        // The allowlist a join-by-code SessionStarted carries: the session's
+        // bundles plus its whole-class grants (#101).
+        var allowlist = await _allowlist.ExpandForSessionAsync(latest.Id, ct);
+        return new SessionStartedPayload(
+            latest.Id, latest.ClassId, latest.StartedAt, latest.JoinCode, allowlist.Apps, allowlist.Domains);
     }
 
     public async Task ReportEvent(ReportEventRequest request)
@@ -251,13 +332,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         var ct = Context.ConnectionAborted;
         var user = await ResolveCurrentUserAsync(ct);
 
-        var isActiveParticipant = await _db.SessionParticipants.AnyAsync(
-            p => p.SessionId == request.SessionId &&
-                 p.UserId == user.Id &&
-                 p.JoinedAt != null &&
-                 p.LeftAt == null,
-            ct);
-        if (!isActiveParticipant)
+        if (!await _activeParticipants.IsActiveAsync(_db.SessionParticipants.AsNoTracking(), request.SessionId, user.Id, ct))
             throw new HubException("Not a participant of this session.");
 
         if (!Enum.TryParse<EventKind>(request.Kind, ignoreCase: true, out var kind))
@@ -331,10 +406,14 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         {
             var participant = await _db.SessionParticipants
                 .FirstOrDefaultAsync(p => p.SessionId == request.SessionId && p.UserId == user.Id, ct);
-            if (participant is not null && participant.LeftAt is null)
+            if (participant is not null)
             {
-                participant.LeftAt = occurredAt;
-                await _db.SaveChangesAsync(ct);
+                if (participant.LeftAt is null)
+                {
+                    participant.LeftAt = occurredAt;
+                    await _db.SaveChangesAsync(ct);
+                }
+                _activeParticipants.Update(participant);
             }
 
             _heartbeats.Clear(request.SessionId, user.Id);

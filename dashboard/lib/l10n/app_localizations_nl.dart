@@ -80,6 +80,9 @@ class AppLocalizationsNl extends AppLocalizations {
       'Aanmelden duurt langer dan verwacht. Probeer het opnieuw.';
 
   @override
+  String get loginError => 'Kon je niet aanmelden. Probeer het opnieuw.';
+
+  @override
   String get shellNavHome => 'Start';
 
   @override
@@ -115,6 +118,10 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get apiError403 =>
       'Je account is nog niet ingesteld als leerkracht. Vraag een beheerder om toegang te verlenen.';
+
+  @override
+  String get apiError403Admin =>
+      'Je account heeft geen beheerderstoegang. Vraag een beheerder om die te verlenen.';
 
   @override
   String get homeLoadError =>
@@ -196,12 +203,70 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String classesDeleteClassBody(String name, String year) {
-    return '$name ($year) verwijderen? Dit verwijdert de klas en haar klaslijst. Klassen met afgelopen sessies kunnen niet worden verwijderd.';
+    return '$name ($year) verwijderen? Dit verwijdert de klas en haar klaslijst.';
   }
 
   @override
   String get classesDeleteError =>
       'Kon de klas niet verwijderen. Probeer het opnieuw.';
+
+  @override
+  String classesDeleteWithSessionsBody(int count, String name, String year) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$name ($year) heeft $count sessies. Als je de klas verwijdert, verdwijnen die sessies ook, en daarmee de activiteitsgegevens van de leerlingen. Dit kan niet ongedaan worden gemaakt.',
+      one:
+          '$name ($year) heeft 1 sessie. Als je de klas verwijdert, verdwijnt die sessie ook, en daarmee de activiteitsgegevens van de leerlingen. Dit kan niet ongedaan worden gemaakt.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get classesDeleteArchiveInstead =>
+      'Wil je de klas alleen uit je lijsten halen? Archiveer ze dan: de sessies blijven bewaard en je kunt de klas later herstellen.';
+
+  @override
+  String classesDeleteTypeName(String name) {
+    return 'Typ $name om te bevestigen';
+  }
+
+  @override
+  String get classesDeleteWithSessions => 'Klas en sessies verwijderen';
+
+  @override
+  String get classesDeleteRunningError =>
+      'Er loopt nog een sessie van deze klas. Beëindig ze en verwijder dan de klas.';
+
+  @override
+  String get classesDeleteHasSessionsError =>
+      'Intussen is er een sessie voor deze klas gestart. Laad de pagina opnieuw en probeer het nog eens.';
+
+  @override
+  String get classesArchive => 'Archiveren';
+
+  @override
+  String get classesArchiveTitle => 'Klas archiveren?';
+
+  @override
+  String classesArchiveBody(String name, String year) {
+    return '$name ($year) verdwijnt uit je klassenlijst en uit de klaskeuze op het startscherm, en er kan geen sessie meer voor starten. De klaslijst en afgelopen sessies blijven bewaard. Je kunt de klas herstellen onder Gearchiveerd, boven de klassenlijst.';
+  }
+
+  @override
+  String get classesArchiveError =>
+      'Kon de klas niet archiveren. Probeer het opnieuw.';
+
+  @override
+  String get classesRestore => 'Herstellen';
+
+  @override
+  String get classesRestoreError =>
+      'Kon de klas niet herstellen. Probeer het opnieuw.';
+
+  @override
+  String get classesShowArchived => 'Gearchiveerde klassen tonen';
 
   @override
   String get classesSaveCodesError =>
@@ -301,6 +366,11 @@ class AppLocalizationsNl extends AppLocalizations {
       'Kon de klas niet aanmaken. Probeer het opnieuw.';
 
   @override
+  String classesCreateArchivedClash(String name, String year) {
+    return '$name ($year) bestaat al en is gearchiveerd. Herstel die klas: zet Gearchiveerd aan boven de klassenlijst.';
+  }
+
+  @override
   String get classesNameLabel => 'Naam';
 
   @override
@@ -332,14 +402,12 @@ class AppLocalizationsNl extends AppLocalizations {
   String get classesCsvHeaderMissing => 'De koprij moet upn bevatten.';
 
   @override
-  String sessionUpdateBundlesError(String error) {
-    return 'Kon de bundels niet bijwerken: $error';
-  }
+  String get sessionUpdateBundlesError =>
+      'Kon de toegestane bundels niet bijwerken. Probeer het opnieuw.';
 
   @override
-  String sessionApproveError(String error) {
-    return 'Goedkeuren mislukt: $error';
-  }
+  String get sessionApproveError =>
+      'Kon het verzoek niet goedkeuren. Probeer het opnieuw.';
 
   @override
   String sessionCopiedCode(String code) {
@@ -347,14 +415,12 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String sessionConnectError(String error) {
-    return 'Kon geen verbinding maken met de live stream: $error';
-  }
+  String get sessionConnectError =>
+      'Kon geen verbinding maken met de live feed van deze sessie. Laad de pagina opnieuw om het nog eens te proberen.';
 
   @override
-  String sessionEndError(String error) {
-    return 'Kon de sessie niet beëindigen: $error';
-  }
+  String get sessionEndError =>
+      'Kon de sessie niet beëindigen. Probeer het opnieuw.';
 
   @override
   String get sessionLeaveTitle => 'Deze sessie verlaten?';
@@ -382,6 +448,17 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String get sessionConnecting => 'Verbinden met de live feed…';
+
+  @override
+  String get sessionReconnecting =>
+      'Verbinding verbroken — opnieuw verbinden. Live-updates zijn gepauzeerd.';
+
+  @override
+  String get sessionDisconnected =>
+      'Geen verbinding — live-updates zijn gepauzeerd.';
+
+  @override
+  String get sessionReconnect => 'Opnieuw verbinden';
 
   @override
   String get sessionActivity => 'Activiteit';
@@ -440,6 +517,10 @@ class AppLocalizationsNl extends AppLocalizations {
   String get sessionMoreApprovalOptions => 'Meer goedkeuringsopties';
 
   @override
+  String get sessionNotYours =>
+      'Deze sessie is niet beschikbaar voor jou. Alleen de leerkracht die ze gestart heeft, kan ze openen.';
+
+  @override
   String get sessionApproveWholeClass => 'Goedkeuren voor hele klas';
 
   @override
@@ -458,19 +539,12 @@ class AppLocalizationsNl extends AppLocalizations {
   String get sessionCopyCode => 'Code kopiëren';
 
   @override
-  String bundlesLoadError(String error) {
-    return 'Kon niet laden: $error';
-  }
+  String get bundlesLoadListError =>
+      'Kon de bundels niet laden. Probeer het opnieuw.';
 
   @override
-  String bundlesLoadListError(String error) {
-    return 'Kon de bundels niet laden: $error';
-  }
-
-  @override
-  String bundlesLoadOneError(String error) {
-    return 'Kon de bundel niet laden: $error';
-  }
+  String get bundlesLoadOneError =>
+      'Kon deze bundel niet laden. Probeer het opnieuw.';
 
   @override
   String get bundlesNameRequired => 'Naam is verplicht.';
@@ -482,9 +556,12 @@ class AppLocalizationsNl extends AppLocalizations {
   String get bundlesEntryAtLeastOne => 'Er is minstens één item vereist.';
 
   @override
-  String bundlesSaveError(String error) {
-    return 'Opslaan mislukt: $error';
-  }
+  String get bundlesSaveError =>
+      'Kon de bundel niet opslaan. Probeer het opnieuw.';
+
+  @override
+  String get bundlesNameTaken =>
+      'Er bestaat al een bundel met die naam. Kies een andere naam.';
 
   @override
   String get bundlesArchiveTitle => 'Bundel archiveren?';
@@ -498,9 +575,8 @@ class AppLocalizationsNl extends AppLocalizations {
   String get bundlesArchive => 'Archiveren';
 
   @override
-  String bundlesArchiveError(String error) {
-    return 'Archiveren mislukt: $error';
-  }
+  String get bundlesArchiveError =>
+      'Kon de bundel niet archiveren. Probeer het opnieuw.';
 
   @override
   String get bundlesDeleteTitle => 'Bundel verwijderen?';
@@ -511,9 +587,42 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String bundlesDeleteError(String error) {
-    return 'Verwijderen mislukt: $error';
+  String get bundlesDeleteError =>
+      'Kon de bundel niet verwijderen. Probeer het opnieuw.';
+
+  @override
+  String get bundlesDeleteUsedError =>
+      'Een sessie heeft deze bundel gebruikt, dus je kunt hem niet verwijderen. Archiveer hem in de plaats.';
+
+  @override
+  String bundlesSaveFailedFor(String name) {
+    return 'Kon \"$name\" niet opslaan.';
   }
+
+  @override
+  String bundlesArchiveFailedFor(String name) {
+    return 'Kon \"$name\" niet archiveren.';
+  }
+
+  @override
+  String bundlesDeleteFailedFor(String name) {
+    return 'Kon \"$name\" niet verwijderen.';
+  }
+
+  @override
+  String get bundlesTryAgain => 'Probeer het opnieuw.';
+
+  @override
+  String bundlesNameTakenBy(String name) {
+    return 'Er bestaat al een andere bundel met de naam \"$name\".';
+  }
+
+  @override
+  String get bundlesUsedArchiveInstead =>
+      'Een sessie heeft hem gebruikt. Archiveer hem in de plaats.';
+
+  @override
+  String get bundlesReopen => 'Opnieuw openen';
 
   @override
   String bundlesTestNoMatch(String probe) {
@@ -541,9 +650,8 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String bundlesExportError(String error) {
-    return 'Exporteren mislukt: $error';
-  }
+  String get bundlesExportError =>
+      'Kon de bundels niet exporteren. Probeer het opnieuw.';
 
   @override
   String bundlesImported(int count, int created, int updated) {
@@ -568,12 +676,19 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String bundlesImportError(String error) {
-    return 'Importeren mislukt: $error';
+  String get bundlesImportError =>
+      'Kon de bundels niet importeren. Probeer het opnieuw.';
+
+  @override
+  String bundlesImportOneError(String name) {
+    return '\"$name\" kon niet opgeslagen worden.';
   }
 
   @override
   String get bundlesImportRejected => 'Import geweigerd';
+
+  @override
+  String get bundlesImportDetails => 'Details';
 
   @override
   String get bundlesAdminRequired => 'Beheerderstoegang vereist.';
@@ -710,18 +825,15 @@ class AppLocalizationsNl extends AppLocalizations {
   String get addStudentNoMatches => 'Geen resultaten.';
 
   @override
-  String adminsLoadError(String error) {
-    return 'Kon de beheerders niet laden: $error';
-  }
+  String get adminsLoadError =>
+      'Kon de beheerders niet laden. Probeer het opnieuw.';
 
   @override
-  String adminsSearchError(String error) {
-    return 'Zoeken mislukt: $error';
-  }
+  String get adminsSearchError => 'Zoeken mislukt. Probeer het opnieuw.';
 
   @override
-  String adminsPromoteError(String name, String error) {
-    return 'Kon $name niet promoveren: $error';
+  String adminsPromoteError(String name) {
+    return 'Kon $name niet promoveren. Probeer het opnieuw.';
   }
 
   @override
@@ -737,8 +849,8 @@ class AppLocalizationsNl extends AppLocalizations {
       'Kan de laatste beheerder niet verwijderen. Promoveer eerst een andere gebruiker.';
 
   @override
-  String adminsRemoveError(String name, String error) {
-    return 'Kon $name niet verwijderen: $error';
+  String adminsRemoveError(String name) {
+    return 'Kon $name niet verwijderen. Probeer het opnieuw.';
   }
 
   @override
@@ -765,13 +877,12 @@ class AppLocalizationsNl extends AppLocalizations {
   String get adminsNoAdmins => 'Geen beheerders.';
 
   @override
-  String schoolsLoadError(String error) {
-    return 'Kon de scholen niet laden: $error';
-  }
+  String get schoolsLoadError =>
+      'Kon de scholen niet laden. Probeer het opnieuw.';
 
   @override
-  String schoolsUpdateError(String name, String error) {
-    return 'Kon $name niet bijwerken: $error';
+  String schoolsUpdateError(String name) {
+    return 'Kon $name niet bijwerken. Probeer het opnieuw.';
   }
 
   @override
@@ -800,9 +911,8 @@ class AppLocalizationsNl extends AppLocalizations {
   String get historySessionFallback => 'Sessie';
 
   @override
-  String pastLoadError(String error) {
-    return 'Kon de afgelopen sessie niet laden: $error';
-  }
+  String get pastLoadError =>
+      'Kon deze afgelopen sessie niet laden. Probeer het opnieuw.';
 
   @override
   String get pastNotAvailable => 'Sessie niet beschikbaar.';

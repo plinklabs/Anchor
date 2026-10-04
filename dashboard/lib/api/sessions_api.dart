@@ -19,6 +19,8 @@ class ClassSummary {
     required this.schoolYear,
     this.schoolTag,
     this.classCode,
+    this.isArchived = false,
+    this.sessionCount = 0,
   });
   final String id;
   final String name;
@@ -32,12 +34,23 @@ class ClassSummary {
   /// across the Arcadia group, so always read in tandem with [schoolTag].
   final String? classCode;
 
+  /// Archived classes are out of use (#395): Home's picker never lists them
+  /// (the backend leaves them out unless asked), and no session starts for
+  /// one. The Classes page shows them on request, to restore them.
+  final bool isArchived;
+
+  /// Every session of the class, whoever started it: what deleting the class
+  /// deletes with it (#395).
+  final int sessionCount;
+
   factory ClassSummary.fromJson(Map<String, dynamic> json) => ClassSummary(
     id: json['id'] as String,
     name: json['name'] as String,
     schoolYear: json['schoolYear'] as String,
     schoolTag: json['schoolTag'] as String?,
     classCode: json['classCode'] as String?,
+    isArchived: json['isArchived'] as bool,
+    sessionCount: json['sessionCount'] as int,
   );
 }
 
@@ -258,9 +271,9 @@ class SessionUnblockGrantInfo {
 }
 
 /// Per-(student, kind) aggregate written when the session ends (#77). The
-/// raw event log is pruned after 30 days; these counts survive indefinitely
-/// so the dashboard can still say "47 foreground changes off-list, 12 blocked
-/// URLs" long after the underlying rows are gone.
+/// raw event log is pruned after 14 days by default; these counts survive
+/// indefinitely so the dashboard can still say "47 foreground changes
+/// off-list, 12 blocked URLs" long after the underlying rows are gone.
 class SessionEventSummary {
   SessionEventSummary({
     required this.userId,
@@ -372,6 +385,8 @@ class SessionsApi {
     return SessionDetail.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
+  /// The classes the caller teaches, archived ones left out (#395): what
+  /// Home's picker offers and the Classes page lists by default.
   Future<List<ClassSummary>> classes() async {
     final res = await _client.get('classes');
     _ensureOk(res);

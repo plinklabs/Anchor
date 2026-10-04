@@ -10,11 +10,12 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Anchor.Api.Tests;
 
 /// <summary>
-/// End-to-end coverage for the dev-only allowlist carve-outs (#125): when the
-/// backend runs in a Development build, every session's broadcast allowlist
+/// End-to-end coverage for the dev-only allowlist carve-outs (#125, #372): when
+/// the backend runs in a Development build, every session's broadcast allowlist
 /// must always include localhost/127.0.0.1 (so the dashboard + backend stay
-/// reachable to stop the session) and VS Code (so the agent doesn't lock the
-/// developer out of their editor).
+/// reachable to stop the session), VS Code (so the agent doesn't lock the
+/// developer out of their editor) and Claude (so an agent e2e run or a local
+/// session doesn't take the Claude desktop / Claude Code window away).
 ///
 /// This goes through the real Development host — reusing
 /// <see cref="DevImpersonationRestTests.RealAuthDevFactory"/>, which boots
@@ -36,7 +37,7 @@ public sealed class SessionAllowlistDevCarveoutTests
     }
 
     [Fact]
-    public async Task Development_session_broadcast_includes_localhost_and_vscode()
+    public async Task Development_session_broadcast_includes_localhost_vscode_and_claude()
     {
         var (teacher, @class) = await SeedClassWithTeacherAsync();
 
@@ -62,6 +63,7 @@ public sealed class SessionAllowlistDevCarveoutTests
         Assert.Contains(payload.Domains, d => d.MatchType == "Exact" && d.Value == "localhost");
         Assert.Contains(payload.Domains, d => d.MatchType == "Exact" && d.Value == "127.0.0.1");
         Assert.Contains(payload.Apps, a => a.MatchKind == "ProcessName" && a.Value == "Code");
+        Assert.Contains(payload.Apps, a => a.MatchKind == "ProcessName" && a.Value == "claude");
         // Baseline still rides along — the carve-outs are additive.
         Assert.Contains(payload.Apps, a => a.MatchKind == "ProcessName" && a.Value == "msedge");
     }

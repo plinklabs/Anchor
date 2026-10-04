@@ -80,6 +80,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Signing in is taking longer than expected. Please try again.';
 
   @override
+  String get loginError => 'Could not sign you in. Please try again.';
+
+  @override
   String get shellNavHome => 'Home';
 
   @override
@@ -115,6 +118,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get apiError403 =>
       'Your account isn\'t set up as a teacher yet. Ask an administrator to grant access.';
+
+  @override
+  String get apiError403Admin =>
+      'Your account doesn\'t have admin access. Ask an administrator to grant it.';
 
   @override
   String get homeLoadError =>
@@ -193,11 +200,69 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String classesDeleteClassBody(String name, String year) {
-    return 'Delete $name ($year)? This removes the class and its roster. Classes with past sessions cannot be deleted.';
+    return 'Delete $name ($year)? This removes the class and its roster.';
   }
 
   @override
   String get classesDeleteError => 'Could not delete class. Please try again.';
+
+  @override
+  String classesDeleteWithSessionsBody(int count, String name, String year) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          '$name ($year) has $count sessions. Deleting the class deletes them too, and with them the students\' activity data. This can\'t be undone.',
+      one:
+          '$name ($year) has 1 session. Deleting the class deletes it too, and with it the students\' activity data. This can\'t be undone.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get classesDeleteArchiveInstead =>
+      'Only want it out of your lists? Archive it instead: its sessions stay, and you can restore it later.';
+
+  @override
+  String classesDeleteTypeName(String name) {
+    return 'Type $name to confirm';
+  }
+
+  @override
+  String get classesDeleteWithSessions => 'Delete class and sessions';
+
+  @override
+  String get classesDeleteRunningError =>
+      'A session of this class is still running. End it, then delete the class.';
+
+  @override
+  String get classesDeleteHasSessionsError =>
+      'A session was started for this class since the page loaded. Reload the page and try again.';
+
+  @override
+  String get classesArchive => 'Archive';
+
+  @override
+  String get classesArchiveTitle => 'Archive class?';
+
+  @override
+  String classesArchiveBody(String name, String year) {
+    return '$name ($year) leaves your class list and the class picker on Home, and no session can start for it. Its roster and past sessions stay. You can restore it under Archived, above the class list.';
+  }
+
+  @override
+  String get classesArchiveError =>
+      'Could not archive the class. Please try again.';
+
+  @override
+  String get classesRestore => 'Restore';
+
+  @override
+  String get classesRestoreError =>
+      'Could not restore the class. Please try again.';
+
+  @override
+  String get classesShowArchived => 'Show archived classes';
 
   @override
   String get classesSaveCodesError =>
@@ -295,6 +360,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get classesCreateError => 'Could not create class. Please try again.';
 
   @override
+  String classesCreateArchivedClash(String name, String year) {
+    return '$name ($year) already exists and is archived. Restore it instead: switch on Archived above the class list.';
+  }
+
+  @override
   String get classesNameLabel => 'Name';
 
   @override
@@ -326,14 +396,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get classesCsvHeaderMissing => 'Header must include upn.';
 
   @override
-  String sessionUpdateBundlesError(String error) {
-    return 'Failed to update bundles: $error';
-  }
+  String get sessionUpdateBundlesError =>
+      'Could not update the allowed bundles. Please try again.';
 
   @override
-  String sessionApproveError(String error) {
-    return 'Approve failed: $error';
-  }
+  String get sessionApproveError =>
+      'Could not approve the request. Please try again.';
 
   @override
   String sessionCopiedCode(String code) {
@@ -341,14 +409,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String sessionConnectError(String error) {
-    return 'Could not connect to live stream: $error';
-  }
+  String get sessionConnectError =>
+      'Could not connect to the live feed for this session. Reload the page to try again.';
 
   @override
-  String sessionEndError(String error) {
-    return 'Failed to end session: $error';
-  }
+  String get sessionEndError => 'Failed to end session. Please try again.';
 
   @override
   String get sessionLeaveTitle => 'Leave this session?';
@@ -376,6 +441,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sessionConnecting => 'Connecting to the live feed…';
+
+  @override
+  String get sessionReconnecting =>
+      'Connection lost — reconnecting. Live updates are paused.';
+
+  @override
+  String get sessionDisconnected => 'Disconnected — live updates are paused.';
+
+  @override
+  String get sessionReconnect => 'Reconnect';
 
   @override
   String get sessionActivity => 'Activity';
@@ -433,6 +508,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionMoreApprovalOptions => 'More approval options';
 
   @override
+  String get sessionNotYours =>
+      'This session isn\'t available to you. Only the teacher who started it can open it.';
+
+  @override
   String get sessionApproveWholeClass => 'Approve for whole class';
 
   @override
@@ -451,19 +530,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionCopyCode => 'Copy code';
 
   @override
-  String bundlesLoadError(String error) {
-    return 'Could not load: $error';
-  }
+  String get bundlesLoadListError =>
+      'Could not load bundles. Please try again.';
 
   @override
-  String bundlesLoadListError(String error) {
-    return 'Could not load bundles: $error';
-  }
-
-  @override
-  String bundlesLoadOneError(String error) {
-    return 'Failed to load bundle: $error';
-  }
+  String get bundlesLoadOneError =>
+      'Could not load this bundle. Please try again.';
 
   @override
   String get bundlesNameRequired => 'Name is required.';
@@ -475,9 +547,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bundlesEntryAtLeastOne => 'At least one entry is required.';
 
   @override
-  String bundlesSaveError(String error) {
-    return 'Save failed: $error';
-  }
+  String get bundlesSaveError => 'Could not save the bundle. Please try again.';
+
+  @override
+  String get bundlesNameTaken =>
+      'A bundle with that name already exists. Choose another name.';
 
   @override
   String get bundlesArchiveTitle => 'Archive bundle?';
@@ -491,9 +565,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get bundlesArchive => 'Archive';
 
   @override
-  String bundlesArchiveError(String error) {
-    return 'Archive failed: $error';
-  }
+  String get bundlesArchiveError =>
+      'Could not archive the bundle. Please try again.';
 
   @override
   String get bundlesDeleteTitle => 'Delete bundle?';
@@ -504,9 +577,42 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String bundlesDeleteError(String error) {
-    return 'Delete failed: $error';
+  String get bundlesDeleteError =>
+      'Could not delete the bundle. Please try again.';
+
+  @override
+  String get bundlesDeleteUsedError =>
+      'A session has used this bundle, so it can\'t be deleted. Archive it instead.';
+
+  @override
+  String bundlesSaveFailedFor(String name) {
+    return 'Could not save \"$name\".';
   }
+
+  @override
+  String bundlesArchiveFailedFor(String name) {
+    return 'Could not archive \"$name\".';
+  }
+
+  @override
+  String bundlesDeleteFailedFor(String name) {
+    return 'Could not delete \"$name\".';
+  }
+
+  @override
+  String get bundlesTryAgain => 'Please try again.';
+
+  @override
+  String bundlesNameTakenBy(String name) {
+    return 'Another bundle is already called \"$name\".';
+  }
+
+  @override
+  String get bundlesUsedArchiveInstead =>
+      'A session has used it. Archive it instead.';
+
+  @override
+  String get bundlesReopen => 'Reopen';
 
   @override
   String bundlesTestNoMatch(String probe) {
@@ -534,9 +640,8 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String bundlesExportError(String error) {
-    return 'Export failed: $error';
-  }
+  String get bundlesExportError =>
+      'Could not export the bundles. Please try again.';
 
   @override
   String bundlesImported(int count, int created, int updated) {
@@ -561,12 +666,19 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String bundlesImportError(String error) {
-    return 'Import failed: $error';
+  String get bundlesImportError =>
+      'Could not import the bundles. Please try again.';
+
+  @override
+  String bundlesImportOneError(String name) {
+    return '\"$name\" could not be saved.';
   }
 
   @override
   String get bundlesImportRejected => 'Import rejected';
+
+  @override
+  String get bundlesImportDetails => 'Details';
 
   @override
   String get bundlesAdminRequired => 'Admin access required.';
@@ -702,18 +814,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get addStudentNoMatches => 'No matches.';
 
   @override
-  String adminsLoadError(String error) {
-    return 'Could not load admins: $error';
-  }
+  String get adminsLoadError => 'Could not load admins. Please try again.';
 
   @override
-  String adminsSearchError(String error) {
-    return 'Search failed: $error';
-  }
+  String get adminsSearchError => 'Search failed. Please try again.';
 
   @override
-  String adminsPromoteError(String name, String error) {
-    return 'Could not promote $name: $error';
+  String adminsPromoteError(String name) {
+    return 'Could not promote $name. Please try again.';
   }
 
   @override
@@ -729,8 +837,8 @@ class AppLocalizationsEn extends AppLocalizations {
       'Can’t remove the last admin. Promote another user first.';
 
   @override
-  String adminsRemoveError(String name, String error) {
-    return 'Could not remove $name: $error';
+  String adminsRemoveError(String name) {
+    return 'Could not remove $name. Please try again.';
   }
 
   @override
@@ -757,13 +865,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get adminsNoAdmins => 'No admins.';
 
   @override
-  String schoolsLoadError(String error) {
-    return 'Could not load schools: $error';
-  }
+  String get schoolsLoadError => 'Could not load schools. Please try again.';
 
   @override
-  String schoolsUpdateError(String name, String error) {
-    return 'Could not update $name: $error';
+  String schoolsUpdateError(String name) {
+    return 'Could not update $name. Please try again.';
   }
 
   @override
@@ -792,9 +898,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get historySessionFallback => 'Session';
 
   @override
-  String pastLoadError(String error) {
-    return 'Could not load past session: $error';
-  }
+  String get pastLoadError =>
+      'Could not load this past session. Please try again.';
 
   @override
   String get pastNotAvailable => 'Session not available.';

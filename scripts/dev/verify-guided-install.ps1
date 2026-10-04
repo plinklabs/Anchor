@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Launches the agent's `--show-test-guided-install` self-test, screenshots the
     guided-install fallback window (#211) via BitBlt+CAPTUREBLT, and prints the
@@ -19,6 +19,23 @@
 
     Saves the screenshot under
     `agent/src/FocusAgent.App/bin/x64/Debug/verify-guided-install.png`.
+
+.PARAMETER SkipBuild
+    Skip the agent build (agent\FocusAgent.sln, x64) and run the existing
+    FocusAgent.App.exe.
+
+.PARAMETER OutPath
+    Where to save the PNG. Default
+    agent\src\FocusAgent.App\bin\x64\Debug\verify-guided-install.png; a
+    missing folder is created.
+
+.PARAMETER WaitForHwndMs
+    How long to wait for the guided-install window to appear before failing,
+    in milliseconds. Default 8000.
+
+.PARAMETER CaptureAfterMs
+    How long to wait after the window appears before capturing it, in
+    milliseconds. Default 1500.
 #>
 
 param(

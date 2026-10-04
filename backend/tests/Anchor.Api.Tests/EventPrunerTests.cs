@@ -13,10 +13,11 @@ namespace Anchor.Api.Tests;
 
 /// <summary>
 /// Exercises <see cref="EventPruner.PruneOnceAsync"/> directly with a fake
-/// clock. The background loop is disabled in tests
+/// clock. The host's background loop is disabled in tests
 /// (EventRetention:EnablePruner=false on <see cref="AnchorApiFactory"/>) so
 /// the prune scan never races the in-memory SQLite connection that the
-/// test factory shares across scopes.
+/// test factory shares across scopes; the scheduling test starts its own
+/// pruner on a fake clock instead.
 /// </summary>
 public sealed class EventPrunerTests : IClassFixture<EventPrunerTests.PrunerTestFactory>
 {
@@ -142,13 +143,82 @@ public sealed class EventPrunerTests : IClassFixture<EventPrunerTests.PrunerTest
         Assert.Equal(5, await db.Events.CountAsync(e => e.SessionId == activeSession));
     }
 
-    private EventPruner BuildPruner(FakeTimeProvider clock, int batchSize = 10_000)
+    [Theory]
+    // Before today's run hour: later the same day.
+    [InlineData("2026-03-01T01:30:00Z", 1440, 2, "2026-03-01T02:00:00Z")]
+    // After it (a deploy mid-morning): tomorrow at the hour, not now.
+    [InlineData("2026-03-01T10:15:00Z", 1440, 2, "2026-03-02T02:00:00Z")]
+    // Exactly on a run: strictly after, so a finished run isn't repeated.
+    [InlineData("2026-03-01T02:00:00Z", 1440, 2, "2026-03-02T02:00:00Z")]
+    // A shorter interval stays on the grid anchored at the hour.
+    [InlineData("2026-03-01T10:15:00Z", 60, 2, "2026-03-01T11:00:00Z")]
+    // Out-of-range settings degrade instead of throwing: hour wraps, interval >= 1 min.
+    [InlineData("2026-03-01T10:15:00Z", 1440, 26, "2026-03-02T02:00:00Z")]
+    [InlineData("2026-03-01T10:15:30Z", 0, 2, "2026-03-01T10:16:00Z")]
+    public void NextRunAfter_follows_the_fixed_utc_schedule(
+        string now, int intervalMinutes, int hourUtc, string expected)
+    {
+        var options = new EventRetentionOptions
+        {
+            PruneIntervalMinutes = intervalMinutes,
+            PruneHourUtc = hourUtc,
+        };
+
+        var next = EventPruner.NextRunAfter(DateTimeOffset.Parse(now), options);
+
+        Assert.Equal(DateTimeOffset.Parse(expected), next);
+    }
+
+    [Fact]
+    public async Task Background_loop_waits_for_the_run_hour_instead_of_pruning_at_startup()
+    {
+        // #344: the pruner used to prune as soon as the app started, so every
+        // (re)start queried the database before serving anything. Started at
+        // 12:00 UTC with the run hour at 02:00, its first prune is 14 h away.
+        var clock = new TimerRecordingTimeProvider(new DateTimeOffset(2026, 3, 1, 12, 0, 0, TimeSpan.Zero));
+        var (session, userId) = await SeedEndedSessionWithStudentAsync(endedAt: clock.GetUtcNow().AddDays(-31));
+        await SeedEventAsync(session, userId, EventKind.ForegroundChange, clock.GetUtcNow().AddDays(-35));
+        var timeout = TimeSpan.FromSeconds(10);
+
+        var pruner = BuildPruner(clock, pruneHourUtc: 2);
+        await pruner.StartAsync(CancellationToken.None);
+        try
+        {
+            // Parked on its first wait (the only timer this pruner creates),
+            // with nothing pruned on the way there, until 02:00.
+            var firstWait = await clock.WaitForTimerAsync(_ => true, timeout);
+            Assert.Equal(1, await CountEventsAsync(session));
+            Assert.Equal(TimeSpan.FromHours(14), firstWait);
+
+            clock.Advance(firstWait - TimeSpan.FromSeconds(1));
+            Assert.Equal(1, await CountEventsAsync(session));
+
+            // 02:00 UTC: the scheduled run prunes, then waits for tomorrow's.
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await clock.WaitForTimerAsync(due => due == TimeSpan.FromHours(24), timeout);
+            Assert.Equal(0, await CountEventsAsync(session));
+        }
+        finally
+        {
+            await pruner.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private async Task<int> CountEventsAsync(Guid sessionId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        return await db.Events.CountAsync(e => e.SessionId == sessionId);
+    }
+
+    private EventPruner BuildPruner(TimeProvider clock, int batchSize = 10_000, int pruneHourUtc = 2)
     {
         var scopeFactory = _factory.Services.GetRequiredService<IServiceScopeFactory>();
         var options = new TestOptionsMonitor(new EventRetentionOptions
         {
             RawEventDays = 30,
             PruneIntervalMinutes = 1440,
+            PruneHourUtc = pruneHourUtc,
             BatchSize = batchSize,
             EnablePruner = false,
         });

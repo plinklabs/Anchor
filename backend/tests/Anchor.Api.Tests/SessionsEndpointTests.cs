@@ -75,6 +75,30 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task POST_sessions_for_an_archived_class_returns_409_until_it_is_restored()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.PostAsync($"/classes/{scenario.Class.Id}/archive", null)).StatusCode);
+
+        var refused = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            Assert.False(await db.Sessions.AnyAsync(s => s.ClassId == scenario.Class.Id));
+        }
+
+        await client.PostAsync($"/classes/{scenario.Class.Id}/unarchive", null);
+        var started = await client.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, null));
+        Assert.Equal(HttpStatusCode.Created, started.StatusCode);
+    }
+
+    [Fact]
     public async Task POST_sessions_with_unknown_bundle_returns_400()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
@@ -240,7 +264,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.NotNull(persisted.EndedAt);
 
         var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
-        Assert.Contains(session.Id, broadcaster.SessionEndedCalls);
+        Assert.Contains(broadcaster.SessionEndedCalls, c => c.SessionId == session.Id);
     }
 
     [Fact]
@@ -549,21 +573,166 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
-    [Fact]
-    public async Task GET_session_returns_403_when_caller_is_neither_owner_nor_participant()
+    [Theory]
+    [InlineData("Student")]
+    [InlineData("Teacher")]
+    [InlineData("Admin")]
+    public async Task GET_session_returns_403_when_caller_is_neither_owner_nor_participant(string role)
     {
+        // No role reads another teacher's session: not a student from another
+        // class, not another teacher, not an admin (#369).
         var owned = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
         var session = await TestSeed.AddSessionAsync(
             _factory, owned.Teacher.Id, owned.Class.Id, owned.Students.Select(s => s.Id).ToList());
 
-        var outsider = await TestSeed.AddUserAsync(_factory, Anchor.Domain.Users.UserRole.Student, "Outsider");
+        var outsider = await TestSeed.AddUserAsync(
+            _factory, Enum.Parse<Anchor.Domain.Users.UserRole>(role), "Outsider");
 
         using var client = _factory.CreateClient();
-        TestAuth.SetStudent(client, outsider);
+        TestAuth.Set(client, outsider, role);
 
         var response = await client.GetAsync($"/sessions/{session.Id}");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_session_returns_403_to_a_participating_student_and_none_of_their_classmates_activity()
+    {
+        // #369: the detail is the owning teacher's roster view. A participating
+        // student used to get all of it: every classmate's name and state, their
+        // tamper flag, the URLs they asked to open, the hosts granted to them.
+        var activity = await SeedClassmateActivityAsync();
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetStudent(client, activity.Classmate);
+
+        var response = await client.GetAsync($"/sessions/{activity.Session.Id}");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.DoesNotContain(activity.Requester.DisplayName, body);
+        Assert.DoesNotContain(activity.Requester.Id.ToString(), body);
+        Assert.DoesNotContain(ClassmateRequestedUrl, body);
+        Assert.DoesNotContain(ClassmateBlockedUrl, body);
+        Assert.DoesNotContain(ClassmateGrantedHost, body);
+        Assert.DoesNotContain(ClassmateTamperKind, body);
+        Assert.DoesNotContain("\"tampered\"", body);
+    }
+
+    [Fact]
+    public async Task GET_session_returns_403_to_a_teacher_who_joined_a_colleagues_session_by_code()
+    {
+        // A join code admits anyone signed in, a co-teacher of the class
+        // included (#34). That makes them a participant, not the session's
+        // owner, so they get no more of the roster than a student would (#369).
+        var activity = await SeedClassmateActivityAsync();
+        var coTeacher = await TestSeed.AddUserAsync(_factory, Anchor.Domain.Users.UserRole.Teacher, "Co-teacher");
+        await AddClassTeacherAsync(activity.Scenario.Class.Id, coTeacher.Id);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, coTeacher);
+        var join = await client.PostAsJsonAsync("/sessions/join-by-code", new JoinByCodeRequest(activity.Session.JoinCode));
+        Assert.Equal(HttpStatusCode.OK, join.StatusCode);
+
+        var response = await client.GetAsync($"/sessions/{activity.Session.Id}");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.DoesNotContain(activity.Requester.DisplayName, body);
+        Assert.DoesNotContain(ClassmateRequestedUrl, body);
+    }
+
+    [Fact]
+    public async Task GET_session_gives_the_owning_teacher_every_students_activity()
+    {
+        // The other side of #369: the owning teacher keeps the whole view.
+        var activity = await SeedClassmateActivityAsync();
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, activity.Scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<SessionDetailResponse>($"/sessions/{activity.Session.Id}");
+
+        Assert.NotNull(body);
+        Assert.Equal(2, body!.Participants.Count);
+        var requester = Assert.Single(body.Participants, p => p.UserId == activity.Requester.Id);
+        Assert.Equal(activity.Requester.DisplayName, requester.DisplayName);
+        Assert.True(requester.Tampered);
+        Assert.False(Assert.Single(body.Participants, p => p.UserId == activity.Classmate.Id).Tampered);
+        Assert.Contains(body.RecentEvents, e =>
+            e.UserId == activity.Requester.Id && e.Kind == EventKind.UnblockRequest && e.PayloadJson.Contains(ClassmateRequestedUrl));
+        Assert.Contains(body.RecentEvents, e =>
+            e.UserId == activity.Requester.Id && e.Kind == EventKind.BlockedUrl && e.PayloadJson.Contains(ClassmateBlockedUrl));
+        Assert.Contains(body.RecentEvents, e =>
+            e.UserId == activity.Requester.Id && e.Kind == EventKind.TamperDetected && e.PayloadJson.Contains(ClassmateTamperKind));
+        var grant = Assert.Single(body.Grants);
+        Assert.Equal(activity.Requester.Id, grant.UserId);
+        Assert.Equal(activity.Requester.DisplayName, grant.DisplayName);
+        Assert.Equal(ClassmateGrantedHost, grant.Host);
+    }
+
+    private const string ClassmateRequestedUrl = "https://www.reddit.com/r/aww";
+    private const string ClassmateBlockedUrl = "https://www.tiktok.com/@someone";
+    private const string ClassmateGrantedHost = "youtube.com";
+    private const string ClassmateTamperKind = "inprivate_opened";
+
+    private sealed record ClassmateActivity(
+        TestScenario Scenario,
+        Session Session,
+        Anchor.Domain.Users.User Requester,
+        Anchor.Domain.Users.User Classmate);
+
+    /// <summary>
+    /// A running session of two joined students in which the first (the
+    /// requester) asked to open a site, hit a blocked one, opened an InPrivate
+    /// window and was granted a host: the activity the owning teacher's roster
+    /// shows and the second student (the classmate) must not see (#369). The
+    /// payloads are the shapes the extension and agent report.
+    /// </summary>
+    private async Task<ClassmateActivity> SeedClassmateActivityAsync()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        var requester = scenario.Students[0];
+        var classmate = scenario.Students[1];
+        var joinedAt = DateTimeOffset.UtcNow.AddMinutes(-4);
+        await SetParticipantStateAsync(session.Id, requester.Id, joinedAt: joinedAt);
+        await SetParticipantStateAsync(session.Id, classmate.Id, joinedAt: joinedAt);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            void Report(EventKind kind, string payloadJson, int minutesAgo) => db.Events.Add(new Event
+            {
+                SessionId = session.Id,
+                UserId = requester.Id,
+                Kind = kind,
+                PayloadJson = payloadJson,
+                OccurredAt = DateTimeOffset.UtcNow.AddMinutes(-minutesAgo),
+            });
+            Report(EventKind.BlockedUrl, $$"""{"url":"{{ClassmateBlockedUrl}}","host":"www.tiktok.com"}""", 3);
+            Report(EventKind.UnblockRequest, $$"""{"url":"{{ClassmateRequestedUrl}}","host":"www.reddit.com"}""", 2);
+            Report(EventKind.TamperDetected, $$"""{"kind":"{{ClassmateTamperKind}}"}""", 1);
+            await db.SaveChangesAsync();
+        }
+
+        await AddUnblockGrantAsync(session.Id, requester.Id, ClassmateGrantedHost, DateTimeOffset.UtcNow.AddMinutes(-1));
+        return new ClassmateActivity(scenario, session, requester, classmate);
+    }
+
+    private async Task AddClassTeacherAsync(Guid classId, Guid userId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        db.ClassMemberships.Add(new Anchor.Domain.Classes.ClassMembership
+        {
+            ClassId = classId,
+            UserId = userId,
+            Role = Anchor.Domain.Classes.ClassMembershipRole.Teacher,
+        });
+        await db.SaveChangesAsync();
     }
 
     [Fact]
@@ -685,21 +854,6 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         var summaryKind = root.GetProperty("summaries")[0].GetProperty("kind");
         Assert.Equal(System.Text.Json.JsonValueKind.String, summaryKind.ValueKind);
         Assert.Equal(nameof(EventKind.ForegroundChange), summaryKind.GetString());
-    }
-
-    [Fact]
-    public async Task GET_session_returns_detail_for_participating_student()
-    {
-        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
-        var session = await TestSeed.AddSessionAsync(
-            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
-
-        using var client = _factory.CreateClient();
-        TestAuth.SetStudent(client, scenario.Students[0]);
-
-        var response = await client.GetAsync($"/sessions/{session.Id}");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]
@@ -1014,6 +1168,24 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         // Class name comes from a join, not the live class lookup the dashboard
         // already has — exposing it here saves the page an extra round trip.
         Assert.Equal(scenario.Class.Name, body[0].ClassName);
+    }
+
+    [Fact]
+    public async Task GET_sessions_history_keeps_the_sessions_of_an_archived_class()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.PostAsync($"/classes/{scenario.Class.Id}/archive", null)).StatusCode);
+
+        // Archiving is not deleting (#395): the past session still lists.
+        var body = await client.GetFromJsonAsync<List<SessionHistoryEntry>>("/sessions/history");
+        Assert.Equal(scenario.Class.Name, Assert.Single(body!, e => e.Id == session.Id).ClassName);
     }
 
     [Fact]

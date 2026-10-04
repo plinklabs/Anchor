@@ -13,8 +13,8 @@
 // environment still deploys with no extra arguments. Regions, however, are NOT
 // hardcoded: `location` defaults to the resource group's region and each
 // resource can override it (the live arcadia env is itself split across two
-// regions — App Service / plan / SQL in Belgium Central, SignalR / Static Web
-// App in West Europe — which a single location cannot reproduce).
+// regions — App Service / plan / SQL in Belgium Central, Static Web App in
+// West Europe — which a single location cannot reproduce).
 // ──────────────────────────────────────────────
 
 @description('Default Azure region for all resources. Defaults to the resource group region; override per-resource with the *Location params below.')
@@ -23,19 +23,16 @@ param location string = resourceGroup().location
 // ── Per-resource region overrides ───────────
 // Each defaults to `location`. Override individually to reproduce a split
 // layout (e.g. the live arcadia env) or to place a resource in a region where
-// the others are not offered (Static Web Apps / SignalR have a limited region
-// set). The setup script reads an existing resource's current region and pins
-// it here on re-run, so adopting an environment never tries to move a resource
-// (region is immutable in Azure).
+// the others are not offered (Static Web Apps have a limited region set). The
+// setup script reads an existing resource's current region and pins it here on
+// re-run, so adopting an environment never tries to move a resource (region is
+// immutable in Azure).
 
 @description('Region for the SQL logical server + database.')
 param sqlServerLocation string = location
 
 @description('Region for the App Service and its plan.')
 param appServiceLocation string = location
-
-@description('Region for the SignalR Service.')
-param signalrLocation string = location
 
 @description('Region for the Static Web App.')
 param staticWebAppLocation string = location
@@ -59,9 +56,6 @@ param appServiceName string = 'anchor-api-${uniqueSuffix}'
 
 @description('Name of the App Service Plan. Defaults to the auto-generated name of the original manually-created plan in anchor-rg; override for a fresh environment, e.g. asp-anchor-<suffix>.')
 param appServicePlanName string = 'ASP-anchorrg-b49b'
-
-@description('Name of the SignalR Service (globally unique). Defaults to anchor-signalr; override for additional environments, e.g. anchor-signalr-<suffix>.')
-param signalrName string = 'anchor-signalr'
 
 @description('Name of the Static Web App for the Flutter dashboard. Defaults to anchor-dashboard; override for additional environments, e.g. anchor-dashboard-<suffix>.')
 param staticWebAppName string = 'anchor-dashboard'
@@ -130,27 +124,40 @@ resource sqlFirewallAllowAzure 'Microsoft.Sql/servers/firewallRules@2023-08-01-p
   }
 }
 
-// ── SQL Database (Serverless) ───────────────
+// ── SQL Database (Standard S0) ──────────────
+// A fixed-price DTU tier, not serverless (#341). Serverless only pays off while
+// the database sleeps most of the day, but every agent/extension (re)connect
+// resolves the user in the database (SessionHub.OnConnectedAsync), so with
+// students connected it stays awake through the school day. S1 is the fallback
+// if the pre-rollout load test calls for it: moving between S0/S1/S2 is an
+// online operation — change `name` here and redeploy, so the template stays the
+// source of truth and a later redeploy doesn't scale it back down.
 
 resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   parent: sqlServer
   name: sqlDatabaseName
   location: sqlServerLocation
   sku: {
-    name: 'GP_S_Gen5'   // General Purpose, Serverless, Gen5
-    tier: 'GeneralPurpose'
-    family: 'Gen5'
-    capacity: 2          // max vCores
+    name: 'S0'           // Standard, 10 DTU
+    tier: 'Standard'
   }
   properties: {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
-    autoPauseDelay: 60   // minutes idle before auto-pause
-    minCapacity: json('0.5') // min vCores
+    // Always explicit: without it a deploy applies the tier's default max size
+    // (the serverless database silently got 32 GB that way). 250 GB is the
+    // storage S0–S2 include at no extra cost; the estimated footprint at rollout
+    // is ~1.5 GB of raw events plus ~0.2 GB of summaries per school year.
+    maxSizeBytes: 268435456000 // 250 GB
     requestedBackupStorageRedundancy: 'Local'
   }
 }
 
-// ── App Service Plan (Linux, Free) ──────────
+// ── App Service Plan (Linux, Basic B1) ──────
+// B1, not F1 (#341): F1 caps a Linux app at 5 concurrent WebSockets and 60
+// CPU-minutes a day, and every student holds two connections (agent +
+// extension). B1 allows ~50k WebSockets per instance — enough for in-process
+// SignalR at rollout's ~1,600 peak connections — and is the cheapest tier that
+// supports Always On (enabled on the site below).
 
 resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: appServicePlanName
@@ -160,8 +167,8 @@ resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
     reserved: true       // required for Linux
   }
   sku: {
-    name: 'F1'
-    tier: 'Free'
+    name: 'B1'
+    tier: 'Basic'
   }
 }
 
@@ -178,6 +185,12 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
       // targeting a newer runtime than this deploys "successfully" but 503s on a
       // host pinned to the older one (#276).
       linuxFxVersion: 'DOTNETCORE|10.0'
+      // Keep the process loaded between requests. Without Always On the app is
+      // unloaded after ~20 idle minutes, which stops the in-process background
+      // services (HeartbeatMonitor flags silent students, EventPruner enforces
+      // event retention, SessionAutoEnder ends forgotten sessions). Needs a Basic
+      // or higher plan (#341).
+      alwaysOn: true
       // Entra + CORS application settings (double-underscore form). Provisioning
       // them here means the deployed API gets its environment-specific config
       // from the infra, not from committed appsettings.json.
@@ -185,10 +198,6 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'ASPNETCORE_ENVIRONMENT'
           value: 'Production'
-        }
-        {
-          name: 'Azure__SignalR__ConnectionString'
-          value: signalr.listKeys().primaryConnectionString
         }
         {
           name: 'AzureAd__Instance'
@@ -222,24 +231,15 @@ resource appService 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-// ── SignalR Service (Free) ──────────────────
-
-resource signalr 'Microsoft.SignalRService/signalR@2024-03-01' = {
-  name: signalrName
-  location: signalrLocation
-  sku: {
-    name: 'Free_F1'
-    capacity: 1
-  }
-  properties: {
-    features: [
-      {
-        flag: 'ServiceMode'
-        value: 'Default'
-      }
-    ]
-  }
-}
+// ── Realtime: no Azure SignalR Service ──────
+// SignalR runs in-process on the App Service (`AddSignalR()` in
+// backend/src/Anchor.Api/Program.cs), so the template provisions no SignalR
+// Service (#343). One B1 instance holds rollout's ~1,600 peak connections. The
+// service only matters if the backend scales out to 2+ instances, which also
+// needs shared heartbeat state (HeartbeatTracker and ActiveParticipantCache are
+// in-memory). Add the resource and its Azure__SignalR__ConnectionString app
+// setting back together with `AddAzureSignalR()` then; until that switch,
+// infra CI rejects them.
 
 // ── Static Web App (Flutter dashboard) ──────
 
@@ -264,7 +264,6 @@ output location string = location
 // resource actually landed (and pin them on a subsequent adopt/re-run).
 output sqlServerLocation string = sqlServerLocation
 output appServiceLocation string = appServiceLocation
-output signalrLocation string = signalrLocation
 output staticWebAppLocation string = staticWebAppLocation
 
 output appServiceName string = appService.name
@@ -276,9 +275,6 @@ output swaUrl string = 'https://${swa.properties.defaultHostname}'
 output sqlServerName string = sqlServer.name
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output sqlDatabaseName string = sqlDb.name
-
-output signalrName string = signalr.name
-output signalrHostName string = signalr.properties.hostName
 
 // Echo back the Entra config the deploy applied, so the dashboard build
 // variables (ENTRA_TENANT_ID / ENTRA_CLIENT_ID / API_SCOPE) and the operator

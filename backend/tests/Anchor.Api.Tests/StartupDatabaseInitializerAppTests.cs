@@ -13,14 +13,13 @@ namespace Anchor.Api.Tests;
 /// the exact call <c>Program.cs</c> makes at startup — so the glue that reads
 /// the environment, resolves <see cref="IStartupDatabaseOperations"/> and builds
 /// the logger is covered, not just the inner branching. A fake operations
-/// implementation stands in for EF so no SqlServer is required.
+/// implementation stands in for EF.
 /// </summary>
 public sealed class StartupDatabaseInitializerAppTests
 {
     private sealed class RecordingOperations : IStartupDatabaseOperations
     {
         public int EnsureCreatedCalls { get; private set; }
-        public int MigrateCalls { get; private set; }
 
         public Task EnsureCreatedAsync(AnchorDbContext db)
         {
@@ -29,15 +28,6 @@ public sealed class StartupDatabaseInitializerAppTests
         }
 
         public Task SeedDevelopmentDataAsync(AnchorDbContext db) => Task.CompletedTask;
-
-        public Task<IEnumerable<string>> GetPendingMigrationsAsync(AnchorDbContext db)
-            => Task.FromResult<IEnumerable<string>>(new[] { "20260612181911_SessionWideUnblockGrants" });
-
-        public Task MigrateAsync(AnchorDbContext db)
-        {
-            MigrateCalls++;
-            return Task.CompletedTask;
-        }
     }
 
     private static WebApplication BuildApp(string environment, RecordingOperations ops)
@@ -52,14 +42,13 @@ public sealed class StartupDatabaseInitializerAppTests
     }
 
     [Fact]
-    public async Task ProductionApp_AppliesMigrationsViaInjectedOperations()
+    public async Task ProductionApp_LeavesTheDatabaseToTheDeployPipeline()
     {
         var ops = new RecordingOperations();
         await using var app = BuildApp(Environments.Production, ops);
 
         await StartupDatabaseInitializer.InitializeAsync(app);
 
-        Assert.Equal(1, ops.MigrateCalls);
         Assert.Equal(0, ops.EnsureCreatedCalls);
     }
 
@@ -72,6 +61,5 @@ public sealed class StartupDatabaseInitializerAppTests
         await StartupDatabaseInitializer.InitializeAsync(app);
 
         Assert.Equal(1, ops.EnsureCreatedCalls);
-        Assert.Equal(0, ops.MigrateCalls);
     }
 }

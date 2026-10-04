@@ -32,8 +32,9 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
     public SessionAllowlistExpander(AnchorDbContext db, IHostEnvironment environment)
     {
         _db = db;
-        // Dev-only carve-outs (#125): localhost + VS Code. Computed once here so
-        // a Release build never merges them, no matter which expansion path runs.
+        // Dev-only carve-outs: localhost + VS Code (#125), Claude (#372). Computed
+        // once here so a Release build never merges them, no matter which
+        // expansion path runs.
         _includeDevelopmentCarveouts = environment.IsDevelopment();
     }
 

@@ -8,7 +8,10 @@ public interface ISessionBroadcaster
         SessionStartedPayload payload,
         IReadOnlyCollection<Guid> recipientUserIds,
         CancellationToken cancellationToken = default);
-    Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default);
+    Task SessionEndedAsync(
+        Guid sessionId,
+        IReadOnlyCollection<Guid> recipientUserIds,
+        CancellationToken cancellationToken = default);
     Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default);
     Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default);
     Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default);
@@ -43,13 +46,26 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         return _hub.Clients.Groups(groups).SessionStarted(payload);
     }
 
-    public Task SessionEndedAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    public Task SessionEndedAsync(
+        Guid sessionId,
+        IReadOnlyCollection<Guid> recipientUserIds,
+        CancellationToken cancellationToken = default)
     {
         // Drop liveness state up-front: no point keeping a participant on the
         // monitor's scan list once the session is over — they'd just stale
         // out and emit spurious HeartbeatLost events after the fact.
         _heartbeats.ClearSession(sessionId);
-        return _hub.Clients.Group(SessionHub.GroupName(sessionId)).SessionEnded(sessionId);
+        if (recipientUserIds.Count == 0)
+            return Task.CompletedTask;
+
+        // User groups, not the session group (#354). A connection joins its user
+        // group on every connect (OnConnectedAsync) but the session group only
+        // through JoinSession, and SignalR doesn't carry group membership across
+        // a reconnect: an agent whose connection came back, or an extension
+        // whose service worker was revived, never heard the session end. A
+        // connection is in exactly one user group, so nobody receives it twice.
+        var groups = recipientUserIds.Select(SessionHub.UserGroupName).ToArray();
+        return _hub.Clients.Groups(groups).SessionEnded(sessionId);
     }
 
     public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
@@ -76,13 +92,13 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
 
     public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
         // Session group: the owning teacher is the only "interested" party,
-        // but they may not yet have joined the hub (dashboard re-opened mid-
-        // session). Pushing to the session group lets any active connection
-        // pick this up; the dashboard filters/groups by host.
+        // and the only one in it (#366): it carries the student's name and the
+        // URL they asked for. Any of the teacher's connections that joined the
+        // session picks this up; the dashboard filters/groups by host.
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnblockRequested(payload);
 
     public Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default)
         // Session group: same routing as UnblockRequested — the owning teacher's
-        // dashboard is the consumer and may have reconnected mid-session.
+        // dashboard is the consumer, and no student may see a classmate's flag.
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).TamperDetected(payload);
 }

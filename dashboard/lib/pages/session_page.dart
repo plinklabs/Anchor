@@ -10,6 +10,7 @@ import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
 import '../l10n/app_localizations.dart';
 import '../realtime/session_hub_client.dart';
+import '../widgets/api_error_text.dart';
 
 class SessionPage extends StatefulWidget {
   const SessionPage({
@@ -43,11 +44,21 @@ enum _ExitChoice { endSession, leaveRunning, cancel }
 class _SessionPageState extends State<SessionPage> {
   late final SessionHubClient _hub;
   StreamSubscription<SessionEvent>? _eventsSub;
+  StreamSubscription<void>? _reconnectedSub;
+  StreamSubscription<SessionHubLinkState>? _linkSub;
+  late final AppLifecycleListener _lifecycle;
   final List<SessionEvent> _events = [];
   bool _connecting = true;
   bool _ending = false;
   bool _ended = false;
   String? _error;
+  // The hub refused to join the session. Kept apart from [_error] so that a
+  // later reconnect that joins can clear it (#370).
+  String? _joinError;
+  // Whether the live feed is getting through; null until it first reports.
+  SessionHubLinkState? _link;
+  // The session belongs to another teacher: the backend answered 403 (#382).
+  bool _notYours = false;
   SessionDetail? _detail;
   List<UnblockRequestSummary> _pendingRequests = const [];
   final Set<String> _approving = {};
@@ -64,16 +75,22 @@ class _SessionPageState extends State<SessionPage> {
       apiBaseUrl: widget.apiBaseUrl,
       tokenProvider: () async => widget.tokens.token,
     );
+    // A closed connection doesn't retry on its own (#370); try again when
+    // the teacher comes back to the page.
+    _lifecycle = AppLifecycleListener(onResume: _restartHub);
     _bootstrap();
   }
 
   Future<void> _bootstrap() async {
     await _loadDetail();
+    // Another teacher's session (#382): the page shows that and asks for
+    // nothing else. The hub would refuse the join (#366) and the other loads
+    // would answer 403 too.
+    if (!mounted || _notYours) return;
     // Old bookmarks / direct links to /session/:id of a session that has since
     // ended would otherwise hit Hub.JoinSession and surface a scary exception.
     // The past-session view at /history/:id is the read-only review surface
     // for these — redirect there before touching the hub.
-    if (!mounted) return;
     if (_ended) {
       context.go('/history/${widget.sessionId}');
       return;
@@ -112,7 +129,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _bundleError = l10n.sessionUpdateBundlesError('$e'));
+      final line = _failureText(e, l10n.sessionUpdateBundlesError, l10n);
+      setState(() => _bundleError = line);
     } finally {
       if (mounted) setState(() => _updatingBundles = false);
     }
@@ -129,9 +147,10 @@ class _SessionPageState extends State<SessionPage> {
         // summary panel only ever renders during the live-end transition.
         if (detail.endedAt != null) _ended = true;
       });
-    } catch (_) {
-      // Non-fatal: the live event stream still works without the detail block.
-      // The join-code panel just won't render.
+    } catch (e) {
+      if (_isNotYours(e)) _showNotYours();
+      // Otherwise non-fatal: the live event stream still works without the
+      // detail block. The join-code panel just won't render.
     }
   }
 
@@ -140,10 +159,44 @@ class _SessionPageState extends State<SessionPage> {
       final list = await widget.sessions.unblockRequests(widget.sessionId);
       if (!mounted) return;
       setState(() => _pendingRequests = list);
-    } catch (_) {
-      // Non-fatal: the panel just stays empty on initial load. Subsequent
-      // UnblockRequested pushes will still populate it.
+    } catch (e) {
+      if (_isNotYours(e)) _showNotYours();
+      // Otherwise non-fatal: the panel just stays empty on initial load.
+      // Subsequent UnblockRequested pushes will still populate it.
     }
+  }
+
+  /// Whether [error] is the backend refusing this session to the signed-in
+  /// teacher: since #369 the detail and the unblock requests answer 403 to
+  /// anyone but the teacher who owns it.
+  static bool _isNotYours(Object error) =>
+      error is ApiException && error.statusCode == 403;
+
+  /// What the page shows when one of the teacher's own requests fails (#383):
+  /// [generic], the action's human sentence, never the raw exception, through
+  /// the helper the other pages use (#278). A 403 is the backend refusing this
+  /// session to the signed-in teacher (#369), whichever request it answers, so
+  /// the page shows the notice it shows for a 403 on the loads (#382) in place
+  /// of the live view, and there is no line to show: null.
+  String? _failureText(Object error, String generic, AppLocalizations l10n) {
+    final message = describeApiError(
+      error,
+      generic: generic,
+      notAuthorized: l10n.sessionNotYours,
+    );
+    if (!message.isAuthorization) return message.text;
+    _showNotYours();
+    return null;
+  }
+
+  /// The session belongs to another teacher (#382): show the calm notice in
+  /// place of the live view, and stop the live feed. It never gives up on its
+  /// own (#370), and every reconnect would rejoin and re-fetch (#365), only to
+  /// be refused again.
+  void _showNotYours() {
+    if (!mounted || _notYours) return;
+    setState(() => _notYours = true);
+    unawaited(_hub.disconnect());
   }
 
   Future<void> _approveHost(UnblockRequestSummary summary) async {
@@ -168,7 +221,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _unblockError = l10n.sessionApproveError('$e'));
+      final line = _failureText(e, l10n.sessionApproveError, l10n);
+      setState(() => _unblockError = line);
     } finally {
       if (mounted) setState(() => _approving.remove(summary.host));
     }
@@ -190,7 +244,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _unblockError = l10n.sessionApproveError('$e'));
+      final line = _failureText(e, l10n.sessionApproveError, l10n);
+      setState(() => _unblockError = line);
     } finally {
       if (mounted) setState(() => _approving.remove(summary.host));
     }
@@ -210,43 +265,104 @@ class _SessionPageState extends State<SessionPage> {
 
   Future<void> _connect() async {
     final l10n = AppLocalizations.of(context);
-    try {
-      await _hub.connect();
-      await _hub.joinSession(widget.sessionId);
-      _eventsSub = _hub.events.listen((evt) {
-        if (!mounted) return;
-        setState(() {
-          _events.insert(0, evt);
-          if (evt.kind == 'SessionEnded' &&
-              evt.payload['sessionId'] == widget.sessionId) {
-            _ended = true;
-          }
-        });
-        // UnblockRequested = a student just clicked Request access. Re-fetch
-        // the pending list rather than maintain a separate in-memory tracker:
-        // the GET endpoint already de-dupes per (student, host) and filters
-        // out already-granted entries, so this is the cheapest way to stay
-        // consistent with the source of truth.
-        if (evt.kind == 'UnblockRequested') {
-          _loadPendingRequests();
-        }
-        // Roster transitions (#100): a member joined/declined/left, or their
-        // agent stopped/resumed reporting. TamperDetected (#105) likewise flips
-        // the server-computed `tampered` flag. Re-fetch the detail so the roster
-        // reflects the server-computed per-student state.
-        if (evt.kind == 'ParticipantStateChanged' ||
-            evt.kind == 'HeartbeatLost' ||
-            evt.kind == 'AgentReconnected' ||
-            evt.kind == 'TamperDetected') {
-          _loadDetail();
+    // Listen before connecting, so that a connection whose first start fails
+    // is still caught up once a restart brings it up (#370).
+    _linkSub = _hub.linkState.listen((state) {
+      if (mounted) setState(() => _link = state);
+    });
+    _reconnectedSub = _hub.reconnected.listen((_) => _rejoinAfterReconnect());
+    _eventsSub = _hub.events.listen((evt) {
+      if (!mounted) return;
+      // The connection also hears about the teacher's other sessions: the
+      // backend sends SessionStarted to the teacher's user group for every
+      // session of their classes, and SessionEnded for every session they
+      // own (#354). This page is one session's live view.
+      if (_isAboutAnotherSession(evt)) return;
+      setState(() {
+        _events.insert(0, evt);
+        if (evt.kind == 'SessionEnded' &&
+            evt.payload['sessionId'] == widget.sessionId) {
+          _ended = true;
         }
       });
+      // UnblockRequested = a student just clicked Request access. Re-fetch
+      // the pending list rather than maintain a separate in-memory tracker:
+      // the GET endpoint already de-dupes per (student, host) and filters
+      // out already-granted entries, so this is the cheapest way to stay
+      // consistent with the source of truth.
+      if (evt.kind == 'UnblockRequested') {
+        _loadPendingRequests();
+      }
+      // Roster transitions (#100): a member joined/declined/left, or their
+      // agent stopped/resumed reporting. TamperDetected (#105) likewise flips
+      // the server-computed `tampered` flag. Re-fetch the detail so the roster
+      // reflects the server-computed per-student state.
+      if (evt.kind == 'ParticipantStateChanged' ||
+          evt.kind == 'HeartbeatLost' ||
+          evt.kind == 'AgentReconnected' ||
+          evt.kind == 'TamperDetected') {
+        _loadDetail();
+      }
+    });
+    try {
+      await _hub.connect();
+    } catch (_) {
+      // It didn't start. The link state says it's disconnected, and the page
+      // offers to reconnect (#370).
+      if (mounted) setState(() => _connecting = false);
+      return;
+    }
+    try {
+      await _hub.joinSession(widget.sessionId);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.sessionConnectError('$e'));
+      // The hub refused the join (a HubException) or the connection went
+      // while it ran: either way a sentence, never the raw text (#383).
+      final line = _failureText(e, l10n.sessionConnectError, l10n);
+      setState(() => _joinError = line);
     } finally {
       if (mounted) setState(() => _connecting = false);
     }
+  }
+
+  /// The hub connection came back after a drop (#365), however long it was
+  /// down, or a restart brought it up (#370). SignalR keeps no group
+  /// membership across a reconnect, and every roster signal (participant
+  /// state, heartbeat, tamper, unblock request) goes to the session group, so
+  /// join it again, then re-fetch the roster and the pending requests the page
+  /// missed while it was offline. Join first: a change after the join reaches
+  /// this connection, one before it is in the re-fetch. The hub runs an
+  /// invocation only after OnConnectedAsync, so the join can't race the
+  /// reconnect's own setup.
+  Future<void> _rejoinAfterReconnect() async {
+    if (_ended || _notYours) return;
+    try {
+      await _hub.joinSession(widget.sessionId);
+      if (mounted) setState(() => _joinError = null);
+    } catch (_) {
+      // JoinSession refuses a session that ended while the page was offline.
+      // The detail re-fetch below still runs and picks the end up.
+    }
+    if (!mounted) return;
+    await Future.wait([_loadDetail(), _loadPendingRequests()]);
+  }
+
+  /// Starts a closed hub connection again (#370): when the teacher comes back
+  /// to the page, or asks to. A connection that dropped retries on its own
+  /// for as long as the page is open; one that closed doesn't. Once it's
+  /// back, [_rejoinAfterReconnect] catches the page up.
+  void _restartHub() {
+    if (_ended || _notYours || _link != SessionHubLinkState.disconnected) {
+      return;
+    }
+    _hub.restart();
+  }
+
+  /// Whether [evt] names a session other than this page's. Every hub payload
+  /// carries its session id.
+  bool _isAboutAnotherSession(SessionEvent evt) {
+    final Object? sessionId = evt.payload['sessionId'];
+    return sessionId != null && sessionId != widget.sessionId;
   }
 
   Future<void> _endSession() async {
@@ -262,7 +378,8 @@ class _SessionPageState extends State<SessionPage> {
       await _loadDetail();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.sessionEndError('$e'));
+      final line = _failureText(e, l10n.sessionEndError, l10n);
+      setState(() => _error = line);
     } finally {
       if (mounted) setState(() => _ending = false);
     }
@@ -322,7 +439,8 @@ class _SessionPageState extends State<SessionPage> {
       context.go('/');
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = l10n.sessionEndError('$e'));
+      final line = _failureText(e, l10n.sessionEndError, l10n);
+      setState(() => _error = line);
     } finally {
       if (mounted) setState(() => _ending = false);
     }
@@ -330,7 +448,10 @@ class _SessionPageState extends State<SessionPage> {
 
   @override
   void dispose() {
+    _lifecycle.dispose();
     _eventsSub?.cancel();
+    _reconnectedSub?.cancel();
+    _linkSub?.cancel();
     _hub.dispose();
     super.dispose();
   }
@@ -349,6 +470,27 @@ class _SessionPageState extends State<SessionPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Another teacher's session (#382): the calm notice the other pages show
+    // for a 403 (#278), with none of the owner's controls. The shell's nav is
+    // the way back.
+    if (_notYours) {
+      return Scaffold(
+        backgroundColor: PlinkColors.paper,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(PlinkSpacing.s6),
+            child: ApiErrorText(
+              ApiErrorMessage(
+                AppLocalizations.of(context).sessionNotYours,
+                isAuthorization: true,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
+    }
+
     final TextTheme text = Theme.of(context).textTheme;
     final String className = _detail?.className ?? '';
     final String headline = className.isEmpty
@@ -411,6 +553,11 @@ class _SessionPageState extends State<SessionPage> {
           const _Hairline(),
           if (_connecting)
             _StatusLine(AppLocalizations.of(context).sessionConnecting),
+          if (!_ended &&
+              (_link == SessionHubLinkState.reconnecting ||
+                  _link == SessionHubLinkState.disconnected))
+            _ConnectionLine(state: _link!, onReconnect: _restartHub),
+          if (_joinError != null) _ErrorBanner(_joinError!),
           if (_error != null) _ErrorBanner(_error!),
           for (final Widget panel in panels) ...<Widget>[
             panel,
@@ -614,6 +761,57 @@ class _StatusLine extends StatelessWidget {
         PlinkSpacing.s3,
       ),
       child: Text(text, style: _monoLabel(PlinkColors.muted)),
+    );
+  }
+}
+
+/// The live feed isn't getting through (#370): it dropped and is
+/// reconnecting, or it closed. The roster and requests above can be stale
+/// until it's back, so the page says so — a quiet mono line with a muted
+/// icon, not an alarm — and offers to reconnect a closed connection.
+class _ConnectionLine extends StatelessWidget {
+  const _ConnectionLine({required this.state, required this.onReconnect});
+
+  final SessionHubLinkState state;
+  final VoidCallback onReconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppLocalizations l10n = AppLocalizations.of(context);
+    final bool closed = state == SessionHubLinkState.disconnected;
+    return Semantics(
+      liveRegion: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          _gutter,
+          PlinkSpacing.s2,
+          _gutter,
+          PlinkSpacing.s2,
+        ),
+        child: Row(
+          children: <Widget>[
+            Icon(
+              closed ? Icons.cloud_off_outlined : Icons.sync,
+              size: 16,
+              color: PlinkColors.ink60,
+            ),
+            const SizedBox(width: PlinkSpacing.s2),
+            Flexible(
+              child: Text(
+                closed ? l10n.sessionDisconnected : l10n.sessionReconnecting,
+                style: _monoLabel(PlinkColors.ink60),
+              ),
+            ),
+            if (closed) ...<Widget>[
+              const SizedBox(width: PlinkSpacing.s3),
+              TextButton(
+                onPressed: onReconnect,
+                child: Text(l10n.sessionReconnect),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
