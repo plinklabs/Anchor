@@ -192,10 +192,16 @@
     <section class="callout">
       <p class="eyebrow">Free &amp; open source</p>
       <h2>Made by teachers, free for everyone</h2>
-      <p>Anchor is GPL-3.0 licensed and self-hostable. Your school runs its own backend; Plink Labs operates none and receives no student data. The full source — including exactly what each component collects — is public and auditable.</p>
+      <p>Anchor is GPL-3.0 licensed and self-hostable. Your school runs its own backend; Plink Labs operates none and receives no student data. The full source — including exactly what each component collects — is public and auditable. Your students get the agent from your school's IT, which builds it for your school's own backend.</p>
+      <!--
+        "Get the agent" leads to the IT page, not to GitHub Releases: each
+        school's IT publishes its own agent, built for that school's backend
+        and Entra tenant, so upstream's Setup.exe is no use to a school.
+        (Issue #361)
+      -->
       <div class="cta-row">
         <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor">Add to Edge</a>
-        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor/releases">Get the agent</a>
+        <a class="cta cta--secondary" href="it.html">Get the agent from your IT</a>
         <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor">Source on GitHub</a>
       </div>
     </section>
@@ -206,7 +212,7 @@
         <li><a href="index.html">Home</a></li>
         <li><a href="it.html">For IT staff</a></li>
         <li><a href="privacy.html">Privacy Policy</a></li>
-        <li><a href="https://github.com/plinklabs/Anchor/releases">Download the agent (GitHub Releases)</a></li>
+        <li><a href="it.html">Get the agent (from your school's IT)</a></li>
         <li><a href="https://github.com/plinklabs/Anchor">Source code on GitHub</a></li>
       </ul>
     </section>
