@@ -44,7 +44,7 @@ each path-filtered so an unrelated push never triggers it:
 | --- | --- | --- | --- |
 | Backend API → Azure App Service | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml) | `workflow_run` after **Backend CI** succeeds on `main` | OIDC federated credential (`azure/login`) |
 | Dashboard → Azure Static Web Apps | [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml) | `push` to `main` under `dashboard/**` | SWA deployment token |
-| Public website → GitHub Pages | [`website-deploy.yml`](../.github/workflows/website-deploy.yml) | `push` to `main` under `website/**` | cross-repo deploy PAT |
+| Public website → GitHub Pages | [`website-deploy.yml`](../.github/workflows/website-deploy.yml) | `push` to `main` under `website/**`, or by hand (`workflow_dispatch`, `main` only) | cross-repo deploy PAT |
 
 The website leg is a **cross-repo mirror**: the site source lives here under
 `website/`, but the live site is the separate `plinklabs.github.io` repo (which
@@ -245,7 +245,7 @@ entries are optional per fork — see [the client section](#client-tier).
 | Name | Used by | What it is / where to get it |
 | --- | --- | --- |
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | `dashboard-deploy.yml` | The Static Web App **deployment token**. Azure Portal → the Static Web App → *Manage deployment token* (or `az staticwebapp secrets list`). |
-| `PLINKLABS_PAGES_DEPLOY_TOKEN` | `website-deploy.yml` | A **scoped deploy credential** with write access to the `plinklabs.github.io` Pages repo, used to push the synced `anchor/` folder cross-repo (`GITHUB_TOKEN` only reaches this repo). Create a fine-grained PAT scoped to **only** `plinklabs/plinklabs.github.io` with **Contents: Read and write**, on a bot/service account, and paste the token as the secret value. (A deploy key is an alternative; the workflow uses a token via `actions/checkout`.) Rotate by regenerating the PAT and replacing the secret. A fork publishing its own site points this at its own Pages repo and updates the `repository:` in `website-deploy.yml`. |
+| `PLINKLABS_PAGES_DEPLOY_TOKEN` | `website-deploy.yml` | A **scoped deploy credential** with write access to the `plinklabs.github.io` Pages repo, used to push the synced `anchor/` folder cross-repo (`GITHUB_TOKEN` only reaches this repo). Create a fine-grained PAT scoped to **only** `plinklabs/plinklabs.github.io` with **Contents: Read and write**, on a bot/service account, and paste the token as the secret value. (A deploy key is an alternative; the workflow uses a token via `actions/checkout`.) Rotate by regenerating the PAT and replacing the secret, then start a **fresh** run with `gh workflow run website-deploy.yml --ref main`. Re-running an earlier run does not pick the new token up: a re-run keeps the secrets the run was created with ([cli/cli#13522](https://github.com/cli/cli/issues/13522)). A fork publishing its own site points this at its own Pages repo and updates the `repository:` in `website-deploy.yml`. |
 | `GITHUB_TOKEN` | `dashboard-deploy.yml`, `ci-gate.yml` | Auto-provided by GitHub Actions; **no setup needed**. Listed only so the inventory is complete. |
 
 > **Backend auth — OIDC, no secret.** `backend-deploy.yml` authenticates to Azure
@@ -402,7 +402,9 @@ release**.
      dart-defines and uploads to the Static Web App.
    - **website** — a push under `website/**` mirrors `website/` into the
      `plinklabs.github.io` repo's `anchor/` folder and pushes (idempotent; only
-     `anchor/` is written). Needs `PLINKLABS_PAGES_DEPLOY_TOKEN`.
+     `anchor/` is written). Needs `PLINKLABS_PAGES_DEPLOY_TOKEN`. To publish
+     without a website change (after setting or rotating the token), run
+     `gh workflow run website-deploy.yml --ref main`.
 3. Confirm the deploy succeeded in the Actions tab; the deployed tip is live.
 
 ### Agent (`agent-v*`)
