@@ -22,6 +22,13 @@ name: Website Deploy
 # auto-provided GITHUB_TOKEN cannot push to another repo, so a cross-repo
 # credential is required.
 #
+# Manual run: `gh workflow run website-deploy.yml --ref main`. Use it after
+# setting or rotating the token. Re-running an old run does not help: a re-run
+# keeps the secrets the run was created with (cli/cli#13522), so a run that
+# failed on a missing token fails again however often it is re-run. The job
+# refuses any ref but main, so a dispatch cannot publish unreleased content
+# (the repo's default branch is develop).
+#
 # One-time manual step (NOT done here — tracked on the epic): the Anchor card in
 # plinklabs.github.io/index.html is currently unlinked; it should be turned into
 # a link to `/anchor/`. That file is the Pages repo's own root content, not part
@@ -34,6 +41,7 @@ on:
     paths:
       - 'website/**'
       - '.github/workflows/website-deploy.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -47,6 +55,12 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Refuse a ref other than main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::The live site publishes main only; dispatch with --ref main (got ${GITHUB_REF})."
+          exit 1
+
       - name: Checkout Anchor (website source)
         uses: actions/checkout@v4
         with:
