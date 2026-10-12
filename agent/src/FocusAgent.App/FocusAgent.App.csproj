@@ -18,8 +18,16 @@
          key missing from the active language (or an unsupported display language)
          resolves to English via MRT's language fallback rather than a blank/raw
          key. The .resw catalogues live under Strings/<lang>/Resources.resw and the
-         Windows App SDK build compiles them into resources.pri next to the exe. -->
+         Windows App SDK build compiles them into FocusAgent.App.pri next to the exe. -->
     <DefaultLanguage>en-US</DefaultLanguage>
+    <!-- #403: FocusAgent.App.pri holds the compiled XAML (.xbf) of every window
+         as well as the .resw strings. An unpackaged `dotnet publish` (the release
+         build in pack-release.ps1) leaves it out unless the single-project MSIX
+         tooling is on, and the installed agent then crashes in
+         InitializeComponent. Turning the tooling on doesn't package the app:
+         with no Package.appxmanifest, WindowsPackageType stays None, so the
+         agent is still unpackaged and installed by Velopack. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
   </PropertyGroup>
 
   <ItemGroup>

@@ -75,20 +75,24 @@ public sealed class I18nTests
     /// Launch the real agent exe in <c>--verify-i18n &lt;lang&gt;</c> mode and read
     /// back the <c>key=value</c> strings it resolves for that language (the exe is a
     /// WinExe with no console, so the result comes via the result file, like
-    /// --verify-ds-theme / --check-update).
+    /// --verify-ds-theme / --check-update). <paramref name="agentExe"/> defaults
+    /// to the x64 Debug build; <c>PublishedPackageTests</c> passes the release
+    /// publish instead (#403).
     /// </summary>
-    private static async Task<IReadOnlyDictionary<string, string>> RunVerifyI18nAsync(string language)
+    internal static async Task<IReadOnlyDictionary<string, string>> RunVerifyI18nAsync(
+        string language, string? agentExe = null)
     {
-        if (!File.Exists(TestConfig.AgentExe))
+        agentExe ??= TestConfig.AgentExe;
+        if (!File.Exists(agentExe))
             throw new FileNotFoundException(
-                $"Agent exe not found at {TestConfig.AgentExe}. Build it first: " +
+                $"Agent exe not found at {agentExe}. Build it first: " +
                 "dotnet build agent/src/FocusAgent.App/FocusAgent.App.csproj -p:Platform=x64 -c Debug",
-                TestConfig.AgentExe);
+                agentExe);
 
         var resultPath = Path.Combine(Path.GetTempPath(), $"anchor-i18n-{Guid.NewGuid():N}.txt");
         try
         {
-            var psi = new ProcessStartInfo(TestConfig.AgentExe) { UseShellExecute = false };
+            var psi = new ProcessStartInfo(agentExe) { UseShellExecute = false };
             psi.ArgumentList.Add("--verify-i18n");
             psi.ArgumentList.Add(language);
             psi.Environment["ANCHOR_I18N_RESULT_PATH"] = resultPath;

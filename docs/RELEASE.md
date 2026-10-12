@@ -177,6 +177,9 @@ launches the agent automatically once installed.
   fork's feed.
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
+- `pack-release.ps1` fails the build when the publish folder has no
+  `FocusAgent.App.pri` (the agent's compiled XAML and strings): agent-v0.2.0 and
+  agent-v0.2.1 shipped without it and crashed on every start (#403).
 - The agent ships **unsigned** (one SmartScreen "More info → Run anyway" on first
   install); code-signing is a planned later upgrade.
 - Full detail: [`agent/README.md`](../agent/README.md#versioning).

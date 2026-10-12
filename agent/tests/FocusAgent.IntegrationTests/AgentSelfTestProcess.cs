@@ -33,17 +33,24 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     public int Pid => _process.Id;
     public bool HasExited => _process.HasExited;
 
-    public static AgentSelfTestProcess Launch(string selfTestFlag)
+    /// <param name="selfTestFlag">One of the self-test flags above.</param>
+    /// <param name="agentExe">
+    /// The exe to launch. Defaults to the x64 Debug build
+    /// (<see cref="TestConfig.AgentExe"/>); <c>PublishedPackageTests</c> passes
+    /// the release publish instead (#403).
+    /// </param>
+    public static AgentSelfTestProcess Launch(string selfTestFlag, string? agentExe = null)
     {
+        agentExe ??= TestConfig.AgentExe;
         if (!OperatingSystem.IsWindows())
             throw new InvalidOperationException("The agent exe is Windows-only.");
-        if (!File.Exists(TestConfig.AgentExe))
+        if (!File.Exists(agentExe))
             throw new FileNotFoundException(
-                $"Agent exe not found at {TestConfig.AgentExe}. Build it first: " +
+                $"Agent exe not found at {agentExe}. Build it first: " +
                 "dotnet build agent/src/FocusAgent.App/FocusAgent.App.csproj -p:Platform=x64 -c Debug",
-                TestConfig.AgentExe);
+                agentExe);
 
-        var psi = new ProcessStartInfo(TestConfig.AgentExe) { UseShellExecute = false };
+        var psi = new ProcessStartInfo(agentExe) { UseShellExecute = false };
         psi.ArgumentList.Add(selfTestFlag);
 
         var process = Process.Start(psi)
