@@ -22,12 +22,16 @@
          appsettings.Production.json — see agent/README.md).
       3. Publish the witness host (anchor-witness-host.exe) into the same folder
          so the native-messaging path works in the installed agent.
-      4. Substitute the #{...}# placeholders in the PUBLISHED
+      4. Check that the publish folder holds FocusAgent.App.pri (the compiled
+         XAML and strings) via assert-publish-output.ps1. Without it the
+         installed agent crashes on startup, so a missing or empty one fails
+         the build (#403).
+      5. Substitute the #{...}# placeholders in the PUBLISHED
          appsettings.Production.json (never the committed template) from env vars
          via substitute-config.ps1: BACKEND_BASE_URL, AUTH_TENANT_ID,
          AUTH_CLIENT_ID, AUTH_SCOPE and UPDATE_REPO_URL. Each is required; a
          missing or blank one fails the build.
-      5. `vpk pack` the publish folder into ./artifacts/velopack, with the app
+      6. `vpk pack` the publish folder into ./artifacts/velopack, with the app
          icon, a success/conclusion page, and the portable bundle suppressed
          (#247). Setup.exe runs the freshly-installed agent automatically — that
          is Velopack's default post-install behaviour, so no extra flag is
@@ -137,6 +141,11 @@ dotnet publish $witProj `
     --self-contained true `
     -o $publishDir
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish (witness host) failed ($LASTEXITCODE)." }
+
+# The publish must carry FocusAgent.App.pri (compiled XAML + strings): without
+# it the installed agent crashes on startup, as agent-v0.2.0/0.2.1 did (#403).
+# Checked here, before substitution and `vpk pack`, so -SkipPack runs it too.
+& (Join-Path $scriptDir 'assert-publish-output.ps1') -PublishDir $publishDir
 
 # Bake the per-deployment backend/Entra/update-feed config into the PUBLISHED copy.
 $publishedProdConfig = Join-Path $publishDir 'appsettings.Production.json'

@@ -123,6 +123,19 @@ SQLite DB under the temp dir, so it never touches a running dev backend or
 `anchor.dev.db`. It runs in CI on a Windows runner via
 [`.github/workflows/agent-e2e.yml`](../.github/workflows/agent-e2e.yml).
 
+### Published package (#403)
+
+Everything else here launches the x64 Debug build. `PublishedPackageTests`
+(`Category=Published`) instead runs `scripts/pack-release.ps1 -SkipPack` with
+stand-in deployment config and launches the agent from the release publish
+folder (`artifacts/publish`): it must show its MainWindow and resolve Dutch
+strings from the shipped `FocusAgent.App.pri`. CI runs it with the state specs.
+The publish takes about a minute when the build is warm.
+
+```powershell
+dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj --filter "Category=Published"
+```
+
 ### Visual enforcement (Phase 2, #133)
 
 The agent's WinUI surfaces are pure DirectComposition — there's no `/status`
@@ -211,7 +224,7 @@ start / amend / end a session and print the agent's live `/status`.
 The agent is localized (#323, part of the cross-surface effort #320) with the
 standard WinUI/.NET resource pipeline: `.resw` catalogues under
 [`src/FocusAgent.App/Strings/<lang>/Resources.resw`](src/FocusAgent.App/Strings),
-compiled into `resources.pri` next to the exe by the Windows App SDK build.
+compiled into `FocusAgent.App.pri` next to the exe by the Windows App SDK build.
 
 - **English (`en-US`) is the source + fallback locale** — set via
   `<DefaultLanguage>` in the csproj. A key missing from the active language (or an
@@ -385,3 +398,8 @@ Anchor is BYOD and is never pushed to devices via Intune/MDM. Startup at login i
 handled by a per-user `HKCU\...\Run` entry written by the Velopack install hook,
 not a packaged startup task (see `FocusAgent.Core.Startup.StartupRegistrar`,
 #225).
+
+The csproj still sets `EnableMsixTooling`: without it the unpackaged publish
+leaves out `FocusAgent.App.pri` (the compiled XAML and strings) and the
+installed agent crashes on startup. `WindowsPackageType` stays `None`, and
+`pack-release.ps1` fails the build if the publish has no PRI (#403).
