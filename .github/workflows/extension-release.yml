@@ -34,8 +34,9 @@ name: Extension Release
 # Gate interaction: like agent-release.yml / backend-deploy.yml this workflow has
 # NO `pull_request` trigger, so it never produces a check on a PR and must NOT be
 # added to ci-gate.yml — a required/awaited check that never runs on a PR would
-# hang the gate forever. A PR that only edits this file is validated by
-# `actionlint` (and the pack-extension unit test asserts the same).
+# hang the gate forever. A PR that edits this file runs Extension CI instead
+# (extension-ci.yml, #412): its unit suite lints this file with `actionlint` and
+# pins the failure reporting below, and the gate waits for it.
 #
 # Edge Add-ons submission: the publish step uses the Edge Add-ons (Partner Center)
 # REST API. It runs ONLY when the submission secrets are configured (see

@@ -107,8 +107,10 @@ describe('pack-extension (#210 Edge Add-ons packaging)', () => {
 
 // Guard the YAML the release ships in: a malformed workflow would never run on a
 // tag, and the PR gate doesn't execute tag-only workflows. actionlint validates
-// it statically. Skipped automatically where the binary isn't installed (local
-// dev without actionlint) so it never produces a false failure; CI has it.
+// it statically. Extension CI (extension-ci.yml) runs this suite with a pinned
+// actionlint installed (#412). Elsewhere the check is skipped where the binary
+// isn't installed (local dev without actionlint), so it never produces a false
+// failure; in CI a missing binary fails it, so a broken install can't skip it.
 describe('extension-release workflow', () => {
   const hasActionlint = (() => {
     try {
@@ -118,11 +120,14 @@ describe('extension-release workflow', () => {
       return false;
     }
   })();
+  // GitHub Actions sets CI=true on every runner.
+  const requireActionlint = process.env.CI === 'true';
 
   const workflowPath = (name: string) =>
     fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url));
 
-  it.runIf(hasActionlint)('passes actionlint', () => {
+  it.runIf(hasActionlint || requireActionlint)('passes actionlint', () => {
+    expect(hasActionlint, 'actionlint must be on PATH in CI; extension-ci.yml installs it').toBe(true);
     // Both release-path workflows: the tag-triggered release and the scheduled
     // key-expiry warning it depends on (#336). Neither runs on a PR, so a typo
     // in either would surface only on the day it was needed.
