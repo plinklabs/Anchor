@@ -9,7 +9,9 @@
 //   2. The credentials are rejected. `EDGE_ADDONS_API_KEY` expires every 72
 //      days and Partner Center's "Create API credentials" button regenerates
 //      the Client ID *and* the key — updating only the key leaves a mismatched
-//      pair that 403s. Recovery: update BOTH secrets, then re-run.
+//      pair that 403s. Recovery: update BOTH secrets, then start a FRESH run
+//      on the tag. Not a re-run: a re-run keeps the secrets the run was created
+//      with (cli/cli#13522), so it would retry the rejected pair (#401).
 //
 // Telling them apart by hand costs a Partner Center login. This does it with
 // one safe read: a GET for a well-formed but non-existent operation id. The
@@ -50,7 +52,11 @@ export function classifyProbeStatus(status) {
 /** Human-facing diagnosis for a cause, including the exact recovery steps. */
 export function describeCause(cause, { version, runId } = {}) {
   const tag = version ? `extension-v${version}` : 'the release tag';
+  // Re-runs the failed job with the package it already built, and with the
+  // secrets the run was created with. Right only when no secret changed.
   const rerun = runId ? `gh run rerun ${runId} --failed` : 'gh run rerun <run-id> --failed';
+  // A new run on the same tag, which reads the secrets as they are now (#401).
+  const freshRun = `gh workflow run extension-release.yml --ref extension-v${version || '<version>'}`;
 
   if (cause === 'credentials') {
     return {
@@ -66,7 +72,7 @@ export function describeCause(cause, { version, runId } = {}) {
         'Copy BOTH the Client ID and the new API key — renewing regenerates both.',
         'Update the EDGE_ADDONS_CLIENT_ID and EDGE_ADDONS_API_KEY secrets (updating only one leaves a mismatched pair that fails exactly like this).',
         'Set the EDGE_ADDONS_KEY_ROTATED repository variable to today (YYYY-MM-DD) so the expiry warning tracks the new key.',
-        `Re-run the failed job — the ${tag} package is already built: ${rerun}`,
+        `Start a fresh run on ${tag}, not a re-run (a re-run keeps the secrets it was created with, so it would retry the rejected credentials): ${freshRun}`,
       ],
     };
   }
@@ -95,9 +101,8 @@ export function describeCause(cause, { version, runId } = {}) {
       'The diagnostic probe returned an unexpected status, so both known causes ' +
       'are still on the table. Check the publish step\'s own error above.',
     recovery: [
-      'If the log shows 401/403: rotate BOTH EDGE_ADDONS_CLIENT_ID and EDGE_ADDONS_API_KEY in Partner Center → Publish API.',
-      'If the log mentions an in-progress submission: wait for review to clear.',
-      `Then re-run the failed job: ${rerun}`,
+      `If the log shows 401/403: rotate BOTH EDGE_ADDONS_CLIENT_ID and EDGE_ADDONS_API_KEY in Partner Center → Publish API, then start a fresh run on the tag (a re-run would keep the old secrets): ${freshRun}`,
+      `If the log mentions an in-progress submission: wait for review to clear, then re-run the failed job: ${rerun}`,
     ],
   };
 }
