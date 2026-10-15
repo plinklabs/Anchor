@@ -72,6 +72,49 @@ internal static class WindowCapture
         return found;
     }
 
+    /// <summary>
+    /// The first <em>visible</em> top-level window of <paramref name="pid"/> whose
+    /// class starts with <paramref name="classPrefix"/> and whose title is exactly
+    /// <paramref name="title"/>, or <see cref="IntPtr.Zero"/>. The startup-crash spec
+    /// (#407) uses it to find the crash surface, the WinUI crash dialog
+    /// (<c>WinUIDesktop…</c>) or the Win32 fallback message box (<c>#32770</c>), both
+    /// titled "Anchor", and not another window the crashed startup also opened
+    /// (e.g. the guided extension install on a policy-locked box).
+    /// </summary>
+    public static IntPtr FindVisibleWindow(int pid, string classPrefix, string title)
+    {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hWnd, _) =>
+        {
+            GetWindowThreadProcessId(hWnd, out var windowPid);
+            if (windowPid != (uint)pid || !IsWindowVisible(hWnd)) return true;
+
+            var className = new StringBuilder(256);
+            GetClassNameW(hWnd, className, className.Capacity);
+            if (!className.ToString().StartsWith(classPrefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var text = new StringBuilder(256);
+            GetWindowTextW(hWnd, text, text.Capacity);
+            if (!string.Equals(text.ToString(), title, StringComparison.Ordinal))
+                return true;
+
+            found = hWnd;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>
+    /// Ask <paramref name="hwnd"/> to close (posts <c>WM_CLOSE</c>), the headless
+    /// stand-in for a user clicking the window's close button. Works for a WinUI
+    /// window and for an OK-only Win32 message box alike.
+    /// </summary>
+    public static void PostClose(IntPtr hwnd) => PostMessageW(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+
+    /// <summary>True while <paramref name="hwnd"/> is a valid window that is shown.</summary>
+    public static bool IsVisible(IntPtr hwnd) => IsWindowNative(hwnd) && IsWindowVisible(hwnd);
+
     /// <summary>True while <paramref name="hwnd"/> is still a valid window handle.</summary>
     public static bool IsWindow(IntPtr hwnd) => IsWindowNative(hwnd);
 
@@ -261,6 +304,7 @@ internal static class WindowCapture
         return sb.Length == 0 ? "  <none>\n" : sb.ToString();
     }
 
+    private const uint WM_CLOSE = 0x0010;
     private const uint SRCCOPY = 0x00CC0020;
     private const uint CAPTUREBLT = 0x40000000;
     private const int SW_RESTORE = 9;
@@ -313,6 +357,17 @@ internal static class WindowCapture
     [DllImport("user32.dll", EntryPoint = "IsWindow")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindowNative(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern int GetWindowTextW(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll", EntryPoint = "IsIconic")]
     [return: MarshalAs(UnmanagedType.Bool)]

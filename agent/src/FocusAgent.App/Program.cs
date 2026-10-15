@@ -308,6 +308,36 @@ public static class Program
     public const string CheckUpdateResultPathEnvVar = "ANCHOR_UPDATE_RESULT_PATH";
 
     /// <summary>
+    /// Dev-only flag (#407): make one startup stage fail on a normal launch, so the
+    /// integration test can prove a release that crashes at startup still runs its
+    /// update check (and so can still be fixed by the next release). The flag is
+    /// followed by the stage: <c>host</c> (the DI host fails to build),
+    /// <c>window</c> (creating the main window throws, like #403's XAML crash) or
+    /// <c>background</c> (a background thread dies with an unhandled exception just
+    /// before the window). Deliberately NOT part of <see cref="SuppressCrashDialog"/>:
+    /// the point is to drive the real fatal path, crash dialog included; the test
+    /// closes the dialog itself. Skips single-instance gating like the self-tests.
+    /// </summary>
+    public const string TestCrashAtArg = "--test-crash-at";
+
+    /// <summary>
+    /// Dev-only flag (#407): swap the real Velopack update manager for
+    /// <see cref="Updates.ProbeUpdateManager"/>, which pretends to be an installed
+    /// agent with a newer release on the feed and records each phase of the update
+    /// pass (check, download, stage) to the file named by
+    /// <see cref="UpdateProbePathEnvVar"/>. Paired with <see cref="TestCrashAtArg"/>
+    /// in the startup-crash e2e.
+    /// </summary>
+    public const string TestUpdateProbeArg = "--test-update-probe";
+
+    /// <summary>
+    /// Dev-only env var (#407): absolute path the <see cref="TestUpdateProbeArg"/>
+    /// probe appends its lines to. The probe holds its "download" open until
+    /// <c>&lt;path&gt;.release</c> exists, so the test can release it on cue.
+    /// </summary>
+    public const string UpdateProbePathEnvVar = "ANCHOR_UPDATE_PROBE_PATH";
+
+    /// <summary>
     /// The Velopack package id the agent ships under (mirrors
     /// <c>--packId</c> in agent/scripts/pack-release.ps1). The
     /// <see cref="CheckUpdateArg"/> mode reads the test feed as this app id.
@@ -326,6 +356,10 @@ public static class Program
     public static int? StatusEndpointPort { get; private set; }
     public static bool AutoJoin { get; private set; }
     public static bool SimulateInPrivate { get; private set; }
+    public static bool TestUpdateProbe { get; private set; }
+
+    /// <summary>The startup stage from <c>--test-crash-at</c>, or null for a normal launch.</summary>
+    public static string? TestCrashAt { get; private set; }
 
     /// <summary>The BCP-47 tag from <c>--ui-language</c>, or null to follow the OS language.</summary>
     public static string? UiLanguage { get; private set; }
@@ -358,8 +392,16 @@ public static class Program
         // runs for a normal launch. `vpk pack` also refuses to package a build
         // whose entrypoint doesn't call this. The auto-update *check* (the agent's
         // UpdateManager against the GitHub Releases feed) is wired in App startup
-        // via AgentUpdateService (#224).
+        // via AgentUpdateService (#224), started before any window (#407).
         VelopackApp.Build()
+            // #407: a release the update check downloaded and staged is applied
+            // HERE, on the next launch, before any WinUI code runs: Run() sees a
+            // newer full package in the packages dir, hands it to the updater,
+            // restarts into the new version and exits this process. So a fixed
+            // release lands even when this launch's own startup would crash again.
+            // It's Velopack's default; set explicitly because it is the second half
+            // of the agent's crash-recovery path and must not be switched off.
+            .SetAutoApplyOnStartup(true)
             // #225: "start the agent at login" lives in a per-user HKCU\...\Run
             // entry (no admin, no MDM) — the unpackaged build's equivalent of a
             // packaged app's windows.startupTask extension. Velopack fires
@@ -429,6 +471,8 @@ public static class Program
         SimulateInPrivate = args.Any(a => string.Equals(a, SimulateInPrivateArg, StringComparison.OrdinalIgnoreCase));
         UiLanguage = ArgValueAfter(args, UiLanguageArg);
         VerifyI18nLanguage = ArgValueAfter(args, VerifyI18nArg);
+        TestCrashAt = ArgValueAfter(args, TestCrashAtArg);
+        TestUpdateProbe = args.Any(a => string.Equals(a, TestUpdateProbeArg, StringComparison.OrdinalIgnoreCase));
 
         // #323: pin the UI language before any XAML is parsed so x:Uid resources and
         // .NET formatting both resolve to it. --verify-i18n's language wins (that mode
@@ -442,7 +486,7 @@ public static class Program
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme && !ShowTestCrash && !VerifyI18n)
+        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme && !ShowTestCrash && !VerifyI18n && TestCrashAt is null)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)
