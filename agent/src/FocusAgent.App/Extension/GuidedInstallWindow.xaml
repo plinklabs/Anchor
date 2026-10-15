@@ -5,9 +5,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:pds="using:PlinkDesignSystem.Controls">
 
-    <!-- #211 guided-install fallback: shown only when the per-user force-install
-         policy didn't take (the extension never checked in within the grace
-         period). Wears the same DS ink treatment as the join-by-code dialog
+    <!-- #211 guided-install fallback: shown when there is no force-install policy
+         (the UAC step of #405 was declined or failed) or it didn't take (the
+         extension never checked in within the grace period). Wears the same DS
+         ink treatment as the join-by-code dialog
          (ANCHOR_BRAND.md §3) — calm, one magenta spark for the single primary
          action (open the store), a quiet on-ink secondary to dismiss. -->
     <Grid Padding="28,24"

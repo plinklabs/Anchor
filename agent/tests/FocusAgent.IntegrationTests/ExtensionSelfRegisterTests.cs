@@ -6,19 +6,18 @@ using Microsoft.Win32;
 namespace FocusAgent.IntegrationTests;
 
 /// <summary>
-/// End-to-end proof for #211: the <em>real</em> built agent writes (and, on
-/// uninstall, removes) the per-user Edge <c>ExtensionInstallForcelist</c> policy
-/// under <c>HKCU</c>. This is the one real-world uncertainty the issue calls out —
-/// whether the agent can self-register the force-install policy on a clean,
-/// unmanaged BYOD box without admin — so it's exercised against the actual
-/// <c>Microsoft.Win32.Registry</c> write, not a fake.
+/// End-to-end proof for the forcelist registry store (#211): the <em>real</em>
+/// built agent, in its dev-only <c>--register-extension</c> /
+/// <c>--unregister-extension</c> modes, adds Anchor's entry at the next free slot
+/// (once), and removes only Anchor's entry, through the actual
+/// <c>Microsoft.Win32.Registry</c> code — not a fake.
 ///
-/// A pure unit test (which this PR also has, against an in-memory store) cannot
-/// prove the registry write itself happens: only launching the shipped exe and
-/// reading HKCU back shows the produced binary touches the registry as designed.
 /// The spec points the agent at a throwaway HKCU subtree (via
 /// <c>ANCHOR_EXTENSION_POLICY_KEY</c>) so it never disturbs a dev's real Edge
-/// policy, and deletes that subtree on the way out.
+/// policy, and deletes that subtree on the way out. (The live HKCU policy key isn't
+/// writable on a default profile, which is why the running agent adds its entry
+/// under HKLM through one UAC prompt instead — #405, covered by
+/// <see cref="ExtensionPolicySetupTests"/>.)
 ///
 /// No backend is needed (this is a registry path, not a session path), so the
 /// spec deliberately stays out of the backend-bound <c>AgentE2ECollection</c>.

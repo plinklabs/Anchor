@@ -5,9 +5,10 @@ using Microsoft.UI.Xaml;
 namespace FocusAgent.App.Extension;
 
 /// <summary>
-/// The guided-install fallback window (#211): a small one-click prompt shown only
-/// when the per-user force-install policy didn't take — the extension never
-/// checked in over the witness link within the grace period. "Open store"
+/// The guided-install fallback window (#211): a small one-click prompt shown when
+/// there is no force-install policy (the student said "not now" to the UAC step,
+/// declined the prompt or isn't an administrator, #405) or the policy didn't take —
+/// the extension never checked in over the witness link within the grace period. "Open store"
 /// launches Edge at the canonical Add-ons listing where the student taps
 /// <em>Get → Add</em>; "Later" dismisses it.
 ///

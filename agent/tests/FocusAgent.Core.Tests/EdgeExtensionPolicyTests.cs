@@ -21,11 +21,58 @@ public class EdgeExtensionPolicyTests
     }
 
     [Fact]
-    public void Forcelist_key_path_is_the_per_user_HKCU_edge_policy()
+    public void Forcelist_key_path_is_the_edge_policy_path_under_either_hive()
     {
         Assert.Equal(
             @"Software\Policies\Microsoft\Edge\ExtensionInstallForcelist",
             EdgeExtensionPolicy.ForcelistKeyPath);
+        // #405: the agent adds its entry machine-wide.
+        Assert.Equal(
+            @"HKLM\Software\Policies\Microsoft\Edge\ExtensionInstallForcelist",
+            EdgeExtensionPolicy.MachineForcelistRegPath);
+    }
+
+    [Fact]
+    public void RegAddArguments_adds_only_our_value_at_the_given_slot_in_the_64bit_view()
+    {
+        // #405: the exact command line the UAC-elevated reg.exe runs. One value, at
+        // one slot, forced (no interactive "overwrite?" in a hidden window).
+        Assert.Equal(
+            @"add ""HKLM\Software\Policies\Microsoft\Edge\ExtensionInstallForcelist"" /v 3 /t REG_SZ " +
+            @"/d ""dnkimhodjfogjibnbbfdjdapgmmiojio;https://edge.microsoft.com/extensionwebstorebase/v1/crx"" /f /reg:64",
+            EdgeExtensionPolicy.RegAddArguments("3", EdgeExtensionPolicy.ForcelistEntry));
+    }
+
+    [Fact]
+    public void RegDeleteArguments_deletes_one_value_never_the_key()
+    {
+        Assert.Equal(
+            @"delete ""HKLM\Software\Policies\Microsoft\Edge\ExtensionInstallForcelist"" /v 2 /f /reg:64",
+            EdgeExtensionPolicy.RegDeleteArguments("2"));
+    }
+
+    [Theory]
+    [InlineData("1", true)]
+    [InlineData("12", true)]
+    [InlineData("0", false)]
+    [InlineData("-1", false)]
+    [InlineData("1 /va", false)]   // can't smuggle "delete every value" into reg.exe
+    [InlineData("1\" /f", false)]
+    [InlineData("abc", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsSlotName_accepts_only_positive_numbers(string? name, bool expected)
+    {
+        Assert.Equal(expected, EdgeExtensionPolicy.IsSlotName(name));
+    }
+
+    [Theory]
+    [InlineData("1 /va")]
+    [InlineData("x")]
+    public void Reg_arguments_refuse_a_value_name_that_is_not_a_slot(string name)
+    {
+        Assert.Throws<ArgumentException>(() => EdgeExtensionPolicy.RegDeleteArguments(name));
+        Assert.Throws<ArgumentException>(() => EdgeExtensionPolicy.RegAddArguments(name, EdgeExtensionPolicy.ForcelistEntry));
     }
 
     [Theory]

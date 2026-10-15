@@ -1,12 +1,19 @@
 namespace FocusAgent.Core.Extension;
 
 /// <summary>
-/// The agent's read/write access to the Edge <c>ExtensionInstallForcelist</c>
-/// policy under <c>HKCU</c> (#211). Abstracted off the concrete
-/// <c>Microsoft.Win32.Registry</c> write so the orchestration in
-/// <see cref="ExtensionSelfRegistrar"/> — and its find/insert/remove decisions —
-/// is unit-testable with an in-memory fake, while the real registry path is
-/// driven end-to-end by the integration test against a throwaway HKCU subtree.
+/// Access to one Edge <c>ExtensionInstallForcelist</c> policy key (#211, #405):
+/// the machine-wide one under <c>HKLM</c> or the per-user one under <c>HKCU</c>.
+/// Abstracted off the concrete <c>Microsoft.Win32.Registry</c> access so the
+/// orchestration in <see cref="ExtensionSelfRegistrar"/> — and its find/insert/
+/// remove decisions — is unit-testable with an in-memory fake, while the real
+/// registry path is driven end-to-end by the integration tests against a throwaway
+/// HKCU subtree.
+///
+/// The running agent only <em>reads</em> both keys: a standard profile can write
+/// neither (see <see cref="EdgeExtensionPolicy"/>). The HKLM entry is added by an
+/// elevated <c>reg.exe</c> (<see cref="IElevatedPolicyWriter"/>), not through this
+/// interface; <see cref="AddForcelistEntry"/> serves the dev-only CLI mode and the
+/// tests' simulated elevation.
 /// </summary>
 public interface IExtensionPolicyStore
 {
@@ -21,6 +28,12 @@ public interface IExtensionPolicyStore
     /// caller can pick the next free slot). Empty when the key doesn't exist.
     /// </summary>
     IReadOnlyList<string> GetForcelistValueNames();
+
+    /// <summary>
+    /// The string stored under <paramref name="valueName"/>, or null when the key
+    /// or the value is absent (or isn't a string).
+    /// </summary>
+    string? GetForcelistValue(string valueName);
 
     /// <summary>
     /// Add <paramref name="entry"/> under value name <paramref name="valueName"/>,

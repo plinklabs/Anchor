@@ -20,7 +20,17 @@ internal sealed record StatusSnapshot(
     [property: JsonPropertyName("joinedSessionId")] Guid? JoinedSessionId,
     [property: JsonPropertyName("allowedApps")] string[]? AllowedApps,
     [property: JsonPropertyName("startupSweep")] StartupSweepSnapshot? StartupSweep,
-    [property: JsonPropertyName("inPrivateDetections")] int InPrivateDetections);
+    [property: JsonPropertyName("inPrivateDetections")] int InPrivateDetections,
+    [property: JsonPropertyName("extensionPolicy")] ExtensionPolicySnapshot? ExtensionPolicy = null);
+
+/// <summary>
+/// The Edge extension setup as exposed on /status (#405): where an Anchor
+/// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>) and
+/// whether the setup window (the explanation before the UAC prompt) is open.
+/// </summary>
+internal sealed record ExtensionPolicySnapshot(
+    [property: JsonPropertyName("location")] string? Location,
+    [property: JsonPropertyName("consentOpen")] bool ConsentOpen);
 
 /// <summary>
 /// The agent's session-start sweep result (#104) as exposed on /status: how many
@@ -66,6 +76,12 @@ internal sealed class AgentProcess : IAsyncDisposable
 
     public int StatusPort { get; private init; }
 
+    /// <summary>The agent's process id, for matching its windows.</summary>
+    public int Pid => _process.Id;
+
+    /// <summary>True once the agent process has exited.</summary>
+    public bool HasExited => _process.HasExited;
+
     /// <summary>
     /// Launch the agent impersonating <paramref name="impersonateOid"/>, pointed
     /// at the e2e backend. Set <paramref name="autoJoin"/> for flows that need
@@ -79,7 +95,9 @@ internal sealed class AgentProcess : IAsyncDisposable
         bool simulateInPrivate = false,
         string? environmentName = null,
         bool pointBackendViaEnv = true,
-        TimeSpan? reconnectMaxBackoff = null)
+        TimeSpan? reconnectMaxBackoff = null,
+        IEnumerable<string>? extraArgs = null,
+        IReadOnlyDictionary<string, string>? extraEnvironment = null)
     {
         if (!OperatingSystem.IsWindows())
             throw new InvalidOperationException("The agent exe is Windows-only.");
@@ -121,6 +139,11 @@ internal sealed class AgentProcess : IAsyncDisposable
         // the backend doesn't wait out a long retry delay.
         if (reconnectMaxBackoff is { } backoff)
             psi.Environment["Realtime__ReconnectMaxBackoff"] = backoff.ToString("c");
+        // Any other per-spec flags / config (e.g. the #405 Extension__* test knobs).
+        foreach (var arg in extraArgs ?? [])
+            psi.ArgumentList.Add(arg);
+        foreach (var (name, value) in extraEnvironment ?? new Dictionary<string, string>())
+            psi.Environment[name] = value;
 
         var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the agent process.");
@@ -206,6 +229,28 @@ internal sealed class AgentProcess : IAsyncDisposable
     public async Task QuitAsync()
     {
         using var res = await _http.PostAsync($"{_controlBase}/quit", content: null);
+        res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Answer the Edge extension setup window (#405) via POST /extension-consent —
+    /// the headless stand-in for clicking Allow / Not now. Returns false when no
+    /// setup window was open.
+    /// </summary>
+    public async Task<bool> AnswerExtensionConsentAsync(bool allow)
+    {
+        var answer = allow ? "allow" : "not-now";
+        using var res = await _http.PostAsync($"{_controlBase}/extension-consent?answer={answer}", content: null);
+        return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    /// <summary>
+    /// Pick the tray's "Set up the Edge extension…" item (#405) via POST
+    /// /extension-setup — a tray flyout can't be opened headlessly.
+    /// </summary>
+    public async Task OfferExtensionSetupAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/extension-setup", content: null);
         res.EnsureSuccessStatusCode();
     }
 

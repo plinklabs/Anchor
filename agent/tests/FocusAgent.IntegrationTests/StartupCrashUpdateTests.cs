@@ -41,9 +41,9 @@ public sealed class StartupCrashUpdateTests
     private const string MessageBoxClass = "#32770";
 
     // The crash dialog's (and the fallback box's) fixed title. Matching on it skips
-    // other windows a crashed startup may also show: on a box where the Edge policy
-    // write is denied, startup queues the guided extension install, which then
-    // opens on top of the crash dialog.
+    // other windows a crashed startup may also show: on a box without the Edge
+    // force-install policy, startup queues the extension setup window (#405), which
+    // then opens on top of the crash dialog.
     private const string CrashSurfaceTitle = "Anchor";
     private const string CheckLine = "check";
     private const string StagedLine = "stage 9.9.9";

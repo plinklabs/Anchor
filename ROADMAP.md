@@ -8,7 +8,7 @@ Goal: a commit to `main` ships the cloud; a version tag ships the client; a cont
 
 - **Hybrid trigger.** Cloud (backend API + DB migrations + dashboard) deploys continuously on push to `main`. Agent + extension publish on version tags / GitHub Releases.
 - **Agent** ships unpackaged via [Velopack](https://velopack.io) — free, no code-signing cert, delta auto-update from GitHub Releases.
-- **Extension** is published once to the Edge Add-ons store as a single canonical listing; it receives its backend URL from the agent at runtime, so forks reuse it rather than publishing their own. The agent force-installs it via a per-user Edge policy, with a guided-install fallback.
+- **Extension** is published once to the Edge Add-ons store as a single canonical listing; it receives its backend URL from the agent at runtime, so forks reuse it rather than publishing their own. The agent force-installs it via a machine-wide Edge policy it adds with one UAC prompt (#405), with a guided-install fallback.
 - **Fork = contributor path.** A forker runs `scripts/setup.ps1` (Bicep + Entra app registrations + App Service settings + GitHub secrets) or follows `docs/SETUP.md` manually.
 
 Tracked in the **A–D** issue series (config externalization → cloud pipeline → client release → fork bootstrap).

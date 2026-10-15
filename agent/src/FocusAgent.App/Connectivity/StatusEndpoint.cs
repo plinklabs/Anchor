@@ -43,6 +43,17 @@ namespace FocusAgent.App.Connectivity;
 ///   POST /quit  -> the tray/window "Quit" action (#110): shuts the agent down
 ///                  cleanly, which emits a best-effort AgentKilled event first
 ///                  if quit happens mid-session.
+///   POST /extension-consent?answer=allow|not-now
+///               -> the Edge extension setup window's buttons (#405): answers
+///                  the open window like a click (404 when none is open). In a
+///                  dev/test run "allow" never leads to a real UAC prompt.
+///   POST /extension-setup
+///               -> the tray's "Set up the Edge extension…" item (#405): opens
+///                  the setup window again, even after a "not now".
+///
+/// And /status carries <c>extensionPolicy</c> (#405): where the Anchor
+/// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>)
+/// and whether the setup window is open.
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
@@ -76,6 +87,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<CancellationToken, Task>? _onLeaveSession;
     private readonly Action? _onCloseWindow;
     private readonly Action? _onQuit;
+    private readonly Func<object?>? _extensionPolicy;
+    private readonly Func<bool, bool>? _onAnswerExtensionConsent;
+    private readonly Action? _onOfferExtensionSetup;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -88,7 +102,10 @@ public sealed class StatusEndpoint : IAsyncDisposable
         ILogger<StatusEndpoint> log,
         Func<CancellationToken, Task>? onLeaveSession = null,
         Action? onCloseWindow = null,
-        Action? onQuit = null)
+        Action? onQuit = null,
+        Func<object?>? extensionPolicy = null,
+        Func<bool, bool>? onAnswerExtensionConsent = null,
+        Action? onOfferExtensionSetup = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -98,6 +115,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _onLeaveSession = onLeaveSession;
         _onCloseWindow = onCloseWindow;
         _onQuit = onQuit;
+        _extensionPolicy = extensionPolicy;
+        _onAnswerExtensionConsent = onAnswerExtensionConsent;
+        _onOfferExtensionSetup = onOfferExtensionSetup;
         _listener = new HttpListener();
     }
 
@@ -166,6 +186,25 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 return;
             }
 
+            if (method == "POST" && path == "/extension-consent")
+            {
+                var answer = ctx.Request.QueryString["answer"];
+                var allow = string.Equals(answer, "allow", StringComparison.OrdinalIgnoreCase);
+                var valid = allow || string.Equals(answer, "not-now", StringComparison.OrdinalIgnoreCase);
+                var answered = valid && _onAnswerExtensionConsent?.Invoke(allow) == true;
+                ctx.Response.StatusCode = !valid ? 400 : answered ? 204 : 404;
+                ctx.Response.Close();
+                return;
+            }
+
+            if (method == "POST" && path == "/extension-setup")
+            {
+                _onOfferExtensionSetup?.Invoke();
+                ctx.Response.StatusCode = _onOfferExtensionSetup is null ? 404 : 204;
+                ctx.Response.Close();
+                return;
+            }
+
             if (path != "/status")
             {
                 ctx.Response.StatusCode = 404;
@@ -200,6 +239,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // reported this process, so the headless e2e can assert detection
                 // fired without screenshotting a real InPrivate window.
                 inPrivateDetections = _inPrivate.DetectionCount,
+                // #405: where the Edge force-install entry is, and whether the
+                // setup window is up, so the headless e2e can follow the flow.
+                extensionPolicy = _extensionPolicy?.Invoke(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

@@ -101,6 +101,21 @@
   <data name="GuidedOpenStore" xml:space="preserve">
     <value>STORE OPENEN</value>
   </data>
+  <data name="ConsentHeadline" xml:space="preserve">
+    <value>Anchor toevoegen aan Edge</value>
+  </data>
+  <data name="ConsentBody" xml:space="preserve">
+    <value>Anchor heeft één keer toestemming nodig om zijn extensie aan Edge toe te voegen. Windows vraagt dan of een programma van Microsoft Windows iets mag wijzigen: kies Ja. Vraagt Windows een wachtwoord? Vraag het aan wie deze laptop beheert.</value>
+  </data>
+  <data name="ConsentManagedNote" xml:space="preserve">
+    <value>Edge meldt daarna dat je browser „beheerd wordt door je organisatie”. Dat is de gewone melding bij deze instelling: hier betekent het alleen dat Edge de extensie van Anchor geïnstalleerd houdt.</value>
+  </data>
+  <data name="ConsentNotNow" xml:space="preserve">
+    <value>NU NIET</value>
+  </data>
+  <data name="ConsentAllow" xml:space="preserve">
+    <value>TOESTAAN</value>
+  </data>
   <data name="JoinHeadline" xml:space="preserve">
     <value>Deelnemen met code</value>
   </data>
@@ -197,6 +212,9 @@
   <data name="Tray_JoinSession" xml:space="preserve">
     <value>Deelnemen aan een sessie…</value>
   </data>
+  <data name="Tray_SetUpExtension" xml:space="preserve">
+    <value>Edge-extensie instellen…</value>
+  </data>
   <data name="Tray_ExitAnchor" xml:space="preserve">
     <value>Anchor afsluiten</value>
   </data>
@@ -283,6 +301,9 @@
   </data>
   <data name="Title_InstallExtension" xml:space="preserve">
     <value>Anchor — De extensie installeren</value>
+  </data>
+  <data name="Title_ExtensionConsent" xml:space="preserve">
+    <value>Anchor — De extensie instellen</value>
   </data>
   <data name="Title_JoinByCode" xml:space="preserve">
     <value>Anchor — Deelnemen met code</value>

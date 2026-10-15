@@ -45,6 +45,7 @@ public partial class App : Application
     private SessionHeartbeatService? _heartbeat;
     private ExtensionWitnessMonitor? _witnessMonitor;
     private ExtensionSelfRegistrar? _extensionRegistrar;
+    private ExtensionPolicyConsentLauncher? _extensionConsent;
     private InPrivateWitnessMonitor? _inPrivateMonitor;
     private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
@@ -97,6 +98,12 @@ public partial class App : Application
         if (Program.ShowTestGuidedInstall)
         {
             RunGuidedInstallSelfTest();
+            return;
+        }
+
+        if (Program.ShowTestExtensionConsent)
+        {
+            RunExtensionConsentSelfTest();
             return;
         }
 
@@ -197,14 +204,19 @@ public partial class App : Application
             // session. Reports only fire on a drop during a joined session.
             _witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
             _ = _witnessMonitor.StartAsync();
-            // #211: self-register the Edge extension. Write the per-user force-
-            // install policy, then (after the witness pipe is listening above so the
-            // check-in can be observed) wait the grace period and, if the extension
-            // never checks in, open the guided install. Fire-and-forget: the grace
-            // wait must never block startup, and a failure can only fall back to the
-            // guided window, never crash the agent.
-            _extensionRegistrar = _host.Services.GetRequiredService<ExtensionSelfRegistrar>();
-            _ = _extensionRegistrar.RegisterAndVerifyAsync();
+            // #211 + #405: self-register the Edge extension. With no force-install
+            // policy under HKLM or HKCU (and no earlier "not now"), explain the step
+            // and add the HKLM entry through one UAC prompt; then (the witness pipe
+            // is listening above, so the check-in can be observed) wait the grace
+            // period and, if the extension never checks in, open the guided install.
+            // Fire-and-forget: neither the question nor the grace wait may block
+            // startup, and a failure can only fall back to the guided window, never
+            // crash the agent.
+            var extensionRegistrar = _host.Services.GetRequiredService<ExtensionSelfRegistrar>();
+            var extensionConsent = _host.Services.GetRequiredService<ExtensionPolicyConsentLauncher>();
+            _extensionRegistrar = extensionRegistrar;
+            _extensionConsent = extensionConsent;
+            _ = extensionRegistrar.RegisterAndVerifyAsync();
             // #288: register the witness native-messaging host so Edge can launch
             // anchor-witness-host.exe when the extension connectNative()s — the link
             // the extension self-detection (the guided-install popup's success signal)
@@ -251,7 +263,11 @@ public partial class App : Application
                 // letting the student type a code they can't act on.
                 canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null,
                 onQuit: ShutdownCleanly,
-                dispatcher: dispatcher);
+                dispatcher: dispatcher,
+                // #405: after a "not now", startup stops asking; the tray keeps
+                // offering the Edge extension setup while no policy is in place.
+                onSetUpExtension: OfferExtensionSetup,
+                canSetUpExtension: () => extensionRegistrar.FindPolicy() == ExtensionPolicyLocation.None);
             _tray.Show();
 
             _connection.StatusChanged += OnConnectionStatusChanged;
@@ -278,7 +294,17 @@ public partial class App : Application
                     // #110: drive tray → Quit headlessly. ShutdownCleanly touches
                     // the window and Application.Exit, so it must run on the UI
                     // thread — same marshalling as onCloseWindow above.
-                    onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly));
+                    onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly),
+                    // #405: let the headless e2e see where the Edge policy is and
+                    // answer the setup window like a click on Allow / Not now.
+                    extensionPolicy: () => new
+                    {
+                        location = extensionRegistrar.FindPolicy().ToString(),
+                        consentOpen = extensionConsent.IsOpen,
+                    },
+                    onAnswerExtensionConsent: allow => extensionConsent.TryAnswer(allow),
+                    // ...and pick the tray's "Set up the Edge extension…" item.
+                    onOfferExtensionSetup: OfferExtensionSetup);
                 _statusEndpoint.Start(port);
             }
         }
@@ -460,6 +486,17 @@ public partial class App : Application
         // Re-show through the AppWindow so a window previously hidden to the
         // tray (#102) comes back, not just a focus poke on a visible one.
         _mainWindow.ShowFromTray();
+    }
+
+    /// <summary>
+    /// The tray's "Set up the Edge extension…" (#405): bring an open setup window
+    /// to the front, or ask again, even after an earlier "not now".
+    /// </summary>
+    private void OfferExtensionSetup()
+    {
+        if (_extensionConsent?.TryActivate() == true) return;
+        if (_extensionRegistrar is { } registrar)
+            _ = Task.Run(() => registrar.OfferAgainAsync());
     }
 
     private void ShutdownCleanly()
@@ -822,8 +859,8 @@ public partial class App : Application
     /// (GuidedInstallVisualTests) and scripts/dev can screenshot its ink surface.
     /// The window's rendering path is production code; only the store-launch side
     /// effect is a synthetic no-op (so the self-test never spawns Edge). This
-    /// fallback is the primary path on a policy-locked box where the HKCU force-
-    /// install write is denied, so it's a load-bearing surface worth observing.
+    /// fallback is where every "not now" to the UAC step lands (#405), so it's a
+    /// load-bearing surface worth observing.
     /// </summary>
     private void RunGuidedInstallSelfTest()
     {
@@ -833,6 +870,27 @@ public partial class App : Application
 
         _guidedInstallSelfTestWindow = new Extension.GuidedInstallWindow(new NoOpStoreLauncher());
         Sessions.DialogWindowPositioner.ConfigureAndShow(_guidedInstallSelfTestWindow);
+    }
+
+    // Held by the --show-test-extension-consent path so the window outlives OnLaunched.
+    private Extension.ExtensionPolicyConsentWindow? _extensionConsentSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#405): show the real <see cref="Extension.ExtensionPolicyConsentWindow"/>
+    /// — the explanation before the Edge extension setup's UAC prompt — with no host
+    /// / WAM / hub bootstrap, and keep the process alive so the visual e2e
+    /// (ExtensionConsentVisualTests) can screenshot its ink surface. Nothing is
+    /// wired to its answer: no elevation can happen from this mode.
+    /// </summary>
+    private void RunExtensionConsentSelfTest()
+    {
+        // Like the other window self-tests: explicit shutdown so the process stays
+        // up after the window is shown; the observer kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        _extensionConsentSelfTestWindow = new Extension.ExtensionPolicyConsentWindow();
+        Sessions.DialogWindowPositioner.ConfigureAndShow(
+            _extensionConsentSelfTestWindow, Sessions.DialogWindowPositioner.TallMaxHeightDip);
     }
 
     /// <summary>A store launcher that does nothing — the self-test renders the
@@ -1161,26 +1219,44 @@ public partial class App : Application
             builder.Services.AddSingleton<IBrowserWindowScanner, BrowserWindowScanner>();
         builder.Services.AddSingleton<InPrivateWitnessMonitor>();
 
-        // #211 -- self-register the Edge extension. On first run the agent writes
-        // the per-user ExtensionInstallForcelist policy so Edge force-installs +
-        // pins the canonical listing (#210); the witness monitor's connected state
-        // is the success signal, and if the extension hasn't checked in within the
-        // grace period the guided-install window opens the store. The store launch
-        // and registry write are the real platform implementations; the registrar
-        // itself is pure (unit-tested).
-        builder.Services.AddSingleton<IExtensionPolicyStore>(
-            sp => new RegistryExtensionPolicyStore(
-                keyPathOverride: null,
-                sp.GetRequiredService<ILogger<RegistryExtensionPolicyStore>>()));
+        // #211 + #405 -- self-register the Edge extension. The agent reads the
+        // ExtensionInstallForcelist policy under HKLM and HKCU (no elevation); with
+        // no Anchor entry it explains the step in its own window, then adds the
+        // entry under HKLM through ONE UAC prompt (the system reg.exe, elevated) so
+        // Edge force-installs + pins the canonical listing (#210). "Not now", a
+        // declined prompt or a failed write fall back to the guided install. The
+        // witness monitor's connected state is the success signal. The registrar
+        // itself is pure (unit-tested); ExtensionPolicyComposition decides whether
+        // this launch may show a real UAC prompt at all: only a user-facing release
+        // launch (Production, no dev/test flag) — never `dotnet run` or the e2e.
+        builder.Services.AddOptions<ExtensionSettings>()
+            .Bind(builder.Configuration.GetSection(ExtensionSettings.SectionName));
+        var allowRealElevation = builder.Environment.IsProduction() && Program.AllowsRealElevation;
+        builder.Services.AddSingleton(sp => ExtensionPolicyComposition.Compose(
+            sp.GetRequiredService<IOptions<ExtensionSettings>>().Value,
+            allowRealElevation,
+            sp.GetRequiredService<ILoggerFactory>()));
         builder.Services.AddSingleton<IStoreLauncher>(
             sp => new EdgeStoreLauncher(sp.GetRequiredService<ILogger<EdgeStoreLauncher>>()));
-        builder.Services.AddSingleton(sp => new ExtensionSelfRegistrar(
-            sp.GetRequiredService<IExtensionPolicyStore>(),
-            // Success signal: the extension has connected over the witness link.
-            extensionCheckedIn: () => sp.GetRequiredService<ExtensionWitnessMonitor>().IsConnected,
-            // Fallback: open the guided one-click install on the UI thread.
-            showGuidedInstall: ct => sp.GetRequiredService<GuidedInstallLauncher>().ShowAsync(ct),
-            log: sp.GetRequiredService<ILogger<ExtensionSelfRegistrar>>()));
+        builder.Services.AddSingleton(sp => new ExtensionPolicyConsentLauncher(
+            sp.GetRequiredService<DispatcherQueue>()));
+        builder.Services.AddSingleton(sp =>
+        {
+            var parts = sp.GetRequiredService<ExtensionPolicyParts>();
+            return new ExtensionSelfRegistrar(
+                parts.Machine,
+                parts.User,
+                parts.ElevatedWriter,
+                parts.State,
+                // The agent's own explanation, before Windows' UAC prompt.
+                askConsent: ct => sp.GetRequiredService<ExtensionPolicyConsentLauncher>().AskAsync(ct),
+                // Success signal: the extension has connected over the witness link.
+                extensionCheckedIn: () => sp.GetRequiredService<ExtensionWitnessMonitor>().IsConnected,
+                // Fallback: open the guided one-click install on the UI thread.
+                showGuidedInstall: ct => sp.GetRequiredService<GuidedInstallLauncher>().ShowAsync(ct),
+                gracePeriod: parts.GracePeriod,
+                log: sp.GetRequiredService<ILogger<ExtensionSelfRegistrar>>());
+        });
         builder.Services.AddSingleton(sp => new GuidedInstallLauncher(
             sp.GetRequiredService<DispatcherQueue>(),
             sp.GetRequiredService<IStoreLauncher>()));
