@@ -10,9 +10,13 @@ name: Extension CI
 # extension-release.yml and edge-key-expiry.yml and pins their failure
 # reporting, and scripts/release-diagnostics.test.ts reads extension-release.yml.
 # So both workflows are in the path filter below (an edit to either runs the
-# tests that check it), and this job installs a pinned actionlint. In CI the
+# tests that check it), and this job installs a pinned actionlint with the
+# install-actionlint action it shares with Workflows CI (#418), which is in the
+# path filter too because scripts/extension-ci.test.ts pins it. In CI the
 # actionlint test fails rather than skips when the binary is missing, so a
-# broken install can't turn the check off quietly.
+# broken install can't turn the check off quietly. Workflows CI lints every
+# workflow on its own; this suite still lints the release workflows, and pins
+# their content, which actionlint doesn't check.
 #
 # Linux runner, unlike Extension E2E: the unit tests need no browser, the
 # release workflow packages on ubuntu-latest too, and the runner's shellcheck
@@ -27,6 +31,7 @@ on:
       - 'extension/**'
       - '.github/workflows/extension-release.yml'
       - '.github/workflows/edge-key-expiry.yml'
+      - '.github/actions/install-actionlint/**'
       - '.github/workflows/extension-ci.yml'
   push:
     branches: [main, develop]
@@ -34,6 +39,7 @@ on:
       - 'extension/**'
       - '.github/workflows/extension-release.yml'
       - '.github/workflows/edge-key-expiry.yml'
+      - '.github/actions/install-actionlint/**'
       - '.github/workflows/extension-ci.yml'
 
 permissions:
@@ -63,24 +69,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Pinned and checksum-verified. To bump, take the new version and the
-      # linux_amd64 line of actionlint_<version>_checksums.txt from
-      # https://github.com/rhysd/actionlint/releases and change both together.
+      # Pinned and checksum-verified; the version lives in the action.
       - name: Install actionlint
-        working-directory: ${{ runner.temp }}
-        env:
-          ACTIONLINT_VERSION: '1.7.12'
-          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
-        run: |
-          set -euo pipefail
-          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL --retry 3 -o "$archive" \
-            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
-          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
-          mkdir -p actionlint-bin
-          tar -xzf "$archive" -C actionlint-bin actionlint
-          ./actionlint-bin/actionlint -version
-          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
+        uses: ./.github/actions/install-actionlint
 
       - name: Run unit tests
         run: npm test

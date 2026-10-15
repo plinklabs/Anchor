@@ -113,11 +113,16 @@ waits only for the suites those changes trigger.
   **not** have a `backend_deploy` filter or a wait step for it. A wait on a check
   that never runs would hang the gate forever (the exact failure mode the gate's
   header comment warns about).
-- A PR that edits only `.github/workflows/backend-deploy.yml` touches **no gated
-  area** (the gate's `backend` filter watches `backend/**` and `backend-ci.yml`,
-  not the deploy workflow). The gate passes that PR immediately. This is the
-  intended behavior: the deploy workflow's correctness is validated by
-  `actionlint`, not by running a live Azure deploy from a fork PR.
+- A PR that edits only `.github/workflows/backend-deploy.yml` doesn't run
+  Backend CI (the gate's `backend` filter watches `backend/**` and
+  `backend-ci.yml`, not the deploy workflow). It matches the gate's `workflows`
+  filter, which covers every file under `.github/workflows/`, so the gate waits
+  for [Workflows CI](../.github/workflows/workflows-ci.yml) (#418): a pinned
+  `actionlint` over every workflow, with shellcheck over their `run:` scripts.
+  This is the intended behavior: the deploy workflow's correctness is validated
+  by `actionlint`, not by running a live Azure deploy from a fork PR. The same
+  goes for the other workflows that never run on a PR (`agent-release.yml`,
+  `extension-release.yml`, `website-deploy.yml`, `edge-key-expiry.yml`).
 - The gate's `backend` filter (`backend/**`, `backend-ci.yml`) and the deploy's
   trigger (`workflow_run: ["Backend CI"]`) reference the **same** Backend CI
   workflow, so a backend change is still fully gated on `main` before it can

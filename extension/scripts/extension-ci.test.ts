@@ -10,13 +10,17 @@ import { fileURLToPath } from 'node:url';
 
 const extensionDir = fileURLToPath(new URL('..', import.meta.url));
 // Normalise line endings: git checks workflows out CRLF on Windows (see #339).
-const readWorkflow = (name: string) =>
-  readFileSync(
-    fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url)),
-    'utf8',
-  ).replace(/\r\n/g, '\n');
+const readRepoFile = (path: string) =>
+  readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8').replace(
+    /\r\n/g,
+    '\n',
+  );
+const readWorkflow = (name: string) => readRepoFile(`.github/workflows/${name}`);
 
 const ci = readWorkflow('extension-ci.yml');
+// The local action that installs actionlint, shared with Workflows CI (#418).
+const installActionDir = '.github/actions/install-actionlint';
+const installAction = readRepoFile(`${installActionDir}/action.yml`);
 
 /** The quoted `paths:` entries of one trigger in the workflow's `on:` block. */
 function triggerPaths(yaml: string, trigger: 'pull_request' | 'push'): string[] {
@@ -69,11 +73,14 @@ describe('Extension CI runs the unit suite (#412)', () => {
   it('installs a pinned, checksum-verified actionlint before the tests run', () => {
     // pack-extension.test.ts lints the release workflows with it, and requires
     // it under CI rather than skipping.
-    expect(ci).toMatch(/ACTIONLINT_VERSION: '\d+\.\d+\.\d+'/);
-    expect(ci).toMatch(/ACTIONLINT_SHA256: [0-9a-f]{64}\n/);
-    expect(ci).toContain('sha256sum -c -');
-    expect(ci).toContain('>> "$GITHUB_PATH"');
-    expect(ci.indexOf('name: Install actionlint')).toBeGreaterThan(-1);
-    expect(ci.indexOf('name: Install actionlint')).toBeLessThan(ci.indexOf('run: npm test'));
+    expect(installAction).toMatch(/ACTIONLINT_VERSION: '\d+\.\d+\.\d+'/);
+    expect(installAction).toMatch(/ACTIONLINT_SHA256: [0-9a-f]{64}\n/);
+    expect(installAction).toContain('sha256sum -c -');
+    expect(installAction).toContain('>> "$GITHUB_PATH"');
+    const install = ci.indexOf(`uses: ./${installActionDir}\n`);
+    expect(install).toBeGreaterThan(-1);
+    expect(install).toBeLessThan(ci.indexOf('run: npm test'));
+    // This test reads the action, so an edit to it must run this suite.
+    expect(triggerPaths(ci, 'pull_request')).toContain(`${installActionDir}/**`);
   });
 });

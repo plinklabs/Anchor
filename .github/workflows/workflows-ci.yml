@@ -1,0 +1,58 @@
+name: Workflows CI
+
+# Lint every GitHub Actions workflow with actionlint on any PR or push that
+# touches one (#418). Several workflows never produce a PR check of their own:
+# agent-release.yml and extension-release.yml run on a tag, backend-deploy.yml
+# and website-deploy.yml after a merge to main. Before this, a broken one (say,
+# a `needs:` naming a job that doesn't exist) passed the CI Gate and failed the
+# next time it ran. actionlint checks the workflow syntax, expressions, job
+# graph and action inputs, and the runner's shellcheck checks `run:` scripts.
+#
+# actionlint with no arguments lints every file in .github/workflows, not just
+# the changed one: a change to one workflow can break another (a renamed check,
+# a local action's inputs), and the whole run takes seconds. Local actions under
+# .github/actions are in the path filter because actionlint checks each
+# `uses: ./.github/actions/...` against the action's metadata.
+#
+# The pinned, checksum-verified actionlint comes from the install-actionlint
+# action, shared with Extension CI so both run the same version. Run
+# `actionlint` from the repo root to get the same result locally.
+#
+# Wired into the CI Gate: keep its `workflows` filter identical to the
+# pull_request paths below. This workflow's own file is listed by name even
+# though the first entry covers it: check-gate-filters.py pairs each filter
+# with its workflow through that entry.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.github/workflows/workflows-ci.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - '.github/workflows/workflows-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Workflow Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install actionlint
+        uses: ./.github/actions/install-actionlint
+
+      # actionlint runs shellcheck over `run:` scripts only when it finds it on
+      # PATH, and skips that check silently otherwise. GitHub's ubuntu runners
+      # ship it; printing its version first fails the job if one ever doesn't.
+      - name: Lint every workflow
+        run: |
+          shellcheck --version
+          actionlint
