@@ -200,6 +200,10 @@
   "sessionNoBundles": "No bundles available yet.",
   "sessionJoinCode": "Join code",
   "sessionCopyCode": "Copy code",
+  "sessionTakePartHint": "Taking part yourself? Use 'Join by code' in the agent.",
+  "@sessionTakePartHint": {
+    "description": "Under the join code on the live session page. The teacher isn't held to their own session; to take part, they join with this code from the agent's join dialog, titled 'Join by code' (#410)."
+  },
 
   "bundlesLoadListError": "Could not load bundles. Please try again.",
   "bundlesLoadOneError": "Could not load this bundle. Please try again.",

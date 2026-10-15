@@ -10,12 +10,12 @@
   "audiences": {
     "session": "The session group, session:{sessionId}. Only the owning teacher's connections join it, through JoinSession (#366), and a reconnected connection is out of it until it joins again.",
     "teacher": "The session teacher's user group, user:{teacherId}. Each of the teacher's connections joins it on connect (OnConnectedAsync), so it also hears about the teacher's other sessions.",
-    "participants": "The user groups of the session's participants, user:{userId}."
+    "participants": "The user groups of the session's participants, user:{userId}. A teacher is one only when they take part themselves, by joining with the session's code (#410). So the teacher's live page hears these events only then, and also for another teacher's session they joined that way."
   },
   "events": {
     "SessionStarted": {
       "fields": ["sessionId", "classId", "startedAt", "joinCode", "apps", "domains"],
-      "audience": ["teacher", "participants"]
+      "audience": ["participants"]
     },
     "SessionEnded": {
       "argument": "sessionId",

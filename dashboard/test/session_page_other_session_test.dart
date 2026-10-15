@@ -11,10 +11,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // #354: the backend sends SessionEnded to the teacher's user group for every
-// session they own, and SessionStarted to it for every session of their
-// classes, so the live page's connection also hears about the teacher's other
-// sessions. The page shows one session: those events must neither end it nor
-// show up in its feed.
+// session they own, and SessionStarted and SessionEnded to it for every
+// session they take part in themselves, by code (#410), so the live page's
+// connection also hears about the teacher's other sessions. The page shows
+// one session: those events must neither end it nor show up in its feed.
 
 const _sessionId = 'aaaaaaaa-0000-0000-0000-000000000001';
 const _otherSessionId = 'bbbbbbbb-0000-0000-0000-000000000002';

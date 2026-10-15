@@ -274,9 +274,10 @@ class _SessionPageState extends State<SessionPage> {
     _eventsSub = _hub.events.listen((evt) {
       if (!mounted) return;
       // The connection also hears about the teacher's other sessions: the
-      // backend sends SessionStarted to the teacher's user group for every
-      // session of their classes, and SessionEnded for every session they
-      // own (#354). This page is one session's live view.
+      // backend sends SessionEnded to the teacher's user group for every
+      // session they own (#354), and SessionStarted and SessionEnded for
+      // every session they take part in themselves, by code (#410), which
+      // can be a colleague's. This page is one session's live view.
       if (_isAboutAnotherSession(evt)) return;
       setState(() {
         _events.insert(0, evt);
@@ -1438,6 +1439,15 @@ class _JoinCodePanel extends StatelessWidget {
                     PlinkColors.ink,
                     PlinkType.display3,
                   ).copyWith(fontWeight: FontWeight.w700, letterSpacing: 8),
+                ),
+                const SizedBox(height: PlinkSpacing.s2),
+                // The teacher isn't held to the session they start (#410).
+                // Taking part is their choice, with this same code.
+                Text(
+                  AppLocalizations.of(context).sessionTakePartHint,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: PlinkColors.ink60),
                 ),
               ],
             ),
