@@ -4,6 +4,13 @@ name: Dashboard CI / Deploy
 # test/contract/ check the dashboard against them, and Backend CI checks the
 # backend. A change to them alone also redeploys the (unchanged) dashboard
 # from main.
+#
+# Manual run (#401): `gh workflow run dashboard-deploy.yml --ref main`. Use it
+# after setting or rotating AZURE_STATIC_WEB_APPS_API_TOKEN. Re-running an old
+# run does not help: a re-run keeps the secrets the run was created with
+# (cli/cli#13522), so a deploy that failed on a bad token fails again however
+# often it is re-run. A manual run refuses any ref but main, so it cannot
+# publish unreleased work (the repo's default branch is develop).
 on:
   push:
     branches: [main]
@@ -16,6 +23,7 @@ on:
       - 'dashboard/**'
       - 'contracts/**'
       - '.github/workflows/dashboard-deploy.yml'
+  workflow_dispatch:
 
 jobs:
   build_and_deploy:
@@ -24,6 +32,15 @@ jobs:
       run:
         working-directory: dashboard
     steps:
+      - name: Refuse a manual run on a ref other than main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        # The job's default working directory (dashboard/) does not exist
+        # before checkout.
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "::error::The dashboard deploys main only; dispatch with --ref main (got ${GITHUB_REF})."
+          exit 1
+
       - uses: actions/checkout@v4
 
       - name: Setup Flutter
@@ -62,7 +79,7 @@ jobs:
             ${{ vars.API_SCOPE && format('--dart-define=API_SCOPE={0}', vars.API_SCOPE) || '' }}
 
       - name: Deploy to Azure Static Web Apps
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
