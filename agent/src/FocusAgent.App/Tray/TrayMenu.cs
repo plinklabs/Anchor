@@ -113,11 +113,21 @@ internal static class TrayMenu
     // fills its geometry with the Foreground brush, so it renders the same solid
     // magenta on every machine — unlike a font glyph, whose fill depends on the
     // fallback face (■ came out hollow at small sizes).
+    //
+    // The item template shows its icon in a 16×16 Viewbox (IconRoot, Stretch
+    // Uniform), which scales the icon until its desired size fills the box. A bare
+    // PathIcon's desired size ends at its geometry's far corner (4.5 + 7 = 11.5), so
+    // the Viewbox blew the square up by 16/11.5 to ~9.7 DIP and pushed it to the
+    // box's bottom-right (#416). Sizing the icon to the full 16×16 box makes that
+    // scale 1, so the geometry lands exactly where it's drawn.
+    private const double IconBoxSize = 16;
+
     private static PathIcon MagentaSparkIcon() => new()
     {
-        // A 7×7 square centred in the ~16px icon box; rounded just slightly to
-        // echo the DS 6px radius language without reading as a dot.
+        // A 7×7 square centred in the 16×16 icon box: (16 - 7) / 2 = 4.5 each side.
         Data = new RectangleGeometry { Rect = new Windows.Foundation.Rect(4.5, 4.5, 7, 7) },
+        Width = IconBoxSize,
+        Height = IconBoxSize,
         Foreground = Brush("PlinkMagentaBrush"),
     };
 
