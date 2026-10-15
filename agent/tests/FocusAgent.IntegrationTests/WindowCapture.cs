@@ -186,6 +186,22 @@ internal static class WindowCapture
         return new ScreenRect(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
     }
 
+    /// <summary>
+    /// Display scale <paramref name="hwnd"/> renders at (1.0 = 96 DPI = 100%,
+    /// 1.25 = 120 DPI, 2.0 = 192 DPI). The agent's WinUI windows are per-monitor
+    /// aware, so this is the scale of the monitor they sit on — the factor that
+    /// turns a DIP size in the app into physical pixels in a capture. Lets a spec
+    /// size a pixel-count threshold to the mark it is looking for instead of to
+    /// one machine's scaling (#415).
+    /// </summary>
+    public static double GetWindowScale(IntPtr hwnd)
+    {
+        var dpi = GetDpiForWindow(hwnd);
+        if (dpi == 0)
+            throw new InvalidOperationException("GetDpiForWindow failed for the agent window.");
+        return dpi / 96.0;
+    }
+
     /// <summary>Capture the window's current on-screen rect.</summary>
     public static Bitmap Capture(IntPtr hwnd) => CaptureRect(GetWindowScreenRect(hwnd));
 
@@ -340,6 +356,9 @@ internal static class WindowCapture
 
     [DllImport("user32.dll")]
     private static extern IntPtr SetProcessDpiAwarenessContext(IntPtr value);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetWindowRect(IntPtr hwnd, out Rect lpRect);
