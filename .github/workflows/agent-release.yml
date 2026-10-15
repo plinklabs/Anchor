@@ -14,10 +14,10 @@ name: Agent Release
 # Gate interaction: like backend-deploy.yml this workflow has NO `pull_request`
 # trigger, so it never produces a check on a PR and must NOT be added to
 # ci-gate.yml — a required/awaited check that never runs on a PR would hang the
-# gate forever. A PR that only edits this file is validated by `actionlint`
-# (ci-gate's agent filter still runs the agent e2e suite because the file lives
-# under agent-adjacent paths via the release tag only — this workflow itself is
-# not awaited).
+# gate forever. A PR that edits this file runs Workflows CI instead
+# (workflows-ci.yml, #418), which lints every workflow with `actionlint`, and the
+# gate waits for it. That check is static: the workflow itself first runs on the
+# next `agent-v*` tag.
 #
 # Per-deployment config: the agent's appsettings.Production.json is a template
 # whose Backend:BaseUrl + Auth values are #{...}# placeholders (#203). They are

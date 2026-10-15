@@ -7,8 +7,11 @@ gate waits for a check that never runs (and hangs the PR) or skips one that
 runs and fails (#368). Each filter lists its workflow's own file, so this
 finds the pairs itself and checks that:
 
-- every filter lists exactly one .github/workflows/*.yml file, which exists;
-- the filter is identical to that workflow's on.pull_request.paths, entry for
+- every .github/workflows/*.yml file a filter lists exists, and exactly one
+  of them runs on pull_request with paths: the filter's own workflow. The
+  others are workflows its suite reads, such as the tag-only release
+  workflows the extension unit tests check (#412);
+- the filter is identical to its own workflow's on.pull_request.paths, entry for
   entry and in the same order;
 - every workflow with on.pull_request.paths has a filter.
 
@@ -94,25 +97,37 @@ def main():
     covered = set()
     for name, entries in filters.items():
         entries = flatten(entries)
-        own = [e for e in entries if isinstance(e, str) and WORKFLOW_FILE.match(e)]
+        listed = [e for e in entries if isinstance(e, str) and WORKFLOW_FILE.match(e)]
+        missing = [rel for rel in listed if not (root / rel).is_file()]
+        for rel in missing:
+            error(f"filter '{name}' lists {rel}, which doesn't exist")
+        # Its own workflow is the listed one that runs on pull_request; any
+        # other listed workflow is one its suite reads (#412).
+        own = {}
+        for rel in listed:
+            if rel not in missing:
+                paths = pr_paths(load_yaml_text((root / rel).read_text(encoding="utf-8")))
+                if paths is not None:
+                    own[rel] = paths
         if len(own) != 1:
-            error(f"filter '{name}' must list exactly one workflow file, lists {own or 'none'}")
+            if not listed:
+                error(f"filter '{name}' must list its own workflow file, lists none")
+            elif not missing:
+                error(
+                    f"filter '{name}' must list exactly one workflow file with "
+                    f"on.pull_request.paths (its own), lists {list(own) or 'none'} "
+                    f"among {listed}"
+                )
             continue
-        path = root / own[0]
-        if not path.is_file():
-            error(f"filter '{name}' lists {own[0]}, which doesn't exist")
-            continue
-        covered.add(own[0])
-        paths = pr_paths(load_yaml_text(path.read_text(encoding="utf-8")))
-        if paths is None:
-            error(f"filter '{name}': {own[0]} has no on.pull_request.paths to match")
-        elif entries != paths:
+        [(rel, paths)] = own.items()
+        covered.add(rel)
+        if entries != paths:
             error(
-                f"filter '{name}' differs from on.pull_request.paths in {own[0]}: "
+                f"filter '{name}' differs from on.pull_request.paths in {rel}: "
                 f"gate has {entries}, workflow has {paths}"
             )
         else:
-            print(f"ok: {name} = {own[0]} ({len(paths)} paths)")
+            print(f"ok: {name} = {rel} ({len(paths)} paths)")
 
     for path in sorted((root / ".github/workflows").glob("*.y*ml")):
         rel = path.relative_to(root).as_posix()

@@ -257,6 +257,15 @@ Vitest runs the pure-logic unit tests under `src/` (host-matcher, session-state,
 tab-scan). These touch no chrome APIs, so they run in plain Node without a
 browser shim.
 
+It also runs the release-path tests under `scripts/`: packaging, the publish
+diagnostics, and checks on `extension-release.yml` and `edge-key-expiry.yml`.
+One of those lints both workflows with
+[actionlint](https://github.com/rhysd/actionlint), and is skipped locally when
+`actionlint` isn't on `PATH`. CI runs the whole suite, with a pinned actionlint,
+on every PR that touches `extension/` or those workflows
+([`extension-ci.yml`](../.github/workflows/extension-ci.yml), #412); there a
+missing actionlint fails the run instead of skipping.
+
 ## End-to-end tests
 
 ```powershell
