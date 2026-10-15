@@ -155,7 +155,7 @@ if (enableAutoEnder)
 
 const string DashboardCorsPolicy = "DashboardCors";
 var dashboardOrigins = builder.Configuration
-    .GetSection("Cors:AllowedOrigins")
+    .GetSection(SessionAllowlist.DashboardOriginsKey)
     .Get<string[]>() ?? Array.Empty<string>();
 builder.Services.AddCors(options =>
 {

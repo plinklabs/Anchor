@@ -55,7 +55,7 @@ export const CLASS_NAME = '3A';
 export const MS365_BUNDLE_NAME = 'Microsoft 365';
 
 // --- Loopback test hosts --------------------------------------------------
-// All three resolve to the harness's local static server (see static-server.ts)
+// All of them resolve to the harness's local static server (see static-server.ts)
 // via Edge's --host-resolver-rules, so the specs never touch the public
 // internet. What differs is whether the *hostname* lands on the allowlist:
 //
@@ -67,9 +67,15 @@ export const MS365_BUNDLE_NAME = 'Microsoft 365';
 //                          pulls to make an open tab go off-list mid-session.
 //   OFFLIST_HOST           never on any allowlist → always blocked once a
 //                          session is active.
+//   DASHBOARD_HOST         the dashboard's host in a deployment: run-backend.ts
+//                          lists DASHBOARD_ORIGIN in the backend's CORS origins,
+//                          which puts it on every session's allowlist (#409).
 export const BASELINE_ONLIST_HOST = '127.0.0.1';
 export const BUNDLE_ONLY_HOST = 'team.sharepoint.com';
 export const OFFLIST_HOST = 'offlist.test';
+export const DASHBOARD_HOST = 'dashboard.test';
+/** The origin the e2e backend is told the dashboard is served from. */
+export const DASHBOARD_ORIGIN = `https://${DASHBOARD_HOST}`;
 
 /**
  * The Entra sign-in authority the extension's token flow targets. Mapped to
@@ -80,7 +86,7 @@ export const OFFLIST_HOST = 'offlist.test';
 export const ENTRA_AUTHORITY_HOST = 'login.microsoftonline.com';
 
 /** Hosts Edge must resolve to the local static server (host → 127.0.0.1). */
-export const MAPPED_HOSTS = [OFFLIST_HOST, BUNDLE_ONLY_HOST, ENTRA_AUTHORITY_HOST];
+export const MAPPED_HOSTS = [OFFLIST_HOST, BUNDLE_ONLY_HOST, DASHBOARD_HOST, ENTRA_AUTHORITY_HOST];
 
 // --- Browser launch knobs -------------------------------------------------
 /** Edge by default; override (e.g. `chromium`) with E2E_BROWSER_CHANNEL. */

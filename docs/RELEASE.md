@@ -370,7 +370,7 @@ nested configuration keys (`AzureAd__TenantId` → `AzureAd:TenantId`).
 | `AzureAd__ClientId` | `AddMicrosoftIdentityWebApi` | Production **API** app registration client ID. **Required.** |
 | `AzureAd__Audience` | JWT bearer validation | Usually `api://<api-client-id>`. **Required.** |
 | `AzureAd__ClientCredentials` (e.g. `__0__SourceType`, `__0__ClientSecret`) | OBO token acquisition for Graph directory search | **Required for the user-directory search feature** (the on-behalf-of exchange). Without it the OBO call fails at first use, not at startup. A client secret or certificate on the API app registration. |
-| `Cors__AllowedOrigins__0`, `__1`, … | CORS policy | The dashboard origin(s), e.g. the Static Web App URL. **Required** for the dashboard to call the API from the browser. |
+| `Cors__AllowedOrigins__0`, `__1`, … | CORS policy | The dashboard origin(s), e.g. the Static Web App URL, or the custom domain teachers use. **Required** for the dashboard to call the API from the browser. Their hosts are also always allowed in every session (#409), so the dashboard stays reachable while a session runs. |
 
 There is no SignalR setting: the API runs SignalR **in-process** (`AddSignalR()`)
 and never reads an Azure SignalR connection string, so Bicep provisions none.

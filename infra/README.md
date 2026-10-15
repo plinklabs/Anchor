@@ -165,7 +165,7 @@ resource only when you pass the matching per-resource locations (the
 | `entraTenantId` / `entraClientId` | empty | Entra tenant + API app-registration client ID. Required for a working deploy; applied as App Service settings (`AzureAd__TenantId` / `AzureAd__ClientId`). |
 | `entraAudience` | `api://<entraClientId>` | JWT audience the API validates. |
 | `entraInstance` | current cloud login endpoint | Entra authority. |
-| `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin for the dashboard SPA (`Cors__AllowedOrigins__0`). |
+| `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin for the dashboard SPA (`Cors__AllowedOrigins__0`). Its host is also always allowed in every session (#409). |
 | `sqlAdminLogin` / `sqlAdminPassword` | `anchoradmin` / *(required, secure)* | SQL admin credentials. |
 
 Bicep applies the Entra IDs and CORS origin as **App Service application

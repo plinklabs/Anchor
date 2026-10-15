@@ -434,7 +434,7 @@ edits; the defaults reproduce the live `arcadia` deployment. (Full table in
 | `entraAudience` | `api://<entraClientId>` | JWT audience the API validates; auto-derived. |
 | `entraInstance` | current cloud login endpoint | Entra authority. |
 | `sqlAdminLogin` / `sqlAdminPassword` | `anchoradmin` / *(required, secure)* | SQL admin credentials. |
-| `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin (`Cors__AllowedOrigins__0`). |
+| `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin (`Cors__AllowedOrigins__0`). Its host is also always allowed in every session (#409). |
 | `sqlServerName` / `sqlDatabaseName` | `anchor-sql-<suffix>` / `anchordb` | Override to reuse manually-created resources. |
 | `appServiceName` / `appServicePlanName` | `anchor-api-<suffix>` / `ASP-anchorrg-b49b` | Backend App Service + plan. |
 | `staticWebAppName` | `anchor-dashboard` | Dashboard SWA. |

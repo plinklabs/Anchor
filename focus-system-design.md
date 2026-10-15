@@ -152,7 +152,7 @@ Bundles are versioned and pushed to agents/extensions as part of session start. 
 Every session implicitly allows:
 
 - `*.microsoftonline.com`, `*.office.com`, `*.office365.com`, `*.microsoft.com`, `*.live.com`, `*.windows.net` — needed for Entra/Office login
-- Our own backend domain
+- The dashboard's host(s), taken from the deployment's `Cors:AllowedOrigins` (#409) — so a teacher who runs the agent on their own laptop can still pick bundles and end the session. Students may reach it too; they can't do anything there. The backend host itself needs no entry: the extension filters only top-level navigations, not the dashboard's API calls.
 - `fonts.googleapis.com`, `fonts.gstatic.com` — too common to block without breaking everything
 
 Without this baseline, the agent's own auth and most modern web pages fail.

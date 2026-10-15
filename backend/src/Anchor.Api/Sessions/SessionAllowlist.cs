@@ -59,6 +59,41 @@ public static class SessionAllowlist
         new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "localhost"),
         new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "127.0.0.1"),
     };
+
+    /// <summary>
+    /// The configuration key listing the dashboard's origin(s). The CORS policy
+    /// in Program.cs and <see cref="DashboardDomains"/> read the same list.
+    /// </summary>
+    public const string DashboardOriginsKey = "Cors:AllowedOrigins";
+
+    /// <summary>
+    /// The dashboard's own host(s), always allowed in every build (#409), so a
+    /// teacher who runs the agent on their own laptop can still pick bundles and
+    /// end the session. Taken from <see cref="DashboardOriginsKey"/>: the
+    /// dashboard can't call the API from an origin that isn't listed there, so
+    /// every working deployment already names the host teachers use, custom
+    /// domain included. Students may reach it too; they can't do anything there.
+    /// Matching is hostname-only and port-agnostic, so each origin is reduced to
+    /// its bare host; an entry that isn't an http(s) origin is skipped.
+    /// </summary>
+    public static IReadOnlyList<AllowedDomainDto> DashboardDomains(IEnumerable<string?> origins)
+    {
+        var domains = new List<AllowedDomainDto>();
+        foreach (var origin in origins)
+        {
+            if (!Uri.TryCreate(origin?.Trim(), UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) ||
+                string.IsNullOrEmpty(uri.IdnHost))
+            {
+                continue;
+            }
+
+            // IdnHost: lowercase, and punycode for an internationalized name,
+            // which is what the extension reads from a URL's hostname.
+            domains.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Exact, uri.IdnHost));
+        }
+        return domains;
+    }
 }
 
 /// <summary>
