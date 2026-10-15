@@ -28,11 +28,27 @@ namespace FocusAgent.App.Diagnostics;
 /// </list>
 /// Both always <em>complement</em> the existing <c>startup-error.log</c> write,
 /// never replace it.
+///
+/// <para>
+/// The startup and background paths also take the fatal-path update check (#407)
+/// as a plain <see cref="Task"/> (no DI), and keep the process alive until it has
+/// settled, at most <see cref="PendingUpdateGrace"/>. A student who closes the
+/// dialog straight away then no longer kills the download of the fixed release.
+/// </para>
 /// </summary>
 internal static class CrashReporter
 {
     /// <summary>The exit code the process reports after a surfaced fatal error.</summary>
     private const int FatalExitCode = 1;
+
+    /// <summary>
+    /// How long a fatal path keeps the process alive, after its dialog is gone, for
+    /// the update check to finish downloading and staging (#407). Long enough for a
+    /// check and a delta download on a school network; bounded because single-
+    /// instance gating turns a relaunch into a no-op while this process lingers.
+    /// Matches Velopack's own updater, which waits 60 s for the app to exit.
+    /// </summary>
+    internal static readonly TimeSpan PendingUpdateGrace = TimeSpan.FromSeconds(60);
 
     // Guards against a crash *while reporting a crash* recursing forever (e.g. the
     // crash window's own construction throws). After the first report we only ever
@@ -45,10 +61,11 @@ internal static class CrashReporter
     /// pump alive so the dialog stays interactive; the window's Close button exits
     /// the process. If the window can't be built, falls back to a blocking message
     /// box and exits. Caller must NOT rethrow afterwards — that would tear the
-    /// process down under the dialog.
+    /// process down under the dialog. The exit waits for
+    /// <paramref name="pendingUpdate"/> (#407), bounded.
     /// </summary>
-    public static void ReportStartupFatal(Application app, Exception ex) =>
-        ReportOnUiThread(app, ex, "Anchor couldn't start");
+    public static void ReportStartupFatal(Application app, Exception ex, Task? pendingUpdate = null) =>
+        ReportOnUiThread(app, ex, "Anchor couldn't start", pendingUpdate);
 
     /// <summary>
     /// Surface a fatal UI-thread exception caught after startup (WinUI's
@@ -56,21 +73,43 @@ internal static class CrashReporter
     /// with a headline that reflects the app was already running.
     /// </summary>
     public static void ReportUiThreadFatal(Application app, Exception ex) =>
-        ReportOnUiThread(app, ex, "Anchor hit an error and needs to close");
+        ReportOnUiThread(app, ex, "Anchor hit an error and needs to close", pendingUpdate: null);
 
     /// <summary>
     /// Surface a fatal exception on a background thread
     /// (<see cref="AppDomain.UnhandledException"/>), where the runtime is tearing
     /// the process down and spinning up a window is unsafe. Shows the blocking
-    /// fallback box on the faulting thread so it appears before the CLR exits, then
-    /// returns to let termination proceed.
+    /// fallback box on the faulting thread so it appears before the CLR exits, waits
+    /// (bounded) for <paramref name="pendingUpdate"/> (#407), then returns to let
+    /// termination proceed.
     /// </summary>
-    public static void ReportBackgroundFatal(Exception ex)
+    public static void ReportBackgroundFatal(Exception ex, Task? pendingUpdate = null)
     {
         WriteLog(ex);
         if (_reporting) return;
         _reporting = true;
         ShowFallbackBox("Anchor hit an error and needs to close", ex);
+        // The runtime ends the process as soon as this handler returns.
+        WaitForPendingUpdate(pendingUpdate);
+    }
+
+    /// <summary>
+    /// Block until a fatal path's update check (#407) has settled, at most
+    /// <see cref="PendingUpdateGrace"/>, so a fix it found is downloaded and staged
+    /// before the process exits. No-op for null; never throws. Safe on the UI
+    /// thread: the check runs on the thread pool and never needs it.
+    /// </summary>
+    public static void WaitForPendingUpdate(Task? pendingUpdate)
+    {
+        if (pendingUpdate is null) return;
+        try
+        {
+            pendingUpdate.Wait(PendingUpdateGrace);
+        }
+        catch
+        {
+            // Best-effort: an update failure must never change how we exit.
+        }
     }
 
     /// <summary>
@@ -94,7 +133,7 @@ internal static class CrashReporter
         }
     }
 
-    private static void ReportOnUiThread(Application app, Exception ex, string headline)
+    private static void ReportOnUiThread(Application app, Exception ex, string headline, Task? pendingUpdate)
     {
         WriteLog(ex);
         if (_reporting) return;
@@ -106,10 +145,15 @@ internal static class CrashReporter
             var fullStack = CrashDiagnostics.BuildFullStack(ex);
 
             var window = new CrashReportWindow(headline, detail, fullStack);
+            // #407: with an update still settling, closing the (last) window must not
+            // let WinUI end the process on its own; ExitAfterPendingUpdate owns the
+            // exit instead.
+            if (pendingUpdate is not null)
+                app.DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
             // Closing the dialog ends the process — explicitly, with a non-zero exit
             // code, so a crash never looks like a clean exit regardless of whether
             // other windows are open.
-            window.Closed += (_, _) => Environment.Exit(FatalExitCode);
+            window.Closed += (_, _) => ExitAfterPendingUpdate(pendingUpdate);
             window.ConfigureAndShow();
             // Return without rethrowing: the activated window keeps the WinUI pump
             // alive, so the dialog stays up until the user closes it.
@@ -119,8 +163,31 @@ internal static class CrashReporter
             // The window path failed (e.g. resources gone) — fall back to the
             // blocking box, then exit since nothing is keeping the pump alive.
             ShowFallbackBox(headline, ex);
+            WaitForPendingUpdate(pendingUpdate);
             Environment.Exit(FatalExitCode);
         }
+    }
+
+    /// <summary>
+    /// The crash dialog's exit (#407): immediate when no update is settling;
+    /// otherwise the dialog closes now (no frozen window) and the process exits from
+    /// the thread pool once the update has settled, bounded. Exiting from the pool,
+    /// not via the dispatcher, means a wedged UI thread can't keep the process (and
+    /// its single-instance key) alive past the bound.
+    /// </summary>
+    private static void ExitAfterPendingUpdate(Task? pendingUpdate)
+    {
+        if (pendingUpdate is null || pendingUpdate.IsCompleted)
+        {
+            Environment.Exit(FatalExitCode);
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            WaitForPendingUpdate(pendingUpdate);
+            Environment.Exit(FatalExitCode);
+        });
     }
 
     private static void ShowFallbackBox(string headline, Exception ex)

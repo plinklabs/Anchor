@@ -155,6 +155,7 @@
   "sessionNoBundles": "Nog geen bundels beschikbaar.",
   "sessionJoinCode": "Toegangscode",
   "sessionCopyCode": "Code kopiëren",
+  "sessionTakePartHint": "Zelf meedoen? Gebruik 'Deelnemen met code' in de agent.",
 
   "bundlesLoadListError": "Kon de bundels niet laden. Probeer het opnieuw.",
   "bundlesLoadOneError": "Kon deze bundel niet laden. Probeer het opnieuw.",

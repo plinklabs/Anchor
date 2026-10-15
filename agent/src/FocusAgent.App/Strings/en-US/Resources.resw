@@ -101,6 +101,21 @@
   <data name="GuidedOpenStore" xml:space="preserve">
     <value>OPEN STORE</value>
   </data>
+  <data name="ConsentHeadline" xml:space="preserve">
+    <value>Add Anchor to Edge</value>
+  </data>
+  <data name="ConsentBody" xml:space="preserve">
+    <value>Anchor needs permission once to add its extension to Edge. Windows then asks if a Microsoft Windows tool may make changes: choose Yes. Asked for a password? Ask whoever looks after this laptop.</value>
+  </data>
+  <data name="ConsentManagedNote" xml:space="preserve">
+    <value>Edge then says “Your browser is managed by your organization”. That's Edge's usual note for this setting: here it only means Edge keeps Anchor's extension installed.</value>
+  </data>
+  <data name="ConsentNotNow" xml:space="preserve">
+    <value>NOT NOW</value>
+  </data>
+  <data name="ConsentAllow" xml:space="preserve">
+    <value>ALLOW</value>
+  </data>
   <data name="JoinHeadline" xml:space="preserve">
     <value>Join by code</value>
   </data>
@@ -197,6 +212,9 @@
   <data name="Tray_JoinSession" xml:space="preserve">
     <value>Join a session…</value>
   </data>
+  <data name="Tray_SetUpExtension" xml:space="preserve">
+    <value>Set up the Edge extension…</value>
+  </data>
   <data name="Tray_ExitAnchor" xml:space="preserve">
     <value>Exit Anchor</value>
   </data>
@@ -283,6 +301,9 @@
   </data>
   <data name="Title_InstallExtension" xml:space="preserve">
     <value>Anchor — Install the extension</value>
+  </data>
+  <data name="Title_ExtensionConsent" xml:space="preserve">
+    <value>Anchor — Set up the extension</value>
   </data>
   <data name="Title_JoinByCode" xml:space="preserve">
     <value>Anchor — Join by code</value>

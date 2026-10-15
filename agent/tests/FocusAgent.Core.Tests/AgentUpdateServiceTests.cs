@@ -182,6 +182,104 @@ public class AgentUpdateServiceTests
         Assert.True(manager.CheckCount > afterStartup);
     }
 
+    // --- #407: the fatal-path check (CheckNowAsync) ---------------------------
+
+    [Fact]
+    public async Task CheckNow_joins_the_startup_check_still_in_flight_instead_of_starting_a_second()
+    {
+        // The crash case: startup kicked off its check, then startup crashed while
+        // that check was still running. The fatal path must wait for THAT pass.
+        var gate = new TaskCompletionSource();
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, CheckGate = gate.Task, NextResult = update };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+
+        svc.Start();
+        await DrainAsync();
+        Assert.Equal(1, manager.CheckCount);
+
+        var fatal = svc.CheckNowAsync();
+        await DrainAsync();
+        Assert.False(fatal.IsCompleted, "the fatal-path task completed while the startup check was still running");
+
+        gate.SetResult();
+        await fatal.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, manager.CheckCount);
+        Assert.Equal(1, manager.StageCount);
+        Assert.True(svc.UpdatePendingRestart);
+    }
+
+    [Fact]
+    public async Task CheckNow_runs_a_fresh_pass_without_Start_and_completes_only_once_the_update_is_staged()
+    {
+        // The host-never-came-up case: nothing was started, so the fatal path runs
+        // its own pass — and the task it hands back must cover the download + stage,
+        // since the crash path keeps the process alive exactly that long.
+        var download = new TaskCompletionSource();
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update, DownloadGate = download.Task };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+
+        var fatal = svc.CheckNowAsync();
+        await DrainAsync();
+        Assert.Equal(1, manager.CheckCount);
+        Assert.False(fatal.IsCompleted, "the fatal-path task completed before the download finished");
+        Assert.Equal(0, manager.StageCount);
+
+        download.SetResult();
+        await fatal.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, manager.StageCount);
+        Assert.Equal("1.2.3", svc.PendingVersion);
+    }
+
+    [Fact]
+    public async Task CheckNow_runs_a_new_pass_once_the_previous_one_has_finished()
+    {
+        // A background fatal hours after startup: the startup check is long done,
+        // so "one more check" means a real new one.
+        var manager = new FakeUpdateManager { IsInstalled = true };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+
+        await svc.CheckNowAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await svc.CheckNowAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, manager.CheckCount);
+    }
+
+    [Fact]
+    public async Task CheckNow_completes_at_once_without_checking_when_not_a_velopack_install()
+    {
+        // Dev runs and the e2e are not installs: a crash there must not wait on, or
+        // talk to, any feed.
+        var manager = new FakeUpdateManager { IsInstalled = false };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+
+        await svc.CheckNowAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, manager.CheckCount);
+    }
+
+    [Fact]
+    public async Task CheckNow_task_does_not_fault_when_the_check_throws()
+    {
+        // The crash path waits on this task with no try/catch of its own.
+        var manager = new FakeUpdateManager { IsInstalled = true, ThrowOnCheck = true };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+
+        var fatal = svc.CheckNowAsync();
+        await fatal.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(fatal.IsCompletedSuccessfully);
+        Assert.Equal(1, manager.CheckCount);
+    }
+
     private static AgentUpdateService NewService(
         FakeUpdateManager manager,
         FakeTimeProvider clock,
@@ -209,6 +307,7 @@ public class AgentUpdateServiceTests
         public bool ThrowOnCheck { get; set; }
         public AgentUpdateCheckResult NextResult { get; set; } = AgentUpdateCheckResult.None;
         public Task? CheckGate { get; set; }
+        public Task? DownloadGate { get; set; }
 
         private int _checkCount;
         private int _downloadCount;
@@ -226,10 +325,10 @@ public class AgentUpdateServiceTests
             return NextResult;
         }
 
-        public Task DownloadUpdateAsync(AgentUpdateCheckResult update, CancellationToken cancellationToken = default)
+        public async Task DownloadUpdateAsync(AgentUpdateCheckResult update, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _downloadCount);
-            return Task.CompletedTask;
+            if (DownloadGate is { } gate) await gate.ConfigureAwait(false);
         }
 
         public void StageUpdateForNextRestart(AgentUpdateCheckResult update)

@@ -547,30 +547,80 @@ HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallAllowlist
 
 paired with a developer-mode-loaded unpacked extension at a known path.
 
-### Agent self-registration (BYOD, no admin) — #211
+### Agent self-registration (BYOD, one UAC prompt) — #211, #405
 
 Anchor is unmanaged BYOD, so there's no MDM to push the `HKLM` policy above. The
-agent instead writes the **per-user** force-install policy itself on first run
-(see `FocusAgent.Core.Extension.EdgeExtensionPolicy` /
-`ExtensionSelfRegistrar`), pointed at the canonical Edge Add-ons store:
+agent sets it up itself instead (see `FocusAgent.Core.Extension.EdgeExtensionPolicy`
+/ `ExtensionSelfRegistrar`), pointed at the canonical Edge Add-ons store:
 
 ```
-HKCU\Software\Policies\Microsoft\Edge\ExtensionInstallForcelist
-  1 = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio;https://edge.microsoft.com/extensionwebstorebase/v1/crx
+HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist
+  <n> = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio;https://edge.microsoft.com/extensionwebstorebase/v1/crx
 ```
 
-The agent removes its entry on uninstall (a Velopack `OnBeforeUninstall` hook).
-The existing mutual agent↔extension witness link is the success signal: after
-writing the policy and a grace period, if the extension hasn't checked in the
-agent opens a **guided-install** window that launches Edge at the store listing
-(`GET → Add`).
+**Why HKLM and a UAC prompt.** Edge also reads the same key under `HKCU`, but a
+standard Windows profile can never write it: `HKCU\Software\Policies` gives the
+user `ReadKey` only, and just `SYSTEM` and an *elevated* Administrators token have
+`FullControl`. The agent runs unelevated (it starts from its per-user `Run`
+entry), so even a student who is a local administrator gets "access denied"
+there. Builds before #405 tried that HKCU write on every start; it never worked
+on a default profile. The agent stays a per-user install, so Velopack installs
+and updates stay silent, and asks for elevation **only for this one write**:
 
-> **Real-world caveat (verified while building #211):** the per-user
-> `HKCU\Software\Policies` subtree is often **ACL-locked** — on a standard
-> Windows profile, creating a key under it is denied (`UnauthorizedAccessException`)
-> even though it's HKCU. On such a box the force-install write fails and the
-> **guided install is the primary path** (which is exactly why it exists). The
-> agent catches the denial and falls back automatically; it never blocks startup.
+1. **Check, without elevation.** At startup the agent reads the forcelist under
+   both `HKLM` and `HKCU`. An Anchor entry in either (written by the agent
+   earlier, or by Intune/GPO on a managed laptop) means there's nothing to do and
+   nothing is asked.
+2. **Explain, then one elevated write.** Otherwise the agent first explains the
+   step in its own window ("Add Anchor to Edge"). On **Allow**, Windows runs the
+   system `reg.exe` elevated (ShellExecute `runas`), which shows **one UAC
+   prompt**, and adds Anchor's value at the next free slot `<n>`, never touching
+   other entries. The prompt names a Microsoft Windows tool ("Registry Console
+   Tool", verified publisher Microsoft Windows): no Anchor code runs elevated. HKLM
+   rather than the elevated process's HKCU, because when an administrator types
+   their password for a standard user, the elevated process runs as that
+   administrator, and its HKCU is theirs, not the student's.
+3. **Fallback.** "Not now", a declined prompt, a student who isn't an
+   administrator (and has nobody to type the password), or a failed write all fall
+   back to the **guided install**: a window that opens Edge at the store listing
+   (`GET → Add`). The answer is remembered (`%LOCALAPPDATA%\Anchor\FocusAgent\extension-policy.json`),
+   so startup doesn't ask again; the tray menu offers **Set up the Edge
+   extension…** for as long as no policy is in place.
 
-Where the policy subtree *is* writable (or pre-provisioned by IT), the force-
-install takes and the extension installs with no `Add` click.
+Once the policy is in place, the existing mutual agent↔extension witness link is
+the success signal: if the extension hasn't checked in after a grace period, the
+guided install opens after all. On unmanaged devices Edge honours forcelist
+entries only for store-hosted extensions; ours is, so the forcelist also wins over
+an `ExtensionInstallBlocklist` of `*` that would block a store install.
+
+**Uninstall.** The Velopack uninstall hook fires-and-forgets the elevated
+removal of the HKLM value the agent wrote: `reg.exe delete … /v <n> /f`, again
+through ShellExecute `runas`, so it doesn't depend on the app folder Velopack is
+about to delete. That's one more UAC prompt during uninstall; the hook waits up
+to 20 s for the answer (Velopack stops it at 30 s). The agent only removes the
+slot it recorded writing, and only while that slot still holds Anchor's entry, so
+an entry Intune or Group Policy manages is never touched (and never costs a
+prompt). If the student declines or doesn't answer in time, the entry stays: the
+extension stays installed until someone removes the value (re-installing and
+uninstalling Anchor again offers the prompt again). Anchor's entries under `HKCU`
+(older builds, or IT where that key is writable) are still removed without
+elevation.
+
+**"Your browser is managed by your organization."** With any Edge policy set
+(HKLM or HKCU, ours or anyone's), Edge shows this line in its settings and menu.
+For students and parents: it is Edge's standard notice that *some* setting on the
+computer is fixed by a policy. Here the only policy Anchor adds is "keep the
+Anchor extension installed". It gives nobody remote control of the browser, and
+it doesn't let Anchor read anything beyond what the extension already does during
+a focus session. The agent's setup window says this before the UAC prompt, and
+removing the value (uninstall) makes the notice go away unless other policies are
+set.
+
+**Testing.** No test or dev run ever shows a real UAC prompt (it would take over
+the secure desktop with nobody there to answer it). The elevated write sits
+behind `IElevatedPolicyWriter`; only a user-facing Release launch (Production,
+no dev/test flag) composes the real `reg.exe` writer. Unit tests fake it, and the
+agent e2e (`ExtensionPolicySetupTests`) runs the real startup against a throwaway
+HKCU subtree with the UAC answer simulated. The real prompt needs a one-time
+manual check on a real laptop: install → prompt → value under HKLM → Edge
+installs the extension; uninstall → prompt → value removed.

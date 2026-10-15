@@ -980,6 +980,12 @@ abstract class AppLocalizations {
   /// **'Copy code'**
   String get sessionCopyCode;
 
+  /// Under the join code on the live session page. The teacher isn't held to their own session; to take part, they join with this code from the agent's join dialog, titled 'Join by code' (#410).
+  ///
+  /// In en, this message translates to:
+  /// **'Taking part yourself? Use \'Join by code\' in the agent.'**
+  String get sessionTakePartHint;
+
   /// No description provided for @bundlesLoadListError.
   ///
   /// In en, this message translates to:

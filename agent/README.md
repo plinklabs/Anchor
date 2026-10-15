@@ -153,6 +153,7 @@ per-monitor DPI-aware (see `WindowCapture.cs`; same path as the matching
 | `--show-test-joinbycode` | redesigned join-by-code dialog (#175) | `JoinByCodeVisualTests` |
 | `--show-test-traymenu` | redesigned tray context menu (#176) | `TrayMenuVisualTests` / `verify-traymenu.ps1` |
 | `--show-test-guided-install` | guided-install fallback window (#211) | `GuidedInstallVisualTests` / `verify-guided-install.ps1` |
+| `--show-test-extension-consent` | Edge extension setup window, before the UAC prompt (#405) | `ExtensionConsentVisualTests` |
 
 The redesign specs assert the real ink surface paints (not blank), is
 dark-dominated (the DS ink treatment, not the desktop or an OS grey popup), and

@@ -87,7 +87,8 @@ class HubEvent extends HubMessage {
   /// Any of `session` (the session group: only the owning teacher's
   /// connections, once they joined it), `teacher` (the session teacher's user
   /// group: all their connections, for each of their sessions) and
-  /// `participants` (the participants' user groups).
+  /// `participants` (the participants' user groups; a teacher's is one of
+  /// them only while they take part themselves, by join code, #410).
   final Set<String> audience;
 
   /// Whether it reaches the teacher's live page through their user group,
@@ -98,4 +99,15 @@ class HubEvent extends HubMessage {
   /// Whether it reaches the teacher's live page through the session group,
   /// which the page joins.
   bool get reachesTheSessionGroup => audience.contains('session');
+
+  /// Whether it reaches the teacher's live page through their user group only
+  /// when they take part themselves (#410): their user group is then a
+  /// participant's. That can be this session or another teacher's they
+  /// joined by code, so it can name another session too.
+  bool get reachesATakingPartTeacher => audience.contains('participants');
+
+  /// Whether it can reach the teacher's user group, as the session's teacher
+  /// or as a participant, and so name a session other than the page's.
+  bool get canNameAnotherSession =>
+      reachesTheTeachersUserGroup || reachesATakingPartTeacher;
 }

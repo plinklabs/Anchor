@@ -83,7 +83,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 
 ### 5.1 Lifecycle
 
-- Installs per user from a Velopack package on GitHub Releases (BYOD, no admin rights, no code-signing cert); updates itself via Velopack deltas.
+- Installs per user from a Velopack package on GitHub Releases (BYOD, no admin rights, no code-signing cert); updates itself via Velopack deltas. The one step that asks for elevation is the Edge extension policy (§6), with a single UAC prompt.
 - Runs at user login as a tray app.
 - Authenticates silently to the backend via Entra (WAM).
 - Maintains a persistent SignalR connection.
@@ -124,7 +124,9 @@ We accept that BYOD without admin rights means a determined student can kill the
 
 ## 6. Edge extension behaviour
 
-- Installs alongside the agent (side-loaded via registry for now; could move to Edge Add-ons private listing later).
+- Published once to the Edge Add-ons store; the agent gets Edge to force-install it (#211, #405). At startup the agent reads Edge's `ExtensionInstallForcelist` policy under `HKLM` and `HKCU` without elevation; if neither has Anchor's entry (an Intune/GPO-managed laptop already does), it explains the step in its own window and then adds the entry under `HKLM` through **one UAC prompt** (the system `reg.exe`, elevated), at the next free slot. The agent itself stays a per-user install, so Velopack installs and updates stay silent; only this one write is elevated. The per-user `HKCU` key isn't an option: a standard Windows profile can only read `HKCU\Software\Policies`.
+- If the student says "not now", declines the prompt, or isn't an administrator, the agent falls back to a guided install (opens the store listing: *Get → Add*), stops asking at every start, and keeps offering the setup in its tray menu. Uninstalling removes the entry the agent wrote (another UAC prompt).
+- With the policy in place, Edge shows "Your browser is managed by your organization". That is Edge's standard notice whenever any policy is set; here it only means Edge keeps Anchor's extension installed, and the agent's setup window says so up front, so students and parents know what they're agreeing to.
 - Subscribes to `chrome.tabs.onUpdated` and `chrome.webNavigation` to observe URL changes.
 - During an active session:
   - Checks each navigation against the session allowlist.

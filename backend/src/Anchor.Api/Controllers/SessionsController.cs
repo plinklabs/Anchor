@@ -101,16 +101,17 @@ public sealed class SessionsController : ControllerBase
                 return ValidationProblem("One or more bundle ids do not exist.");
         }
 
-        var rosterUserIds = await _db.ClassMemberships
+        // The class's members take part; its teachers don't (#410). The
+        // teacher who starts the session, and any co-teacher of the class, get
+        // no participant row and no SessionStarted, so an agent or extension
+        // on a teacher's own laptop doesn't lock it down. A teacher who wants
+        // to take part joins with the session's code, like anyone outside the
+        // roster (POST /sessions/join-by-code).
+        var memberIds = await _db.ClassMemberships
             .AsNoTracking()
-            .Where(m => m.ClassId == request.ClassId)
-            .Select(m => new { m.UserId, m.Role })
-            .ToListAsync(cancellationToken);
-        var memberIds = rosterUserIds
-            .Where(m => m.Role == ClassMembershipRole.Member)
+            .Where(m => m.ClassId == request.ClassId && m.Role == ClassMembershipRole.Member)
             .Select(m => m.UserId)
-            .ToList();
-        var broadcastRecipientIds = rosterUserIds.Select(m => m.UserId).ToList();
+            .ToListAsync(cancellationToken);
 
         var joinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
         var now = _clock.GetUtcNow();
@@ -144,7 +145,7 @@ public sealed class SessionsController : ControllerBase
         var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
         await _broadcaster.SessionStartedAsync(
             BuildStartedPayload(session, expanded),
-            broadcastRecipientIds,
+            memberIds,
             cancellationToken);
 
         var response = new StartSessionResponse(session.Id, session.ClassId, session.StartedAt, session.JoinCode);
@@ -353,6 +354,11 @@ public sealed class SessionsController : ControllerBase
         // not in the DB) on top of the lifecycle timestamps, so resolve it after
         // materialising. Name order is a stable secondary sort; the dashboard
         // re-groups by state.
+        //
+        // The roster is every participant row: the class's members and anyone
+        // who joined by code. That includes the owning teacher once they take
+        // part themselves (#410): their device is then held to the session like
+        // a student's, and the roster shows whether it joined and stays live.
         var participantRows = await _db.SessionParticipants.AsNoTracking()
             .Where(p => p.SessionId == id)
             .OrderBy(p => p.User!.DisplayName)
@@ -694,7 +700,9 @@ public sealed class SessionsController : ControllerBase
         // Single-target SessionStarted: the agent's existing handler picks
         // this up and the #31 join-confirmation flow takes over. Keeping the
         // payload identical to the roster-based push means the agent needs
-        // no new client-side branch.
+        // no new client-side branch. It is also the only way a teacher takes
+        // part in a session, their own included (#410): the start reaches
+        // the class's members only.
         var expanded = await _allowlist.ExpandForSessionAsync(session.Id, cancellationToken);
         await _broadcaster.SessionStartedAsync(
             BuildStartedPayload(session, expanded),
