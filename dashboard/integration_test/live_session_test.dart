@@ -33,7 +33,9 @@ import 'support/e2e_binding.dart';
 //   - while the hub connection is down the page says live updates are paused,
 //     and a closed connection can be reconnected from the page (#370),
 //   - a failed join, approval, bundle change or End reads as a sentence, never
-//     the raw exception (#383).
+//     the raw exception (#383),
+//   - the join code says how the teacher takes part in the session themselves
+//     (#410).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -707,6 +709,32 @@ void main() {
     // at this window size — no RenderFlex overflow or other exception.
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'the join code says how the teacher takes part themselves (#410)',
+    (tester) async {
+      // The teacher isn't held to the session they start; taking part is their
+      // choice, with this code, from the agent. The hint sits under the code
+      // in the real composition, beside the copy button, with the real fonts.
+      const hint = "Taking part yourself? Use 'Join by code' in the agent.";
+      await _bootToLiveSession(tester);
+
+      expect(find.text('ABC123'), findsOneWidget);
+      expect(find.text(hint), findsOneWidget);
+      final code = tester.getRect(find.text('ABC123'));
+      final line = tester.getRect(find.text(hint));
+      final copy = tester.getRect(find.byTooltip('Copy code'));
+      expect(line.top, greaterThan(code.bottom));
+      expect(line.left, code.left);
+      expect(line.right, lessThanOrEqualTo(copy.left));
+      // Above the panels that follow the join code.
+      expect(
+        line.bottom,
+        lessThan(tester.getTopLeft(find.text('Students (1/1 in session)')).dy),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   group('a failed action reads as a sentence, never the raw exception', () {
     void bigWindow(WidgetTester tester) {

@@ -24,6 +24,7 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";
     public const string ShowTestTrayMenuArg = "--show-test-traymenu";
     public const string ShowTestGuidedInstallArg = "--show-test-guided-install";
+    public const string ShowTestExtensionConsentArg = "--show-test-extension-consent";
     public const string ShowTestCrashArg = "--show-test-crash";
 
     private readonly Process _process;
@@ -39,7 +40,9 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     /// (<see cref="TestConfig.AgentExe"/>); <c>PublishedPackageTests</c> passes
     /// the release publish instead (#403).
     /// </param>
-    public static AgentSelfTestProcess Launch(string selfTestFlag, string? agentExe = null)
+    /// <param name="extraArgs">More flags after the self-test flag, e.g. <c>--ui-language nl-NL</c>.</param>
+    public static AgentSelfTestProcess Launch(
+        string selfTestFlag, string? agentExe = null, IEnumerable<string>? extraArgs = null)
     {
         agentExe ??= TestConfig.AgentExe;
         if (!OperatingSystem.IsWindows())
@@ -52,6 +55,8 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
 
         var psi = new ProcessStartInfo(agentExe) { UseShellExecute = false };
         psi.ArgumentList.Add(selfTestFlag);
+        foreach (var arg in extraArgs ?? [])
+            psi.ArgumentList.Add(arg);
 
         var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the agent self-test process.");

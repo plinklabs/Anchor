@@ -539,6 +539,10 @@ class AppLocalizationsNl extends AppLocalizations {
   String get sessionCopyCode => 'Code kopiëren';
 
   @override
+  String get sessionTakePartHint =>
+      'Zelf meedoen? Gebruik \'Deelnemen met code\' in de agent.';
+
+  @override
   String get bundlesLoadListError =>
       'Kon de bundels niet laden. Probeer het opnieuw.';
 

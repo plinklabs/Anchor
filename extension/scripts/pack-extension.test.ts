@@ -107,8 +107,10 @@ describe('pack-extension (#210 Edge Add-ons packaging)', () => {
 
 // Guard the YAML the release ships in: a malformed workflow would never run on a
 // tag, and the PR gate doesn't execute tag-only workflows. actionlint validates
-// it statically. Skipped automatically where the binary isn't installed (local
-// dev without actionlint) so it never produces a false failure; CI has it.
+// it statically. Extension CI (extension-ci.yml) runs this suite with a pinned
+// actionlint installed (#412). Elsewhere the check is skipped where the binary
+// isn't installed (local dev without actionlint), so it never produces a false
+// failure; in CI a missing binary fails it, so a broken install can't skip it.
 describe('extension-release workflow', () => {
   const hasActionlint = (() => {
     try {
@@ -118,11 +120,14 @@ describe('extension-release workflow', () => {
       return false;
     }
   })();
+  // GitHub Actions sets CI=true on every runner.
+  const requireActionlint = process.env.CI === 'true';
 
   const workflowPath = (name: string) =>
     fileURLToPath(new URL(`../../.github/workflows/${name}`, import.meta.url));
 
-  it.runIf(hasActionlint)('passes actionlint', () => {
+  it.runIf(hasActionlint || requireActionlint)('passes actionlint', () => {
+    expect(hasActionlint, 'actionlint must be on PATH in CI; extension-ci.yml installs it').toBe(true);
     // Both release-path workflows: the tag-triggered release and the scheduled
     // key-expiry warning it depends on (#336). Neither runs on a PR, so a typo
     // in either would surface only on the day it was needed.
@@ -170,6 +175,41 @@ describe('extension-release workflow', () => {
       const expiry = readWorkflow('edge-key-expiry.yml');
       expect(expiry).toMatch(/schedule:\s*\n\s*(#.*\n\s*)*- cron:/);
       expect(expiry).toContain('node scripts/check-key-expiry.mjs');
+    });
+  });
+
+  // #401: a re-run keeps the secrets the run was created with (cli/cli#13522),
+  // so after rotating EDGE_ADDONS_* only a fresh run on the tag can publish.
+  // Without a manual trigger that would take a new tag.
+  describe('fresh run after a secret change (#401)', () => {
+    const release = readFileSync(workflowPath('extension-release.yml'), 'utf8').replace(/\r\n/g, '\n');
+    const onBlock = release.slice(release.indexOf('\non:\n'), release.indexOf('\npermissions:'));
+
+    it('can be started by hand as well as by a tag push', () => {
+      expect(onBlock).toMatch(/^ {2}push:\n {4}tags:\n {6}- 'extension-v\*'$/m);
+      expect(onBlock).toMatch(/^ {2}workflow_dispatch:/m);
+    });
+
+    it('refuses a manual run on anything but an extension tag, before building', () => {
+      // `gh workflow run` without --ref runs on the default branch (develop);
+      // that must stop at the first step, not package and publish develop.
+      const guardAt = release.indexOf("if: ${{ !startsWith(github.ref, 'refs/tags/extension-v') }}");
+      expect(guardAt).toBeGreaterThan(-1);
+      expect(guardAt).toBeLessThan(release.indexOf('uses: actions/checkout@v4'));
+      expect(release.slice(guardAt, release.indexOf('uses: actions/checkout@v4'))).toContain('exit 1');
+      // A refused dispatch names no stranded tag, so it must not file an issue.
+      expect(release).toMatch(/if: \$\{\{ failure\(\) && startsWith\(github\.ref, 'refs\/tags\/extension-v'\) \}\}/);
+    });
+
+    it('tells the filed issue to start a fresh run after rotating, and re-run only after a review', () => {
+      const body = release.slice(release.indexOf('body="'), release.indexOf('_Filed automatically'));
+      const items = body.split(/\n(?=\s*- \*\*)/);
+      const freshItem = items.find((item) => item.includes('gh workflow run extension-release.yml --ref $TAG'));
+      const rerunItem = items.find((item) => item.includes('gh run rerun'));
+      expect(freshItem).toMatch(/credentials rejected/i);
+      // The re-run sits in the in-review item, and only there.
+      expect(rerunItem).toMatch(/in review/i);
+      expect(rerunItem).not.toMatch(/credential/i);
     });
   });
 });

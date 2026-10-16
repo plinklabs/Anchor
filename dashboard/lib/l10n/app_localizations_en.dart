@@ -530,6 +530,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionCopyCode => 'Copy code';
 
   @override
+  String get sessionTakePartHint =>
+      'Taking part yourself? Use \'Join by code\' in the agent.';
+
+  @override
   String get bundlesLoadListError =>
       'Could not load bundles. Please try again.';
 

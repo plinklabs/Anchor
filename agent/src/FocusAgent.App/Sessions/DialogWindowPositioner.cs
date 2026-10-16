@@ -33,7 +33,13 @@ internal static class DialogWindowPositioner
     private const int MinHeightDip = 220;
     private const int MaxHeightDip = 420;
 
-    public static void ConfigureAndShow(Window window)
+    /// <summary>
+    /// A taller ceiling for a dialog with more to explain — the Edge extension
+    /// setup (#405), whose Dutch copy runs longer than <see cref="MaxHeightDip"/>.
+    /// </summary>
+    public const int TallMaxHeightDip = 600;
+
+    public static void ConfigureAndShow(Window window, int maxHeightDip = MaxHeightDip)
     {
         var hwnd = WindowNative.GetWindowHandle(window);
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
@@ -69,7 +75,7 @@ internal static class DialogWindowPositioner
                 // add a little slack so descenders aren't shaved.
                 var measured = (int)Math.Ceiling((contentHeightDip + 48) * scale);
                 var floor = (int)(MinHeightDip * scale);
-                var ceiling = (int)(MaxHeightDip * scale);
+                var ceiling = (int)(maxHeightDip * scale);
                 if (measured < floor) measured = floor;
                 if (measured > ceiling) measured = ceiling;
                 height = measured;

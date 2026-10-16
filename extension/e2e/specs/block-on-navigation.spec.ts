@@ -5,7 +5,7 @@
 
 import { test, expect } from '../fixtures.ts';
 import { expectRedirectedToBlockPage } from '../asserts.ts';
-import { BASELINE_ONLIST_HOST, OFFLIST_HOST } from '../config.ts';
+import { BASELINE_ONLIST_HOST, DASHBOARD_HOST, OFFLIST_HOST } from '../config.ts';
 
 test.beforeEach(async ({ ext, backend }) => {
   await ext.configure();
@@ -39,5 +39,15 @@ test('navigating to an on-list site is left untouched', async ({ ext, staticServ
   // Give any (erroneous) redirect a beat to happen, then assert it didn't.
   await expect(page.locator('#ok')).toHaveText('anchor-e2e');
   expect(page.url()).toContain(BASELINE_ONLIST_HOST);
+  expect(page.url()).not.toContain('block-page.html');
+});
+
+test('navigating to the dashboard is left untouched', async ({ ext, staticServer }) => {
+  // #409: the deployment's dashboard host is on every session's allowlist,
+  // whatever bundle is attached.
+  const page = await ext.context.newPage();
+  await page.goto(staticServer.url(DASHBOARD_HOST, '/during-session'));
+
+  await expect(page.locator('#where')).toContainText(DASHBOARD_HOST);
   expect(page.url()).not.toContain('block-page.html');
 });

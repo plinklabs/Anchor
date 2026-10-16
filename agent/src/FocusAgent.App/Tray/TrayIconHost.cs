@@ -2,6 +2,7 @@ using FocusAgent.App.Localization;
 using FocusAgent.Core.Realtime;
 using H.NotifyIcon;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
 namespace FocusAgent.App.Tray;
@@ -13,6 +14,7 @@ internal sealed class TrayIconHost : IDisposable
     private readonly MenuFlyout _menu;
     private readonly MenuFlyoutItem _statusItem;
     private readonly MenuFlyoutItem _joinByCodeItem;
+    private readonly MenuFlyoutItem? _setUpExtensionItem;
     private readonly Func<bool> _canJoinByCode;
     private readonly DispatcherQueue _dispatcher;
 
@@ -21,7 +23,9 @@ internal sealed class TrayIconHost : IDisposable
         Action onJoinByCode,
         Func<bool> canJoinByCode,
         Action onQuit,
-        DispatcherQueue dispatcher)
+        DispatcherQueue dispatcher,
+        Action? onSetUpExtension = null,
+        Func<bool>? canSetUpExtension = null)
     {
         _dispatcher = dispatcher;
         _canJoinByCode = canJoinByCode;
@@ -31,15 +35,29 @@ internal sealed class TrayIconHost : IDisposable
         // on-ink actions, hairline rules, the one magenta spark on "Open Anchor".
         // Built by the shared TrayMenu factory so the real tray and the
         // --show-test-traymenu self-test render byte-for-byte the same menu.
-        var menu = TrayMenu.Build(onOpen, onJoinByCode, onQuit);
+        var menu = TrayMenu.Build(onOpen, onJoinByCode, onQuit, onSetUpExtension);
         _menu = menu.Flyout;
         _statusItem = menu.StatusItem;
         _joinByCodeItem = menu.JoinItem;
+        _setUpExtensionItem = menu.SetUpExtensionItem;
 
         // Recompute Join-by-code's enabled state every time the menu opens
         // rather than threading SessionCoordinator events through here — it's
         // a one-shot read at exactly the moment the user is looking at it.
         _menu.Opening += (_, _) => _joinByCodeItem.IsEnabled = _canJoinByCode();
+
+        // #405: likewise, offer the Edge extension setup only while no
+        // force-install policy is in place (a quick unelevated registry read).
+        if (_setUpExtensionItem is { } setUpItem && canSetUpExtension is not null)
+        {
+            _menu.Opening += (_, _) =>
+            {
+                bool show;
+                try { show = canSetUpExtension(); }
+                catch { show = true; }
+                setUpItem.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            };
+        }
 
         // The Anchor mark (on-ink indigo, transparent) so it floats on the
         // taskbar — replaces the old programmatic "F" tile. Generated from the

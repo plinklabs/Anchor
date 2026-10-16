@@ -6,6 +6,7 @@ using Anchor.Domain.Users;
 using Anchor.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 
@@ -41,7 +42,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
     [Fact]
     public async Task Empty_bundle_set_returns_baseline_only()
     {
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
 
         var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
 
@@ -61,7 +62,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.Domain, "exact.example.com", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "school.local", BundleEntryMatchType.Suffix),
         });
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
@@ -80,7 +81,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "winword", BundleEntryMatchType.Exact),
             (BundleEntryKind.App, "International GeoGebra Institute", BundleEntryMatchType.SignedPublisher),
         });
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
@@ -96,7 +97,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "MSEDGE", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "*.office.com", BundleEntryMatchType.Wildcard),
         });
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
@@ -115,7 +116,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         {
             (BundleEntryKind.Domain, "*.b.example", BundleEntryMatchType.Wildcard),
         });
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
 
         var expanded = await expander.ExpandAsync(new[] { a, b });
 
@@ -151,7 +152,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         _db.SessionBundles.Add(new SessionBundle { SessionId = sessionId, BundleId = bundleId });
         await _db.SaveChangesAsync();
 
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
         var expanded = await expander.ExpandForSessionAsync(sessionId);
 
         Assert.Contains(expanded.Domains, d => d.Value == "*.live.example");
@@ -186,7 +187,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         });
         await _db.SaveChangesAsync();
 
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
         var expanded = await expander.ExpandForSessionAsync(sessionId);
 
         Assert.Contains(expanded.Domains, d => d.MatchType == "Suffix" && d.Value == "reddit.com");
@@ -203,7 +204,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
             (BundleEntryKind.App, "", BundleEntryMatchType.Exact),
             (BundleEntryKind.Domain, "real.example", BundleEntryMatchType.Exact),
         });
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
@@ -219,7 +220,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         // and the editor usable (VS Code) even while a session enforces the list.
         // #372: likewise Claude (desktop app + the Claude Code binary it runs,
         // both claude.exe), so an e2e run doesn't take the developer's window.
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Development));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Development), Config());
 
         var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
 
@@ -238,7 +239,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         // dev carve-outs — not the localhost domain, VS Code, or Claude —
         // production stays fully locked down. The agent matches process names
         // case-insensitively, so the app checks are too.
-        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production));
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
 
         var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
 
@@ -250,8 +251,93 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         Assert.Contains(expanded.Apps, a => a.Value == "msedge");
     }
 
+    [Fact]
+    public async Task Dashboard_origins_are_always_allowed_as_exact_hosts_outside_Development()
+    {
+        // #409: the dashboard must stay reachable during a session, for the
+        // teacher who runs the agent on their own laptop and for everyone else.
+        // Its host comes from the deployment's CORS origins, scheme, port and
+        // path stripped (the matchers are hostname-only).
+        var expander = new SessionAllowlistExpander(
+            _db,
+            Env(Environments.Production),
+            Config("https://anchorssm.arcadiascholen.be", "https://Anchor.Example.org:8443/"));
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
+
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "anchorssm.arcadiascholen.be");
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "anchor.example.org");
+        // Additive: the baseline is still there.
+        Assert.Contains(expanded.Domains, d => d.Value == "*.microsoftonline.com");
+    }
+
+    [Fact]
+    public async Task Dashboard_origins_reach_the_rejoin_and_join_by_code_expansion()
+    {
+        // ExpandForSessionAsync serves rejoin, join-by-code and GetStartedSession:
+        // a student who joins late must not find the dashboard blocked either.
+        var teacher = new User { EntraOid = Guid.NewGuid(), DisplayName = "T", Role = UserRole.Teacher };
+        var @class = new Class { Name = "Maths 5", SchoolYear = "2025-2026" };
+        _db.Users.Add(teacher);
+        _db.Classes.Add(@class);
+        await _db.SaveChangesAsync();
+
+        var sessionId = Guid.NewGuid();
+        _db.Sessions.Add(new Session
+        {
+            Id = sessionId,
+            TeacherId = teacher.Id,
+            ClassId = @class.Id,
+            StartedAt = DateTimeOffset.UtcNow,
+            JoinCode = "222222",
+        });
+        await _db.SaveChangesAsync();
+
+        var expander = new SessionAllowlistExpander(
+            _db, Env(Environments.Production), Config("https://anchorssm.arcadiascholen.be"));
+        var expanded = await expander.ExpandForSessionAsync(sessionId);
+
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "anchorssm.arcadiascholen.be");
+    }
+
+    [Fact]
+    public async Task Origins_that_are_not_http_origins_add_nothing()
+    {
+        var expander = new SessionAllowlistExpander(
+            _db,
+            Env(Environments.Production),
+            Config("", "   ", "*", "null", "not a url", "/relative", "ftp://files.example.org"));
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
+
+        Assert.Equal(SessionAllowlist.BaselineDomains.Count, expanded.Domains.Count);
+    }
+
+    [Fact]
+    public async Task A_dashboard_origin_that_repeats_an_allowed_host_is_listed_once()
+    {
+        // The Development appsettings list http://localhost:5173, whose host the
+        // #125 carve-out already allows.
+        var expander = new SessionAllowlistExpander(
+            _db, Env(Environments.Development), Config("http://localhost:5173", "http://LOCALHOST:5174"));
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
+
+        Assert.Single(expanded.Domains, d => d.Value.Equals("localhost", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static IHostEnvironment Env(string environmentName) =>
         new StubHostEnvironment { EnvironmentName = environmentName };
+
+    /// <summary>
+    /// Configuration whose only entries are the dashboard origins, the way App
+    /// Service supplies them (<c>Cors__AllowedOrigins__0</c>, <c>__1</c>, ...).
+    /// </summary>
+    private static IConfiguration Config(params string[] dashboardOrigins) =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(dashboardOrigins.Select((origin, i) =>
+                new KeyValuePair<string, string?>($"{SessionAllowlist.DashboardOriginsKey}:{i}", origin)))
+            .Build();
 
     /// <summary>
     /// Minimal <see cref="IHostEnvironment"/> whose only meaningful state is the

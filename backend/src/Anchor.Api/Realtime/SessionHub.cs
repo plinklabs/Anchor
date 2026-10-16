@@ -101,15 +101,17 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (session is null || session.EndedAt is not null)
             throw new HubException("Session not found or already ended.");
 
-        // The session-owning teacher is not stored as a SessionParticipant
-        // (they're the TeacherId). Let them subscribe to their own session
-        // without a join code or a participant row.
+        // The session-owning teacher runs it (they're the TeacherId) and has
+        // no participant row unless they chose to take part, by join code
+        // (#410). Let them subscribe to their own session without a join code
+        // or a participant row.
         var isOwningTeacher = session.TeacherId == user.Id;
 
         var participant = await _db.SessionParticipants
             .FirstOrDefaultAsync(p => p.SessionId == session.Id && p.UserId == user.Id, ct);
 
         var now = _clock.GetUtcNow();
+        var joined = false;
         if (participant is null && !isOwningTeacher)
         {
             // Join-by-code fallback: any signed-in user with the correct code
@@ -127,11 +129,24 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                 JoinedAt = now,
             };
             _db.SessionParticipants.Add(participant);
+            joined = true;
         }
-        else if (participant is not null)
+        else if (participant is not null && !isOwningTeacher)
         {
             participant.JoinedAt ??= now;
             participant.LeftAt = null;
+            joined = true;
+        }
+        else if (participant is not null &&
+                 participant.JoinedAt is null && participant.LeftAt is null && participant.DeclinedAt is null)
+        {
+            // The owning teacher took part by code and their agent or extension
+            // is joining (#410). Their dashboard's live page sends this same
+            // call to subscribe, so for them it only ever completes a pending
+            // join: it never brings back a participation they left or declined.
+            // Taking part again goes through join-by-code, which clears those.
+            participant.JoinedAt = now;
+            joined = true;
         }
 
         await _db.SaveChangesAsync(ct);
@@ -145,14 +160,17 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             // name, the URLs they ask to open and their tamper flags. A
             // student's join records them as joined without subscribing them;
             // what their agent and extension listen for goes to their user group.
-            // The teacher's join changes nothing else, so calling it again,
-            // from the same connection or a new one, only (re)subscribes it.
+            // Apart from completing a pending join (above), the teacher's join
+            // changes nothing else, so calling it again, from the same
+            // connection or a new one, only (re)subscribes it.
             await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(session.Id), ct);
         }
-        else
+
+        if (joined)
         {
-            // Tell the teacher's roster a member just joined (#100). The owning
-            // teacher isn't a participant, so their own subscribe doesn't emit.
+            // Tell the teacher's roster a participant just joined (#100). The
+            // owning teacher's own subscribe doesn't emit; their join as a
+            // participant does, since the roster lists them once they take part.
             await _broadcaster.ParticipantStateChangedAsync(
                 new ParticipantStateChangedPayload(
                     session.Id, user.Id, user.DisplayName,

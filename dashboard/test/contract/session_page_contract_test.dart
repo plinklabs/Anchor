@@ -15,13 +15,16 @@ import '../support/session_hub_contract.dart';
 
 // #390: the live page's side of contracts/session-hub.json. Every event the
 // contract lists has to reach the teacher's live page, which may read only the
-// payload fields the contract gives it. An event the backend sends to the
-// teacher's user group reaches every connection of theirs, whatever session
-// its page shows, so the page has to ignore one that names another session
-// (233a64f). That is how #354 broke the page: it moved SessionEnded from the
-// session group to user groups, and the page put the teacher's other
-// sessions' ends in its feed. With the contract, that move fails Backend CI
-// until the file says so, and the file's change runs these tests.
+// payload fields the contract gives it. SessionStarted does only while the
+// teacher takes part themselves (#410): it goes to the participants, and a
+// teacher is one only once they joined with the code. An event the backend
+// sends to the teacher's user group, as the session's teacher or as a
+// participant, reaches every connection of theirs, whatever session its page
+// shows, so the page has to ignore one that names another session (233a64f).
+// That is how #354 broke the page: it moved SessionEnded from the session
+// group to user groups, and the page put the teacher's other sessions' ends
+// in its feed. With the contract, that move fails Backend CI until the file
+// says so, and the file's change runs these tests.
 
 const _sessionId = 'aaaaaaaa-0000-0000-0000-000000000001';
 const _otherSessionId = 'bbbbbbbb-0000-0000-0000-000000000002';
@@ -186,11 +189,14 @@ void main() {
   test("every event in the contract reaches the teacher's live page", () {
     for (final event in contract.events) {
       expect(
-        event.reachesTheSessionGroup || event.reachesTheTeachersUserGroup,
+        event.reachesTheSessionGroup ||
+            event.reachesTheTeachersUserGroup ||
+            event.reachesATakingPartTeacher,
         isTrue,
         reason:
-            '${event.name} goes to ${event.audience}: neither the session '
-            "group the page joins nor the teacher's user group.",
+            '${event.name} goes to ${event.audience}: not the session group '
+            "the page joins, nor the teacher's user group, as the session's "
+            'teacher or as a participant (#410).',
       );
     }
   });
@@ -201,7 +207,7 @@ void main() {
     testWidgets('${event.name} about this session lands in its feed '
         '(sent to: $audience)', (tester) async {
       final page = await _pumpLiveSession(tester);
-      if (!event.reachesTheTeachersUserGroup) {
+      if (!event.canNameAnotherSession) {
         // Only through the session group, which the page has to join.
         expect(page.hub.joined, contains(_sessionId));
       }
@@ -213,10 +219,10 @@ void main() {
       _expectReadsOnlyItsFields(event, payload);
     });
 
-    if (event.reachesTheTeachersUserGroup) {
+    if (event.canNameAnotherSession) {
       testWidgets('${event.name} naming another session leaves the page as '
           "it was (sent to: $audience, the teacher's user group hears about "
-          'all their sessions)', (tester) async {
+          'all their sessions, and those they take part in)', (tester) async {
         final page = await _pumpLiveSession(tester);
         final loads = page.sessions.loads;
 

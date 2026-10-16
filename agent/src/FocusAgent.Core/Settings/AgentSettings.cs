@@ -94,6 +94,44 @@ public sealed record UpdateSettings
     public TimeSpan CheckInterval { get; init; } = TimeSpan.FromHours(6);
 }
 
+/// <summary>
+/// Test-only knobs for the Edge extension setup (#405). Read <em>only</em> in a dev
+/// or test run, where the agent never shows a real UAC prompt; a user-facing
+/// release launch ignores this section entirely (see the composition root). The
+/// agent e2e sets them per launch through environment variables
+/// (<c>Extension__TestPolicyRoot</c> etc.), which the agent only reads under
+/// <c>--inject-token</c>.
+/// </summary>
+public sealed record ExtensionSettings
+{
+    public const string SectionName = "Extension";
+
+    /// <summary>
+    /// An HKCU-relative key under which the run simulates both forcelists:
+    /// <c>&lt;root&gt;\Machine\ExtensionInstallForcelist</c> stands in for HKLM and
+    /// <c>&lt;root&gt;\User\ExtensionInstallForcelist</c> for HKCU. Empty: read the
+    /// live keys (reading is harmless; nothing is ever written to them).
+    /// </summary>
+    public string TestPolicyRoot { get; init; } = "";
+
+    /// <summary>
+    /// The state file to use. Empty: a dev run keeps its state in memory, so it
+    /// never touches the file an installed agent on the same box reads.
+    /// </summary>
+    public string StatePath { get; init; } = "";
+
+    /// <summary>
+    /// With <see cref="TestPolicyRoot"/> set, plays the student's answer to the UAC
+    /// prompt without showing one: <c>allow</c> (the write lands in the simulated
+    /// machine key), <c>decline</c> or <c>fail</c>. Empty: the elevated write is
+    /// skipped and reported as failed.
+    /// </summary>
+    public string SimulateElevation { get; init; } = "";
+
+    /// <summary>Overrides the wait for the extension to check in (seconds). Empty: 45 s.</summary>
+    public int? GracePeriodSeconds { get; init; }
+}
+
 public sealed record DevSettings
 {
     public const string SectionName = "Dev";

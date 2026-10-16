@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 // @ts-expect-error — .mjs sibling, no type declarations needed for the test.
 import { isMainModule } from './is-main-module.mjs';
@@ -98,16 +99,53 @@ describe('publish failure classification (#336)', () => {
     const recovery = d.recovery.join(' ');
     expect(recovery).toContain('EDGE_ADDONS_CLIENT_ID');
     expect(recovery).toContain('EDGE_ADDONS_API_KEY');
-    expect(recovery).toContain('gh run rerun 123 --failed');
+  });
+
+  // #401: a re-run keeps the secrets the run was created with (cli/cli#13522),
+  // so after rotating the credentials `gh run rerun` retries the rejected pair
+  // and fails with the same 403. Only a fresh run on the tag reads the new ones.
+  it('retries rotated credentials with a fresh run on the tag, not a re-run', async () => {
+    const { impl } = fakeFetch(403);
+    const d = await diagnose({
+      productId: 'p',
+      clientId: 'c',
+      apiKey: 'k',
+      version: '0.4.1',
+      runId: '123',
+      fetchImpl: impl,
+    });
+
+    const recovery = d.recovery.join(' ');
+    expect(recovery).toContain('gh workflow run extension-release.yml --ref extension-v0.4.1');
+    expect(recovery).not.toContain('gh run rerun');
+  });
+
+  it('names the tag as a placeholder when the version is unknown', async () => {
+    const { impl } = fakeFetch(403);
+    const d = await diagnose({ productId: 'p', clientId: 'c', apiKey: 'k', fetchImpl: impl });
+
+    expect(d.recovery.join(' ')).toContain('gh workflow run extension-release.yml --ref extension-v<version>');
   });
 
   it('tells an in-review block to wait, not to touch the credentials', async () => {
     const { impl } = fakeFetch(404);
-    const d = await diagnose({ productId: 'p', clientId: 'c', apiKey: 'k', fetchImpl: impl });
+    const d = await diagnose({
+      productId: 'p',
+      clientId: 'c',
+      apiKey: 'k',
+      version: '0.4.1',
+      runId: '123',
+      fetchImpl: impl,
+    });
 
     expect(d.cause).toBe('store');
     expect(d.detail).toContain('in-review');
-    expect(d.recovery.join(' ')).not.toContain('Create API credentials');
+    const recovery = d.recovery.join(' ');
+    expect(recovery).not.toContain('Create API credentials');
+    // No secret changed, so re-running the failed job (with the ZIP it already
+    // built) is right here, and the only case where it is (#401).
+    expect(recovery).toContain('gh run rerun 123 --failed');
+    expect(recovery).not.toContain('gh workflow run');
   });
 
   it('stays honest when the probe itself fails', async () => {
@@ -115,15 +153,38 @@ describe('publish failure classification (#336)', () => {
       productId: 'p',
       clientId: 'c',
       apiKey: 'k',
+      version: '0.4.1',
+      runId: '123',
       fetchImpl: () => Promise.reject(new Error('getaddrinfo ENOTFOUND')),
     });
 
     expect(d.cause).toBe('unknown');
     expect(d.probeStatus).toBeNull();
     expect(d.probeError).toContain('ENOTFOUND');
-    // Both recoveries stay on the table rather than a confident wrong answer.
-    expect(d.recovery.join(' ')).toContain('401/403');
-    expect(d.recovery.join(' ')).toContain('in-progress submission');
+    // Both recoveries stay on the table rather than a confident wrong answer,
+    // each with the retry that works for it (#401): a fresh run after rotating
+    // the credentials, a re-run after waiting out a review.
+    const credentials = d.recovery.find((step: string) => step.includes('401/403'));
+    const review = d.recovery.find((step: string) => step.includes('in-progress submission'));
+    expect(credentials).toContain('gh workflow run extension-release.yml --ref extension-v0.4.1');
+    expect(credentials).not.toContain('gh run rerun');
+    expect(review).toContain('gh run rerun 123 --failed');
+    expect(review).not.toContain('gh workflow run');
+  });
+
+  // The fresh-run command is only useful if the workflow it names exists and
+  // accepts a manual run; without `workflow_dispatch`, `gh workflow run` is
+  // refused and the operator is left with a re-run that cannot work (#401).
+  it('points the fresh run at a workflow that can be started by hand', async () => {
+    const { impl } = fakeFetch(403);
+    const d = await diagnose({ productId: 'p', clientId: 'c', apiKey: 'k', version: '0.4.1', fetchImpl: impl });
+
+    const workflow = d.recovery.join(' ').match(/gh workflow run (\S+) --ref/)?.[1];
+    expect(workflow).toBe('extension-release.yml');
+    const path = fileURLToPath(new URL(`../../.github/workflows/${workflow}`, import.meta.url));
+    expect(existsSync(path)).toBe(true);
+    const yaml = readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+    expect(yaml).toMatch(/^ {2}workflow_dispatch:/m);
   });
 
   it('renders an Actions error annotation', async () => {

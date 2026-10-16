@@ -1,0 +1,77 @@
+name: Extension CI
+
+# Run the extension's Vitest unit suite (`npm test`, src/** and scripts/**) on
+# every PR and push that touches it (#412). Before this, no workflow ran it:
+# Extension E2E runs only the Playwright specs, so a broken unit test was found
+# by the next person to run `npm test` locally.
+#
+# The suite also guards the tag-only release path, which never produces a PR
+# check of its own: scripts/pack-extension.test.ts runs actionlint over
+# extension-release.yml and edge-key-expiry.yml and pins their failure
+# reporting, and scripts/release-diagnostics.test.ts reads extension-release.yml.
+# So both workflows are in the path filter below (an edit to either runs the
+# tests that check it), and this job installs a pinned actionlint with the
+# install-actionlint action it shares with Workflows CI (#418), which is in the
+# path filter too because scripts/extension-ci.test.ts pins it. In CI the
+# actionlint test fails rather than skips when the binary is missing, so a
+# broken install can't turn the check off quietly. Workflows CI lints every
+# workflow on its own; this suite still lints the release workflows, and pins
+# their content, which actionlint doesn't check.
+#
+# Linux runner, unlike Extension E2E: the unit tests need no browser, the
+# release workflow packages on ubuntu-latest too, and the runner's shellcheck
+# lets actionlint check the release workflows' `run:` scripts as well.
+#
+# Wired into the CI Gate: keep its `extension_unit` filter identical to the
+# pull_request paths below.
+
+on:
+  pull_request:
+    paths:
+      - 'extension/**'
+      - '.github/workflows/extension-release.yml'
+      - '.github/workflows/edge-key-expiry.yml'
+      - '.github/actions/install-actionlint/**'
+      - '.github/workflows/extension-ci.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'extension/**'
+      - '.github/workflows/extension-release.yml'
+      - '.github/workflows/edge-key-expiry.yml'
+      - '.github/actions/install-actionlint/**'
+      - '.github/workflows/extension-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Extension Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Pinned and checksum-verified; the version lives in the action.
+      - name: Install actionlint
+        uses: ./.github/actions/install-actionlint
+
+      - name: Run unit tests
+        run: npm test

@@ -65,15 +65,23 @@ public static class Program
 
     /// <summary>
     /// Dev-only flag (#211): show the real <see cref="Extension.GuidedInstallWindow"/>
-    /// — the guided-install fallback shown when the per-user force-install policy
-    /// doesn't take — with no WAM / hub / coordinator bootstrap, and keep it up so
-    /// its ink surface can be screenshotted. The guided fallback is the primary path
-    /// on a policy-locked box (where the HKCU <c>Software\Policies</c> subtree is
-    /// ACL-restricted and the force-install write is denied), so it's a load-bearing
-    /// user-visible surface worth observing directly. Used by the visual e2e
+    /// — the guided-install fallback shown when there is no force-install policy
+    /// (the student said "not now" to the UAC step, or isn't an administrator, #405)
+    /// or it didn't take — with no WAM / hub / coordinator bootstrap, and keep it up
+    /// so its ink surface can be screenshotted. It's a load-bearing user-visible
+    /// surface worth observing directly. Used by the visual e2e
     /// (GuidedInstallVisualTests) and scripts/dev.
     /// </summary>
     public const string ShowTestGuidedInstallArg = "--show-test-guided-install";
+
+    /// <summary>
+    /// Dev-only flag (#405): show the real <see cref="Extension.ExtensionPolicyConsentWindow"/>
+    /// — the agent's explanation before the one UAC prompt of the Edge extension
+    /// setup — with no WAM / hub / coordinator bootstrap, and keep it up so its ink
+    /// surface can be screenshotted. Its buttons go nowhere: no elevation can ever
+    /// happen from this mode. Used by the visual e2e (ExtensionConsentVisualTests).
+    /// </summary>
+    public const string ShowTestExtensionConsentArg = "--show-test-extension-consent";
 
     /// <summary>
     /// Dev-only flag (#164): verify the design-system WinUI binding actually
@@ -172,13 +180,15 @@ public static class Program
     public const string SimulateInPrivateArg = "--simulate-inprivate";
 
     /// <summary>
-    /// Dev-only flag (#211): write the per-user Edge force-install policy
-    /// (<c>ExtensionInstallForcelist</c>) for Anchor's extension, print the
+    /// Dev-only flag (#211): add Anchor's Edge force-install entry
+    /// (<c>ExtensionInstallForcelist</c>) to an HKCU forcelist key, print the
     /// resulting registry state, and exit — no WAM / hub / UI bootstrap. Drives the
-    /// <em>real</em> registry-write path so the integration test can assert the
-    /// HKCU value is actually written on a clean box (the one real-world
-    /// uncertainty the issue flags). Pair with <see cref="ExtensionPolicyKeyEnvVar"/>
-    /// to point the write at a throwaway HKCU subtree instead of the live Edge key.
+    /// <em>real</em> registry store (slot picking, idempotence, leaving other
+    /// entries alone) so the integration test can assert it end-to-end. Pair with
+    /// <see cref="ExtensionPolicyKeyEnvVar"/> to point the write at a throwaway HKCU
+    /// subtree: the live HKCU policy key isn't writable on a default profile, which
+    /// is why the running agent adds its entry under HKLM through one UAC prompt
+    /// instead (#405).
     /// </summary>
     public const string RegisterExtensionArg = "--register-extension";
 
@@ -308,6 +318,36 @@ public static class Program
     public const string CheckUpdateResultPathEnvVar = "ANCHOR_UPDATE_RESULT_PATH";
 
     /// <summary>
+    /// Dev-only flag (#407): make one startup stage fail on a normal launch, so the
+    /// integration test can prove a release that crashes at startup still runs its
+    /// update check (and so can still be fixed by the next release). The flag is
+    /// followed by the stage: <c>host</c> (the DI host fails to build),
+    /// <c>window</c> (creating the main window throws, like #403's XAML crash) or
+    /// <c>background</c> (a background thread dies with an unhandled exception just
+    /// before the window). Deliberately NOT part of <see cref="SuppressCrashDialog"/>:
+    /// the point is to drive the real fatal path, crash dialog included; the test
+    /// closes the dialog itself. Skips single-instance gating like the self-tests.
+    /// </summary>
+    public const string TestCrashAtArg = "--test-crash-at";
+
+    /// <summary>
+    /// Dev-only flag (#407): swap the real Velopack update manager for
+    /// <see cref="Updates.ProbeUpdateManager"/>, which pretends to be an installed
+    /// agent with a newer release on the feed and records each phase of the update
+    /// pass (check, download, stage) to the file named by
+    /// <see cref="UpdateProbePathEnvVar"/>. Paired with <see cref="TestCrashAtArg"/>
+    /// in the startup-crash e2e.
+    /// </summary>
+    public const string TestUpdateProbeArg = "--test-update-probe";
+
+    /// <summary>
+    /// Dev-only env var (#407): absolute path the <see cref="TestUpdateProbeArg"/>
+    /// probe appends its lines to. The probe holds its "download" open until
+    /// <c>&lt;path&gt;.release</c> exists, so the test can release it on cue.
+    /// </summary>
+    public const string UpdateProbePathEnvVar = "ANCHOR_UPDATE_PROBE_PATH";
+
+    /// <summary>
     /// The Velopack package id the agent ships under (mirrors
     /// <c>--packId</c> in agent/scripts/pack-release.ps1). The
     /// <see cref="CheckUpdateArg"/> mode reads the test feed as this app id.
@@ -320,12 +360,17 @@ public static class Program
     public static bool ShowTestJoinByCode { get; private set; }
     public static bool ShowTestTrayMenu { get; private set; }
     public static bool ShowTestGuidedInstall { get; private set; }
+    public static bool ShowTestExtensionConsent { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
     public static bool ShowTestCrash { get; private set; }
     public static bool InjectToken { get; private set; }
     public static int? StatusEndpointPort { get; private set; }
     public static bool AutoJoin { get; private set; }
     public static bool SimulateInPrivate { get; private set; }
+    public static bool TestUpdateProbe { get; private set; }
+
+    /// <summary>The startup stage from <c>--test-crash-at</c>, or null for a normal launch.</summary>
+    public static string? TestCrashAt { get; private set; }
 
     /// <summary>The BCP-47 tag from <c>--ui-language</c>, or null to follow the OS language.</summary>
     public static string? UiLanguage { get; private set; }
@@ -346,7 +391,25 @@ public static class Program
     public static bool SuppressCrashDialog =>
         InjectToken || StatusEndpointPort is not null || AutoJoin || SimulateInPrivate ||
         ShowTestToast || ShowTestOverlay || ShowTestMainWindow || ShowTestJoinByCode ||
-        ShowTestTrayMenu || ShowTestGuidedInstall || VerifyDsTheme || ShowTestCrash || VerifyI18n;
+        ShowTestTrayMenu || ShowTestGuidedInstall || ShowTestExtensionConsent || VerifyDsTheme ||
+        ShowTestCrash || VerifyI18n;
+
+    /// <summary>
+    /// Whether this launch may show a real UAC prompt (#405): only a normal,
+    /// user-facing launch. Every dev / headless / self-test / test-crash flag rules
+    /// it out, because a prompt takes over the secure desktop and waits for an answer
+    /// nobody is there to give. The composition root additionally requires the
+    /// Production environment, so a Debug run (<c>dotnet run</c>, the e2e) never
+    /// elevates either.
+    /// </summary>
+    public static bool AllowsRealElevation =>
+        !SuppressCrashDialog && TestCrashAt is null && !TestUpdateProbe;
+
+    /// <summary>
+    /// How long the uninstall hook waits for the student to answer the UAC prompt
+    /// that removes the HKLM Edge policy entry (#405); Velopack kills the hook at 30 s.
+    /// </summary>
+    private static readonly TimeSpan UninstallPromptBudget = TimeSpan.FromSeconds(20);
 
     [STAThread]
     public static int Main(string[] args)
@@ -358,8 +421,16 @@ public static class Program
         // runs for a normal launch. `vpk pack` also refuses to package a build
         // whose entrypoint doesn't call this. The auto-update *check* (the agent's
         // UpdateManager against the GitHub Releases feed) is wired in App startup
-        // via AgentUpdateService (#224).
+        // via AgentUpdateService (#224), started before any window (#407).
         VelopackApp.Build()
+            // #407: a release the update check downloaded and staged is applied
+            // HERE, on the next launch, before any WinUI code runs: Run() sees a
+            // newer full package in the packages dir, hands it to the updater,
+            // restarts into the new version and exits this process. So a fixed
+            // release lands even when this launch's own startup would crash again.
+            // It's Velopack's default; set explicitly because it is the second half
+            // of the agent's crash-recovery path and must not be switched off.
+            .SetAutoApplyOnStartup(true)
             // #225: "start the agent at login" lives in a per-user HKCU\...\Run
             // entry (no admin, no MDM) — the unpackaged build's equivalent of a
             // packaged app's windows.startupTask extension. Velopack fires
@@ -375,11 +446,18 @@ public static class Program
             // files go away). Best-effort: a failure here must not block uninstall.
             .OnBeforeUninstallFastCallback(_ =>
             {
-                ExtensionRegistration.RemovePolicyForUninstall();
+                // #405: start the elevated removal of the HKLM Edge policy entry this
+                // agent wrote first (fire-and-forget: one UAC prompt for the system
+                // reg.exe, so it doesn't depend on the app folder being deleted), so
+                // the prompt is up while the quick per-user clean-up below runs.
+                var edgePolicyRemoval = ExtensionRegistration.RemovePolicyForUninstall();
                 StartupRegistration.RemoveForUninstall();
                 // #288: un-register the witness native-messaging host (remove its HKCU
                 // key) so uninstalling the agent leaves the box as it found it.
                 WitnessHostRegistration.RemoveForUninstall();
+                // Velopack kills the hook at 30 s and exits the process when it
+                // returns; leave the student most of that to answer the prompt.
+                ExtensionRegistration.WaitForUninstallPrompt(edgePolicyRemoval, UninstallPromptBudget);
             })
             .Run();
 
@@ -421,6 +499,7 @@ public static class Program
         ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
         ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));
         ShowTestGuidedInstall = args.Any(a => string.Equals(a, ShowTestGuidedInstallArg, StringComparison.OrdinalIgnoreCase));
+        ShowTestExtensionConsent = args.Any(a => string.Equals(a, ShowTestExtensionConsentArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
         ShowTestCrash = args.Any(a => string.Equals(a, ShowTestCrashArg, StringComparison.OrdinalIgnoreCase));
         InjectToken = args.Any(a => string.Equals(a, InjectTokenArg, StringComparison.OrdinalIgnoreCase));
@@ -429,6 +508,8 @@ public static class Program
         SimulateInPrivate = args.Any(a => string.Equals(a, SimulateInPrivateArg, StringComparison.OrdinalIgnoreCase));
         UiLanguage = ArgValueAfter(args, UiLanguageArg);
         VerifyI18nLanguage = ArgValueAfter(args, VerifyI18nArg);
+        TestCrashAt = ArgValueAfter(args, TestCrashAtArg);
+        TestUpdateProbe = args.Any(a => string.Equals(a, TestUpdateProbeArg, StringComparison.OrdinalIgnoreCase));
 
         // #323: pin the UI language before any XAML is parsed so x:Uid resources and
         // .NET formatting both resolve to it. --verify-i18n's language wins (that mode
@@ -442,7 +523,7 @@ public static class Program
 
         // Single-instance gating gets in the way of the self-test loops (each
         // launch needs to be its own process). Skip it in those modes only.
-        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !VerifyDsTheme && !ShowTestCrash && !VerifyI18n)
+        if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !ShowTestExtensionConsent && !VerifyDsTheme && !ShowTestCrash && !VerifyI18n && TestCrashAt is null)
         {
             var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
             if (!keyInstance.IsCurrent)

@@ -165,7 +165,7 @@ resource only when you pass the matching per-resource locations (the
 | `entraTenantId` / `entraClientId` | empty | Entra tenant + API app-registration client ID. Required for a working deploy; applied as App Service settings (`AzureAd__TenantId` / `AzureAd__ClientId`). |
 | `entraAudience` | `api://<entraClientId>` | JWT audience the API validates. |
 | `entraInstance` | current cloud login endpoint | Entra authority. |
-| `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin for the dashboard SPA (`Cors__AllowedOrigins__0`). |
+| `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin for the dashboard SPA (`Cors__AllowedOrigins__0`). Its host is also always allowed in every session (#409). |
 | `sqlAdminLogin` / `sqlAdminPassword` | `anchoradmin` / *(required, secure)* | SQL admin credentials. |
 
 Bicep applies the Entra IDs and CORS origin as **App Service application
@@ -225,12 +225,17 @@ so nothing is published and the dashboard URL returns a bare **404** (issue
      --query properties.apiKey -o tsv \
      | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN --repo plinklabs/Anchor
 
-   gh run rerun <run-id> --failed   # re-run the failed deploy with the new secret
+   gh workflow run dashboard-deploy.yml --ref main --repo plinklabs/Anchor   # a fresh deploy with the new secret
    ```
+
+   Start a **fresh** run, not `gh run rerun`: a re-run keeps the secrets the run
+   was created with ([cli/cli#13522](https://github.com/cli/cli/issues/13522)),
+   so it would retry the old token and fail the same way.
 
    `scripts/setup.ps1` refetches and re-sets this secret on every run (the token
    is **not** a Bicep output, so an infra-only `az deployment` does not re-sync
-   it) — re-running the bootstrap fixes it too.
+   it) — re-running the bootstrap fixes the secret too; then start the fresh
+   deploy above.
 
 2. **The SWA instance itself won't serve.** If the token is valid (a manual
    `swa deploy` succeeds) yet every path still 404s with no SWA response headers
@@ -240,7 +245,9 @@ so nothing is published and the dashboard URL returns a bare **404** (issue
    --sku Free`) — if that serves 200, recreate `anchor-dashboard`. The Free tier
    hands out a **new random hostname**, so re-point the Entra SPA redirect URI
    and the API's `Cors__AllowedOrigins__0` to it (re-running `scripts/setup.ps1`
-   does both), then re-run the deploy.
+   does both, and re-sets the new instance's deployment token), then start a
+   fresh deploy with `gh workflow run dashboard-deploy.yml --ref main` — a
+   re-run of the old one would still carry the old instance's token.
 
 ### Production tiers and scaling
 

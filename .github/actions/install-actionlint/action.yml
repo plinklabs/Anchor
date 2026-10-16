@@ -1,0 +1,30 @@
+name: Install actionlint
+description: >-
+  Install a pinned, checksum-verified actionlint from the official release
+  (https://github.com/rhysd/actionlint) and put it on PATH for the rest of the
+  job. Linux x64 runners only. Used by Workflows CI, which lints every workflow
+  (#418), and Extension CI, whose unit suite lints the extension release
+  workflows (#412), so both run the same actionlint.
+
+runs:
+  using: composite
+  steps:
+    # To bump, take the new version and the linux_amd64 line of
+    # actionlint_<version>_checksums.txt from
+    # https://github.com/rhysd/actionlint/releases and change both together.
+    - name: Install actionlint
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        ACTIONLINT_VERSION: '1.7.12'
+        ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      run: |
+        set -euo pipefail
+        archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+        curl -fsSL --retry 3 -o "$archive" \
+          "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+        echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum -c -
+        mkdir -p actionlint-bin
+        tar -xzf "$archive" -C actionlint-bin actionlint
+        ./actionlint-bin/actionlint -version
+        echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"

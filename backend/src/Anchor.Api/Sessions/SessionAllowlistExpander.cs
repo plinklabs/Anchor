@@ -28,14 +28,18 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
 {
     private readonly AnchorDbContext _db;
     private readonly bool _includeDevelopmentCarveouts;
+    private readonly IReadOnlyList<AllowedDomainDto> _dashboardDomains;
 
-    public SessionAllowlistExpander(AnchorDbContext db, IHostEnvironment environment)
+    public SessionAllowlistExpander(AnchorDbContext db, IHostEnvironment environment, IConfiguration configuration)
     {
         _db = db;
         // Dev-only carve-outs: localhost + VS Code (#125), Claude (#372). Computed
         // once here so a Release build never merges them, no matter which
         // expansion path runs.
         _includeDevelopmentCarveouts = environment.IsDevelopment();
+        // The dashboard's own host(s) (#409), in every build and on every path.
+        _dashboardDomains = SessionAllowlist.DashboardDomains(
+            configuration.GetSection(SessionAllowlist.DashboardOriginsKey).Get<string[]>() ?? Array.Empty<string>());
     }
 
     public async Task<ExpandedAllowlist> ExpandAsync(IReadOnlyCollection<Guid> bundleIds, CancellationToken cancellationToken = default)
@@ -84,6 +88,7 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
     {
         var apps = new List<AllowedAppDto>(SessionAllowlist.BaselineApps);
         var domains = new List<AllowedDomainDto>(SessionAllowlist.BaselineDomains);
+        domains.AddRange(_dashboardDomains);
 
         if (_includeDevelopmentCarveouts)
         {

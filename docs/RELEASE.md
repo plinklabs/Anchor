@@ -43,7 +43,7 @@ each path-filtered so an unrelated push never triggers it:
 | Leg | Workflow | Trigger | Auth |
 | --- | --- | --- | --- |
 | Backend API → Azure App Service | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml) | `workflow_run` after **Backend CI** succeeds on `main` | OIDC federated credential (`azure/login`) |
-| Dashboard → Azure Static Web Apps | [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml) | `push` to `main` under `dashboard/**` | SWA deployment token |
+| Dashboard → Azure Static Web Apps | [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml) | `push` to `main` under `dashboard/**`, or by hand (`workflow_dispatch`, `main` only) | SWA deployment token |
 | Public website → GitHub Pages | [`website-deploy.yml`](../.github/workflows/website-deploy.yml) | `push` to `main` under `website/**`, or by hand (`workflow_dispatch`, `main` only) | cross-repo deploy PAT |
 
 The website leg is a **cross-repo mirror**: the site source lives here under
@@ -113,11 +113,16 @@ waits only for the suites those changes trigger.
   **not** have a `backend_deploy` filter or a wait step for it. A wait on a check
   that never runs would hang the gate forever (the exact failure mode the gate's
   header comment warns about).
-- A PR that edits only `.github/workflows/backend-deploy.yml` touches **no gated
-  area** (the gate's `backend` filter watches `backend/**` and `backend-ci.yml`,
-  not the deploy workflow). The gate passes that PR immediately. This is the
-  intended behavior: the deploy workflow's correctness is validated by
-  `actionlint`, not by running a live Azure deploy from a fork PR.
+- A PR that edits only `.github/workflows/backend-deploy.yml` doesn't run
+  Backend CI (the gate's `backend` filter watches `backend/**` and
+  `backend-ci.yml`, not the deploy workflow). It matches the gate's `workflows`
+  filter, which covers every file under `.github/workflows/`, so the gate waits
+  for [Workflows CI](../.github/workflows/workflows-ci.yml) (#418): a pinned
+  `actionlint` over every workflow, with shellcheck over their `run:` scripts.
+  This is the intended behavior: the deploy workflow's correctness is validated
+  by `actionlint`, not by running a live Azure deploy from a fork PR. The same
+  goes for the other workflows that never run on a PR (`agent-release.yml`,
+  `extension-release.yml`, `website-deploy.yml`, `edge-key-expiry.yml`).
 - The gate's `backend` filter (`backend/**`, `backend-ci.yml`) and the deploy's
   trigger (`workflow_run: ["Backend CI"]`) reference the **same** Backend CI
   workflow, so a backend change is still fully gated on `main` before it can
@@ -187,7 +192,9 @@ launches the agent automatically once installed.
 ### Edge extension — Edge Add-ons store (`extension-v*`)
 
 [`extension-release.yml`](../.github/workflows/extension-release.yml) (#210)
-triggers on a push of an `extension-v*` tag. It builds the MV3 extension, zips
+triggers on a push of an `extension-v*` tag, or by hand on an existing tag
+(`workflow_dispatch`, see [*If the publish fails*](#extension-extension-v)).
+It builds the MV3 extension, zips
 `dist/` into `artifacts/anchor-extension-<version>.zip`, **always** uploads that
 ZIP as a workflow artifact, and — only when the Edge Add-ons submission config is
 present — publishes/updates the **single canonical** Edge listing via the Partner
@@ -247,7 +254,7 @@ entries are optional per fork — see [the client section](#client-tier).
 
 | Name | Used by | What it is / where to get it |
 | --- | --- | --- |
-| `AZURE_STATIC_WEB_APPS_API_TOKEN` | `dashboard-deploy.yml` | The Static Web App **deployment token**. Azure Portal → the Static Web App → *Manage deployment token* (or `az staticwebapp secrets list`). |
+| `AZURE_STATIC_WEB_APPS_API_TOKEN` | `dashboard-deploy.yml` | The Static Web App **deployment token**. Azure Portal → the Static Web App → *Manage deployment token* (or `az staticwebapp secrets list`). After setting or replacing it, start a **fresh** run with `gh workflow run dashboard-deploy.yml --ref main`. Re-running an earlier run does not pick the new token up: a re-run keeps the secrets the run was created with ([cli/cli#13522](https://github.com/cli/cli/issues/13522)). |
 | `PLINKLABS_PAGES_DEPLOY_TOKEN` | `website-deploy.yml` | A **scoped deploy credential** with write access to the `plinklabs.github.io` Pages repo, used to push the synced `anchor/` folder cross-repo (`GITHUB_TOKEN` only reaches this repo). Create a fine-grained PAT scoped to **only** `plinklabs/plinklabs.github.io` with **Contents: Read and write**, on a bot/service account, and paste the token as the secret value. (A deploy key is an alternative; the workflow uses a token via `actions/checkout`.) Rotate by regenerating the PAT and replacing the secret, then start a **fresh** run with `gh workflow run website-deploy.yml --ref main`. Re-running an earlier run does not pick the new token up: a re-run keeps the secrets the run was created with ([cli/cli#13522](https://github.com/cli/cli/issues/13522)). A fork publishing its own site points this at its own Pages repo and updates the `repository:` in `website-deploy.yml`. |
 | `GITHUB_TOKEN` | `dashboard-deploy.yml`, `ci-gate.yml` | Auto-provided by GitHub Actions; **no setup needed**. Listed only so the inventory is complete. |
 
@@ -370,7 +377,7 @@ nested configuration keys (`AzureAd__TenantId` → `AzureAd:TenantId`).
 | `AzureAd__ClientId` | `AddMicrosoftIdentityWebApi` | Production **API** app registration client ID. **Required.** |
 | `AzureAd__Audience` | JWT bearer validation | Usually `api://<api-client-id>`. **Required.** |
 | `AzureAd__ClientCredentials` (e.g. `__0__SourceType`, `__0__ClientSecret`) | OBO token acquisition for Graph directory search | **Required for the user-directory search feature** (the on-behalf-of exchange). Without it the OBO call fails at first use, not at startup. A client secret or certificate on the API app registration. |
-| `Cors__AllowedOrigins__0`, `__1`, … | CORS policy | The dashboard origin(s), e.g. the Static Web App URL. **Required** for the dashboard to call the API from the browser. |
+| `Cors__AllowedOrigins__0`, `__1`, … | CORS policy | The dashboard origin(s), e.g. the Static Web App URL, or the custom domain teachers use. **Required** for the dashboard to call the API from the browser. Their hosts are also always allowed in every session (#409), so the dashboard stays reachable while a session runs. |
 
 There is no SignalR setting: the API runs SignalR **in-process** (`AddSignalR()`)
 and never reads an Azure SignalR connection string, so Bicep provisions none.
@@ -402,7 +409,10 @@ release**.
      database, then publishes the CI-validated commit to the App Service. If
      the migration fails, nothing is deployed.
    - **dashboard** — a push under `dashboard/**` builds with the `vars.*`
-     dart-defines and uploads to the Static Web App.
+     dart-defines and uploads to the Static Web App. To deploy without a
+     dashboard change (after setting or rotating
+     `AZURE_STATIC_WEB_APPS_API_TOKEN`), run
+     `gh workflow run dashboard-deploy.yml --ref main`.
    - **website** — a push under `website/**` mirrors `website/` into the
      `plinklabs.github.io` repo's `anchor/` folder and pushes (idempotent; only
      `anchor/` is written). Needs `PLINKLABS_PAGES_DEPLOY_TOKEN`. To publish
@@ -445,13 +455,16 @@ re-push.
 
 **If the publish fails**, the run diagnoses which of the two causes it was and
 files an issue naming the stranded tag (#336) — a tag-triggered workflow produces
-no PR check, so nothing else would tell you. The packaged ZIP is always attached
-to the run, so recovery never needs a re-tag:
+no PR check, so nothing else would tell you. Recovery never needs a re-tag:
 
 | Cause | Signal | Recovery |
 | --- | --- | --- |
-| A prior submission is still **in review** | Probe authenticates fine; the store refuses the submission | Wait for review to clear, then `gh run rerun <run-id> --failed` |
-| **Credentials rejected** | Probe returns 401/403 | Rotate both credentials (above), then `gh run rerun <run-id> --failed` |
+| A prior submission is still **in review** | Probe authenticates fine; the store refuses the submission | Wait for review to clear, then re-run the failed job, which reuses the ZIP it already built: `gh run rerun <run-id> --failed` |
+| **Credentials rejected** | Probe returns 401/403 | Rotate both credentials (above), then start a **fresh** run on the tag: `gh workflow run extension-release.yml --ref extension-v<version>`. Not `gh run rerun`: a re-run keeps the secrets the run was created with ([cli/cli#13522](https://github.com/cli/cli/issues/13522)), so it retries the rejected credentials. |
+
+A manual run uses the workflow file as it is at the tag, so it works only for a
+tag cut after the `workflow_dispatch` trigger landed (#401). For an older tag,
+bump the version and cut a fresh tag.
 
 Reviews have taken **over two weeks**. If a stranded release waits long enough
 that newer work has landed, **bump the version and cut a fresh tag** rather than

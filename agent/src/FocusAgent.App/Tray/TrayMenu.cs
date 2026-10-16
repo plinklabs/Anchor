@@ -26,17 +26,23 @@ internal static class TrayMenu
 
     /// <summary>
     /// The handles a caller (real tray or self-test) needs after the menu is built:
-    /// the flyout to attach/show, the status item to keep updated, and the join item
-    /// to enable/disable as sessions come and go.
+    /// the flyout to attach/show, the status item to keep updated, the join item
+    /// to enable/disable as sessions come and go, and the Edge extension setup item
+    /// (#405) to show only while no force-install policy is in place (null when the
+    /// caller offers no setup action).
     /// </summary>
-    internal sealed record Handles(MenuFlyout Flyout, MenuFlyoutItem StatusItem, MenuFlyoutItem JoinItem);
+    internal sealed record Handles(
+        MenuFlyout Flyout,
+        MenuFlyoutItem StatusItem,
+        MenuFlyoutItem JoinItem,
+        MenuFlyoutItem? SetUpExtensionItem);
 
     /// <summary>
     /// Compose the brand-styled tray menu. Commands are wired to the supplied
     /// actions; the status text starts at <see cref="DefaultStatusText"/> and is
     /// refreshed by <see cref="TrayIconHost.UpdateStatus"/>.
     /// </summary>
-    public static Handles Build(Action onOpen, Action onJoinByCode, Action onQuit)
+    public static Handles Build(Action onOpen, Action onJoinByCode, Action onQuit, Action? onSetUpExtension = null)
     {
         var flyout = new MenuFlyout
         {
@@ -71,6 +77,16 @@ internal static class TrayMenu
         var joinItem = ActionItem(Loc.Get("Tray_JoinSession"), onJoinByCode);
         flyout.Items.Add(joinItem);
 
+        // #405: set up the Edge extension (the explanation + one UAC prompt) —
+        // offered here after a "not now", since startup stops asking. Neutral
+        // on-ink action; the tray hides it while a policy is in place.
+        MenuFlyoutItem? setUpExtensionItem = null;
+        if (onSetUpExtension is not null)
+        {
+            setUpExtensionItem = ActionItem(Loc.Get("Tray_SetUpExtension"), onSetUpExtension);
+            flyout.Items.Add(setUpExtensionItem);
+        }
+
         flyout.Items.Add(Separator());
 
         // #102: the true exit lives here (the main window's button only closes to
@@ -78,7 +94,7 @@ internal static class TrayMenu
         var exitItem = ActionItem(Loc.Get("Tray_ExitAnchor"), onQuit);
         flyout.Items.Add(exitItem);
 
-        return new Handles(flyout, statusItem, joinItem);
+        return new Handles(flyout, statusItem, joinItem, setUpExtensionItem);
     }
 
     // A neutral on-ink action item in Hanken body, on the ink presenter.
@@ -97,11 +113,21 @@ internal static class TrayMenu
     // fills its geometry with the Foreground brush, so it renders the same solid
     // magenta on every machine — unlike a font glyph, whose fill depends on the
     // fallback face (■ came out hollow at small sizes).
+    //
+    // The item template shows its icon in a 16×16 Viewbox (IconRoot, Stretch
+    // Uniform), which scales the icon until its desired size fills the box. A bare
+    // PathIcon's desired size ends at its geometry's far corner (4.5 + 7 = 11.5), so
+    // the Viewbox blew the square up by 16/11.5 to ~9.7 DIP and pushed it to the
+    // box's bottom-right (#416). Sizing the icon to the full 16×16 box makes that
+    // scale 1, so the geometry lands exactly where it's drawn.
+    private const double IconBoxSize = 16;
+
     private static PathIcon MagentaSparkIcon() => new()
     {
-        // A 7×7 square centred in the ~16px icon box; rounded just slightly to
-        // echo the DS 6px radius language without reading as a dot.
+        // A 7×7 square centred in the 16×16 icon box: (16 - 7) / 2 = 4.5 each side.
         Data = new RectangleGeometry { Rect = new Windows.Foundation.Rect(4.5, 4.5, 7, 7) },
+        Width = IconBoxSize,
+        Height = IconBoxSize,
         Foreground = Brush("PlinkMagentaBrush"),
     };
 

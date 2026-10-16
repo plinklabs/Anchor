@@ -15,7 +15,7 @@
 
 import { test, expect } from '../fixtures.ts';
 import { expectRedirectedToBlockPage } from '../asserts.ts';
-import { OFFLIST_HOST } from '../config.ts';
+import { DASHBOARD_HOST, OFFLIST_HOST } from '../config.ts';
 
 test('a tab already on an off-list site is redirected when the session starts', async ({
   ext,
@@ -42,6 +42,30 @@ test('a tab already on an off-list site is redirected when the session starts', 
   // The calm, student-facing block page shows its reassuring headline
   // (AE1 / #177) — not a punitive one.
   await expect(page.locator('h1')).toContainText("Let's stay on track");
+});
+
+// #409 — the teacher starts a session from the dashboard, with no bundle yet.
+// If their own browser enforces it, the open-tab scan must leave the dashboard
+// tab alone, or they can't pick a bundle or end the session. The off-list tab
+// next to it proves the scan ran.
+test('a tab already on the dashboard stays open when the session starts', async ({
+  ext,
+  backend,
+  staticServer,
+}) => {
+  await ext.configure();
+
+  const dashboard = await ext.context.newPage();
+  await dashboard.goto(staticServer.url(DASHBOARD_HOST, '/session'));
+  const offlist = await ext.context.newPage();
+  await offlist.goto(staticServer.url(OFFLIST_HOST, '/before-session'));
+
+  const classId = await backend.findClassId();
+  await backend.startSession(classId, []);
+
+  await expectRedirectedToBlockPage(offlist, ext, OFFLIST_HOST);
+  await expect(dashboard.locator('#where')).toContainText(DASHBOARD_HOST);
+  expect(dashboard.url()).not.toContain('block-page.html');
 });
 
 test('a tab already on an off-list site is redirected once the extension is back, when the session started while its service worker was stopped', async ({

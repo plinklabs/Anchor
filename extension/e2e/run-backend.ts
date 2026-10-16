@@ -10,7 +10,7 @@
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { BACKEND_PORT, BACKEND_PROJECT, E2E_DB_PATH } from './config.ts';
+import { BACKEND_PORT, BACKEND_PROJECT, DASHBOARD_ORIGIN, E2E_DB_PATH } from './config.ts';
 
 for (const suffix of ['', '-wal', '-shm']) {
   fs.rmSync(`${E2E_DB_PATH}${suffix}`, { force: true });
@@ -33,6 +33,10 @@ const child = spawn(
       ...process.env,
       ASPNETCORE_ENVIRONMENT: 'Development',
       ConnectionStrings__DefaultConnection: `Data Source=${E2E_DB_PATH}`,
+      // A deployment's dashboard origin, set the way App Service sets it. Index
+      // 1, so the Development appsettings' http://localhost:5173 (index 0)
+      // stays. Its host is always allowed in a session (#409).
+      Cors__AllowedOrigins__1: DASHBOARD_ORIGIN,
       // Keep the piped webServer / CI log readable — the EF command logger is
       // otherwise hundreds of SQL lines per run.
       'Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command': 'Warning',

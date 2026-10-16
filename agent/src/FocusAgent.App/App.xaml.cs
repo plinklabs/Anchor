@@ -45,6 +45,7 @@ public partial class App : Application
     private SessionHeartbeatService? _heartbeat;
     private ExtensionWitnessMonitor? _witnessMonitor;
     private ExtensionSelfRegistrar? _extensionRegistrar;
+    private ExtensionPolicyConsentLauncher? _extensionConsent;
     private InPrivateWitnessMonitor? _inPrivateMonitor;
     private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
@@ -100,6 +101,12 @@ public partial class App : Application
             return;
         }
 
+        if (Program.ShowTestExtensionConsent)
+        {
+            RunExtensionConsentSelfTest();
+            return;
+        }
+
         if (Program.VerifyDsTheme)
         {
             RunDsThemeVerification();
@@ -133,6 +140,10 @@ public partial class App : Application
             };
         }
 
+        // Startup order (#407): host → update check → config validation → crash
+        // handlers → services → main window + tray → connection. The update check
+        // goes right after the host, so anything that fails after it can still be
+        // repaired by the next release.
         try
         {
             var dispatcher = DispatcherQueue.GetForCurrentThread();
@@ -141,6 +152,19 @@ public partial class App : Application
 
             var logger = _host.Services.GetRequiredService<ILogger<App>>();
             logger.LogInformation("FocusAgent starting (unpackaged WinUI 3)");
+
+            // #224 + #407: start the Velopack auto-update cadence FIRST — a check
+            // now, then every Update:CheckInterval — before config validation and
+            // before any window, tray icon or connection. A release that crashes
+            // later in startup (#403: MainWindow's XAML; #247: an empty
+            // Backend:BaseUrl) has then still checked the feed and can pull the
+            // release that fixes it; started last, it never got the chance. Start()
+            // doesn't block (the check runs on the thread pool), no-ops unless this
+            // is a real Velopack install (dev runs / the e2e are untouched), and
+            // stages updates for the NEXT launch so a student is never interrupted
+            // mid-session.
+            _updateService = _host.Services.GetRequiredService<AgentUpdateService>();
+            _updateService.Start();
 
             // #247: fail fast with a readable message if this build shipped without
             // its per-deployment backend config. An empty Backend:BaseUrl would
@@ -153,12 +177,17 @@ public partial class App : Application
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             {
                 logger.LogCritical(e.ExceptionObject as Exception, "Unhandled exception");
+                // #407: the process is going down; run (or join) one update check
+                // first, and let it settle (bounded) before the runtime ends us.
+                var pendingUpdate = BeginFatalUpdateCheck();
                 // #248: a fatal exception on a background thread tears the process
                 // down; surface the copyable crash dialog (blocking, on this thread)
                 // before it exits, instead of dying silently. Suppressed in
                 // headless/dev runs so the e2e's intentional failures don't block.
                 if (!Program.SuppressCrashDialog && e.ExceptionObject is Exception fatal)
-                    CrashReporter.ReportBackgroundFatal(fatal);
+                    CrashReporter.ReportBackgroundFatal(fatal, pendingUpdate);
+                else
+                    CrashReporter.WaitForPendingUpdate(pendingUpdate);
             };
             TaskScheduler.UnobservedTaskException += (_, e) =>
                 logger.LogError(e.Exception, "Unobserved task exception");
@@ -175,14 +204,19 @@ public partial class App : Application
             // session. Reports only fire on a drop during a joined session.
             _witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
             _ = _witnessMonitor.StartAsync();
-            // #211: self-register the Edge extension. Write the per-user force-
-            // install policy, then (after the witness pipe is listening above so the
-            // check-in can be observed) wait the grace period and, if the extension
-            // never checks in, open the guided install. Fire-and-forget: the grace
-            // wait must never block startup, and a failure can only fall back to the
-            // guided window, never crash the agent.
-            _extensionRegistrar = _host.Services.GetRequiredService<ExtensionSelfRegistrar>();
-            _ = _extensionRegistrar.RegisterAndVerifyAsync();
+            // #211 + #405: self-register the Edge extension. With no force-install
+            // policy under HKLM or HKCU (and no earlier "not now"), explain the step
+            // and add the HKLM entry through one UAC prompt; then (the witness pipe
+            // is listening above, so the check-in can be observed) wait the grace
+            // period and, if the extension never checks in, open the guided install.
+            // Fire-and-forget: neither the question nor the grace wait may block
+            // startup, and a failure can only fall back to the guided window, never
+            // crash the agent.
+            var extensionRegistrar = _host.Services.GetRequiredService<ExtensionSelfRegistrar>();
+            var extensionConsent = _host.Services.GetRequiredService<ExtensionPolicyConsentLauncher>();
+            _extensionRegistrar = extensionRegistrar;
+            _extensionConsent = extensionConsent;
+            _ = extensionRegistrar.RegisterAndVerifyAsync();
             // #288: register the witness native-messaging host so Edge can launch
             // anchor-witness-host.exe when the extension connectNative()s — the link
             // the extension self-detection (the guided-install popup's success signal)
@@ -213,6 +247,8 @@ public partial class App : Application
             _focus = _host.Services.GetRequiredService<FocusSessionController>();
             _connection = _host.Services.GetRequiredService<ConnectionManager>();
 
+            CrashIfTestStage(TestCrashStage.Window);
+            CrashIfTestStage(TestCrashStage.Background);
             _mainWindow = new MainWindow(
                 _connection,
                 _coordinator,
@@ -227,7 +263,11 @@ public partial class App : Application
                 // letting the student type a code they can't act on.
                 canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null,
                 onQuit: ShutdownCleanly,
-                dispatcher: dispatcher);
+                dispatcher: dispatcher,
+                // #405: after a "not now", startup stops asking; the tray keeps
+                // offering the Edge extension setup while no policy is in place.
+                onSetUpExtension: OfferExtensionSetup,
+                canSetUpExtension: () => extensionRegistrar.FindPolicy() == ExtensionPolicyLocation.None);
             _tray.Show();
 
             _connection.StatusChanged += OnConnectionStatusChanged;
@@ -254,21 +294,29 @@ public partial class App : Application
                     // #110: drive tray → Quit headlessly. ShutdownCleanly touches
                     // the window and Application.Exit, so it must run on the UI
                     // thread — same marshalling as onCloseWindow above.
-                    onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly));
+                    onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly),
+                    // #405: let the headless e2e see where the Edge policy is and
+                    // answer the setup window like a click on Allow / Not now.
+                    extensionPolicy: () => new
+                    {
+                        location = extensionRegistrar.FindPolicy().ToString(),
+                        consentOpen = extensionConsent.IsOpen,
+                    },
+                    onAnswerExtensionConsent: allow => extensionConsent.TryAnswer(allow),
+                    // ...and pick the tray's "Set up the Edge extension…" item.
+                    onOfferExtensionSetup: OfferExtensionSetup);
                 _statusEndpoint.Start(port);
             }
-
-            // #224: start the Velopack auto-update cadence — a check shortly after
-            // startup, then every Update:CheckInterval. It no-ops unless this is a
-            // real Velopack install (so dev runs / the e2e are untouched), downloads
-            // deltas in the background, and stages them for the NEXT restart so a
-            // student is never interrupted mid-session. Resolved + started last so a
-            // slow first check can't delay the agent coming up.
-            _updateService = _host.Services.GetRequiredService<AgentUpdateService>();
-            _updateService.Start();
         }
         catch (Exception ex)
         {
+            // #407: whatever broke, give the update path one more go before the
+            // process goes away: join the startup check if it is still running, or
+            // run one (on a host-independent service if the host never came up).
+            // Both branches below keep the process alive, bounded, until it has
+            // settled, so a staged fix survives the dialog being closed at once.
+            var pendingUpdate = BeginFatalUpdateCheck();
+
             // #248: a headless/dev run (the e2e, a verify script) intentionally
             // exercises startup failure and must not block on a modal — keep the old
             // behaviour there: write the breadcrumb and rethrow so the process fails
@@ -276,6 +324,7 @@ public partial class App : Application
             if (Program.SuppressCrashDialog)
             {
                 CrashReporter.WriteLog(ex);
+                CrashReporter.WaitForPendingUpdate(pendingUpdate);
                 throw;
             }
 
@@ -283,8 +332,99 @@ public partial class App : Application
             // "opens and closes instantly". ReportStartupFatal keeps the message
             // pump alive behind the window (and exits when it's closed), so we must
             // NOT rethrow — that would tear the process down under the dialog.
-            CrashReporter.ReportStartupFatal(this, ex);
+            CrashReporter.ReportStartupFatal(this, ex, pendingUpdate);
         }
+    }
+
+    /// <summary>
+    /// The update check every startup/background fatal path runs before the process
+    /// goes away (#407). Joins the pass already in flight (typically the startup
+    /// check) or starts a fresh one; when the host never came up, builds a
+    /// stand-alone update service from the same config files first. Returns the
+    /// task to wait on, or null when no update path could be built. Never throws:
+    /// it runs inside crash handling.
+    /// </summary>
+    private Task? BeginFatalUpdateCheck()
+    {
+        try
+        {
+            _updateService ??= CreateStandaloneUpdateService();
+            return _updateService.CheckNowAsync();
+        }
+        catch (Exception ex)
+        {
+            // Likely the same broken config that took startup down. Keep the
+            // breadcrumb and carry on to the crash dialog without an update.
+            CrashReporter.WriteLog(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// An <see cref="AgentUpdateService"/> that needs no DI host (#407), for a crash
+    /// before or while the host is built. Reads the same config layers as
+    /// <see cref="BuildHost"/>, so a fork's agent still updates only from its own
+    /// Releases (#360); if even those can't be read, this throws and the crash path
+    /// goes on without an update.
+    /// </summary>
+    private static AgentUpdateService CreateStandaloneUpdateService()
+    {
+        var configuration = new ConfigurationBuilder();
+        AddAgentConfiguration(configuration, ResolveEnvironmentName());
+        var settings = configuration.Build().GetSection(UpdateSettings.SectionName).Get<UpdateSettings>()
+                       ?? new UpdateSettings();
+        return new AgentUpdateService(
+            CreateUpdateManager(settings, NullLogger<VelopackUpdateManager>.Instance),
+            Options.Create(settings));
+    }
+
+    /// <summary>
+    /// The production update manager over the configured GitHub Releases feed, or
+    /// the dev-only <see cref="ProbeUpdateManager"/> under <c>--test-update-probe</c>
+    /// (#407). Shared by the DI host and <see cref="CreateStandaloneUpdateService"/>.
+    /// </summary>
+    private static IAgentUpdateManager CreateUpdateManager(UpdateSettings settings, ILogger<VelopackUpdateManager> log) =>
+        Program.TestUpdateProbe
+            ? new ProbeUpdateManager()
+            : VelopackUpdateManager.ForGithub(settings, log);
+
+    /// <summary>The startup stages <c>--test-crash-at</c> can fail (#407). See Program.TestCrashAtArg.</summary>
+    private static class TestCrashStage
+    {
+        public const string Host = "host";
+        public const string Window = "window";
+        public const string Background = "background";
+    }
+
+    /// <summary>
+    /// Dev-only (#407): fail the startup stage named by <c>--test-crash-at</c>, so the
+    /// startup-crash e2e can prove a release that crashes there still runs its update
+    /// check. No-op on a normal launch. <c>background</c> throws on a fresh thread
+    /// (the AppDomain fatal path) and parks this one, so the rest of startup never
+    /// runs; the process ends when the background crash terminates it.
+    /// </summary>
+    private static void CrashIfTestStage(string stage)
+    {
+        if (!string.Equals(Program.TestCrashAt, stage, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // The startup check runs on the thread pool. Wait for it to have begun, so
+        // the probe file shows "check" before "crash-at:<stage>" whenever the check
+        // was started first, however slow the pool is. (Not for host: there is no
+        // update service yet, the fatal path starts the first check.)
+        if (Program.TestUpdateProbe && stage != TestCrashStage.Host)
+            ProbeUpdateManager.WaitForFirstCheck(TimeSpan.FromSeconds(10));
+        ProbeUpdateManager.Record($"crash-at:{stage}");
+
+        var crash = new InvalidOperationException(
+            $"Test-only startup crash at '{stage}' ({Program.TestCrashAtArg}).");
+        if (stage == TestCrashStage.Background)
+        {
+            var thread = new Thread(() => throw crash) { IsBackground = true, Name = "test-crash-at" };
+            thread.Start();
+            thread.Join();
+        }
+        throw crash;
     }
 
     private void OnConnectionStatusChanged(object? sender, ConnectionStatusSnapshot snapshot)
@@ -346,6 +486,17 @@ public partial class App : Application
         // Re-show through the AppWindow so a window previously hidden to the
         // tray (#102) comes back, not just a focus poke on a visible one.
         _mainWindow.ShowFromTray();
+    }
+
+    /// <summary>
+    /// The tray's "Set up the Edge extension…" (#405): bring an open setup window
+    /// to the front, or ask again, even after an earlier "not now".
+    /// </summary>
+    private void OfferExtensionSetup()
+    {
+        if (_extensionConsent?.TryActivate() == true) return;
+        if (_extensionRegistrar is { } registrar)
+            _ = Task.Run(() => registrar.OfferAgainAsync());
     }
 
     private void ShutdownCleanly()
@@ -708,8 +859,8 @@ public partial class App : Application
     /// (GuidedInstallVisualTests) and scripts/dev can screenshot its ink surface.
     /// The window's rendering path is production code; only the store-launch side
     /// effect is a synthetic no-op (so the self-test never spawns Edge). This
-    /// fallback is the primary path on a policy-locked box where the HKCU force-
-    /// install write is denied, so it's a load-bearing surface worth observing.
+    /// fallback is where every "not now" to the UAC step lands (#405), so it's a
+    /// load-bearing surface worth observing.
     /// </summary>
     private void RunGuidedInstallSelfTest()
     {
@@ -719,6 +870,27 @@ public partial class App : Application
 
         _guidedInstallSelfTestWindow = new Extension.GuidedInstallWindow(new NoOpStoreLauncher());
         Sessions.DialogWindowPositioner.ConfigureAndShow(_guidedInstallSelfTestWindow);
+    }
+
+    // Held by the --show-test-extension-consent path so the window outlives OnLaunched.
+    private Extension.ExtensionPolicyConsentWindow? _extensionConsentSelfTestWindow;
+
+    /// <summary>
+    /// Dev-only path (#405): show the real <see cref="Extension.ExtensionPolicyConsentWindow"/>
+    /// — the explanation before the Edge extension setup's UAC prompt — with no host
+    /// / WAM / hub bootstrap, and keep the process alive so the visual e2e
+    /// (ExtensionConsentVisualTests) can screenshot its ink surface. Nothing is
+    /// wired to its answer: no elevation can happen from this mode.
+    /// </summary>
+    private void RunExtensionConsentSelfTest()
+    {
+        // Like the other window self-tests: explicit shutdown so the process stays
+        // up after the window is shown; the observer kills it once it has captured.
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
+
+        _extensionConsentSelfTestWindow = new Extension.ExtensionPolicyConsentWindow();
+        Sessions.DialogWindowPositioner.ConfigureAndShow(
+            _extensionConsentSelfTestWindow, Sessions.DialogWindowPositioner.TallMaxHeightDip);
     }
 
     /// <summary>A store launcher that does nothing — the self-test renders the
@@ -905,20 +1077,12 @@ public partial class App : Application
 #endif
     }
 
-    private static IHost BuildHost(DispatcherQueue dispatcher, Func<IntPtr> windowHandleProvider)
+    /// <summary>
+    /// The agent's config layers, shared by <see cref="BuildHost"/> and the
+    /// host-independent update service of the crash path (#407).
+    /// </summary>
+    private static void AddAgentConfiguration(IConfigurationBuilder configuration, string environmentName)
     {
-        var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
-        {
-            // Select the per-deployment config layer (#203): a Debug build (dotnet
-            // run / the headless e2e) defaults to Development and keeps loading
-            // appsettings.Development.json; a Release build defaults to Production and
-            // loads the substituted appsettings.Production.json. An explicit
-            // DOTNET_ENVIRONMENT always wins. See ResolveEnvironmentName — set here
-            // because the generic host's own default (always Production) would
-            // silently skip the dev overrides for every local run.
-            EnvironmentName = ResolveEnvironmentName(),
-        });
-
         // Layer config: committed dev defaults (appsettings.json) first, then the
         // per-environment file. In Development that's the gitignored local override
         // (appsettings.Development.json); in a release build it's the committed
@@ -927,11 +1091,11 @@ public partial class App : Application
         // pack time so a fork's published agent targets its own backend + Entra,
         // and updates from its own Releases, without editing the committed dev
         // source (#203, #360).
-        builder.Configuration
+        configuration
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .AddJsonFile(
-                $"appsettings.{builder.Environment.EnvironmentName}.json",
+                $"appsettings.{environmentName}.json",
                 optional: true,
                 reloadOnChange: true);
 
@@ -947,8 +1111,27 @@ public partial class App : Application
         // appsettings files — a student can't repoint the agent via an env var.
         if (Program.InjectToken)
         {
-            builder.Configuration.AddEnvironmentVariables();
+            configuration.AddEnvironmentVariables();
         }
+    }
+
+    private static IHost BuildHost(DispatcherQueue dispatcher, Func<IntPtr> windowHandleProvider)
+    {
+        CrashIfTestStage(TestCrashStage.Host);
+
+        var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            // Select the per-deployment config layer (#203): a Debug build (dotnet
+            // run / the headless e2e) defaults to Development and keeps loading
+            // appsettings.Development.json; a Release build defaults to Production and
+            // loads the substituted appsettings.Production.json. An explicit
+            // DOTNET_ENVIRONMENT always wins. See ResolveEnvironmentName — set here
+            // because the generic host's own default (always Production) would
+            // silently skip the dev overrides for every local run.
+            EnvironmentName = ResolveEnvironmentName(),
+        });
+
+        AddAgentConfiguration(builder.Configuration, builder.Environment.EnvironmentName);
 
         builder.Services.AddOptions<BackendSettings>()
             .Bind(builder.Configuration.GetSection(BackendSettings.SectionName));
@@ -1036,26 +1219,44 @@ public partial class App : Application
             builder.Services.AddSingleton<IBrowserWindowScanner, BrowserWindowScanner>();
         builder.Services.AddSingleton<InPrivateWitnessMonitor>();
 
-        // #211 -- self-register the Edge extension. On first run the agent writes
-        // the per-user ExtensionInstallForcelist policy so Edge force-installs +
-        // pins the canonical listing (#210); the witness monitor's connected state
-        // is the success signal, and if the extension hasn't checked in within the
-        // grace period the guided-install window opens the store. The store launch
-        // and registry write are the real platform implementations; the registrar
-        // itself is pure (unit-tested).
-        builder.Services.AddSingleton<IExtensionPolicyStore>(
-            sp => new RegistryExtensionPolicyStore(
-                keyPathOverride: null,
-                sp.GetRequiredService<ILogger<RegistryExtensionPolicyStore>>()));
+        // #211 + #405 -- self-register the Edge extension. The agent reads the
+        // ExtensionInstallForcelist policy under HKLM and HKCU (no elevation); with
+        // no Anchor entry it explains the step in its own window, then adds the
+        // entry under HKLM through ONE UAC prompt (the system reg.exe, elevated) so
+        // Edge force-installs + pins the canonical listing (#210). "Not now", a
+        // declined prompt or a failed write fall back to the guided install. The
+        // witness monitor's connected state is the success signal. The registrar
+        // itself is pure (unit-tested); ExtensionPolicyComposition decides whether
+        // this launch may show a real UAC prompt at all: only a user-facing release
+        // launch (Production, no dev/test flag) — never `dotnet run` or the e2e.
+        builder.Services.AddOptions<ExtensionSettings>()
+            .Bind(builder.Configuration.GetSection(ExtensionSettings.SectionName));
+        var allowRealElevation = builder.Environment.IsProduction() && Program.AllowsRealElevation;
+        builder.Services.AddSingleton(sp => ExtensionPolicyComposition.Compose(
+            sp.GetRequiredService<IOptions<ExtensionSettings>>().Value,
+            allowRealElevation,
+            sp.GetRequiredService<ILoggerFactory>()));
         builder.Services.AddSingleton<IStoreLauncher>(
             sp => new EdgeStoreLauncher(sp.GetRequiredService<ILogger<EdgeStoreLauncher>>()));
-        builder.Services.AddSingleton(sp => new ExtensionSelfRegistrar(
-            sp.GetRequiredService<IExtensionPolicyStore>(),
-            // Success signal: the extension has connected over the witness link.
-            extensionCheckedIn: () => sp.GetRequiredService<ExtensionWitnessMonitor>().IsConnected,
-            // Fallback: open the guided one-click install on the UI thread.
-            showGuidedInstall: ct => sp.GetRequiredService<GuidedInstallLauncher>().ShowAsync(ct),
-            log: sp.GetRequiredService<ILogger<ExtensionSelfRegistrar>>()));
+        builder.Services.AddSingleton(sp => new ExtensionPolicyConsentLauncher(
+            sp.GetRequiredService<DispatcherQueue>()));
+        builder.Services.AddSingleton(sp =>
+        {
+            var parts = sp.GetRequiredService<ExtensionPolicyParts>();
+            return new ExtensionSelfRegistrar(
+                parts.Machine,
+                parts.User,
+                parts.ElevatedWriter,
+                parts.State,
+                // The agent's own explanation, before Windows' UAC prompt.
+                askConsent: ct => sp.GetRequiredService<ExtensionPolicyConsentLauncher>().AskAsync(ct),
+                // Success signal: the extension has connected over the witness link.
+                extensionCheckedIn: () => sp.GetRequiredService<ExtensionWitnessMonitor>().IsConnected,
+                // Fallback: open the guided one-click install on the UI thread.
+                showGuidedInstall: ct => sp.GetRequiredService<GuidedInstallLauncher>().ShowAsync(ct),
+                gracePeriod: parts.GracePeriod,
+                log: sp.GetRequiredService<ILogger<ExtensionSelfRegistrar>>());
+        });
         builder.Services.AddSingleton(sp => new GuidedInstallLauncher(
             sp.GetRequiredService<DispatcherQueue>(),
             sp.GetRequiredService<IStoreLauncher>()));
@@ -1065,7 +1266,7 @@ public partial class App : Application
         // + interval) and the install/enabled gating, and downloads + stages deltas
         // for the next restart. Both are no-ops on a non-install (dev run / e2e).
         builder.Services.AddSingleton<IAgentUpdateManager>(sp =>
-            VelopackUpdateManager.ForGithub(
+            CreateUpdateManager(
                 sp.GetRequiredService<IOptions<UpdateSettings>>().Value,
                 sp.GetRequiredService<ILogger<VelopackUpdateManager>>()));
         builder.Services.AddSingleton<AgentUpdateService>();
