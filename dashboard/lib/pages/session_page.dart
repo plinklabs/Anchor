@@ -150,7 +150,7 @@ class _SessionPageState extends State<SessionPage> {
     } catch (e) {
       if (_isNotYours(e)) _showNotYours();
       // Otherwise non-fatal: the live event stream still works without the
-      // detail block. The join-code panel just won't render.
+      // detail block. The join code just won't show.
     }
   }
 
@@ -498,14 +498,14 @@ class _SessionPageState extends State<SessionPage> {
         ? AppLocalizations.of(context).sessionHeadlineFallback
         : className;
 
+    // The join code shows in the header while the session is live (#422).
+    final String? joinCode = !_ended && (_detail?.joinCode.isNotEmpty ?? false)
+        ? _detail!.joinCode
+        : null;
+
     // The instrument panels above the feed — only what applies to the session's
     // current state. The feed itself is the hero and fills the rest below.
     final List<Widget> panels = <Widget>[
-      if (!_ended && (_detail?.joinCode.isNotEmpty ?? false))
-        _JoinCodePanel(
-          code: _detail!.joinCode,
-          onCopy: () => _copyJoinCode(_detail!.joinCode),
-        ),
       if (!_ended && _pendingRequests.isNotEmpty)
         _PendingRequestsPanel(
           requests: _pendingRequests,
@@ -537,36 +537,58 @@ class _SessionPageState extends State<SessionPage> {
         _SessionSummaryPanel(summaries: _detail!.summaries),
     ];
 
+    // The page scrolls as a whole (#422). The panels stack to more than a short
+    // window holds; in a plain column they squeezed the feed to nothing and
+    // clipped the last panel, with nothing to scroll it back into view.
     return Scaffold(
       backgroundColor: PlinkColors.paper,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          _SessionHeader(
-            headline: headline,
-            spec: _titleText(AppLocalizations.of(context)),
-            ended: _ended,
-            ending: _ending,
-            onLeave: _confirmExit,
-            onEnd: _endSession,
-            headlineStyle: text.displaySmall,
+      body: CustomScrollView(
+        slivers: <Widget>[
+          SliverToBoxAdapter(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                _SessionHeader(
+                  headline: headline,
+                  spec: _titleText(AppLocalizations.of(context)),
+                  ended: _ended,
+                  ending: _ending,
+                  joinCode: joinCode,
+                  onLeave: _confirmExit,
+                  onEnd: _endSession,
+                  onCopyCode: _copyJoinCode,
+                  headlineStyle: text.displaySmall,
+                ),
+                const _Hairline(),
+                if (_connecting)
+                  _StatusLine(AppLocalizations.of(context).sessionConnecting),
+                if (!_ended &&
+                    (_link == SessionHubLinkState.reconnecting ||
+                        _link == SessionHubLinkState.disconnected))
+                  _ConnectionLine(state: _link!, onReconnect: _restartHub),
+                if (_joinError != null) _ErrorBanner(_joinError!),
+                if (_error != null) _ErrorBanner(_error!),
+                for (final Widget panel in panels) ...<Widget>[
+                  panel,
+                  const _Hairline(),
+                ],
+                _PanelLabel(AppLocalizations.of(context).sessionActivity),
+              ],
+            ),
           ),
-          const _Hairline(),
-          if (_connecting)
-            _StatusLine(AppLocalizations.of(context).sessionConnecting),
-          if (!_ended &&
-              (_link == SessionHubLinkState.reconnecting ||
-                  _link == SessionHubLinkState.disconnected))
-            _ConnectionLine(state: _link!, onReconnect: _restartHub),
-          if (_joinError != null) _ErrorBanner(_joinError!),
-          if (_error != null) _ErrorBanner(_error!),
-          for (final Widget panel in panels) ...<Widget>[
-            panel,
-            const _Hairline(),
-          ],
-          // The live feed — the instrument's read-out, filling the rest.
-          _PanelLabel(AppLocalizations.of(context).sessionActivity),
-          Expanded(child: _Feed(events: _events)),
+          // The live feed — the instrument's read-out, filling the rest of the
+          // window, but never shorter than [_feedMinHeight]: on a short window
+          // the page scrolls down to it instead. Without a scroll body the
+          // sliver is the larger of the space left and its child's height,
+          // which the SizedBox states without asking the list (a list can't
+          // measure itself). The feed's list scrolls inside that height.
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: SizedBox(
+              height: _feedMinHeight,
+              child: _Feed(events: _events),
+            ),
+          ),
         ],
       ),
     );
@@ -576,6 +598,10 @@ class _SessionPageState extends State<SessionPage> {
 /// Horizontal page gutter — keeps the live-session content on the same
 /// flush-left margin as the shell's eyebrow and app-bar (the editorial column).
 const double _gutter = PlinkSpacing.s6; // 32
+
+/// The least height the live feed gets (#422): room for a handful of event
+/// rows when the panels above it already fill a short window.
+const double _feedMinHeight = 320;
 
 /// A full-width 1px instrument rule — the system separates with hairlines,
 /// never shadows.
@@ -640,17 +666,19 @@ TextStyle _monoSpec(Color color, double size) => TextStyle(
 );
 
 /// The header: leave-affordance, the session identity (class name + the
-/// date/time spec), the liveness mark, and End session. The shell already
-/// carries the "Live session" eyebrow above this, so the page leads with the
-/// class it belongs to.
+/// date/time spec), the liveness mark, the join code while the session is live,
+/// and End session. The shell already carries the "Live session" eyebrow above
+/// this, so the page leads with the class it belongs to.
 class _SessionHeader extends StatelessWidget {
   const _SessionHeader({
     required this.headline,
     required this.spec,
     required this.ended,
     required this.ending,
+    required this.joinCode,
     required this.onLeave,
     required this.onEnd,
+    required this.onCopyCode,
     required this.headlineStyle,
   });
 
@@ -658,12 +686,61 @@ class _SessionHeader extends StatelessWidget {
   final String spec;
   final bool ended;
   final bool ending;
+
+  /// The code students join with; null while there is none to show.
+  final String? joinCode;
   final VoidCallback onLeave;
   final VoidCallback onEnd;
+  final void Function(String code) onCopyCode;
   final TextStyle? headlineStyle;
 
   @override
   Widget build(BuildContext context) {
+    final String? code = joinCode;
+    final Widget identity = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        // The liveness spec line: the ping motif + a LIVE/ENDED badge, then
+        // the date/time spec in mono.
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (!ended) ...<Widget>[
+              // Static ping — the ping motif marks liveness without an ambient
+              // loop, so the page stays calm (and tests settle); the magenta
+              // badge carries the live signal (matches AD3).
+              const Ping(size: 16, mode: PingMode.static),
+              const SizedBox(width: PlinkSpacing.s2),
+              PlinkBadge(
+                AppLocalizations.of(context).badgeLive,
+                variant: BadgeVariant.spark,
+              ),
+            ] else
+              PlinkBadge(
+                AppLocalizations.of(context).badgeEnded,
+                variant: BadgeVariant.outline,
+              ),
+            const SizedBox(width: PlinkSpacing.s3),
+            Flexible(
+              child: Text(
+                spec,
+                style: _monoLabel(PlinkColors.ink60),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: PlinkSpacing.s2),
+        Text(
+          headline,
+          style: headlineStyle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         PlinkSpacing.s3,
@@ -682,47 +759,28 @@ class _SessionHeader extends StatelessWidget {
           ),
           const SizedBox(width: PlinkSpacing.s2),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                // The liveness spec line: the ping motif + a LIVE/ENDED badge,
-                // then the date/time spec in mono.
-                Row(
-                  children: <Widget>[
-                    if (!ended) ...<Widget>[
-                      // Static ping — the ping motif marks liveness without an
-                      // ambient loop, so the page stays calm (and tests settle);
-                      // the magenta badge carries the live signal (matches AD3).
-                      const Ping(size: 16, mode: PingMode.static),
-                      const SizedBox(width: PlinkSpacing.s2),
-                      PlinkBadge(
-                        AppLocalizations.of(context).badgeLive,
-                        variant: BadgeVariant.spark,
+            child: code == null
+                ? identity
+                // The join code shares the row, centred between the class and
+                // End session (#422). A Wrap, not a Row: on a narrow window
+                // the code drops under the title instead of overflowing the
+                // row, like the classes page's rows (#151).
+                : Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    runSpacing: PlinkSpacing.s3,
+                    children: <Widget>[
+                      // The gap to the code, as padding so a wrapped code
+                      // stays flush left under the title.
+                      Padding(
+                        padding: const EdgeInsets.only(right: PlinkSpacing.s4),
+                        child: identity,
                       ),
-                    ] else
-                      PlinkBadge(
-                        AppLocalizations.of(context).badgeEnded,
-                        variant: BadgeVariant.outline,
-                      ),
-                    const SizedBox(width: PlinkSpacing.s3),
-                    Flexible(
-                      child: Text(
-                        spec,
-                        style: _monoLabel(PlinkColors.ink60),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: PlinkSpacing.s2),
-                Text(
-                  headline,
-                  style: headlineStyle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
+                      _JoinCode(code: code, onCopy: () => onCopyCode(code)),
+                      // An empty last child: spaceBetween then leaves as much
+                      // room after the code as before it, which centres it.
+                      const SizedBox.shrink(),
+                    ],
+                  ),
           ),
           if (!ended) ...<Widget>[
             const SizedBox(width: PlinkSpacing.s4),
@@ -1403,63 +1461,59 @@ class _LiveBundlePanel extends StatelessWidget {
   }
 }
 
-class _JoinCodePanel extends StatelessWidget {
-  const _JoinCodePanel({required this.code, required this.onCopy});
+/// The join code, in the header row (#422) rather than a band of its own, so
+/// the panels start higher up the window.
+class _JoinCode extends StatelessWidget {
+  const _JoinCode({required this.code, required this.onCopy});
 
   final String code;
   final VoidCallback onCopy;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        _gutter,
-        PlinkSpacing.s4,
-        _gutter,
-        PlinkSpacing.s4,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  AppLocalizations.of(context).sessionJoinCode,
-                  style: _monoLabel(PlinkColors.ink60),
-                ),
-                const SizedBox(height: PlinkSpacing.s2),
-                Text(
-                  // Big enough to be legible across a classroom — the fallback
-                  // path for any student who didn't get the roster-based push
-                  // (substitute, transferred class, etc). Mono tabular so the
-                  // glyphs sit on an even grid.
-                  code,
-                  style: _monoSpec(
-                    PlinkColors.ink,
-                    PlinkType.display3,
-                  ).copyWith(fontWeight: FontWeight.w700, letterSpacing: 8),
-                ),
-                const SizedBox(height: PlinkSpacing.s2),
-                // The teacher isn't held to the session they start (#410).
-                // Taking part is their choice, with this same code.
-                Text(
-                  AppLocalizations.of(context).sessionTakePartHint,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: PlinkColors.ink60),
-                ),
-              ],
-            ),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                AppLocalizations.of(context).sessionJoinCode,
+                style: _monoLabel(PlinkColors.ink60),
+              ),
+              const SizedBox(height: PlinkSpacing.s2),
+              Text(
+                // Big enough to be legible across a classroom — the fallback
+                // path for any student who didn't get the roster-based push
+                // (substitute, transferred class, etc). Mono tabular so the
+                // glyphs sit on an even grid.
+                code,
+                style: _monoSpec(
+                  PlinkColors.ink,
+                  PlinkType.display3,
+                ).copyWith(fontWeight: FontWeight.w700, letterSpacing: 8),
+              ),
+              const SizedBox(height: PlinkSpacing.s2),
+              // The teacher isn't held to the session they start (#410).
+              // Taking part is their choice, with this same code.
+              Text(
+                AppLocalizations.of(context).sessionTakePartHint,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: PlinkColors.ink60),
+              ),
+            ],
           ),
-          IconButton(
-            tooltip: AppLocalizations.of(context).sessionCopyCode,
-            color: PlinkColors.ink,
-            icon: const Icon(Icons.copy),
-            onPressed: onCopy,
-          ),
-        ],
-      ),
+        ),
+        IconButton(
+          tooltip: AppLocalizations.of(context).sessionCopyCode,
+          color: PlinkColors.ink,
+          icon: const Icon(Icons.copy),
+          onPressed: onCopy,
+        ),
+      ],
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
@@ -8,6 +9,7 @@ import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/main.dart';
 import 'package:anchor_dashboard/realtime/session_hub_client.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -35,7 +37,10 @@ import 'support/e2e_binding.dart';
 //   - a failed join, approval, bundle change or End reads as a sentence, never
 //     the raw exception (#383),
 //   - the join code says how the teacher takes part in the session themselves
-//     (#410).
+//     (#410),
+//   - on a short window the page scrolls to every panel and the feed, and the
+//     join code sits in the header row, dropping under the title on a narrow
+//     one (#422).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -315,13 +320,16 @@ typedef _Harness = ({
 /// Boots the real app authenticated, then drives the real Home → Start-session
 /// navigation to land on the live session view. Returns the fakes so the test
 /// can push events and inspect recorded calls. [joinError] is what the hub's
-/// JoinSession throws when the page opens.
+/// JoinSession throws when the page opens; [roster] replaces the one-student
+/// class.
 Future<_Harness> _bootToLiveSession(
   WidgetTester tester, {
   Object? joinError,
+  List<SessionParticipantInfo>? roster,
 }) async {
   final hub = _StubHub()..joinError = joinError;
   final sessions = _FakeSessions();
+  if (roster != null) sessions.roster = roster;
   final bundles = _FakeBundles();
   final tokens = AuthTokenStore()
     ..setSession(
@@ -848,5 +856,218 @@ void main() {
       expectNoRawError();
       expect(tester.takeException(), isNull);
     });
+  });
+
+  group('the live view on a short, a tall and a narrow window (#422)', () {
+    void window(WidgetTester tester, Size size) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    }
+
+    // A laptop at 150% with the browser's chrome and the taskbar: about
+    // 1280x600 logical px is left for the page, as the issue reports.
+    const short = Size(1280, 600);
+
+    final sixStudents = [
+      for (final name in ['Ada', 'Bo', 'Cas', 'Dina', 'Eli', 'Fien'])
+        _participant(name, ParticipantLiveState.joined),
+    ];
+
+    /// The part of the window the page scrolls in, under the shell's chrome.
+    Rect page(WidgetTester tester) =>
+        tester.getRect(find.byType(CustomScrollView));
+
+    bool inView(WidgetTester tester, Finder finder) {
+      final rect = tester.getRect(finder);
+      return rect.top >= page(tester).top && rect.bottom <= page(tester).bottom;
+    }
+
+    /// Turns the mouse wheel by [dy] over the page's left gutter, the way a
+    /// teacher scrolls. The roster's list sits inside the gutter, and the feed
+    /// holds too few events here to scroll on its own, so the page scrolls.
+    Future<void> wheel(WidgetTester tester, double dy) async {
+      final pointer = TestPointer(1, PointerDeviceKind.mouse)
+        ..hover(page(tester).bottomLeft + const Offset(PlinkSpacing.s3, -40));
+      await tester.sendEventToBinding(pointer.scroll(Offset(0, dy)));
+      await tester.pumpAndSettle();
+    }
+
+    /// Wheels down a notch at a time until [finder] is in view, or gives up.
+    Future<void> wheelUntilInView(WidgetTester tester, Finder finder) async {
+      for (var i = 0; i < 30 && !inView(tester, finder); i++) {
+        await wheel(tester, 80);
+      }
+    }
+
+    testWidgets(
+      'every panel and the feed can be scrolled to on a short window',
+      (tester) async {
+        window(tester, short);
+        final h = await _bootToLiveSession(tester, roster: sixStudents);
+        final now = DateTime(2026, 6, 12, 9, 20);
+        h.sessions.pending = [
+          UnblockRequestSummary(
+            host: 'chat.example.com',
+            count: 1,
+            firstRequestedAt: now,
+            latestRequestedAt: now,
+            requesters: [
+              UnblockRequestRequester(
+                userId: 'Ada',
+                displayName: 'Ada',
+                requestedAt: now,
+              ),
+            ],
+          ),
+        ];
+        h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+        await tester.pumpAndSettle();
+
+        // The panels stack to more than the window holds, with the real
+        // fonts. Nothing overflows: the page scrolls instead.
+        expect(find.text('Pending requests'), findsOneWidget);
+        expect(find.text('Students (6/6 in session)'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        final chip = find.widgetWithText(FilterChip, 'Math');
+        expect(inView(tester, chip), isFalse, reason: 'below the window');
+
+        // The teacher scrolls down to the allowed bundles and toggles one.
+        await wheelUntilInView(tester, chip);
+        expect(inView(tester, chip), isTrue);
+        await tester.tap(chip);
+        await tester.pumpAndSettle();
+        expect(h.sessions.updateBundlesCalls, [
+          ['b1'],
+        ]);
+        expect(tester.widget<FilterChip>(chip).selected, isTrue);
+
+        // Further down, the feed: an event lands in it, in view.
+        h.hub.emit('HeartbeatLost', {'userId': 'Ada'});
+        await tester.pumpAndSettle();
+        // Not skipping offstage: while the feed is still wholly below the
+        // window the finder would otherwise not see its rows at all.
+        final event = find.text('HeartbeatLost', skipOffstage: false);
+        expect(event, findsOneWidget);
+        await wheelUntilInView(tester, event);
+        expect(inView(tester, event), isTrue);
+        // At the end of the page the feed has room for several more rows
+        // under its label, not the sliver the panels used to leave it.
+        await wheel(tester, 5000);
+        final activity = find.text('Activity');
+        expect(inView(tester, activity), isTrue);
+        expect(
+          page(tester).bottom - tester.getRect(activity).bottom,
+          greaterThanOrEqualTo(300),
+        );
+
+        // The ended view holds at this height too.
+        h.hub.emit('SessionEnded', {'sessionId': _sessionId});
+        await tester.pumpAndSettle();
+        expect(
+          find.text('Session ended — event stream stopped.'),
+          findsOneWidget,
+        );
+        expect(find.text('ABC123'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'on a tall window the feed still fills the rest, with nothing to scroll',
+      (tester) async {
+        // The default 1400x1000 window: the panels leave the feed more than
+        // its least height, so it takes all of it, as before #422.
+        await _bootToLiveSession(tester);
+
+        final feed = tester.getRect(
+          find
+              .ancestor(
+                of: find.text('Waiting for events…'),
+                matching: find.byType(SizedBox),
+              )
+              .first,
+        );
+        expect(feed.bottom, page(tester).bottom);
+        expect(feed.height, greaterThan(320));
+        final pageScroll = tester
+            .state<ScrollableState>(
+              find
+                  .descendant(
+                    of: find.byType(CustomScrollView),
+                    matching: find.byType(Scrollable),
+                  )
+                  .first,
+            )
+            .position;
+        expect(pageScroll.maxScrollExtent, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'the join code sits in the header row, between the class and End session',
+      (tester) async {
+        window(tester, short);
+        await _bootToLiveSession(tester);
+
+        final label = tester.getRect(find.text('Join code'));
+        final code = tester.getRect(find.text('ABC123'));
+        // The whole button, tap-target padding and all: the code's block ends
+        // there.
+        final copy = tester.getRect(
+          find.widgetWithIcon(IconButton, Icons.copy),
+        );
+        final spec = tester.getRect(find.text('Session 2026-06-12 09:15'));
+        final headline = tester.getRect(find.text('Math 101'));
+        final end = tester.getRect(
+          find.widgetWithText(OutlinedButton, 'End session'),
+        );
+
+        // Level with the class name, not a band of its own under the header.
+        expect(label.top, lessThan(headline.bottom));
+        expect(code.top, lessThan(headline.bottom));
+        expect(code.left, label.left);
+        // Between the class and End session, and centred between them.
+        final classRight = math.max(spec.right, headline.right);
+        expect(code.left, greaterThan(classRight));
+        expect(copy.right, lessThanOrEqualTo(end.left));
+        expect(
+          (code.left + copy.right) / 2,
+          moreOrLessEquals((classRight + end.left) / 2, epsilon: 1),
+        );
+        // The panels start under the header row.
+        expect(
+          tester.getTopLeft(find.text('Students (1/1 in session)')).dy,
+          greaterThan(copy.bottom),
+        );
+
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'on a narrow window the join code drops under the title instead of overflowing',
+      (tester) async {
+        window(tester, const Size(800, 800));
+        await _bootToLiveSession(tester);
+
+        final code = tester.getRect(find.text('ABC123'));
+        final label = tester.getRect(find.text('Join code'));
+        final copy = tester.getRect(find.byTooltip('Copy code'));
+        final headline = tester.getRect(find.text('Math 101'));
+        final end = tester.getRect(
+          find.widgetWithText(OutlinedButton, 'End session'),
+        );
+
+        // Under the title, flush left with it; End session stays up top.
+        expect(label.top, greaterThan(headline.bottom));
+        expect(code.left, headline.left);
+        expect(end.top, lessThan(headline.bottom));
+        expect(copy.right, lessThanOrEqualTo(end.left));
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }
