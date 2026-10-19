@@ -17,6 +17,14 @@ public interface IFocusOverlay
     void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName);
 
     /// <summary>
+    /// Show the overlay for an Edge that is paused because its extension is off
+    /// (#427): say why, offer <paramref name="prompt"/>'s way to switch the
+    /// extension back on, and list <paramref name="allowedRules"/> (the other
+    /// allowed apps) to carry on with. Idempotent like <see cref="Show"/>.
+    /// </summary>
+    void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt);
+
+    /// <summary>
     /// Hide the overlay (kept alive for fast re-show). Safe to call when
     /// already hidden.
     /// </summary>
@@ -29,3 +37,15 @@ public interface IFocusOverlay
     /// </summary>
     void Close();
 }
+
+/// <summary>
+/// The "turn the extension back on" action the paused-Edge overlay offers (#427).
+/// </summary>
+/// <param name="Browser">The paused browser, brought forward once the repair window is open.</param>
+/// <param name="RepairWindow">How long the browser opens for.</param>
+/// <param name="TurnBackOn">
+/// Opens the repair window. Called before <paramref name="Browser"/> is brought
+/// forward, so its foreground change already finds it allowed. Returns false when
+/// the browser isn't paused any more (the extension came back meanwhile).
+/// </param>
+public sealed record BrowserPausedPrompt(AllowedAppRule Browser, TimeSpan RepairWindow, Func<bool> TurnBackOn);

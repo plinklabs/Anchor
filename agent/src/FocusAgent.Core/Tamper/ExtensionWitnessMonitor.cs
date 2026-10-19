@@ -10,10 +10,12 @@ namespace FocusAgent.Core.Tamper;
 /// is joined, the student disabled/removed the extension (or closed the browser)
 /// mid-lesson, which we surface as <see cref="TamperKinds.ExtensionDisabled"/>.
 ///
-/// Soft enforcement (design §5.4): we can't prevent it, only make it visible to
-/// the teacher. Reporting is gated on an active <em>joined</em> session — the hub
-/// rejects events from a non-participant, and a drop outside a session is just
-/// the student closing their browser, not tampering.
+/// Reporting is gated on an active <em>joined</em> session — the hub rejects
+/// events from a non-participant, and a drop outside a session is just the
+/// student closing their browser, not tampering. The report makes the drop
+/// visible to the teacher; <see cref="ExtensionGuard"/> listens to
+/// <see cref="ConnectionChanged"/> and pauses Edge while the extension stays
+/// gone (#427).
 /// </summary>
 public sealed class ExtensionWitnessMonitor : IAsyncDisposable
 {
@@ -24,6 +26,7 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
     private readonly object _gate = new();
 
     private bool _connected;
+    private bool _hasConnected;
 
     /// <param name="transport">The witness link surfacing connect/disconnect.</param>
     /// <param name="reporter">Sends the TamperDetected event.</param>
@@ -61,10 +64,37 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
         get { lock (_gate) return _connected; }
     }
 
+    /// <summary>
+    /// True once the extension's witness has connected at least once since the
+    /// agent started — i.e. this device has the extension. A device where it never
+    /// connected (not installed yet, or the host isn't registered) is one the agent
+    /// can't tell "switched off" from "never there", so the Edge pause (#427)
+    /// leaves it alone.
+    /// </summary>
+    public bool HasConnected
+    {
+        get { lock (_gate) return _hasConnected; }
+    }
+
+    /// <summary>
+    /// Raised after each genuine transition of <see cref="IsConnected"/>: true when
+    /// the witness comes up, false when it drops. Raised on the transport's thread,
+    /// in or out of a session.
+    /// </summary>
+    public event EventHandler<bool>? ConnectionChanged;
+
     private void OnConnected(object? sender, EventArgs e)
     {
-        lock (_gate) _connected = true;
+        bool changed;
+        lock (_gate)
+        {
+            changed = !_connected;
+            _connected = true;
+            _hasConnected = true;
+        }
         _log.LogInformation("Extension witness connected.");
+        if (changed)
+            RaiseConnectionChanged(true);
     }
 
     private void OnDisconnected(object? sender, EventArgs e)
@@ -78,6 +108,8 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
             _connected = false;
         }
 
+        RaiseConnectionChanged(false);
+
         var sessionId = _activeSession();
         if (sessionId is null)
         {
@@ -89,6 +121,20 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
             "Extension witness dropped during session {SessionId} — reporting {Kind}.",
             sessionId, TamperKinds.ExtensionDisabled);
         _ = ReportAsync(sessionId.Value);
+    }
+
+    private void RaiseConnectionChanged(bool connected)
+    {
+        try
+        {
+            ConnectionChanged?.Invoke(this, connected);
+        }
+        catch (Exception ex)
+        {
+            // A subscriber's failure must not break the witness loop or skip the
+            // tamper report below.
+            _log.LogWarning(ex, "A witness ConnectionChanged subscriber threw (connected={Connected})", connected);
+        }
     }
 
     private async Task ReportAsync(Guid sessionId)

@@ -1,6 +1,7 @@
 using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
+using FocusAgent.Core.Tamper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -11,7 +12,9 @@ namespace FocusAgent.Core.Focus;
 /// Glue between the session lifecycle and the foreground-enforcement stack.
 /// Starts the watcher on <see cref="SessionCoordinator.SessionJoined"/>,
 /// stops it on <see cref="SessionCoordinator.SessionLeft"/>, classifies each
-/// change against the allowlist, drives the enforcer, and reports.
+/// change against the allowlist, drives the enforcer, and reports. While the
+/// <see cref="ExtensionGuard"/> has Edge paused (its extension is off, #427),
+/// Edge is handled like an off-list app on top of the allowlist.
 /// </summary>
 public sealed class FocusSessionController : IAsyncDisposable
 {
@@ -24,6 +27,7 @@ public sealed class FocusSessionController : IAsyncDisposable
     private readonly SessionSettings _settings;
     private readonly TimeProvider _clock;
     private readonly ILogger<FocusSessionController> _log;
+    private readonly ExtensionGuard? _guard;
     private readonly object _gate = new();
 
     private Guid? _activeSessionId;
@@ -41,7 +45,8 @@ public sealed class FocusSessionController : IAsyncDisposable
         IFocusOverlay overlay,
         IOptions<SessionSettings> settings,
         TimeProvider? clock = null,
-        ILogger<FocusSessionController>? log = null)
+        ILogger<FocusSessionController>? log = null,
+        ExtensionGuard? guard = null)
     {
         _sessions = sessions;
         _watcher = watcher;
@@ -52,12 +57,23 @@ public sealed class FocusSessionController : IAsyncDisposable
         _settings = settings.Value;
         _clock = clock ?? TimeProvider.System;
         _log = log ?? NullLogger<FocusSessionController>.Instance;
+        _guard = guard;
 
         _sessions.SessionJoined += OnSessionJoined;
         _sessions.SessionLeft += OnSessionLeft;
         _sessions.SessionAllowlistUpdated += OnAllowlistUpdated;
         _watcher.Changed += OnForegroundChanged;
+        if (_guard is not null)
+            _guard.BrowserPaused += OnBrowserPaused;
     }
+
+    /// <summary>
+    /// The student's "turn the extension back on" action on the paused-Edge
+    /// overlay (#427): opens Edge for the guard's repair window. Returns false
+    /// when Edge isn't paused. Also driven by the dev status endpoint so the
+    /// headless e2e can take the action without clicking the overlay.
+    /// </summary>
+    public bool TurnExtensionBackOn() => _guard?.BeginRepair() ?? false;
 
     public Guid? ActiveSessionId
     {
@@ -224,6 +240,70 @@ public sealed class FocusSessionController : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// The guard just paused Edge (#427). The foreground hook only fires on focus
+    /// changes, so an Edge window already on screen — typically the one the
+    /// student switched the extension off in — would stay usable until they
+    /// clicked away. Minimize every open Edge window now, like the session-start
+    /// sweep does for off-list apps, and tell the student what happened.
+    /// </summary>
+    private void OnBrowserPaused(object? sender, EventArgs e)
+    {
+        Guid? sessionId;
+        AllowlistMatcher? matcher;
+        lock (_gate)
+        {
+            sessionId = _activeSessionId;
+            matcher = _matcher;
+        }
+        if (sessionId is null || matcher is null || _guard is null)
+            return;
+
+        IReadOnlyList<OpenWindow> open;
+        try
+        {
+            open = _windows.GetOpenWindows();
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed to enumerate open windows to pause the browser");
+            open = Array.Empty<OpenWindow>();
+        }
+
+        var minimized = 0;
+        foreach (var window in open)
+        {
+            if (!_guard.IsBrowser(window.App))
+                continue;
+            try
+            {
+                _enforcer.Minimize(window.Handle);
+                minimized++;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to minimize a {ProcessName} window to pause it", window.App.ProcessName);
+            }
+        }
+
+        _log.LogWarning(
+            "Paused the browser in session {SessionId}: minimized {Minimized} window(s) until its extension reconnects",
+            sessionId, minimized);
+        ShowBrowserPausedOverlay(matcher);
+    }
+
+    private void ShowBrowserPausedOverlay(AllowlistMatcher matcher)
+    {
+        if (_guard is not { } guard)
+            return;
+        // A paused Edge is no way back, so leave it out of the allowed-app rows;
+        // the prompt's own action is how the student gets Edge again.
+        var others = matcher.UserRules.Where(r => !guard.IsBrowserRule(r)).ToArray();
+        var prompt = new BrowserPausedPrompt(guard.BrowserRule, guard.RepairWindow, TurnExtensionBackOn);
+        try { _overlay.ShowBrowserPaused(others, prompt); }
+        catch (Exception ex) { _log.LogWarning(ex, "Overlay.ShowBrowserPaused threw"); }
+    }
+
     internal void OnForegroundChanged(ForegroundChange change)
     {
         Guid? sessionId;
@@ -251,7 +331,20 @@ public sealed class FocusSessionController : IAsyncDisposable
             return;
         }
 
-        var allowed = matcher.IsAllowed(change.App);
+        // #427: while the extension is off, Edge is an unfiltered browser, so the
+        // guard pauses it on top of whatever the allowlist says. Otherwise an Edge
+        // coming forward tells a guard that's waiting for Edge to relaunch that the
+        // extension's grace period can start now.
+        var browserPaused = false;
+        if (_guard is { } guard && guard.IsBrowser(change.App))
+        {
+            if (guard.IsBrowserPaused)
+                browserPaused = true;
+            else
+                guard.NoteBrowserForeground();
+        }
+
+        var allowed = !browserPaused && matcher.IsAllowed(change.App);
 
         // Enforcement runs on EVERY foreground event, including repeats of the
         // same app inside the coalesce window. Design §5.2 requires re-checking
@@ -266,6 +359,17 @@ public sealed class FocusSessionController : IAsyncDisposable
                 _enforcer.RememberAllowed(change.WindowHandle);
                 try { _overlay.Hide(); }
                 catch (Exception ex) { _log.LogWarning(ex, "Overlay.Hide threw"); }
+            }
+            else if (browserPaused)
+            {
+                // Minimize without handing focus back to the last allowed app: the
+                // overlay must stay up, because it is the only place the student
+                // learns why Edge went away and how to switch the extension back on.
+                _log.LogWarning(
+                    "Pausing {ProcessName} (pid={Pid}) in session {SessionId}: its extension is off",
+                    change.App.ProcessName, change.ProcessId, id);
+                _enforcer.Minimize(change.WindowHandle);
+                ShowBrowserPausedOverlay(matcher);
             }
             else
             {
@@ -332,6 +436,8 @@ public sealed class FocusSessionController : IAsyncDisposable
         _sessions.SessionLeft -= OnSessionLeft;
         _sessions.SessionAllowlistUpdated -= OnAllowlistUpdated;
         _watcher.Changed -= OnForegroundChanged;
+        if (_guard is not null)
+            _guard.BrowserPaused -= OnBrowserPaused;
         try { _watcher.Stop(); } catch { /* best-effort */ }
         _watcher.Dispose();
         await Task.CompletedTask;

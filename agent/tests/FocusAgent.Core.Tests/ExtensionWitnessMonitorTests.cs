@@ -79,6 +79,46 @@ public class ExtensionWitnessMonitorTests
     }
 
     [Fact]
+    public async Task ConnectionChanged_fires_once_per_genuine_transition_in_or_out_of_a_session()
+    {
+        // #427: the Edge pause listens to this, so a repeated connect (the
+        // transport re-accepting) must not look like a new connection, and a drop
+        // must be announced even outside a session (where nothing is reported).
+        var transport = new FakeWitnessTransport();
+        var reporter = new RecordingReporter();
+        await using var monitor = new ExtensionWitnessMonitor(transport, reporter, () => null);
+        var changes = new List<bool>();
+        monitor.ConnectionChanged += (_, connected) => changes.Add(connected);
+
+        Assert.False(monitor.HasConnected);
+        transport.RaiseDisconnected();   // never connected: not a transition
+        transport.RaiseConnected();
+        transport.RaiseConnected();      // already up
+        transport.RaiseDisconnected();
+
+        Assert.Equal(new[] { true, false }, changes);
+        Assert.True(monitor.HasConnected);
+        Assert.False(monitor.IsConnected);
+        Assert.Empty(reporter.Calls);
+    }
+
+    [Fact]
+    public async Task A_throwing_ConnectionChanged_subscriber_does_not_stop_the_tamper_report()
+    {
+        var transport = new FakeWitnessTransport();
+        var reporter = new RecordingReporter();
+        var sessionId = Guid.NewGuid();
+        await using var monitor = new ExtensionWitnessMonitor(transport, reporter, () => sessionId);
+        monitor.ConnectionChanged += (_, _) => throw new InvalidOperationException("subscriber bug");
+
+        transport.RaiseConnected();
+        var ex = Record.Exception(() => transport.RaiseDisconnected());
+
+        Assert.Null(ex);
+        Assert.Single(reporter.Calls);
+    }
+
+    [Fact]
     public async Task StartAsync_delegates_to_the_transport()
     {
         var transport = new FakeWitnessTransport();

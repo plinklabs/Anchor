@@ -3,6 +3,7 @@ using FocusAgent.Core.Focus;
 using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
+using FocusAgent.Core.Tamper;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
@@ -437,6 +438,181 @@ public class FocusSessionControllerTests
         Assert.Null(controller.GetLastStartupSweep());
     }
 
+    // --- #427: Edge is paused while its extension is off ---------------------
+
+    private static readonly AllowedAppDto[] EdgeAndWord =
+    {
+        new("ProcessName", "msedge"),
+        new("ProcessName", "winword"),
+    };
+
+    /// <summary>
+    /// A joined session with Edge and Word allowed and both on screen, the
+    /// extension connected, then switched off.
+    /// </summary>
+    private static async Task<(FocusSessionController, Fixtures, Guid)> JoinThenSwitchExtensionOffAsync()
+    {
+        var fixtures = new Fixtures { WithGuard = true };
+        fixtures.Windows.Windows.AddRange(new[]
+        {
+            OpenWindowFor("winword", hwnd: 0x10),
+            OpenWindowFor("msedge", hwnd: 0x20),
+        });
+        var (controller, _) = BuildController(fixtures);
+        fixtures.Transport.RaiseConnected();
+        var payload = NewPayload(apps: EdgeAndWord);
+        await fixtures.Hub.RaiseSessionStarted(payload);
+        Assert.Empty(fixtures.Enforcer.Minimized); // both allowed at session start
+
+        fixtures.Transport.RaiseDisconnected();
+        return (controller, fixtures, payload.SessionId);
+    }
+
+    [Fact]
+    public async Task Edge_stays_usable_while_the_extensions_grace_period_runs()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+
+        fixtures.Clock.Advance(ExtensionGrace - TimeSpan.FromSeconds(1));
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Contains((nint)0x20, fixtures.Enforcer.Remembered);
+        Assert.Empty(fixtures.Overlay.PausedShown);
+        Assert.False(Assert.Single(fixtures.Reporter.Reports).Blocked);
+    }
+
+    [Fact]
+    public async Task Pausing_edge_minimizes_the_edge_window_on_screen_and_explains_why()
+    {
+        // The window the student switched the extension off in is already in the
+        // foreground; no foreground change will come for it, so the pause itself
+        // has to bring it down.
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+
+        fixtures.Clock.Advance(ExtensionGrace);
+
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
+        var shown = Assert.Single(fixtures.Overlay.PausedShown);
+        // Edge is left out of the way-back rows: a paused Edge goes nowhere.
+        Assert.Equal(new[] { "winword" }, shown.Rules.Select(r => r.Value).ToArray());
+        Assert.Equal("msedge", shown.Prompt.Browser.Value);
+        Assert.Equal(ExtensionRepair, shown.Prompt.RepairWindow);
+        Assert.Empty(fixtures.Overlay.Shown);
+    }
+
+    [Fact]
+    public async Task Paused_edge_is_minimized_on_every_foreground_and_reported_as_blocked()
+    {
+        var (_, fixtures, sessionId) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Enforcer.BlockRestoresFallback = true;
+
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        fixtures.Clock.Advance(TimeSpan.FromMilliseconds(100));
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+
+        // Minimized every time, without handing focus to Word: the overlay must
+        // stay up to say why Edge went away and how to get it back.
+        Assert.Equal(new[] { (nint)0x20, (nint)0x20, (nint)0x20 }, fixtures.Enforcer.Minimized);
+        Assert.Empty(fixtures.Enforcer.Blocked);
+        Assert.Equal(3, fixtures.Overlay.PausedShown.Count);
+        var reported = Assert.Single(fixtures.Reporter.Reports);
+        Assert.Equal(sessionId, reported.SessionId);
+        Assert.Equal("msedge", reported.Change.App.ProcessName);
+        Assert.True(reported.Blocked);
+    }
+
+    [Fact]
+    public async Task Other_allowed_apps_are_untouched_while_edge_is_paused()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Clock.Advance(ExtensionGrace);
+
+        fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x10));
+
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
+        Assert.Contains((nint)0x10, fixtures.Enforcer.Remembered);
+        Assert.False(Assert.Single(fixtures.Reporter.Reports).Blocked);
+    }
+
+    [Fact]
+    public async Task Edge_is_allowed_again_as_soon_as_the_extension_reconnects()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        var minimizedWhilePaused = fixtures.Enforcer.Minimized.Count;
+
+        fixtures.Transport.RaiseConnected();
+        fixtures.Clock.Advance(TimeSpan.FromSeconds(1)); // past the report coalesce window
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+
+        Assert.Equal(minimizedWhilePaused, fixtures.Enforcer.Minimized.Count);
+        Assert.Contains((nint)0x20, fixtures.Enforcer.Remembered);
+        Assert.False(fixtures.Reporter.Reports[^1].Blocked);
+    }
+
+    [Fact]
+    public async Task An_edge_relaunch_coming_forward_gets_a_fresh_grace_period_before_any_pause()
+    {
+        // Edge was closed when the extension dropped, so nothing was paused. When
+        // the student opens Edge again its window comes forward before the
+        // extension has loaded: that must not be minimized.
+        var fixtures = new Fixtures { WithGuard = true };
+        fixtures.Windows.Windows.Add(OpenWindowFor("winword", hwnd: 0x10));
+        var (_, _) = BuildController(fixtures);
+        fixtures.Transport.RaiseConnected();
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: EdgeAndWord));
+        fixtures.Transport.RaiseDisconnected();
+        fixtures.Clock.Advance(ExtensionGrace);
+        Assert.Equal(ExtensionGuardState.Dormant, fixtures.Guard!.State);
+
+        fixtures.Clock.Advance(TimeSpan.FromMinutes(3));
+        fixtures.Windows.Windows.Add(OpenWindowFor("msedge", hwnd: 0x30));
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x30));
+
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Equal(ExtensionGuardState.Waiting, fixtures.Guard.State);
+
+        // The extension is still off in the relaunched Edge: paused after the grace.
+        fixtures.Clock.Advance(ExtensionGrace);
+        Assert.Equal(new[] { (nint)0x30 }, fixtures.Enforcer.Minimized);
+        Assert.Single(fixtures.Overlay.PausedShown);
+    }
+
+    [Fact]
+    public async Task The_overlays_turn_back_on_action_opens_edge_for_the_repair_window_then_pauses_it_again()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Clock.Advance(ExtensionGrace);
+        var prompt = Assert.Single(fixtures.Overlay.PausedShown).Prompt;
+
+        Assert.True(prompt.TurnBackOn());
+
+        // Edge may come forward so the student can reach edge://extensions.
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
+        Assert.Contains((nint)0x20, fixtures.Enforcer.Remembered);
+
+        // They didn't switch it on in time: the pause comes back on screen.
+        fixtures.Clock.Advance(ExtensionRepair);
+        Assert.Equal(new[] { (nint)0x20, (nint)0x20 }, fixtures.Enforcer.Minimized);
+        Assert.Equal(2, fixtures.Overlay.PausedShown.Count);
+    }
+
+    [Fact]
+    public async Task TurnExtensionBackOn_does_nothing_unless_edge_is_paused()
+    {
+        var (controller, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+
+        Assert.False(controller.TurnExtensionBackOn()); // still in the grace period
+        Assert.Equal(ExtensionGuardState.Waiting, fixtures.Guard!.State);
+
+        var (withoutGuard, _) = BuildController();
+        Assert.False(withoutGuard.TurnExtensionBackOn());
+    }
+
     private static OpenWindow OpenWindowFor(string process, nint hwnd, string? exePath = null, string? publisher = null) =>
         new(hwnd, new AppInfo(process, exePath, publisher));
 
@@ -463,6 +639,24 @@ public class FocusSessionControllerTests
             new NoopUi { Decision = fixtures.UiDecision },
             Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromMilliseconds(1) }),
             fixtures.Clock);
+        ExtensionGuard? guard = null;
+        if (fixtures.WithGuard)
+        {
+            var witness = new ExtensionWitnessMonitor(
+                fixtures.Transport, new NoopTamperReporter(), () => coordinator.JoinedSessionId);
+            guard = new ExtensionGuard(
+                coordinator,
+                witness,
+                fixtures.Windows,
+                Options.Create(new SessionSettings
+                {
+                    ExtensionGraceSeconds = (int)ExtensionGrace.TotalSeconds,
+                    ExtensionRepairSeconds = (int)ExtensionRepair.TotalSeconds,
+                }),
+                Options.Create(new WitnessSettings()),
+                fixtures.Clock);
+            fixtures.Guard = guard;
+        }
         var controller = new FocusSessionController(
             coordinator,
             fixtures.Watcher,
@@ -471,13 +665,21 @@ public class FocusSessionControllerTests
             fixtures.Reporter,
             fixtures.Overlay,
             settings,
-            fixtures.Clock);
+            fixtures.Clock,
+            guard: guard);
         fixtures.Coordinator = coordinator;
         return (controller, fixtures);
     }
 
+    private static readonly TimeSpan ExtensionGrace = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ExtensionRepair = TimeSpan.FromSeconds(60);
+
     private sealed class Fixtures
     {
+        /// <summary>Wire an <see cref="ExtensionGuard"/> (#427) over <see cref="Transport"/>.</summary>
+        public bool WithGuard { get; init; }
+        public FakeWitnessTransport Transport { get; } = new();
+        public ExtensionGuard? Guard { get; set; }
         public FakeHub Hub { get; } = new();
         public FakeForegroundWatcher Watcher { get; } = new();
         public RecordingEnforcer Enforcer { get; } = new();
@@ -580,12 +782,30 @@ public class FocusSessionControllerTests
     private sealed class RecordingOverlay : IFocusOverlay
     {
         public List<(IReadOnlyList<AllowedAppRule> Rules, string? BlockedAppName)> Shown { get; } = new();
+        public List<(IReadOnlyList<AllowedAppRule> Rules, BrowserPausedPrompt Prompt)> PausedShown { get; } = new();
         public int HideCount { get; private set; }
         public int CloseCount { get; private set; }
         public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName)
             => Shown.Add((allowedRules, blockedAppName));
+        public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
+            => PausedShown.Add((allowedRules, prompt));
         public void Hide() => HideCount++;
         public void Close() => CloseCount++;
+    }
+
+    private sealed class FakeWitnessTransport : IExtensionWitnessTransport
+    {
+        public event EventHandler? WitnessConnected;
+        public event EventHandler? WitnessDisconnected;
+        public void RaiseConnected() => WitnessConnected?.Invoke(this, EventArgs.Empty);
+        public void RaiseDisconnected() => WitnessDisconnected?.Invoke(this, EventArgs.Empty);
+        public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    private sealed class NoopTamperReporter : ITamperReporter
+    {
+        public Task ReportAsync(Guid sessionId, string kind, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     private sealed class RecordingReporter : IFocusEventReporter

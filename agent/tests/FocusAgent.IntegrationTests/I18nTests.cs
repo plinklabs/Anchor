@@ -58,6 +58,29 @@ public sealed class I18nTests
     }
 
     [Fact]
+    public async Task The_paused_Edge_overlay_reads_in_English_and_Dutch()
+    {
+        // #427: the copy a student reads on the real overlay window when Edge is
+        // paused because its extension is off — composed the way the controller
+        // shows it, with a 60-second repair window.
+        var en = await RunVerifyI18nAsync("en-US");
+        Assert.Equal("Edge is paused for now", en["window.overlay_paused_headline"]);
+        Assert.StartsWith("The Anchor extension in Edge is switched off", en["window.overlay_paused_message"]);
+        Assert.Equal("Switch the extension back on", en["window.overlay_paused_action"]);
+        Assert.Equal(
+            "Edge opens for 60 seconds. Go to edge://extensions and switch Anchor on.",
+            en["window.overlay_paused_hint"]);
+
+        var nl = await RunVerifyI18nAsync("nl-NL");
+        Assert.Equal("Edge staat even op pauze", nl["window.overlay_paused_headline"]);
+        Assert.StartsWith("De Anchor-extensie in Edge staat uit", nl["window.overlay_paused_message"]);
+        Assert.Equal("Zet de extensie weer aan", nl["window.overlay_paused_action"]);
+        Assert.Equal(
+            "Edge gaat 60 seconden open. Ga naar edge://extensions en zet Anchor aan.",
+            nl["window.overlay_paused_hint"]);
+    }
+
+    [Fact]
     public async Task Unsupported_language_falls_back_to_English()
     {
         // fr-FR ships no catalogue, so MRT resolves the en-US default — never a
@@ -127,6 +150,10 @@ public sealed class I18nTests
                 map.ContainsKey("window.error"),
                 $"Agent --verify-i18n {language} failed to build the probe window: " +
                 (map.TryGetValue("window.error", out var err) ? err : "<unknown>"));
+            Assert.False(
+                map.ContainsKey("window.overlay_error"),
+                $"Agent --verify-i18n {language} failed to compose the paused-Edge overlay: " +
+                (map.TryGetValue("window.overlay_error", out var overlayErr) ? overlayErr : "<unknown>"));
 
             return map;
         }

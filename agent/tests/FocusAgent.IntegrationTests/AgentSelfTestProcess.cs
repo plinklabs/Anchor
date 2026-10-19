@@ -19,6 +19,8 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
 {
     /// <summary>Dev-only self-test flags (mirror <c>Program</c> in the agent).</summary>
     public const string ShowTestOverlayArg = "--show-test-overlay";
+    /// <summary>With <see cref="ShowTestOverlayArg"/>: show the paused-Edge variant (#427).</summary>
+    public const string OverlayPausedArg = "--overlay-paused";
     public const string ShowTestToastArg = "--show-test-toast";
     public const string ShowTestMainWindowArg = "--show-test-mainwindow";
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";

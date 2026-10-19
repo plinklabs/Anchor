@@ -21,7 +21,17 @@ internal sealed record StatusSnapshot(
     [property: JsonPropertyName("allowedApps")] string[]? AllowedApps,
     [property: JsonPropertyName("startupSweep")] StartupSweepSnapshot? StartupSweep,
     [property: JsonPropertyName("inPrivateDetections")] int InPrivateDetections,
-    [property: JsonPropertyName("extensionPolicy")] ExtensionPolicySnapshot? ExtensionPolicy = null);
+    [property: JsonPropertyName("extensionPolicy")] ExtensionPolicySnapshot? ExtensionPolicy = null,
+    [property: JsonPropertyName("extensionGuard")] ExtensionGuardSnapshot? ExtensionGuard = null);
+
+/// <summary>
+/// The Edge pause as exposed on /status (#427): whether the extension's witness
+/// pipe is connected, and the guard's state (<c>Off</c> / <c>Present</c> /
+/// <c>Waiting</c> / <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>).
+/// </summary>
+internal sealed record ExtensionGuardSnapshot(
+    [property: JsonPropertyName("witnessConnected")] bool WitnessConnected,
+    [property: JsonPropertyName("state")] string? State);
 
 /// <summary>
 /// The Edge extension setup as exposed on /status (#405): where an Anchor
@@ -252,6 +262,16 @@ internal sealed class AgentProcess : IAsyncDisposable
     {
         using var res = await _http.PostAsync($"{_controlBase}/extension-setup", content: null);
         res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Take the paused-Edge overlay's "switch the extension back on" action (#427)
+    /// via POST /extension-repair. Returns false when Edge wasn't paused.
+    /// </summary>
+    public async Task<bool> TurnExtensionBackOnAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/extension-repair", content: null);
+        return res.StatusCode == System.Net.HttpStatusCode.NoContent;
     }
 
     /// <summary>Wait for the agent process to exit (e.g. after <see cref="QuitAsync"/>).</summary>
