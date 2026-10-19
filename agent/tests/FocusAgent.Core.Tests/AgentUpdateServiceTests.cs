@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FocusAgent.Core.Settings;
 using FocusAgent.Core.Updates;
 using Microsoft.Extensions.Options;
@@ -12,6 +13,13 @@ namespace FocusAgent.Core.Tests;
 /// check, a re-check on the interval, install/enabled gating, single-flighting, and
 /// best-effort tolerance of a throwing check. The real Velopack check path is
 /// proven end-to-end by the IntegrationTests UpdateCheckTests spec.
+///
+/// <para>
+/// Every pass runs on the thread pool and a tick that lands before the previous
+/// pass has completed is dropped (#407), so these tests never sleep for a slice of
+/// wall-clock time (#435): they await the pass itself (<see cref="PassAsync"/>), or
+/// wait for an explicit condition with a generous timeout (<see cref="WaitUntilAsync"/>).
+/// </para>
 /// </summary>
 public class AgentUpdateServiceTests
 {
@@ -23,9 +31,9 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock);
 
         svc.Start();
-        await DrainAsync();
+        await PassAsync(svc);
 
-        Assert.True(manager.CheckCount >= 1, $"expected a startup check, got {manager.CheckCount}");
+        Assert.Equal(1, manager.CheckCount);
     }
 
     [Fact]
@@ -36,16 +44,15 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock, interval: TimeSpan.FromHours(6));
 
         svc.Start();
-        await DrainAsync(); // startup check
+        await PassAsync(svc); // startup check
 
         var afterStartup = manager.CheckCount;
         clock.Advance(TimeSpan.FromHours(6));
-        await DrainAsync();
+        await PassAsync(svc);
         clock.Advance(TimeSpan.FromHours(6));
-        await DrainAsync();
+        await PassAsync(svc);
 
-        Assert.True(manager.CheckCount >= afterStartup + 2,
-            $"expected 2 more checks after two intervals, started at {afterStartup}, ended at {manager.CheckCount}");
+        Assert.Equal(afterStartup + 2, manager.CheckCount);
     }
 
     [Fact]
@@ -56,9 +63,9 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock);
 
         svc.Start();
-        await DrainAsync();
+        await PassAsync(svc);
         clock.Advance(TimeSpan.FromHours(24));
-        await DrainAsync();
+        await PassAsync(svc);
 
         Assert.Equal(0, manager.CheckCount);
     }
@@ -71,9 +78,9 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock, enabled: false);
 
         svc.Start();
-        await DrainAsync();
+        await PassAsync(svc);
         clock.Advance(TimeSpan.FromHours(24));
-        await DrainAsync();
+        await PassAsync(svc);
 
         Assert.Equal(0, manager.CheckCount);
     }
@@ -87,7 +94,7 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock);
 
         svc.Start();
-        await DrainAsync();
+        await PassAsync(svc);
 
         Assert.Equal(1, manager.DownloadCount);
         Assert.Equal(1, manager.StageCount);
@@ -103,7 +110,7 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock);
 
         svc.Start();
-        await DrainAsync();
+        await PassAsync(svc);
 
         Assert.Equal(0, manager.DownloadCount);
         Assert.Equal(0, manager.StageCount);
@@ -119,16 +126,17 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock, interval: TimeSpan.FromHours(1));
 
         svc.Start();
-        await DrainAsync(); // startup check throws but is swallowed
+        await PassAsync(svc); // startup check throws but is swallowed
 
-        var afterStartup = manager.CheckCount;
-        Assert.True(afterStartup >= 1);
+        Assert.Equal(1, manager.CheckCount);
 
-        // The loop survives a thrown check and tries again next interval.
+        // The loop survives a thrown check and tries again next interval. Awaiting
+        // the startup pass to completion first matters: a tick that lands while it
+        // is still unwinding the throw is dropped as in flight, by design.
         clock.Advance(TimeSpan.FromHours(1));
-        await DrainAsync();
+        await PassAsync(svc);
 
-        Assert.True(manager.CheckCount > afterStartup);
+        Assert.Equal(2, manager.CheckCount);
         Assert.False(svc.UpdatePendingRestart);
     }
 
@@ -141,22 +149,23 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock, interval: TimeSpan.FromHours(1));
 
         svc.Start();         // startup check begins and blocks on the gate
-        await DrainAsync();
-        Assert.Equal(1, manager.CheckCount);
+        var startup = svc.InFlight;
+        await WaitUntilAsync(() => manager.CheckCount == 1, "the startup check to begin");
 
         // An interval fires while the first check is still running — it must be
-        // dropped, not queued (single-flight).
+        // dropped, not queued (single-flight): no new pass, no second check.
         clock.Advance(TimeSpan.FromHours(1));
-        await DrainAsync();
+        Assert.Same(startup, svc.InFlight);
+        Assert.False(startup.IsCompleted);
         Assert.Equal(1, manager.CheckCount);
 
         gate.SetResult();    // let the first check complete
-        await DrainAsync();
+        await startup.WaitAsync(WaitTimeout);
 
         // A later interval now runs normally.
         clock.Advance(TimeSpan.FromHours(1));
-        await DrainAsync();
-        Assert.True(manager.CheckCount >= 2);
+        await PassAsync(svc);
+        Assert.Equal(2, manager.CheckCount);
     }
 
     [Fact]
@@ -167,19 +176,20 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock, interval: TimeSpan.Zero);
 
         svc.Start();
-        await DrainAsync(); // startup check only
+        await PassAsync(svc); // startup check only
 
         var afterStartup = manager.CheckCount;
 
-        // Advance less than the clamp floor: no extra check should fire.
+        // Advance less than the clamp floor: no extra check should fire. (Had one
+        // fired, it would be the pass in flight now, and awaiting it would count it.)
         clock.Advance(TimeSpan.FromSeconds(30));
-        await DrainAsync();
+        await PassAsync(svc);
         Assert.Equal(afterStartup, manager.CheckCount);
 
         // Cross the floor: now the interval tick fires.
         clock.Advance(AgentUpdateService.MinimumInterval);
-        await DrainAsync();
-        Assert.True(manager.CheckCount > afterStartup);
+        await PassAsync(svc);
+        Assert.Equal(afterStartup + 1, manager.CheckCount);
     }
 
     // --- #407: the fatal-path check (CheckNowAsync) ---------------------------
@@ -196,15 +206,15 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock);
 
         svc.Start();
-        await DrainAsync();
-        Assert.Equal(1, manager.CheckCount);
+        var startup = svc.InFlight;
+        await WaitUntilAsync(() => manager.CheckCount == 1, "the startup check to begin");
 
         var fatal = svc.CheckNowAsync();
-        await DrainAsync();
+        Assert.Same(startup, fatal);
         Assert.False(fatal.IsCompleted, "the fatal-path task completed while the startup check was still running");
 
         gate.SetResult();
-        await fatal.WaitAsync(TimeSpan.FromSeconds(5));
+        await fatal.WaitAsync(WaitTimeout);
 
         Assert.Equal(1, manager.CheckCount);
         Assert.Equal(1, manager.StageCount);
@@ -224,13 +234,13 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock);
 
         var fatal = svc.CheckNowAsync();
-        await DrainAsync();
+        await WaitUntilAsync(() => manager.DownloadCount == 1, "the pass to reach the download");
         Assert.Equal(1, manager.CheckCount);
         Assert.False(fatal.IsCompleted, "the fatal-path task completed before the download finished");
         Assert.Equal(0, manager.StageCount);
 
         download.SetResult();
-        await fatal.WaitAsync(TimeSpan.FromSeconds(5));
+        await fatal.WaitAsync(WaitTimeout);
 
         Assert.Equal(1, manager.StageCount);
         Assert.Equal("1.2.3", svc.PendingVersion);
@@ -245,8 +255,8 @@ public class AgentUpdateServiceTests
         var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
         await using var svc = NewService(manager, clock);
 
-        await svc.CheckNowAsync().WaitAsync(TimeSpan.FromSeconds(5));
-        await svc.CheckNowAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await svc.CheckNowAsync().WaitAsync(WaitTimeout);
+        await svc.CheckNowAsync().WaitAsync(WaitTimeout);
 
         Assert.Equal(2, manager.CheckCount);
     }
@@ -260,7 +270,7 @@ public class AgentUpdateServiceTests
         var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
         await using var svc = NewService(manager, clock);
 
-        await svc.CheckNowAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await svc.CheckNowAsync().WaitAsync(WaitTimeout);
 
         Assert.Equal(0, manager.CheckCount);
     }
@@ -274,7 +284,7 @@ public class AgentUpdateServiceTests
         await using var svc = NewService(manager, clock);
 
         var fatal = svc.CheckNowAsync();
-        await fatal.WaitAsync(TimeSpan.FromSeconds(5));
+        await fatal.WaitAsync(WaitTimeout);
 
         Assert.True(fatal.IsCompletedSuccessfully);
         Assert.Equal(1, manager.CheckCount);
@@ -294,11 +304,28 @@ public class AgentUpdateServiceTests
         return new AgentUpdateService(manager, Options.Create(settings), clock);
     }
 
-    private static async Task DrainAsync()
+    // Generous on purpose: a passing test never waits this long, and a loaded CI
+    // runner must not turn a slow pass into a failure.
+    private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Wait for the check pass in flight (or the last one) to complete. FakeTimeProvider
+    /// fires a due timer synchronously inside <c>Start()</c> / <c>Advance()</c>, so once
+    /// either returns, the pass that tick started — if any — is the one in flight.
+    /// </summary>
+    private static Task PassAsync(AgentUpdateService svc) => svc.InFlight.WaitAsync(WaitTimeout);
+
+    /// <summary>Wait for a condition the thread-pool pass makes true (e.g. a gated
+    /// check has begun); fails the test after <see cref="WaitTimeout"/>.</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, string what)
     {
-        // Give the timer-fired fire-and-forget check a slice to run before the
-        // assertion reads the counters.
-        await Task.Delay(40);
+        var elapsed = Stopwatch.StartNew();
+        while (!condition())
+        {
+            if (elapsed.Elapsed > WaitTimeout)
+                Assert.Fail($"timed out after {WaitTimeout.TotalSeconds:0} s waiting for {what}");
+            await Task.Delay(1);
+        }
     }
 
     private sealed class FakeUpdateManager : IAgentUpdateManager
