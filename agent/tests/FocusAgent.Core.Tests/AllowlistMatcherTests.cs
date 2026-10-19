@@ -136,9 +136,28 @@ public class AllowlistMatcherTests
     [InlineData("winword")]
     [InlineData("explorer")]   // baseline-allowed every session — reported normally, not a surface (#140)
     [InlineData("msedge")]     // baseline-allowed every session — reported normally, not a surface (#140)
+    [InlineData("PickerHost")]            // judged by the app that owns the picker, not exempt (#428)
+    [InlineData("ApplicationFrameHost")]  // Settings: blocked on purpose (#428)
     public void IsSystemSurface_is_false_for_regular_and_baseline_apps(string processName)
     {
         Assert.False(AllowlistMatcher.IsSystemSurface(new AppInfo(processName, null, null)));
+    }
+
+    [Theory]
+    [InlineData("PickerHost")]
+    [InlineData("ApplicationFrameHost")]
+    public void Dialog_and_frame_hosts_are_not_allowed_on_their_own(string processName)
+    {
+        // #428: no blanket exemption for the file picker's host. An allowed app's
+        // picker is allowed because of the window that owns it (see
+        // ForegroundChange.OwningApp), so a picker opened by an off-list app is not.
+        var matcher = new AllowlistMatcher(new[]
+        {
+            new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
+            new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "explorer" },
+        });
+
+        Assert.False(matcher.IsAllowed(new AppInfo(processName, null, "Microsoft Windows")));
     }
 
     [Fact]

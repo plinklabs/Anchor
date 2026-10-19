@@ -317,26 +317,42 @@ public sealed class FocusSessionController : IAsyncDisposable
         if (sessionId is not Guid id || matcher is null)
             return;
 
+        // #428: a dialog another process shows for an app's window belongs to that
+        // app. Edge's upload button opens the Windows file picker in PickerHost,
+        // owned by the Edge window: judged by its own process it was blocked, so
+        // no upload could be done. Judge, enforce and report it as the app that
+        // owns it instead: an allowed app's picker stays usable, while a picker
+        // opened by an off-list app (or by a paused Edge) is handled like that app.
+        var app = change.OwningApp;
+
         // OS shell surfaces (taskbar Search, Start, the touch keyboard, …) are
         // neither allowed nor blocked: minimizing them and stealing foreground
         // blanks Search/Start and can restart the taskbar (#140). Bail before the
         // allowed/blocked branch so we don't enforce, report, or remember one as
         // the fallback window — leaving _lastAllowed pointing at the real app the
-        // student returns to when the transient shell surface closes.
-        if (AllowlistMatcher.IsSystemSurface(change.App))
+        // student returns to when the transient shell surface closes. A dialog a
+        // shell surface owns is left alone with it: taking the dialog down would
+        // minimize the surface that owns it.
+        if (AllowlistMatcher.IsSystemSurface(change.App) || AllowlistMatcher.IsSystemSurface(app))
         {
             _log.LogDebug(
-                "Ignoring OS shell surface {ProcessName} (pid={Pid}) in session {SessionId}; not enforcing or reporting",
-                change.App.ProcessName, change.ProcessId, id);
+                "Ignoring OS shell surface {ProcessName} (owner {OwnerProcessName}, pid={Pid}) in session {SessionId}; not enforcing or reporting",
+                change.App.ProcessName, app.ProcessName, change.ProcessId, id);
             return;
         }
 
+        if (change.Owner is { } owner)
+            _log.LogDebug(
+                "Judging a {ProcessName} window (pid={Pid}) as the {OwnerProcessName} window that owns it (pid={OwnerPid})",
+                change.App.ProcessName, change.ProcessId, owner.App.ProcessName, owner.ProcessId);
+
         // #427: while the extension is off, Edge is an unfiltered browser, so the
-        // guard pauses it on top of whatever the allowlist says. Otherwise an Edge
+        // guard pauses it on top of whatever the allowlist says — dialogs Edge owns
+        // included, so a picker is no way around the pause. Otherwise an Edge
         // coming forward tells a guard that's waiting for Edge to relaunch that the
         // extension's grace period can start now.
         var browserPaused = false;
-        if (_guard is { } guard && guard.IsBrowser(change.App))
+        if (_guard is { } guard && guard.IsBrowser(app))
         {
             if (guard.IsBrowserPaused)
                 browserPaused = true;
@@ -344,14 +360,15 @@ public sealed class FocusSessionController : IAsyncDisposable
                 guard.NoteBrowserForeground();
         }
 
-        var allowed = !browserPaused && matcher.IsAllowed(change.App);
+        var allowed = !browserPaused && matcher.IsAllowed(app);
 
         // Enforcement runs on EVERY foreground event, including repeats of the
         // same app inside the coalesce window. Design §5.2 requires re-checking
         // and re-minimizing an off-list window each time it returns to the
         // foreground — e.g. a student repeatedly clicking the taskbar entry of a
         // just-minimized blocked app (#92). Minimizing is idempotent, so
-        // re-running it for genuine OS double-fires is harmless.
+        // re-running it for genuine OS double-fires is harmless. The enforcer takes
+        // a dialog down together with the app window that owns it (#428).
         try
         {
             if (allowed)
@@ -367,7 +384,7 @@ public sealed class FocusSessionController : IAsyncDisposable
                 // learns why Edge went away and how to switch the extension back on.
                 _log.LogWarning(
                     "Pausing {ProcessName} (pid={Pid}) in session {SessionId}: its extension is off",
-                    change.App.ProcessName, change.ProcessId, id);
+                    app.ProcessName, change.ProcessId, id);
                 _enforcer.Minimize(change.WindowHandle);
                 ShowBrowserPausedOverlay(matcher);
             }
@@ -375,14 +392,14 @@ public sealed class FocusSessionController : IAsyncDisposable
             {
                 _log.LogWarning(
                     "Blocking off-list foreground app {ProcessName} (pid={Pid}) in session {SessionId}",
-                    change.App.ProcessName, change.ProcessId, id);
+                    app.ProcessName, change.ProcessId, id);
                 var restored = _enforcer.Block(change.WindowHandle);
                 if (!restored)
                 {
                     _log.LogInformation(
                         "No allowed-window fallback after blocking {ProcessName}; surfacing overlay",
-                        change.App.ProcessName);
-                    try { _overlay.Show(matcher.UserRules, change.App.ProcessName); }
+                        app.ProcessName);
+                    try { _overlay.Show(matcher.UserRules, app.ProcessName); }
                     catch (Exception ex) { _log.LogWarning(ex, "Overlay.Show threw"); }
                 }
             }
@@ -391,22 +408,23 @@ public sealed class FocusSessionController : IAsyncDisposable
         {
             _log.LogError(ex,
                 "Enforcer threw for {ProcessName} (pid={Pid}); reporting anyway",
-                change.App.ProcessName, change.ProcessId);
+                app.ProcessName, change.ProcessId);
         }
 
         // Coalesce only the backend *report* — not enforcement above. Genuine OS
         // double-fires of the same app within the window (SetWinEventHook firing
         // twice for one window, rapid alt-tabs bouncing back) are reporting
-        // noise; the enforcement already ran for each.
+        // noise; the enforcement already ran for each. An app's picker coming up
+        // right after the app is the same app, so it coalesces too.
         var now = _clock.GetUtcNow();
         lock (_gate)
         {
-            if (string.Equals(_lastReportedProcessName, change.App.ProcessName, StringComparison.OrdinalIgnoreCase) &&
+            if (string.Equals(_lastReportedProcessName, app.ProcessName, StringComparison.OrdinalIgnoreCase) &&
                 (now - _lastReportedAt) < _settings.DuplicateCoalesceWindow)
             {
                 return;
             }
-            _lastReportedProcessName = change.App.ProcessName;
+            _lastReportedProcessName = app.ProcessName;
             _lastReportedAt = now;
         }
 
@@ -420,13 +438,13 @@ public sealed class FocusSessionController : IAsyncDisposable
             await _reporter.ReportForegroundChangeAsync(sessionId, change, blocked).ConfigureAwait(false);
             _log.LogInformation(
                 "Foreground change reported: {ProcessName} blocked={Blocked} session={SessionId}",
-                change.App.ProcessName, blocked, sessionId);
+                change.OwningApp.ProcessName, blocked, sessionId);
         }
         catch (Exception ex)
         {
             _log.LogError(ex,
                 "Failed to report foreground change for {ProcessName} in session {SessionId}",
-                change.App.ProcessName, sessionId);
+                change.OwningApp.ProcessName, sessionId);
         }
     }
 

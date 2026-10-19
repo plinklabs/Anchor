@@ -135,6 +135,50 @@ internal static class WindowCapture
     public static void RestoreWindow(IntPtr hwnd) => ShowWindow(hwnd, SW_RESTORE);
 
     /// <summary>
+    /// Minimize <paramref name="hwnd"/>, so a following <see cref="RestoreWindow"/>
+    /// raises EVENT_SYSTEM_MINIMIZEEND for it: the #428 spec's lever for making the
+    /// agent judge a file picker without waiting on Windows to grant it the
+    /// foreground.
+    /// </summary>
+    public static void MinimizeWindow(IntPtr hwnd) => ShowWindow(hwnd, SW_MINIMIZE);
+
+    /// <summary>
+    /// The first visible top-level window that <paramref name="owner"/> owns and
+    /// that another process shows, or <see cref="IntPtr.Zero"/>: a dialog shown
+    /// for the owner's app from outside it, like the file picker PickerHost shows
+    /// for an Edge upload (#428).
+    /// </summary>
+    public static IntPtr FindWindowOwnedFromAnotherProcess(IntPtr owner)
+    {
+        GetWindowThreadProcessId(owner, out var ownerPid);
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hWnd, _) =>
+        {
+            if (GetWindow(hWnd, GW_OWNER) != owner || !IsWindowVisible(hWnd)) return true;
+            GetWindowThreadProcessId(hWnd, out var windowPid);
+            if (windowPid == ownerPid) return true;
+            found = hWnd;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>The name of the process that shows <paramref name="hwnd"/> (no extension).</summary>
+    public static string GetProcessName(IntPtr hwnd)
+    {
+        GetWindowThreadProcessId(hwnd, out var pid);
+        try
+        {
+            using var process = Process.GetProcessById((int)pid);
+            return process.ProcessName;
+        }
+        catch (ArgumentException)
+        {
+            return $"<exited pid {pid}>";
+        }
+    }
+
+    /// <summary>
     /// The current top-level main-window handle of a running process named
     /// <paramref name="processName"/> (no extension), or <see cref="IntPtr.Zero"/>
     /// if none is up yet. Resolves a fresh <see cref="Process"/> each call so the
@@ -324,6 +368,8 @@ internal static class WindowCapture
     private const uint SRCCOPY = 0x00CC0020;
     private const uint CAPTUREBLT = 0x40000000;
     private const int SW_RESTORE = 9;
+    private const int SW_MINIMIZE = 6;
+    private const uint GW_OWNER = 4;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
 
@@ -395,6 +441,9 @@ internal static class WindowCapture
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);

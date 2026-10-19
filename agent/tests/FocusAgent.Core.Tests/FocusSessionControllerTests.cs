@@ -613,6 +613,179 @@ public class FocusSessionControllerTests
         Assert.False(withoutGuard.TurnExtensionBackOn());
     }
 
+    // --- #428: a dialog another process shows for an app is judged as that app ---
+
+    [Fact]
+    public async Task A_file_picker_owned_by_an_allowed_app_stays_usable_and_is_reported_as_that_app()
+    {
+        // Edge's upload button opens the Windows file picker in PickerHost, owned
+        // by the Edge window. Judged by its own process it was blocked (PickerHost
+        // is on no list), so no upload could be done in an allowed web app.
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        var payload = NewPayload(apps: new[] { new AllowedAppDto("ProcessName", "msedge") });
+        await fixtures.Hub.RaiseSessionStarted(payload);
+
+        fixtures.Watcher.Raise(PickerFor(hwnd: 0x700, ownerProcess: "msedge", ownerHwnd: 0x300));
+
+        Assert.Empty(fixtures.Enforcer.Blocked);
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Empty(fixtures.Overlay.Shown);
+        // The picker is where the student is: it's the window to hand focus back to.
+        Assert.Equal(new[] { (nint)0x700 }, fixtures.Enforcer.Remembered);
+        var reported = Assert.Single(fixtures.Reporter.Reports);
+        Assert.Equal(payload.SessionId, reported.SessionId);
+        Assert.False(reported.Blocked);
+        Assert.Equal("msedge", reported.Change.OwningApp.ProcessName);
+    }
+
+    [Fact]
+    public async Task A_file_picker_right_after_its_app_is_the_same_app_for_the_report()
+    {
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[] { new AllowedAppDto("ProcessName", "msedge") }));
+
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x300));
+        fixtures.Clock.Advance(TimeSpan.FromMilliseconds(100));
+        fixtures.Watcher.Raise(PickerFor(hwnd: 0x700, ownerProcess: "msedge", ownerHwnd: 0x300));
+
+        // Edge, then Edge's picker: one switch to Edge for the teacher, not a
+        // second app with a Windows process name.
+        var reported = Assert.Single(fixtures.Reporter.Reports);
+        Assert.Equal("msedge", reported.Change.OwningApp.ProcessName);
+    }
+
+    [Fact]
+    public async Task A_file_picker_owned_by_an_off_list_app_is_blocked_as_that_app()
+    {
+        // The picker is no way around the allowlist: one that an off-list app
+        // opens is blocked with it, and the overlay names that app.
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "msedge"),
+        }));
+
+        fixtures.Watcher.Raise(PickerFor(hwnd: 0x700, ownerProcess: "notepad", ownerHwnd: 0x200));
+
+        Assert.Equal(new[] { (nint)0x700 }, fixtures.Enforcer.Blocked);
+        Assert.Empty(fixtures.Enforcer.Remembered);
+        Assert.Equal("notepad", Assert.Single(fixtures.Overlay.Shown).BlockedAppName);
+        var reported = Assert.Single(fixtures.Reporter.Reports);
+        Assert.True(reported.Blocked);
+        Assert.Equal("notepad", reported.Change.OwningApp.ProcessName);
+    }
+
+    [Fact]
+    public async Task A_file_picker_without_an_owner_stays_blocked()
+    {
+        // No blanket exemption for PickerHost: a picker that no app window owns
+        // can't be tied to an allowed app, so it's judged by its own process.
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "msedge"),
+            new AllowedAppDto("ProcessName", "explorer"),
+        }));
+
+        fixtures.Watcher.Raise(ForegroundFor("PickerHost", hwnd: 0x700));
+
+        Assert.Equal(new[] { (nint)0x700 }, fixtures.Enforcer.Blocked);
+        Assert.True(Assert.Single(fixtures.Reporter.Reports).Blocked);
+    }
+
+    [Fact]
+    public async Task Settings_in_ApplicationFrameHost_stays_blocked()
+    {
+        // Settings runs in an ApplicationFrameHost top-level window of its own,
+        // with no owner: it's still blocked, on purpose.
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "msedge"),
+            new AllowedAppDto("ProcessName", "explorer"),
+        }));
+
+        fixtures.Watcher.Raise(ForegroundFor("ApplicationFrameHost", hwnd: 0x800));
+
+        Assert.Equal(new[] { (nint)0x800 }, fixtures.Enforcer.Blocked);
+        Assert.True(Assert.Single(fixtures.Reporter.Reports).Blocked);
+    }
+
+    [Fact]
+    public async Task A_dialog_owned_by_a_shell_surface_is_left_alone()
+    {
+        // Taking such a dialog down would minimize the shell surface that owns it,
+        // which blanks Search/Start (#140).
+        var fixtures = new Fixtures();
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[] { new AllowedAppDto("ProcessName", "winword") }));
+        fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x100));
+
+        fixtures.Watcher.Raise(OwnedWindowFor(
+            "CredentialUIBroker", hwnd: 0x700, ownerProcess: "ShellExperienceHost", ownerHwnd: 0x900));
+
+        Assert.Empty(fixtures.Enforcer.Blocked);
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Equal(new[] { (nint)0x100 }, fixtures.Enforcer.Remembered);
+        Assert.Equal("winword", Assert.Single(fixtures.Reporter.Reports).Change.OwningApp.ProcessName);
+    }
+
+    [Fact]
+    public async Task A_file_picker_owned_by_a_paused_edge_is_paused_with_it()
+    {
+        // #427 + #428: judged by its owner, an Edge picker would be allowed — but
+        // while Edge is paused it must go down like Edge, or it would be a way
+        // around the pause.
+        var (_, fixtures, sessionId) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Enforcer.BlockRestoresFallback = true;
+
+        fixtures.Watcher.Raise(PickerFor(hwnd: 0x700, ownerProcess: "msedge", ownerHwnd: 0x20));
+
+        // The pause minimized Edge's window; the picker that came forward goes down too.
+        Assert.Equal(new[] { (nint)0x20, (nint)0x700 }, fixtures.Enforcer.Minimized);
+        Assert.Empty(fixtures.Enforcer.Blocked);
+        Assert.DoesNotContain((nint)0x700, fixtures.Enforcer.Remembered);
+        Assert.Equal(2, fixtures.Overlay.PausedShown.Count);
+        var reported = Assert.Single(fixtures.Reporter.Reports);
+        Assert.Equal(sessionId, reported.SessionId);
+        Assert.Equal("msedge", reported.Change.OwningApp.ProcessName);
+        Assert.True(reported.Blocked);
+    }
+
+    [Fact]
+    public async Task A_file_picker_owned_by_edge_is_usable_while_the_extensions_grace_period_runs()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Clock.Advance(ExtensionGrace - TimeSpan.FromSeconds(1));
+
+        fixtures.Watcher.Raise(PickerFor(hwnd: 0x700, ownerProcess: "msedge", ownerHwnd: 0x20));
+
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Contains((nint)0x700, fixtures.Enforcer.Remembered);
+        Assert.False(Assert.Single(fixtures.Reporter.Reports).Blocked);
+    }
+
+    /// <summary>
+    /// The Windows file picker as <c>PickerHost</c> shows it for another app: a
+    /// PickerHost window whose owner is that app's window.
+    /// </summary>
+    private static ForegroundChange PickerFor(nint hwnd, string ownerProcess, nint ownerHwnd) =>
+        OwnedWindowFor("PickerHost", hwnd, ownerProcess, ownerHwnd);
+
+    /// <summary>A <paramref name="process"/> window owned by another process's window.</summary>
+    private static ForegroundChange OwnedWindowFor(string process, nint hwnd, string ownerProcess, nint ownerHwnd) =>
+        new(new AppInfo(process, null, null),
+            WindowTitle: "Open",
+            ProcessId: 7036,
+            WindowHandle: hwnd,
+            Owner: new ForegroundOwner(new AppInfo(ownerProcess, null, null), ProcessId: 5151, ownerHwnd));
+
     private static OpenWindow OpenWindowFor(string process, nint hwnd, string? exePath = null, string? publisher = null) =>
         new(hwnd, new AppInfo(process, exePath, publisher));
 

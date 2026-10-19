@@ -9,14 +9,17 @@ public interface IFocusEnforcer
     /// session-start sweep (#104) to bring down off-list windows that were
     /// already open: unlike <see cref="Block"/> it deliberately does not try to
     /// restore a previously-allowed window, because a bulk sweep has no single
-    /// window to hand focus back to.
+    /// window to hand focus back to. A dialog goes down with the app window that
+    /// owns it (#428): minimizing the owner hides its dialogs too, and they come
+    /// back with the app.
     /// </summary>
     void Minimize(nint windowHandle);
 
     /// <summary>
-    /// Minimizes the off-list window. Returns true if focus was returned to a
-    /// previously remembered allowed window; false if there was nothing valid
-    /// to fall back to (caller should surface the overlay).
+    /// Minimizes the off-list window (a dialog together with the app window that
+    /// owns it, like <see cref="Minimize"/>). Returns true if focus was returned
+    /// to a previously remembered allowed window; false if there was nothing
+    /// valid to fall back to (caller should surface the overlay).
     /// </summary>
     bool Block(nint offendingWindowHandle);
 
