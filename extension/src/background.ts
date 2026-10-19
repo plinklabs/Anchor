@@ -289,23 +289,23 @@ async function handleAllowlistAmended(payload: AllowlistAmendedPayload): Promise
     addedCount: payload.addedDomains?.length ?? 0,
     totalDomains: merged.domains.length,
   });
+  await notifyBlockPages(merged);
+}
 
-  // Tell any open block pages that an amendment landed. We send the bare
-  // host strings: the block page only needs to know "does this match what
-  // I'm currently blocking?" — it doesn't need the matchType to decide.
-  const addedHosts = (payload.addedDomains ?? [])
-    .map((d) => d.value?.trim().toLowerCase())
-    .filter((v): v is string => !!v);
-  if (addedHosts.length === 0) return;
+// Tell any open block pages which allowlist is now in force, so one whose
+// blocked URL it covers sends the student back there. We send the full list
+// with its match types: the block page then judges with the same matcher as
+// the navigation filter, wildcard entries included (#426), instead of guessing
+// from bare host strings.
+async function notifyBlockPages(state: ActiveSessionState): Promise<void> {
   const message: ExtensionRuntimeMessage = {
     kind: 'allowlist-amended',
-    sessionId: payload.sessionId,
-    addedHosts,
+    sessionId: state.sessionId,
+    domains: state.domains,
   };
   try {
     // sendMessage with no recipient broadcasts to all extension contexts
-    // (popups, options pages, extension pages like the block page). The
-    // callback errors silently if no listener is attached — we don't care.
+    // (popups, options pages, extension pages like the block page).
     await chrome.runtime.sendMessage(message);
   } catch (err) {
     // "Receiving end does not exist" is the normal case when no block page
@@ -329,6 +329,12 @@ async function handleSessionBundlesUpdated(payload: SessionBundlesUpdatedPayload
     sessionId: payload.sessionId,
     domainCount: next.domains.length,
   });
+  // Adding a bundle can cover a tab already parked on the block page: the
+  // session starts with no bundles, so the scan at its start blocks hosts the
+  // teacher allows moments later (#426). Those block pages don't navigate on
+  // their own, so tell them, the same way an approved unblock request does.
+  // First, so the student isn't kept waiting on the scan's per-tab reports.
+  await notifyBlockPages(next);
   // Removing a bundle can turn a currently-open tab off-list, and that tab
   // won't navigate on its own. Re-scan so a mid-session bundle change closes
   // the loophole retroactively, same as it does at session start (#91).
