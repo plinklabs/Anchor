@@ -56,9 +56,22 @@ public sealed class OverlayVisualTests
     private static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(2);
 
     [Fact]
-    public async Task OverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly()
+    public Task OverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(extraArgs: [], artifactPrefix: "overlay");
+
+    /// <summary>
+    /// #427: the paused-Edge variant — its own headline and copy, the "switch the
+    /// extension back on" row and its hint above the other allowed apps — renders
+    /// as the same full-monitor ink surface and tears down the same way.
+    /// </summary>
+    [Fact]
+    public Task PausedBrowserOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlayPausedArg], artifactPrefix: "overlay-paused");
+
+    private static async Task AssertOverlayRendersAndTearsDownAsync(string[] extraArgs, string artifactPrefix)
     {
-        await using var agent = AgentSelfTestProcess.Launch(AgentSelfTestProcess.ShowTestOverlayArg);
+        await using var agent = AgentSelfTestProcess.Launch(AgentSelfTestProcess.ShowTestOverlayArg, extraArgs: extraArgs);
 
         // SHOW: the real overlay window must appear, then settle so it's painted
         // and topmost before we read pixels.
@@ -84,7 +97,7 @@ public sealed class OverlayVisualTests
 
         // ...and actually render (not a blank/transparent window).
         using var shown = WindowCapture.CaptureRect(rect);
-        var saved = VisualArtifacts.Save(shown, "overlay-shown");
+        var saved = VisualArtifacts.Save(shown, $"{artifactPrefix}-shown");
         var colors = WindowCapture.DistinctColorCount(shown);
         Assert.True(
             colors >= MinDistinctColors,
@@ -118,7 +131,7 @@ public sealed class OverlayVisualTests
         // post-teardown capture would match it and the assertion would fail —
         // so the test can't be fooled by whatever sits behind the overlay.
         using var cleared = WindowCapture.CaptureRect(rect);
-        VisualArtifacts.Save(cleared, "overlay-cleared");
+        VisualArtifacts.Save(cleared, $"{artifactPrefix}-cleared");
         var changed = WindowCapture.FractionDifferent(shown, cleared);
         Assert.True(
             changed >= MinShownVsClearedFraction,

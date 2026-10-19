@@ -14,7 +14,10 @@
     agent built first (the CI workflow and the dev loop both build it).
   -->
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- The Windows 10 SDK projection gives the #428 file-picker spec the real
+         WinRT FileOpenPicker, which Windows shows in PickerHost like Edge's
+         upload dialog. Same TFM as FocusAgent.Native. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>

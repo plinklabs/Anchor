@@ -123,7 +123,13 @@ export type ExtensionRuntimeMessage =
       payload: UnblockRequestPayload;
     }
   | {
+      /**
+       * The session's allowlist changed: a teacher approved an unblock request
+       * (#73) or changed the session's bundles (#426). Open block pages use it
+       * to send the student back to a page it now covers.
+       */
       kind: 'allowlist-amended';
       sessionId: string;
-      addedHosts: ReadonlyArray<string>;
+      /** The full allowlist now in force, entries as the matcher reads them. */
+      domains: ReadonlyArray<AllowedDomainDto>;
     };

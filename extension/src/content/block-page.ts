@@ -1,13 +1,11 @@
 import { logger } from '../shared/logger';
 import { localizeDocument, t } from '../shared/i18n';
+import { isBlockLifted, type BlockedPage } from '../shared/block-release';
 import type { ExtensionRuntimeMessage, UnblockRequestPayload } from '../shared/types';
 
 const log = logger('block-page');
 
-interface BlockParams {
-  blockedUrl: string;
-  sessionId: string | null;
-}
+type BlockParams = BlockedPage;
 
 function readParams(): BlockParams {
   const url = new URL(globalThis.location.href);
@@ -35,18 +33,6 @@ function extractHost(rawUrl: string): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Does an approved host cover the URL we're blocking? Mirrors the matcher's
- * Suffix semantics (#72) — `reddit.com` matches `reddit.com` AND any
- * subdomain. The dashboard always grants Suffix, so this is the only rule
- * we need to honour here.
- */
-function hostCoversBlockedUrl(blockedHost: string, approvedHost: string): boolean {
-  if (!blockedHost || !approvedHost) return false;
-  if (blockedHost === approvedHost) return true;
-  return blockedHost.endsWith('.' + approvedHost);
 }
 
 function wireButtons(params: BlockParams): void {
@@ -116,19 +102,20 @@ function wireButtons(params: BlockParams): void {
   });
 }
 
+// The background broadcasts the allowlist whenever it changes mid-session: an
+// approved unblock request (#73) or a bundle change (#426). When it now covers
+// the page we're holding back, go back there.
 function wireAllowlistAmendedListener(params: BlockParams): void {
-  const blockedHost = extractHost(params.blockedUrl);
-  if (!blockedHost || !params.sessionId) return;
+  if (!params.sessionId) return;
 
   chrome.runtime.onMessage.addListener((raw) => {
     const message = raw as ExtensionRuntimeMessage;
     if (message?.kind !== 'allowlist-amended') return;
-    if (message.sessionId !== params.sessionId) return;
-    if (!message.addedHosts.some((h) => hostCoversBlockedUrl(blockedHost, h))) return;
+    if (!isBlockLifted(params, message.sessionId, message.domains)) return;
 
-    log.info('matching allowlist amendment received — redirecting', {
-      blockedHost,
-      addedHosts: message.addedHosts,
+    log.info('allowlist now covers the blocked page — redirecting', {
+      blockedHost: extractHost(params.blockedUrl),
+      domainCount: message.domains.length,
     });
     setStatus(t('blockApproved'));
     // Replace rather than assign so the block page doesn't sit in history,

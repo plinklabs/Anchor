@@ -43,6 +43,12 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         _dispatcher.TryEnqueue(() => ShowOnUiThread(allowedRules, blockedAppName));
     }
 
+    public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
+    {
+        if (_disposed) return;
+        _dispatcher.TryEnqueue(() => ShowBrowserPausedOnUiThread(allowedRules, prompt));
+    }
+
     public void Hide()
     {
         if (_disposed) return;
@@ -80,6 +86,29 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         catch (Exception ex)
         {
             _log.LogError(ex, "Focus overlay Show failed");
+        }
+    }
+
+    private void ShowBrowserPausedOnUiThread(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
+    {
+        try
+        {
+            FocusOverlayWindow window;
+            lock (_gate)
+            {
+                window = _window ??= CreateWindow();
+            }
+
+            window.UpdateBrowserPausedContent(allowedRules, prompt);
+            ApplyTopmostAndPosition(window);
+            window.Activate();
+            _log.LogInformation(
+                "Focus overlay shown for a paused {Browser} with {RuleCount} other allowed-app entries",
+                prompt.Browser.Value, allowedRules.Count);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Focus overlay ShowBrowserPaused failed");
         }
     }
 

@@ -120,4 +120,13 @@ internal static class NativeMethods
     public static extern nint GetWindow(nint hWnd, uint uCmd);
 
     public const uint GW_OWNER = 4;
+
+    [DllImport("user32.dll")]
+    public static extern nint GetAncestor(nint hWnd, uint gaFlags);
+
+    /// <summary>
+    /// <see cref="GetAncestor"/>: walk the owner chain to the top-level window at
+    /// its root (the window itself when it has no owner).
+    /// </summary>
+    public const uint GA_ROOTOWNER = 3;
 }

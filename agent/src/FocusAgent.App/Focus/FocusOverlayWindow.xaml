@@ -67,6 +67,30 @@
                        Style="{StaticResource PlinkBodyLargeTextStyle}"
                        Foreground="{StaticResource PlinkOnInkMutedBrush}" />
 
+            <!-- #427: the paused-Edge variant's way back. Edge is paused because its
+                 extension is off, and the extension only comes back on through
+                 Edge's own edge://extensions page, so the student gets one action
+                 that opens Edge for a moment, plus a mono line saying where to go.
+                 Collapsed for the ordinary off-list overlay. Same on-ink hairline
+                 row as the allowed apps below (never a shadow or a colour flip). -->
+            <StackPanel x:Name="BrowserRepairPanel"
+                        Spacing="8"
+                        Visibility="Collapsed">
+                <Button x:Name="BrowserRepairButton"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Left"
+                        Foreground="{StaticResource PlinkOnInkBrush}"
+                        Background="{StaticResource PlinkSurfaceInkBrush}"
+                        BorderBrush="{StaticResource PlinkHairlineOnInkBrush}"
+                        BorderThickness="1"
+                        Padding="16,12,16,12"
+                        Click="OnBrowserRepairClicked" />
+                <TextBlock x:Name="BrowserRepairHintText"
+                           Style="{StaticResource PlinkLabelTextStyle}"
+                           Foreground="{StaticResource PlinkOnInkMutedBrush}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
             <!-- the just-blocked line: quiet mono microcopy, never an alarm. -->
             <TextBlock x:Name="BlockedText"
                        Style="{StaticResource PlinkLabelTextStyle}"

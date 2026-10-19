@@ -22,10 +22,15 @@ public static class ForegroundChangeReport
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    /// <summary>The JSON payload reported for <paramref name="change"/>.</summary>
+    /// <summary>
+    /// The JSON payload reported for <paramref name="change"/>. It names the app
+    /// the window belongs to (<see cref="ForegroundChange.OwningApp"/>): the file
+    /// picker <c>PickerHost</c> shows for an Edge upload is reported as Edge
+    /// (#428), the app the teacher knows, not as the Windows process hosting it.
+    /// </summary>
     public static string ToPayloadJson(ForegroundChange change, bool blocked) =>
         JsonSerializer.Serialize(
-            new Payload(change.App.ProcessName, change.App.SignedPublisher, blocked),
+            new Payload(change.OwningApp.ProcessName, change.OwningApp.SignedPublisher, blocked),
             JsonOptions);
 
     private sealed record Payload(string ProcessName, string? Publisher, bool Blocked);

@@ -54,6 +54,16 @@ internal sealed class BackendClient
         return await ReadAsync<StartedSession>(res);
     }
 
+    /// <summary>
+    /// GET /sessions/rejoinable as a student: the running sessions they are still
+    /// in, which an agent of theirs silently rejoins as soon as it connects (#54).
+    /// </summary>
+    public async Task<IReadOnlyList<Guid>> GetRejoinableSessionIdsAsync(string oid = TestConfig.StudentOid)
+    {
+        var sessions = await GetJsonAsync<List<RejoinableSession>>("/sessions/rejoinable", oid);
+        return sessions.Select(s => s.SessionId).ToList();
+    }
+
     /// <summary>POST /sessions/{id}/end — end a running session.</summary>
     public async Task EndSessionAsync(Guid sessionId, string oid = TestConfig.TeacherOid)
     {
@@ -188,4 +198,5 @@ internal sealed class BackendClient
 
     private sealed record NamedRef(Guid Id, string Name);
     private sealed record JoinByCodeResult(Guid SessionId);
+    private sealed record RejoinableSession(Guid SessionId);
 }

@@ -32,25 +32,33 @@ public sealed class AgentKilledTests
 
         var classId = await api.FindClassIdAsync();
         var session = await api.StartSessionAsync(classId);
+        try
+        {
+            var joined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
+            Assert.True(
+                joined?.JoinedSessionId == session.Id,
+                $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
 
-        var joined = await agent.WaitForAsync(
-            s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
-        Assert.True(
-            joined?.JoinedSessionId == session.Id,
-            $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
+            await agent.QuitAsync();
 
-        await agent.QuitAsync();
+            // Quit is a clean shutdown: the process actually exits (vs. Close, which
+            // just hides the window).
+            await agent.WaitForExitAsync(TimeSpan.FromSeconds(10));
 
-        // Quit is a clean shutdown: the process actually exits (vs. Close, which
-        // just hides the window).
-        await agent.WaitForExitAsync(TimeSpan.FromSeconds(10));
-
-        // The AgentKilled event reached the backend over the hub before exit —
-        // the agent awaits the server ack inside its bounded best-effort window,
-        // so by the time it exits the event is already persisted. Exactly one:
-        // the agent reports it a single time on quit.
-        var kinds = await PollForEventAsync(api, session.Id, "AgentKilled", TimeSpan.FromSeconds(5));
-        Assert.Equal(1, kinds.Count(k => k == "AgentKilled"));
+            // The AgentKilled event reached the backend over the hub before exit —
+            // the agent awaits the server ack inside its bounded best-effort window,
+            // so by the time it exits the event is already persisted. Exactly one:
+            // the agent reports it a single time on quit.
+            var kinds = await PollForEventAsync(api, session.Id, "AgentKilled", TimeSpan.FromSeconds(5));
+            Assert.Equal(1, kinds.Count(k => k == "AgentKilled"));
+        }
+        finally
+        {
+            // Quitting leaves the student in the session, so left running it would be
+            // rejoined by the next spec's agent (#54).
+            await api.EndSessionAsync(session.Id);
+        }
     }
 
     [Fact]
@@ -63,32 +71,39 @@ public sealed class AgentKilledTests
 
         var classId = await api.FindClassIdAsync();
         var session = await api.StartSessionAsync(classId);
+        try
+        {
+            var joined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
+            Assert.True(
+                joined?.JoinedSessionId == session.Id,
+                $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
 
-        var joined = await agent.WaitForAsync(
-            s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
-        Assert.True(
-            joined?.JoinedSessionId == session.Id,
-            $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
+            // Leave first — the agent is no longer in a session, so a subsequent quit
+            // has nothing deliberate to report.
+            await agent.LeaveSessionAsync();
+            var cleared = await agent.WaitForAsync(
+                s => s.JoinedSessionId is null, TimeSpan.FromSeconds(5));
+            Assert.True(
+                cleared is { JoinedSessionId: null },
+                $"Agent did not clear its joined session within 5s of leaving " +
+                $"(joinedSessionId: {cleared?.JoinedSessionId?.ToString() ?? "<none>"}).");
 
-        // Leave first — the agent is no longer in a session, so a subsequent quit
-        // has nothing deliberate to report.
-        await agent.LeaveSessionAsync();
-        var cleared = await agent.WaitForAsync(
-            s => s.JoinedSessionId is null, TimeSpan.FromSeconds(5));
-        Assert.True(
-            cleared is { JoinedSessionId: null },
-            $"Agent did not clear its joined session within 5s of leaving " +
-            $"(joinedSessionId: {cleared?.JoinedSessionId?.ToString() ?? "<none>"}).");
+            await agent.QuitAsync();
+            await agent.WaitForExitAsync(TimeSpan.FromSeconds(10));
 
-        await agent.QuitAsync();
-        await agent.WaitForExitAsync(TimeSpan.FromSeconds(10));
-
-        // ManualLeave is on record from the leave above; AgentKilled must not be —
-        // quit outside a session emits nothing. The leave already round-tripped,
-        // so its presence confirms we're reading the right session's events.
-        var kinds = await api.GetSessionEventKindsAsync(session.Id);
-        Assert.Contains("ManualLeave", kinds);
-        Assert.DoesNotContain("AgentKilled", kinds);
+            // ManualLeave is on record from the leave above; AgentKilled must not be —
+            // quit outside a session emits nothing. The leave already round-tripped,
+            // so its presence confirms we're reading the right session's events.
+            var kinds = await api.GetSessionEventKindsAsync(session.Id);
+            Assert.Contains("ManualLeave", kinds);
+            Assert.DoesNotContain("AgentKilled", kinds);
+        }
+        finally
+        {
+            // Never leave the session running for the specs that follow.
+            await api.EndSessionAsync(session.Id);
+        }
     }
 
     /// <summary>
