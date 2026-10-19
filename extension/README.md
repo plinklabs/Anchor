@@ -321,6 +321,17 @@ copy pass on a Dutch or any other dev box too. A spec that needs another languag
 asks for it with `loadExtension({ locale: '<lang>' })`, as `i18n-dutch.spec.ts`
 does.
 
+**Runs next to the agent's Edge policy (#429).** Once the agent has added Anchor
+to `HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist` (#405),
+Edge refuses an unpacked `dist/` that claims the forcelisted ID, which the
+manifest `key` makes it do, and the launch never returns. So the harness checks
+that key under HKLM and HKCU when it loads. If either names Anchor, it says so
+once and loads a copy of `dist/` without the `key`, which Edge gives an ID
+derived from the copy's path. Every spec runs as usual, except the stable-ID
+assertion in `extension-loads.spec.ts`, which is skipped. Neither the policy nor
+`dist/` is changed. CI has no such entry and loads `dist/` itself. The check
+does nothing off Windows or with a non-Edge `E2E_BROWSER_CHANNEL`.
+
 Prerequisites: Node ≥ 22 (the harness is TypeScript run via Node's built-in type
 stripping), Microsoft Edge, and the .NET SDK on `PATH` (the harness builds and
 runs the backend). Loading an MV3 extension needs a **headed** browser, so the
@@ -498,7 +509,8 @@ The ID is a pure function of that public key:
 - [src/manifest.test.ts](src/manifest.test.ts) re-derives the ID from the committed
   `key` and asserts it equals the value above (runs under `npm test`).
 - the `extension-loads` e2e spec asserts a **real Edge load** assigns that exact
-  ID (`STABLE_EXTENSION_ID` in [e2e/config.ts](e2e/config.ts)).
+  ID (`STABLE_EXTENSION_ID` in [e2e/config.ts](e2e/config.ts)). It runs in CI;
+  a machine whose Edge policy force-installs Anchor skips it (#429).
 
 ### Signing key
 

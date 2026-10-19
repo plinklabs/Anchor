@@ -6,7 +6,7 @@
 // Edge finds a native-messaging host via an HKCU registry key pointing at a
 // manifest JSON whose `allowed_origins` names the extension id. We build the
 // host from the agent solution, write a manifest with the absolute exe path and
-// the pinned e2e extension id, set the registry key, and inject the backend URL
+// the id of the extension under test, set the registry key, and inject the backend URL
 // the host should hand down via the host's ANCHOR_WITNESS_BACKEND_URL env var
 // (the per-deployment source). connectNative inherits the launching browser's
 // environment, so the env var the harness sets is what the host reads.
@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { REPO_ROOT, STABLE_EXTENSION_ID } from './config.ts';
+import { REPO_ROOT } from './config.ts';
 
 const HOST_NAME = 'net.anchor.witness';
 /** Where Edge looks up the witness host's manifest. */
@@ -64,12 +64,15 @@ export function readWitnessHostRegistration(): string | null {
 }
 
 /**
- * Build the witness host (Debug), write its manifest pinned to the e2e
- * extension id, and register it in HKCU. The browser must be launched AFTER
- * this so Edge picks up the host, and with ANCHOR_WITNESS_BACKEND_URL in its
- * environment so the host hands that URL to the extension.
+ * Build the witness host (Debug), write its manifest allowing `extensionId`, and
+ * register it in HKCU. The browser must be launched AFTER this so Edge picks up
+ * the host, and with ANCHOR_WITNESS_BACKEND_URL in its environment so the host
+ * hands that URL to the extension. Pass the extension under test's id
+ * (EXTENSION_ID in extension.ts): the pinned one, or the key-less copy's on a box
+ * whose Edge policy force-installs Anchor (#429). Edge connects only an
+ * extension whose origin the manifest names.
  */
-export function registerWitnessHost(): RegisteredWitnessHost {
+export function registerWitnessHost(extensionId: string): RegisteredWitnessHost {
   const exePath = buildHost();
 
   const manifest = {
@@ -77,7 +80,7 @@ export function registerWitnessHost(): RegisteredWitnessHost {
     description: 'Anchor witness host (e2e #204)',
     path: exePath,
     type: 'stdio',
-    allowed_origins: [`chrome-extension://${STABLE_EXTENSION_ID}/`],
+    allowed_origins: [`chrome-extension://${extensionId}/`],
   };
   const manifestPath = path.join(path.dirname(exePath), `${HOST_NAME}.json`);
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');

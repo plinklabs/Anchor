@@ -17,12 +17,17 @@
 // extension. It also proves the harness leaves the registry the way it found it,
 // which is what keeps a developer's agent link working after a run.
 //
+// The stand-in allows EXTENSION_ID, the id of the extension under test, so the
+// link would work if the harness didn't cut it. That is the pinned id, except on
+// a box whose Edge policy force-installs Anchor, where it is the key-less copy's
+// path-derived id (#429).
+//
 // Windows-only: native messaging + the host build/registration need Edge + .NET
 // on a Windows runner, which is exactly what the Extension E2E CI job uses.
 
 import { test, expect } from '../fixtures.ts';
 import { BACKEND_URL } from '../config.ts';
-import { loadExtension, type LoadedExtension } from '../extension.ts';
+import { EXTENSION_ID, loadExtension, type LoadedExtension } from '../extension.ts';
 import {
   readWitnessHostRegistration,
   registerWitnessHost,
@@ -68,7 +73,7 @@ test.describe('the suite is hermetic against an installed agent (#332)', () => {
     // Stand in for the developer box: the real host registered in HKCU, with the
     // backend URL it should hand down in the environment the browser inherits.
     process.env.ANCHOR_WITNESS_BACKEND_URL = AGENT_BACKEND_URL;
-    const installed = registerWitnessHost();
+    const installed = registerWitnessHost(EXTENSION_ID);
     try {
       expect(readWitnessHostRegistration()).toBe(installed.manifestPath);
 

@@ -2,7 +2,7 @@
 // the Entra tenant/client/scope to sign the student in from the on-box agent at
 // runtime over the native-messaging witness link, exactly like the backend URL
 // (#204), rather than baking it in. This drives the REAL witness host
-// (anchor-witness-host.exe) registered against the pinned e2e extension id: the
+// (anchor-witness-host.exe) registered against the extension under test's id: the
 // host hands the extension an auth_config via the native channel and the extension
 // persists it — with NO authConfig ever seeded into chrome.storage by the harness.
 //
