@@ -4,6 +4,8 @@
 
 import { test, expect } from '../fixtures.ts';
 import { BACKEND_URL, DEFAULT_LOCALE, STABLE_EXTENSION_ID, STUDENT_OID } from '../config.ts';
+import { describeEntry } from '../edge-forcelist.ts';
+import { ANCHOR_FORCELIST_ENTRY } from '../extension.ts';
 
 test('extension loads in Edge and its service worker boots', async ({ ext }) => {
   // A real MV3 extension id is 32 lowercase letters.
@@ -11,12 +13,25 @@ test('extension loads in Edge and its service worker boots', async ({ ext }) => 
   await expect(ext.waitForLog('service worker started')).resolves.toContain('service worker started');
 });
 
-test('Edge derives the pinned stable extension id from the manifest key', async ({ ext }) => {
-  // End-to-end proof of #123: a real Edge load of the unpacked dist/ assigns the
-  // id the manifest `key` pins — the same id on every machine, so the school's
-  // ExtensionInstallForcelist entry keeps matching. The unit test locks the
-  // manifest→id derivation; this proves the browser actually does the same.
-  expect(ext.extensionId).toBe(STABLE_EXTENSION_ID);
+test.describe('the pinned extension id (#123)', () => {
+  // #429: where Edge policy force-installs Anchor (the agent's HKLM forcelist
+  // entry on a dev box), Edge refuses an unpacked dist/ claiming that id, so the
+  // harness loads a key-less copy with a path-derived id and this can't hold.
+  // CI has no such entry and runs it.
+  test.skip(
+    ANCHOR_FORCELIST_ENTRY !== null,
+    `Edge policy force-installs Anchor on this machine ` +
+      `(${ANCHOR_FORCELIST_ENTRY ? describeEntry(ANCHOR_FORCELIST_ENTRY) : ''}), so the ` +
+      `harness loads dist/ without its manifest key (#429)`,
+  );
+
+  test('Edge derives the pinned stable extension id from the manifest key', async ({ ext }) => {
+    // End-to-end proof of #123: a real Edge load of the unpacked dist/ assigns the
+    // id the manifest `key` pins — the same id on every machine, so the school's
+    // ExtensionInstallForcelist entry keeps matching. The unit test locks the
+    // manifest→id derivation; this proves the browser actually does the same.
+    expect(ext.extensionId).toBe(STABLE_EXTENSION_ID);
+  });
 });
 
 test('the browser runs in the pinned UI language, whatever the host language', async ({ ext }) => {
