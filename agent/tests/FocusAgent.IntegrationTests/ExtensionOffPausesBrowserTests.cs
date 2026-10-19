@@ -182,6 +182,18 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
     {
         var pipeName = "anchor-witness-e2e-" + Guid.NewGuid().ToString("N");
 
+        // The agent silently rejoins any running session the student is still in
+        // as soon as it connects (#54), and that session's start-of-session sweep
+        // would minimize the stand-in before ours begins. Every spec must end the
+        // sessions it starts; say so here rather than fail later as a minimized
+        // window.
+        var stale = await api.GetRejoinableSessionIdsAsync();
+        Assert.True(
+            stale.Count == 0,
+            $"The student is still in running session(s) {string.Join(", ", stale)} that an earlier spec " +
+            "left behind; this agent would rejoin them on connect and sweep the stand-in browser. " +
+            "End every session a spec starts.");
+
         // A fresh window must be up before the session starts (Win11 notepad is a
         // tabbed launcher, so kill leftovers first to guarantee a new window).
         KillNotepad();
