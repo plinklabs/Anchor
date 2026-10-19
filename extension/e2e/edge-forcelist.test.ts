@@ -3,7 +3,7 @@
 // Playwright spec: it needs no browser, so it also runs on the Linux CI runner,
 // where detection has to be a no-op.
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,7 +13,9 @@ import {
   describeEntry,
   extensionIdForPath,
   findForcelistEntry,
+  prepareEdgeExtension,
   stageKeylessCopy,
+  type ForcelistEntry,
 } from './edge-forcelist.ts';
 
 const ANCHOR_ID = 'dnkimhodjfogjibnbbfdjdapgmmiojio';
@@ -165,5 +167,64 @@ describe('stageKeylessCopy', () => {
     expect(fs.existsSync(path.join(copy, 'stale.js'))).toBe(false);
     // dist/ itself keeps its key: packaging and CI load it as built.
     expect(JSON.parse(fs.readFileSync(path.join(dist, 'manifest.json'), 'utf8')).key).toBe('MIIB');
+  });
+});
+
+// #431: what the dev launcher (npm run dev:extension) loads into Edge.
+describe('prepareEdgeExtension', () => {
+  const AGENT_ENTRY: ForcelistEntry = { key: HKLM_KEY, name: '1', data: `${ANCHOR_ID};${UPDATE_URL}` };
+  let root: string;
+  let dist: string;
+  let keyless: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-prepare-test-'));
+    dist = path.join(root, 'dist');
+    fs.mkdirSync(dist);
+    fs.writeFileSync(path.join(dist, 'manifest.json'), JSON.stringify({ name: 'Anchor', key: 'MIIB' }));
+    keyless = path.join(root, 'keyless');
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('loads dist/ as built and touches nothing where no forcelist names Anchor', () => {
+    const asked: string[] = [];
+    const exitHooks: Array<() => void> = [];
+    const prepared = prepareEdgeExtension(dist, ANCHOR_ID, keyless, {
+      find: (id) => {
+        asked.push(id);
+        return null;
+      },
+      onExit: (cleanup) => exitHooks.push(cleanup),
+    });
+
+    expect(prepared).toEqual({ path: dist, forcelistEntry: null });
+    expect(asked).toEqual([ANCHOR_ID]);
+    expect(fs.existsSync(keyless)).toBe(false);
+    expect(exitHooks).toEqual([]);
+  });
+
+  it('loads a key-less copy where the forcelist names Anchor, and removes it on exit', () => {
+    const exitHooks: Array<() => void> = [];
+    const prepared = prepareEdgeExtension(dist, ANCHOR_ID, keyless, {
+      find: () => AGENT_ENTRY,
+      onExit: (cleanup) => exitHooks.push(cleanup),
+    });
+
+    expect(prepared).toEqual({ path: keyless, forcelistEntry: AGENT_ENTRY });
+    expect(JSON.parse(fs.readFileSync(path.join(keyless, 'manifest.json'), 'utf8'))).toEqual({
+      name: 'Anchor',
+    });
+    expect(JSON.parse(fs.readFileSync(path.join(dist, 'manifest.json'), 'utf8')).key).toBe('MIIB');
+
+    expect(exitHooks).toHaveLength(1);
+    exitHooks[0]();
+    expect(fs.existsSync(keyless)).toBe(false);
+    expect(fs.existsSync(path.join(dist, 'manifest.json'))).toBe(true);
+  });
+
+  // On Windows the real forcelist decides, which differs per box (the agent's
+  // entry on a dev box, none on a runner), so this only runs elsewhere (CI).
+  it.skipIf(process.platform === 'win32')('reads the real forcelist by default: dist/ off Windows', () => {
+    expect(prepareEdgeExtension(dist, ANCHOR_ID, keyless)).toEqual({ path: dist, forcelistEntry: null });
+    expect(fs.existsSync(keyless)).toBe(false);
   });
 });

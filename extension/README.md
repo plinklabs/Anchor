@@ -364,6 +364,13 @@ q  quit (closes Edge, stops the backend if it started one)
 With a session running, open `https://reddit.com` → block page; open
 `https://outlook.office.com` → loads. No dashboard, no agent.
 
+On a box whose Edge policy force-installs Anchor (the agent's HKLM forcelist
+entry, #405), Edge refuses `dist/` and the launch would never return. There the
+launcher loads a key-less copy of `dist/` instead, the same way the e2e harness
+does (#429), and says so in one line with the copy's path-derived ID (#431). The
+agent's witness host only accepts the pinned ID, so it can't repoint that copy
+at the agent's backend.
+
 ## Dev load
 
 1. Open `edge://extensions` in Edge.

@@ -1,16 +1,17 @@
-// Lets the e2e suite run on a developer box whose Edge policy force-installs
-// Anchor (#429).
+// Lets the e2e suite (#429) and the dev launcher (#431) run on a developer box
+// whose Edge policy force-installs Anchor.
 //
 // Since #405 the installed agent adds Anchor's id to
 // HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist (IT may put it
 // under HKCU, through GPO or Intune). With that entry in place Edge refuses any
 // unpacked copy that claims the same id, logging "Your organization blocks
 // Anchor". dist/ claims it, because the manifest `key` pins the id (#123). The
-// launch then never completes, and every spec hung for 60 s in the `ext` fixture
-// with a timeout that didn't say why. CI never saw it: the runner has no agent.
+// launch then never completes: every spec hung for 60 s in the `ext` fixture with
+// a timeout that didn't say why, and `npm run dev:extension` waited forever. CI
+// never saw it: the runner has no agent.
 //
-// The harness can't change the policy: it needs elevation, and it belongs to the
-// developer's agent. Instead it loads a copy of dist/ with the `key` removed.
+// Neither can change the policy: it needs elevation, and it belongs to the
+// developer's agent. Instead they load a copy of dist/ with the `key` removed.
 // Edge then derives the id from the copy's path, which no forcelist names. Only
 // the stable-id assertion can't hold that way, so extension-loads.spec.ts skips
 // it on such a box.
@@ -130,4 +131,44 @@ export function stageKeylessCopy(distPath: string, dir: string): void {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
   delete manifest.key;
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+}
+
+/** The unpacked extension a launch loads into Edge. */
+export interface PreparedExtension {
+  /** The directory to pass to --load-extension: dist/ itself, or its key-less copy. */
+  readonly path: string;
+  /** The forcelist entry that made it a key-less copy, or null when `path` is dist/. */
+  readonly forcelistEntry: ForcelistEntry | null;
+}
+
+/**
+ * Get the built extension at `distPath` ready to load into Edge on this machine
+ * (#431). Where Edge policy force-installs `stableId` (findForcelistEntry), stage
+ * a key-less copy at `keylessDir` and remove it when the process exits. Anywhere
+ * else, load `distPath` as built and touch nothing. `find` and `onExit` exist for
+ * the unit tests.
+ */
+export function prepareEdgeExtension(
+  distPath: string,
+  stableId: string,
+  keylessDir: string,
+  {
+    find = findForcelistEntry,
+    onExit = (cleanup) => process.on('exit', cleanup),
+  }: {
+    find?: (extensionId: string) => ForcelistEntry | null;
+    onExit?: (cleanup: () => void) => void;
+  } = {},
+): PreparedExtension {
+  const forcelistEntry = find(stableId);
+  if (!forcelistEntry) return { path: distPath, forcelistEntry: null };
+  stageKeylessCopy(distPath, keylessDir);
+  onExit(() => {
+    try {
+      fs.rmSync(keylessDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort: a leftover copy in the temp dir is harmless.
+    }
+  });
+  return { path: keylessDir, forcelistEntry };
 }

@@ -16,7 +16,15 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { BackendClient } from './backend.ts';
-import { BACKEND_PROJECT, CLASS_NAME, DIST_PATH, MS365_BUNDLE_NAME, STUDENT_OID } from './config.ts';
+import {
+  BACKEND_PROJECT,
+  CLASS_NAME,
+  DIST_PATH,
+  MS365_BUNDLE_NAME,
+  STABLE_EXTENSION_ID,
+  STUDENT_OID,
+} from './config.ts';
+import { describeEntry, prepareEdgeExtension } from './edge-forcelist.ts';
 
 // Dev port / DB, deliberately the project defaults so this matches what the
 // dashboard and agent talk to — reuse a running dev backend if there is one.
@@ -60,14 +68,31 @@ async function launchEdge(): Promise<{ context: BrowserContext; serviceWorker: W
   if (!fs.existsSync(path.join(DIST_PATH, 'manifest.json'))) {
     throw new Error(`No built extension at ${DIST_PATH}. Run \`npm run build\` first.`);
   }
+  // On a box whose Edge policy force-installs Anchor (the agent's HKLM entry,
+  // #405), Edge refuses dist/, which claims the pinned id, and the launch never
+  // returns. Load a key-less copy there instead, as the e2e harness does (#429,
+  // #431). The agent's witness-host manifest names only the pinned id, so the
+  // agent can't hand the copy its own backend URL: it runs on the settings below.
+  const extension = prepareEdgeExtension(
+    DIST_PATH,
+    STABLE_EXTENSION_ID,
+    path.join(os.tmpdir(), `anchor-ext-dev-keyless-${process.pid}`),
+  );
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-ext-dev-'));
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'msedge',
     headless: false,
-    args: [`--disable-extensions-except=${DIST_PATH}`, `--load-extension=${DIST_PATH}`],
+    args: [`--disable-extensions-except=${extension.path}`, `--load-extension=${extension.path}`],
   });
 
   let sw = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
+  if (extension.forcelistEntry) {
+    log(
+      `Running a key-less copy of dist/ as ${new URL(sw.url()).host} (${extension.path}): ` +
+        `Edge policy force-installs Anchor (${describeEntry(extension.forcelistEntry)}) and ` +
+        `refuses dist/, which claims ${STABLE_EXTENSION_ID}.`,
+    );
+  }
   await sw.evaluate(
     (s) => chrome.storage.local.set(s),
     { backendUrl: DEV_BACKEND_URL, devImpersonateOid: STUDENT_OID },
