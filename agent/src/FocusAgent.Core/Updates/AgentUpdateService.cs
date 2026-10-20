@@ -68,6 +68,16 @@ public sealed class AgentUpdateService : IAsyncDisposable
     public string? PendingVersion { get; private set; }
 
     /// <summary>
+    /// Test seam (#435): the check pass in flight, or the last one once it has
+    /// finished (<see cref="Task.CompletedTask"/> before any pass). It never faults.
+    /// Lets tests await a timer-fired pass instead of sleeping for the thread pool.
+    /// </summary>
+    internal Task InFlight
+    {
+        get { lock (_gate) return _current; }
+    }
+
+    /// <summary>
     /// Kick off the cadence: an immediate startup check, then a periodic re-check.
     /// Idempotent and safe to call from app startup. No-op (and logs why) when
     /// disabled in config or when the agent isn't a Velopack install.
