@@ -263,6 +263,18 @@
   <data name="Overlay_PublisherApps" xml:space="preserve">
     <value>Apps van {0}</value>
   </data>
+  <data name="Overlay_BrowserPaused_Headline" xml:space="preserve">
+    <value>Edge staat even op pauze</value>
+  </data>
+  <data name="Overlay_BrowserPaused_Message" xml:space="preserve">
+    <value>De Anchor-extensie in Edge staat uit, dus je kunt Edge in deze sessie pas weer gebruiken als ze weer aanstaat. Ga intussen verder met een van deze apps.</value>
+  </data>
+  <data name="Overlay_BrowserPaused_TurnBackOn" xml:space="preserve">
+    <value>Zet de extensie weer aan</value>
+  </data>
+  <data name="Overlay_BrowserPaused_Hint" xml:space="preserve">
+    <value>Edge gaat {0} seconden open. Ga naar edge://extensions en zet Anchor aan.</value>
+  </data>
   <data name="Join_Button_Join" xml:space="preserve">
     <value>DEELNEMEN</value>
   </data>

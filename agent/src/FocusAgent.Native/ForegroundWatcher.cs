@@ -17,7 +17,8 @@ namespace FocusAgent.Native;
 /// Marshals raw OS callbacks through a <see cref="SynchronizationContext"/> so
 /// subscribers see <see cref="Changed"/> on the agent UI thread, and resolves
 /// the active HWND/PID into an <see cref="AppInfo"/> via the injected
-/// <see cref="IAppIdentifier"/>.
+/// <see cref="IAppIdentifier"/>, plus the app window that owns it when another
+/// process shows the window (#428, a file picker in <c>PickerHost</c>).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class ForegroundWatcher : IForegroundWatcher
@@ -243,7 +244,29 @@ public sealed class ForegroundWatcher : IForegroundWatcher
         if (info is null)
             return null;
         var title = GetWindowTitle(hwnd);
-        return new ForegroundChange(info, title, pid, hwnd);
+        return new ForegroundChange(info, title, pid, hwnd, ResolveOwner(hwnd, pid));
+    }
+
+    /// <summary>
+    /// The app window that owns <paramref name="hwnd"/>, when it belongs to another
+    /// process (#428): Edge's upload button opens the Windows file picker in
+    /// <c>PickerHost</c>, a window owned by the Edge window, so the picker's own
+    /// process says nothing about which app it serves. Walks the owner chain to its
+    /// root, the app's top-level window. <c>null</c> for a window without an owner
+    /// or owned within its own process, and when the owner can't be identified —
+    /// the window is then judged by its own process, as before.
+    /// </summary>
+    private ForegroundOwner? ResolveOwner(nint hwnd, int pid)
+    {
+        var root = NativeMethods.GetAncestor(hwnd, NativeMethods.GA_ROOTOWNER);
+        if (root == IntPtr.Zero || root == hwnd)
+            return null;
+        _ = NativeMethods.GetWindowThreadProcessId(root, out var rawOwnerPid);
+        var ownerPid = (int)rawOwnerPid;
+        if (ownerPid <= 0 || ownerPid == pid)
+            return null;
+        var owner = _identifier.Identify(root, ownerPid);
+        return owner is null ? null : new ForegroundOwner(owner, ownerPid, root);
     }
 
     private static string? GetWindowTitle(nint hwnd)

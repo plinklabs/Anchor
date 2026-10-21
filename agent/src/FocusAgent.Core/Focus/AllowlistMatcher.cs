@@ -22,7 +22,12 @@ public sealed class AllowlistMatcher
     /// the shell alone. <c>explorer</c> and <c>msedge</c> are intentionally
     /// absent — they're already baseline-allowed every session, so they're never
     /// minimized, and treating them as surfaces would suppress their legitimate
-    /// foreground reporting. Stored normalized (lower-case, no <c>.exe</c>).
+    /// foreground reporting. Dialog hosts such as <c>PickerHost</c> (the file
+    /// picker Edge opens for an upload) are deliberately absent as well: a dialog
+    /// is judged by the app whose window owns it (#428, see
+    /// <see cref="ForegroundChange.OwningApp"/>), so an allowed app's picker is
+    /// usable while a picker opened by an off-list app stays blocked. Stored
+    /// normalized (lower-case, no <c>.exe</c>).
     /// </summary>
     private static readonly HashSet<string> SystemSurfaceProcessNames = new(StringComparer.OrdinalIgnoreCase)
     {

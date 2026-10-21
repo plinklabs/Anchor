@@ -99,7 +99,9 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
   - If the new foreground app is **on the allowlist**: report and do nothing.
   - If the new foreground app is **not on the allowlist**: report the event, minimize that window (`ShowWindow` with `SW_MINIMIZE`), and bring the agent's overlay (or the most recently allowed app) back to the foreground.
   - The report names the app (process name, signed publisher) and whether it was blocked. It never includes the window title or the executable path: titles carry document names, chat partners and search terms, and paths carry the Windows user name (#345).
+  - A dialog that another process shows for an app's window belongs to that app (#428). Edge's upload button opens the Windows file picker in `PickerHost`, as a window owned by the Edge window: the agent follows the owner chain to the app window at its root and judges, enforces and reports the dialog as that app. An allowed app's picker stays usable; a picker opened by an off-list app, or by a paused Edge, goes down with that app (its owner window is minimized, which hides the dialog too). A picker with no owner is judged by its own process, so `PickerHost` is never allowed on its own.
 - Edge is treated as one allowlisted "app" while the extension is responsible for URL-level filtering inside it.
+- Without its extension Edge is an unfiltered browser, so while the extension is gone during a session the agent pauses Edge like an off-list app (#427). It knows the extension is gone because the native-messaging witness pipe between the extension and the agent drops (#146). The pipe also drops when Edge closes or the extension updates or reloads, so Edge is paused only after a short grace period (10 s) with an Edge window on screen; a grace period that ends with Edge closed starts again when Edge next comes forward. The pause lifts the moment the pipe reconnects. Only the browser's windows are minimized, so the extension can always reconnect. A switched-off extension can only be switched on again from `edge://extensions`, inside Edge, so the overlay explains the pause and offers to open Edge for a minute; if the extension doesn't come back in that time, Edge is paused again. A device where the extension never connected (not installed yet) is left alone.
 - When the session ends (teacher action, or the backend ending a session still running four hours after it started, #345): unsubscribes from hooks, hides overlay, returns to idle. An agent that was offline when the session ended (asleep, or off the network) asks the backend whether its session is still on as soon as it reconnects, and returns to idle if not (#354). The extension does the same.
 
 ### 5.3 Native interop layer
@@ -110,6 +112,7 @@ Key APIs in use:
 
 - `SetWinEventHook` / `EVENT_SYSTEM_FOREGROUND` — foreground change events
 - `GetForegroundWindow`, `GetWindowThreadProcessId` — identify the active window
+- `GetAncestor` with `GA_ROOTOWNER` — find the app window that owns a dialog another process shows (#428)
 - `SetForegroundWindow`, `AttachThreadInput` — pull focus back (with the documented workarounds)
 - `SetWindowPos` with `HWND_TOPMOST` — keep overlay above other windows during active enforcement
 - `ShowWindow` with `SW_MINIMIZE` — push off-list apps behind without closing them

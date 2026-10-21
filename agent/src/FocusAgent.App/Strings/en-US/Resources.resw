@@ -263,6 +263,18 @@
   <data name="Overlay_PublisherApps" xml:space="preserve">
     <value>Apps from {0}</value>
   </data>
+  <data name="Overlay_BrowserPaused_Headline" xml:space="preserve">
+    <value>Edge is paused for now</value>
+  </data>
+  <data name="Overlay_BrowserPaused_Message" xml:space="preserve">
+    <value>The Anchor extension in Edge is switched off, so Edge can't be used in this session until it's back on. You can carry on with one of these apps in the meantime.</value>
+  </data>
+  <data name="Overlay_BrowserPaused_TurnBackOn" xml:space="preserve">
+    <value>Switch the extension back on</value>
+  </data>
+  <data name="Overlay_BrowserPaused_Hint" xml:space="preserve">
+    <value>Edge opens for {0} seconds. Go to edge://extensions and switch Anchor on.</value>
+  </data>
   <data name="Join_Button_Join" xml:space="preserve">
     <value>JOIN</value>
   </data>

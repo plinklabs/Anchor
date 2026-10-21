@@ -38,4 +38,26 @@ public class ForegroundChangeReportTests
         Assert.DoesNotContain("Bram", json);
         Assert.DoesNotContain("alice.peeters", json);
     }
+
+    [Fact]
+    public void A_dialog_another_process_shows_for_an_app_is_reported_as_that_app()
+    {
+        // #428: the file picker PickerHost opens for an Edge upload is Edge to the
+        // teacher, not a Windows process name.
+        var picker = new ForegroundChange(
+            new AppInfo("PickerHost", @"C:\Windows\System32\PickerHost.exe", "Microsoft Windows"),
+            WindowTitle: "Open",
+            ProcessId: 7036,
+            WindowHandle: 0x700,
+            Owner: new ForegroundOwner(
+                new AppInfo("msedge", @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "Microsoft Corporation"),
+                ProcessId: 5151,
+                WindowHandle: 0x300));
+
+        using var payload = JsonDocument.Parse(ForegroundChangeReport.ToPayloadJson(picker, blocked: false));
+
+        Assert.Equal("msedge", payload.RootElement.GetProperty("processName").GetString());
+        Assert.Equal("Microsoft Corporation", payload.RootElement.GetProperty("publisher").GetString());
+        Assert.False(payload.RootElement.GetProperty("blocked").GetBoolean());
+    }
 }

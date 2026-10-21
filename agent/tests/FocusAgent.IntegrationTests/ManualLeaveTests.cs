@@ -30,33 +30,40 @@ public sealed class ManualLeaveTests
 
         var classId = await api.FindClassIdAsync();
         var session = await api.StartSessionAsync(classId);
+        try
+        {
+            var joined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
+            Assert.True(
+                joined?.JoinedSessionId == session.Id,
+                $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
 
-        var joined = await agent.WaitForAsync(
-            s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
-        Assert.True(
-            joined?.JoinedSessionId == session.Id,
-            $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
+            await agent.LeaveSessionAsync();
 
-        await agent.LeaveSessionAsync();
+            // Ended locally: the coordinator cleared both session ids, so enforcement
+            // and the heartbeat stop and join-by-code is available again.
+            var cleared = await agent.WaitForAsync(
+                s => s.ActiveSessionId is null && s.JoinedSessionId is null, TimeSpan.FromSeconds(5));
+            Assert.True(
+                cleared is { ActiveSessionId: null, JoinedSessionId: null },
+                $"Agent did not clear session state within 5s of leaving " +
+                $"(activeSessionId: {cleared?.ActiveSessionId?.ToString() ?? "<none>"}, " +
+                $"joinedSessionId: {cleared?.JoinedSessionId?.ToString() ?? "<none>"}).");
 
-        // Ended locally: the coordinator cleared both session ids, so enforcement
-        // and the heartbeat stop and join-by-code is available again.
-        var cleared = await agent.WaitForAsync(
-            s => s.ActiveSessionId is null && s.JoinedSessionId is null, TimeSpan.FromSeconds(5));
-        Assert.True(
-            cleared is { ActiveSessionId: null, JoinedSessionId: null },
-            $"Agent did not clear session state within 5s of leaving " +
-            $"(activeSessionId: {cleared?.ActiveSessionId?.ToString() ?? "<none>"}, " +
-            $"joinedSessionId: {cleared?.JoinedSessionId?.ToString() ?? "<none>"}).");
+            // Leave is not Quit: the agent is still reachable and Connected.
+            Assert.Equal("Connected", cleared!.ConnectionStatus);
 
-        // Leave is not Quit: the agent is still reachable and Connected.
-        Assert.Equal("Connected", cleared!.ConnectionStatus);
-
-        // The manual_leave event reached the backend over the hub. It's reported
-        // before LeaveSession sets LeftAt, so the backend accepts it — if the
-        // order were wrong the event would be rejected and never appear here.
-        var kinds = await PollForEventAsync(api, session.Id, "ManualLeave", TimeSpan.FromSeconds(5));
-        Assert.Contains("ManualLeave", kinds);
+            // The manual_leave event reached the backend over the hub. It's reported
+            // before LeaveSession sets LeftAt, so the backend accepts it — if the
+            // order were wrong the event would be rejected and never appear here.
+            var kinds = await PollForEventAsync(api, session.Id, "ManualLeave", TimeSpan.FromSeconds(5));
+            Assert.Contains("ManualLeave", kinds);
+        }
+        finally
+        {
+            // Never leave the session running for the specs that follow.
+            await api.EndSessionAsync(session.Id);
+        }
     }
 
     [Fact]
@@ -69,22 +76,31 @@ public sealed class ManualLeaveTests
 
         var classId = await api.FindClassIdAsync();
         var session = await api.StartSessionAsync(classId);
+        try
+        {
+            var joined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
+            Assert.True(
+                joined?.JoinedSessionId == session.Id,
+                $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
 
-        var joined = await agent.WaitForAsync(
-            s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
-        Assert.True(
-            joined?.JoinedSessionId == session.Id,
-            $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
+            await agent.CloseWindowAsync();
 
-        await agent.CloseWindowAsync();
-
-        // Closing only hides the window: after a beat the agent is still
-        // reachable (process alive), still Connected, and still in the session.
-        await Task.Delay(TimeSpan.FromSeconds(1));
-        var after = await agent.TryGetStatusAsync();
-        Assert.True(after is not null, "Agent became unreachable after Close — it should keep running in the tray.");
-        Assert.Equal("Connected", after!.ConnectionStatus);
-        Assert.Equal(session.Id, after.JoinedSessionId);
+            // Closing only hides the window: after a beat the agent is still
+            // reachable (process alive), still Connected, and still in the session.
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            var after = await agent.TryGetStatusAsync();
+            Assert.True(after is not null, "Agent became unreachable after Close — it should keep running in the tray.");
+            Assert.Equal("Connected", after!.ConnectionStatus);
+            Assert.Equal(session.Id, after.JoinedSessionId);
+        }
+        finally
+        {
+            // The student is still in this session when the agent is disposed, so
+            // left running it would be rejoined by the next spec's agent (#54) —
+            // whose start-of-session sweep then minimizes windows that spec allows.
+            await api.EndSessionAsync(session.Id);
+        }
     }
 
     /// <summary>

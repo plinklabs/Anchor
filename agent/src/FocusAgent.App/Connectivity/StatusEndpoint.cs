@@ -50,10 +50,15 @@ namespace FocusAgent.App.Connectivity;
 ///   POST /extension-setup
 ///               -> the tray's "Set up the Edge extension…" item (#405): opens
 ///                  the setup window again, even after a "not now".
+///   POST /extension-repair
+///               -> the paused-Edge overlay's "switch the extension back on"
+///                  action (#427): opens Edge for the repair window (409 when
+///                  Edge isn't paused).
 ///
 /// And /status carries <c>extensionPolicy</c> (#405): where the Anchor
 /// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>)
-/// and whether the setup window is open.
+/// and whether the setup window is open; and <c>extensionGuard</c> (#427):
+/// whether the extension's witness is connected and the Edge pause's state.
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
@@ -90,6 +95,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<object?>? _extensionPolicy;
     private readonly Func<bool, bool>? _onAnswerExtensionConsent;
     private readonly Action? _onOfferExtensionSetup;
+    private readonly Func<object?>? _extensionGuard;
+    private readonly Func<bool>? _onTurnExtensionBackOn;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -105,7 +112,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Action? onQuit = null,
         Func<object?>? extensionPolicy = null,
         Func<bool, bool>? onAnswerExtensionConsent = null,
-        Action? onOfferExtensionSetup = null)
+        Action? onOfferExtensionSetup = null,
+        Func<object?>? extensionGuard = null,
+        Func<bool>? onTurnExtensionBackOn = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -118,6 +127,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _extensionPolicy = extensionPolicy;
         _onAnswerExtensionConsent = onAnswerExtensionConsent;
         _onOfferExtensionSetup = onOfferExtensionSetup;
+        _extensionGuard = extensionGuard;
+        _onTurnExtensionBackOn = onTurnExtensionBackOn;
         _listener = new HttpListener();
     }
 
@@ -205,6 +216,15 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 return;
             }
 
+            if (method == "POST" && path == "/extension-repair")
+            {
+                // 409 when Edge isn't paused, so a spec can tell "opened" from "no-op".
+                var opened = _onTurnExtensionBackOn?.Invoke();
+                ctx.Response.StatusCode = opened switch { null => 404, true => 204, false => 409 };
+                ctx.Response.Close();
+                return;
+            }
+
             if (path != "/status")
             {
                 ctx.Response.StatusCode = 404;
@@ -242,6 +262,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // #405: where the Edge force-install entry is, and whether the
                 // setup window is up, so the headless e2e can follow the flow.
                 extensionPolicy = _extensionPolicy?.Invoke(),
+                // #427: whether the extension's witness is connected and where the
+                // Edge pause stands, so the headless e2e can follow a switch-off.
+                extensionGuard = _extensionGuard?.Invoke(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

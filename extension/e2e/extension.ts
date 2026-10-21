@@ -23,14 +23,80 @@ import {
   HEADLESS,
   MAPPED_HOSTS,
   OFFLIST_HOST,
+  STABLE_EXTENSION_ID,
   STUDENT_OID,
 } from './config.ts';
+import {
+  describeEntry,
+  extensionIdForPath,
+  findForcelistEntry,
+  stageKeylessCopy,
+  type ForcelistEntry,
+} from './edge-forcelist.ts';
 import {
   registerWitnessHost,
   suppressWitnessHost,
   type RegisteredWitnessHost,
   type SuppressedWitnessHost,
 } from './witness-host.ts';
+
+/**
+ * This machine's Edge forcelist entry for Anchor, or null (#429). With one, Edge
+ * refuses dist/ (its manifest `key` claims the forcelisted id) and the launch
+ * never returns, so loadExtension() loads a key-less copy of dist/ instead (see
+ * edge-forcelist.ts). Only Edge reads that policy: another channel always gets
+ * dist/. Detected once, when the harness loads, so a spec can skip what can't
+ * hold in that mode.
+ */
+export const ANCHOR_FORCELIST_ENTRY: ForcelistEntry | null = BROWSER_CHANNEL.startsWith('msedge')
+  ? findForcelistEntry(STABLE_EXTENSION_ID)
+  : null;
+
+/** Where loadExtension() stages the key-less copy: one per process, removed on
+ *  exit. A resolved path, because Edge hashes the path exactly as it is given. */
+const KEYLESS_DIST_PATH = ANCHOR_FORCELIST_ENTRY
+  ? path.join(fs.realpathSync.native(os.tmpdir()), `anchor-ext-e2e-keyless-${process.pid}`)
+  : null;
+
+/** The unpacked extension every launch loads. */
+const EXTENSION_PATH = KEYLESS_DIST_PATH ?? DIST_PATH;
+
+/**
+ * The id Edge gives the extension under test: the pinned STABLE_EXTENSION_ID,
+ * or the key-less copy's path-derived id on a box with ANCHOR_FORCELIST_ENTRY.
+ * Known before launch, so a witness-host manifest can name it.
+ */
+export const EXTENSION_ID = KEYLESS_DIST_PATH
+  ? extensionIdForPath(KEYLESS_DIST_PATH)
+  : STABLE_EXTENSION_ID;
+
+// Say so once per run, from the Playwright runner process (workers have
+// TEST_WORKER_INDEX), before any spec starts.
+if (ANCHOR_FORCELIST_ENTRY && process.env.TEST_WORKER_INDEX === undefined) {
+  console.warn(
+    `[e2e] Edge policy on this machine force-installs Anchor: ` +
+      `${describeEntry(ANCHOR_FORCELIST_ENTRY)}. Edge refuses an unpacked dist/ that ` +
+      `claims ${STABLE_EXTENSION_ID}, so the suite loads a copy of dist/ without the ` +
+      `manifest key (path-derived id) and skips the stable-id assertion in ` +
+      `extension-loads.spec.ts (#429).`,
+  );
+}
+
+let keylessCopyStaged = false;
+
+/** Copy dist/ to KEYLESS_DIST_PATH once per process, when it is needed. */
+function stageExtension(): void {
+  if (!KEYLESS_DIST_PATH || keylessCopyStaged) return;
+  stageKeylessCopy(DIST_PATH, KEYLESS_DIST_PATH);
+  keylessCopyStaged = true;
+  process.on('exit', () => {
+    try {
+      fs.rmSync(KEYLESS_DIST_PATH, { recursive: true, force: true });
+    } catch {
+      // Best-effort: a leftover copy in the temp dir is harmless.
+    }
+  });
+}
 
 export interface LoadExtensionOptions {
   /**
@@ -108,6 +174,7 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   if (!fs.existsSync(path.join(DIST_PATH, 'manifest.json'))) {
     throw new Error(`No built extension at ${DIST_PATH}. Run \`npm run build\` first.`);
   }
+  stageExtension();
 
   // The native-messaging witness link is opt-IN, per run (#332). A spec that
   // asks for it gets the REAL host, registered here with the backend URL / auth
@@ -120,7 +187,7 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   let witnessHost: RegisteredWitnessHost | null = null;
   let suppressedWitness: SuppressedWitnessHost | null = null;
   if (options.witnessBackendUrl || options.witnessAuth) {
-    witnessHost = registerWitnessHost();
+    witnessHost = registerWitnessHost(EXTENSION_ID);
   } else {
     suppressedWitness = suppressWitnessHost();
   }
@@ -146,8 +213,8 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     // left out, Edge takes the host's display language (#364).
     locale,
     args: [
-      `--disable-extensions-except=${DIST_PATH}`,
-      `--load-extension=${DIST_PATH}`,
+      `--disable-extensions-except=${EXTENSION_PATH}`,
+      `--load-extension=${EXTENSION_PATH}`,
       // Resolve the synthetic test hosts to the local static server so specs
       // never hit the public internet (config.MAPPED_HOSTS).
       `--host-resolver-rules=${hostRule}`,
@@ -159,6 +226,17 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
 
   const firstWorker = await getServiceWorker(context);
   const extensionId = new URL(firstWorker.url()).host;
+  if (KEYLESS_DIST_PATH && extensionId !== EXTENSION_ID) {
+    // The witness-host specs name EXTENSION_ID in the host manifest, so they
+    // would fail on a mismatch with an error that says nothing about why.
+    await context.close();
+    witnessHost?.unregister();
+    suppressedWitness?.restore();
+    throw new Error(
+      `Edge gave the key-less copy of dist/ at ${KEYLESS_DIST_PATH} the id ${extensionId}, ` +
+        `not ${EXTENSION_ID} as extensionIdForPath() in e2e/edge-forcelist.ts derives it (#429).`,
+    );
+  }
   const blockPagePrefix = `chrome-extension://${extensionId}/block-page.html`;
 
   async function configure(

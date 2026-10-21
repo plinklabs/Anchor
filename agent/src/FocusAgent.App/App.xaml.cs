@@ -202,8 +202,13 @@ public partial class App : Application
             // named-pipe server is listening before the native host can connect,
             // and so its SessionCoordinator-backed gate is wired before the first
             // session. Reports only fire on a drop during a joined session.
-            _witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
-            _ = _witnessMonitor.StartAsync();
+            var witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
+            _witnessMonitor = witnessMonitor;
+            _ = witnessMonitor.StartAsync();
+            // #427: and the guard that pauses Edge while the witness stays down in a
+            // session — resolved now so its SessionJoined / ConnectionChanged
+            // subscriptions are in place before the first session or witness change.
+            var extensionGuard = _host.Services.GetRequiredService<ExtensionGuard>();
             // #211 + #405: self-register the Edge extension. With no force-install
             // policy under HKLM or HKCU (and no earlier "not now"), explain the step
             // and add the HKLM entry through one UAC prompt; then (the witness pipe
@@ -304,7 +309,15 @@ public partial class App : Application
                     },
                     onAnswerExtensionConsent: allow => extensionConsent.TryAnswer(allow),
                     // ...and pick the tray's "Set up the Edge extension…" item.
-                    onOfferExtensionSetup: OfferExtensionSetup);
+                    onOfferExtensionSetup: OfferExtensionSetup,
+                    // #427: let the headless e2e follow the Edge pause and take the
+                    // overlay's "switch the extension back on" action.
+                    extensionGuard: () => new
+                    {
+                        witnessConnected = witnessMonitor.IsConnected,
+                        state = extensionGuard.State.ToString(),
+                    },
+                    onTurnExtensionBackOn: _focus.TurnExtensionBackOn);
                 _statusEndpoint.Start(port);
             }
         }
@@ -639,7 +652,17 @@ public partial class App : Application
             new() { MatchKind = AllowedAppMatchKind.Publisher, Value = "International GeoGebra Institute" },
         };
 
-        overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName);
+        // #427: --overlay-paused shows the paused-Edge variant instead (the
+        // allowed-app rows then stand for the apps a student carries on with).
+        if (Program.OverlayPaused)
+            overlay.ShowBrowserPaused(
+                rules,
+                new BrowserPausedPrompt(
+                    new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
+                    TimeSpan.FromSeconds(60),
+                    () => false));
+        else
+            overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName);
 
         // Deterministic show -> close -> linger cycle so both consumers can observe
         // it without a real backend or off-list app:
@@ -934,6 +957,30 @@ public partial class App : Application
             Add("window.error", ex.Message);
         }
 
+        // #427: the focus overlay's paused-Edge variant, composed the way the
+        // controller shows it — the copy a student reads when Edge is paused
+        // because its extension is off.
+        try
+        {
+            var overlay = new Focus.FocusOverlayWindow(new AppIdentifier(), _ => { });
+            overlay.UpdateBrowserPausedContent(
+                Array.Empty<AllowedAppRule>(),
+                new BrowserPausedPrompt(
+                    new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
+                    TimeSpan.FromSeconds(60),
+                    () => false));
+            var (headline, message, action, hint) = overlay.BrowserPausedProbe();
+            Add("window.overlay_paused_headline", headline);
+            Add("window.overlay_paused_message", message);
+            Add("window.overlay_paused_action", action);
+            Add("window.overlay_paused_hint", hint);
+            overlay.Close();
+        }
+        catch (Exception ex)
+        {
+            Add("window.overlay_error", ex.Message);
+        }
+
         // Direct code-lookup path: the Loc helper (ResourceLoader/MRT) resolving keys.
         Add("code.tray_open", Localization.Loc.Get("Tray_OpenAnchor"));
         Add("code.status_connected", Localization.Loc.Get("Main_Status_Connected"));
@@ -1201,12 +1248,22 @@ public partial class App : Application
         // ActiveSessionId) gates it: the hub only accepts events from a joined
         // participant, and a drop outside a session is just a closed browser.
         builder.Services.AddSingleton<ITamperReporter, SignalRTamperReporter>();
-        builder.Services.AddSingleton<IExtensionWitnessTransport, NamedPipeWitnessTransport>();
+        builder.Services.AddOptions<WitnessSettings>()
+            .Bind(builder.Configuration.GetSection(WitnessSettings.SectionName));
+        builder.Services.AddSingleton<IExtensionWitnessTransport>(sp => new NamedPipeWitnessTransport(
+            sp.GetRequiredService<ILogger<NamedPipeWitnessTransport>>(),
+            sp.GetRequiredService<IOptions<WitnessSettings>>().Value.PipeName));
         builder.Services.AddSingleton(sp => new ExtensionWitnessMonitor(
             sp.GetRequiredService<IExtensionWitnessTransport>(),
             sp.GetRequiredService<ITamperReporter>(),
             () => sp.GetRequiredService<SessionCoordinator>().JoinedSessionId,
             sp.GetRequiredService<ILogger<ExtensionWitnessMonitor>>()));
+        // #427 -- the report alone left Edge an unfiltered browser while the
+        // extension was off. The guard pauses Edge once the witness has stayed down
+        // past a short grace period during a joined session, and the focus
+        // controller (which takes it as an optional dependency) enforces the pause
+        // like an off-list app until the witness reconnects.
+        builder.Services.AddSingleton<ExtensionGuard>();
 
         // #148 -- agent-side robust InPrivate detection. The scanner enumerates
         // live Edge windows; the monitor polls it while in a joined session and

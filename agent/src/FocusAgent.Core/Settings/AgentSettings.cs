@@ -132,6 +132,27 @@ public sealed record ExtensionSettings
     public int? GracePeriodSeconds { get; init; }
 }
 
+/// <summary>
+/// The extension witness link (#146) and the Edge pause built on it (#427). The
+/// defaults are what production uses; the agent e2e overrides them per launch
+/// through environment variables (<c>Witness__PipeName</c> etc.), which the agent
+/// only reads under <c>--inject-token</c>, so a test agent never shares the real
+/// pipe with an installed agent and can stand a harmless window in for Edge.
+/// </summary>
+public sealed record WitnessSettings
+{
+    public const string SectionName = "Witness";
+
+    /// <summary>The named pipe the browser-launched witness host connects to.</summary>
+    public string PipeName { get; init; } = Tamper.WitnessLink.PipeName;
+
+    /// <summary>
+    /// The browser the extension lives in, as a process name: the one the agent
+    /// pauses while the extension is gone during a session.
+    /// </summary>
+    public string BrowserProcessName { get; init; } = "msedge";
+}
+
 public sealed record DevSettings
 {
     public const string SectionName = "Dev";

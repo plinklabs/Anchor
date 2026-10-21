@@ -1,7 +1,7 @@
 // #204: the extension is backend-agnostic — it learns which backend to target
 // from the on-box agent at runtime over the native-messaging witness link,
 // rather than baking the URL in. This drives the REAL witness host
-// (anchor-witness-host.exe) registered against the pinned e2e extension id: the
+// (anchor-witness-host.exe) registered against the extension under test's id: the
 // host hands the extension a backend URL via the native channel, the extension
 // stores it and connects the hub to it — with NO backendUrl ever seeded into
 // chrome.storage by the harness.
