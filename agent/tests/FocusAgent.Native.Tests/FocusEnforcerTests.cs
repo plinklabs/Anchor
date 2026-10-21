@@ -78,17 +78,19 @@ public class FocusEnforcerTests
     }
 
     [Fact]
-    public void A_minimized_fallback_is_restored_then_foregrounded()
+    public void A_minimized_fallback_is_restored()
     {
-        Assert.Equal(FocusEnforcer.FallbackPlan.RestoreThenForeground, FocusEnforcer.PlanFallback(
+        // Back on screen before the blocked window goes down, so Windows can hand it
+        // the foreground (#438).
+        Assert.Equal(FocusEnforcer.FallbackPlan.Restore, FocusEnforcer.PlanFallback(
             sameAppAsBlocked: false, visible: true, minimized: true));
     }
 
     [Fact]
-    public void A_fallback_on_screen_only_gets_the_foreground()
+    public void A_fallback_on_screen_is_left_as_it_is()
     {
         // No ShowWindow on a window that is already up: its state is left as it is.
-        Assert.Equal(FocusEnforcer.FallbackPlan.Foreground, FocusEnforcer.PlanFallback(
+        Assert.Equal(FocusEnforcer.FallbackPlan.OnScreen, FocusEnforcer.PlanFallback(
             sameAppAsBlocked: false, visible: true, minimized: false));
     }
 

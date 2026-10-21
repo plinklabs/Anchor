@@ -15,8 +15,8 @@ public sealed class AllowlistMatcher
     /// <summary>
     /// OS shell surfaces that must never be enforced against. Clicking taskbar
     /// Search or pressing Start briefly foregrounds one of these UWP hosts; if
-    /// the enforcer minimizes it and steals foreground (the <c>AttachThreadInput</c>
-    /// dance), Search/Start blanks and <c>explorer</c> can restart the whole
+    /// the enforcer minimizes it and hands the foreground elsewhere, Search/Start
+    /// blanks and <c>explorer</c> can restart the whole
     /// taskbar (#140). These are deliberately separate from the teacher
     /// allowlist: we don't want to *show* them as allowed apps, only to leave
     /// the shell alone. <c>explorer</c> and <c>msedge</c> are intentionally
