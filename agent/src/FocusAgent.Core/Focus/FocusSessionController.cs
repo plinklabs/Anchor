@@ -373,6 +373,8 @@ public sealed class FocusSessionController : IAsyncDisposable
         {
             if (allowed)
             {
+                // The enforcer skips explorer's shell windows here (#437): a click
+                // on the allowed taskbar leaves the student's own app the fallback.
                 _enforcer.RememberAllowed(change.WindowHandle);
                 try { _overlay.Hide(); }
                 catch (Exception ex) { _log.LogWarning(ex, "Overlay.Hide threw"); }

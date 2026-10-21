@@ -41,4 +41,72 @@ public class FocusEnforcerTests
         Assert.Equal((false, false), FocusEnforcer.PlanMinimize(
             hasVisibleOwner: true, ownerMinimized: true, windowShown: false));
     }
+
+    // --- #437: where focus goes after a block ---------------------------------
+
+    [Theory]
+    [InlineData("Shell_TrayWnd")]                 // the taskbar
+    [InlineData("Shell_SecondaryTrayWnd")]        // the taskbar on another monitor
+    [InlineData("XamlExplorerHostIslandWindow")]  // the taskbar's thumbnail flyout
+    [InlineData("Progman")]                       // the desktop
+    [InlineData("WorkerW")]                       // the desktop
+    [InlineData("shell_traywnd")]                 // window classes ignore case
+    public void Explorers_shell_windows_are_never_the_focus_fallback(string className)
+    {
+        // Explorer is allowed in every session, so a click on the taskbar made it
+        // the window to hand focus back to: the student landed on the taskbar, and
+        // re-showing the closing thumbnail flyout crashed explorer.
+        Assert.False(FocusEnforcer.IsFallbackCandidate(className, visible: true));
+    }
+
+    [Theory]
+    [InlineData("CabinetWClass")]       // a File Explorer window
+    [InlineData("Notepad")]
+    [InlineData("Chrome_WidgetWin_1")]  // Edge, and Electron apps such as Teams
+    [InlineData("XLMAIN")]              // Excel
+    [InlineData("#32770")]              // a dialog, such as the file picker of an allowed app (#428)
+    [InlineData(null)]                  // class unknown
+    public void An_app_window_on_screen_is_the_focus_fallback(string? className)
+    {
+        Assert.True(FocusEnforcer.IsFallbackCandidate(className, visible: true));
+    }
+
+    [Fact]
+    public void A_hidden_window_is_never_the_focus_fallback()
+    {
+        Assert.False(FocusEnforcer.IsFallbackCandidate("Notepad", visible: false));
+    }
+
+    [Fact]
+    public void A_minimized_fallback_is_restored_then_foregrounded()
+    {
+        Assert.Equal(FocusEnforcer.FallbackPlan.RestoreThenForeground, FocusEnforcer.PlanFallback(
+            sameAppAsBlocked: false, visible: true, minimized: true));
+    }
+
+    [Fact]
+    public void A_fallback_on_screen_only_gets_the_foreground()
+    {
+        // No ShowWindow on a window that is already up: its state is left as it is.
+        Assert.Equal(FocusEnforcer.FallbackPlan.Foreground, FocusEnforcer.PlanFallback(
+            sameAppAsBlocked: false, visible: true, minimized: false));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_fallback_that_went_hidden_is_never_shown_again(bool minimized)
+    {
+        // Showing it would put back a window its app hid: the taskbar's thumbnail
+        // flyout, shown again while it closed, crashed explorer (#437).
+        Assert.Equal(FocusEnforcer.FallbackPlan.None, FocusEnforcer.PlanFallback(
+            sameAppAsBlocked: false, visible: false, minimized: minimized));
+    }
+
+    [Fact]
+    public void Focus_never_goes_back_to_the_app_just_blocked()
+    {
+        Assert.Equal(FocusEnforcer.FallbackPlan.None, FocusEnforcer.PlanFallback(
+            sameAppAsBlocked: true, visible: true, minimized: false));
+    }
 }

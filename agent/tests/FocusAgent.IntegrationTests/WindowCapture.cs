@@ -143,6 +143,76 @@ internal static class WindowCapture
     public static void MinimizeWindow(IntPtr hwnd) => ShowWindow(hwnd, SW_MINIMIZE);
 
     /// <summary>
+    /// Restore <paramref name="hwnd"/> from minimized without activating it. Like
+    /// <see cref="RestoreWindow"/> it raises EVENT_SYSTEM_MINIMIZEEND, so the agent
+    /// judges the window, but the foreground stays where it was (#437).
+    /// </summary>
+    public static void RestoreWithoutActivating(IntPtr hwnd) => ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+
+    /// <summary>
+    /// Hide <paramref name="hwnd"/>: the stand-in for a window that went away after
+    /// it had the focus, like the taskbar's thumbnail flyout closing (#437).
+    /// </summary>
+    public static void HideWindow(IntPtr hwnd) => ShowWindow(hwnd, SW_HIDE);
+
+    /// <summary>The primary taskbar's window (<c>Shell_TrayWnd</c>), or <see cref="IntPtr.Zero"/>.</summary>
+    public static IntPtr FindTaskbar() => FindWindowW("Shell_TrayWnd", null);
+
+    /// <summary>The window that has the foreground right now.</summary>
+    public static IntPtr ForegroundWindow() => GetForegroundWindow();
+
+    /// <summary>The window class of <paramref name="hwnd"/>, for failure messages.</summary>
+    public static string GetClassName(IntPtr hwnd)
+    {
+        var className = new StringBuilder(256);
+        GetClassNameW(hwnd, className, className.Capacity);
+        return className.ToString();
+    }
+
+    /// <summary>
+    /// Give <paramref name="hwnd"/> the foreground, the way a click on it would.
+    /// The test process is a background process that Windows won't let take the
+    /// foreground, so this sends a key with no meaning (<c>VK_NONAME</c>) first,
+    /// which makes it the process that had the last input, and attaches to the
+    /// foreground window's input queue (the same dance the agent's enforcer uses).
+    /// Returns whether <paramref name="hwnd"/> ended up in the foreground.
+    /// </summary>
+    public static bool BringToForeground(IntPtr hwnd)
+    {
+        // AttachThreadInput needs a message queue on the calling thread, and a
+        // test's thread-pool thread may not have one yet: PeekMessage creates it.
+        PeekMessageW(out _, IntPtr.Zero, 0, 0, PM_NOREMOVE);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            keybd_event(VK_NONAME, 0, 0, UIntPtr.Zero);
+            keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            var current = GetCurrentThreadId();
+            var foreground = GetForegroundWindow();
+            var foregroundThread = foreground == IntPtr.Zero ? 0u : GetWindowThreadProcessId(foreground, out _);
+            var attached = false;
+            try
+            {
+                if (foregroundThread != 0 && foregroundThread != current)
+                    attached = AttachThreadInput(current, foregroundThread, true);
+                SetForegroundWindow(hwnd);
+            }
+            finally
+            {
+                if (attached)
+                    AttachThreadInput(current, foregroundThread, false);
+            }
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(500);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (GetForegroundWindow() == hwnd) return true;
+                Thread.Sleep(50);
+            }
+        }
+        return GetForegroundWindow() == hwnd;
+    }
+
+    /// <summary>
     /// The first visible top-level window that <paramref name="owner"/> owns and
     /// that another process shows, or <see cref="IntPtr.Zero"/>: a dialog shown
     /// for the owner's app from outside it, like the file picker PickerHost shows
@@ -369,6 +439,8 @@ internal static class WindowCapture
     private const uint CAPTUREBLT = 0x40000000;
     private const int SW_RESTORE = 9;
     private const int SW_MINIMIZE = 6;
+    private const int SW_HIDE = 0;
+    private const int SW_SHOWNOACTIVATE = 4;
     private const uint GW_OWNER = 4;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
@@ -444,6 +516,46 @@ internal static class WindowCapture
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowW(string lpClassName, string? lpWindowName);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    private const uint PM_NOREMOVE = 0x0000;
+    private const byte VK_NONAME = 0xFC;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMsg
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public int ptX;
+        public int ptY;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PeekMessageW(out NativeMsg lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);

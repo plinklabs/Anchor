@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using System.Text;
 using FocusAgent.Core.Focus;
 using FocusAgent.Native.Win32;
 using Microsoft.Extensions.Logging;
@@ -24,11 +25,73 @@ public sealed class FocusEnforcer : IFocusEnforcer
         _log = log ?? NullLogger<FocusEnforcer>.Instance;
     }
 
+    /// <summary>
+    /// Windows of explorer's own shell, which explorer owns but which are no app a
+    /// student works in (#437): the taskbars, the flyouts the taskbar opens (its
+    /// thumbnail previews, the hidden-icons overflow), the task switcher and the
+    /// desktop. Explorer is allowed in every session, so a click on the taskbar
+    /// used to make one of these the window to hand focus back to after a block:
+    /// the student landed on the taskbar or desktop instead of their app, and
+    /// re-showing the closing thumbnail flyout crashed explorer. File Explorer's
+    /// own windows (<c>CabinetWClass</c>) are not in here: they are an app.
+    /// </summary>
+    private static readonly HashSet<string> ShellWindowClasses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Shell_TrayWnd",                        // primary taskbar
+        "Shell_SecondaryTrayWnd",               // taskbar on another monitor
+        "XamlExplorerHostIslandWindow",         // Windows 11 taskbar flyouts (thumbnails), Alt+Tab, Task View
+        "TaskListThumbnailWnd",                 // Windows 10 taskbar thumbnails
+        "TopLevelWindowForOverflowXamlIsland",  // Windows 11 hidden-icons overflow
+        "NotifyIconOverflowWindow",             // Windows 10 hidden-icons overflow
+        "MultitaskingViewFrame",                // Windows 10 Alt+Tab / Task View
+        "ForegroundStaging",                    // explorer's stand-in while it switches windows
+        "Progman",                              // desktop
+        "WorkerW",                              // desktop
+    };
+
+    /// <summary>
+    /// Remembers <paramref name="windowHandle"/> as the window to hand focus back
+    /// to after a block, unless it is no window to return a student to (#437): one
+    /// of explorer's shell windows, or a window that is already gone from the
+    /// screen. Those leave the previous fallback in place.
+    /// </summary>
     public void RememberAllowed(nint windowHandle)
     {
         if (windowHandle == IntPtr.Zero) return;
+
+        var className = ClassNameOf(windowHandle);
+        if (!IsFallbackCandidate(className, visible: NativeMethods.IsWindowVisible(windowHandle)))
+        {
+            _log.LogDebug(
+                "Not remembering 0x{Hwnd:X} [{ClassName}] as the focus fallback: a shell or hidden window",
+                windowHandle, className);
+            return;
+        }
+
         lock (_gate)
             _lastAllowed = windowHandle;
+    }
+
+    /// <summary>
+    /// Whether an allowed window may become the focus fallback, factored out as a
+    /// pure decision so it is unit-testable without a live desktop. A hidden
+    /// window is no place to return a student to, and neither is explorer's shell
+    /// (<see cref="ShellWindowClasses"/>). Deliberately not the full alt-tab test:
+    /// owned windows (an allowed app's dialog or file picker, #428) and tool-styled
+    /// windows of an allowed app are where the student was working, so they stay
+    /// valid.
+    /// </summary>
+    internal static bool IsFallbackCandidate(string? className, bool visible)
+    {
+        if (!visible) return false;
+        return className is null || !ShellWindowClasses.Contains(className);
+    }
+
+    private static string? ClassNameOf(nint windowHandle)
+    {
+        var buffer = new StringBuilder(256);
+        var length = NativeMethods.GetClassNameW(windowHandle, buffer, buffer.Capacity);
+        return length > 0 ? buffer.ToString(0, length) : null;
     }
 
     /// <summary>
@@ -110,12 +173,13 @@ public sealed class FocusEnforcer : IFocusEnforcer
         lock (_gate)
             target = _lastAllowed;
 
-        // Never hand focus back to the app just taken down: the blocked window
-        // itself, the app window that owns a blocked dialog, or a dialog of the
-        // blocked app (#428).
-        if (target == IntPtr.Zero
-            || !NativeMethods.IsWindow(target)
-            || AppWindowOf(target) == AppWindowOf(offendingWindowHandle))
+        var plan = target == IntPtr.Zero || !NativeMethods.IsWindow(target)
+            ? FallbackPlan.None
+            : PlanFallback(
+                sameAppAsBlocked: AppWindowOf(target) == AppWindowOf(offendingWindowHandle),
+                visible: NativeMethods.IsWindowVisible(target),
+                minimized: NativeMethods.IsIconic(target));
+        if (plan == FallbackPlan.None)
         {
             _log.LogDebug("Block: no valid prior allowed window to restore");
             return false;
@@ -123,7 +187,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
 
         try
         {
-            ForceForeground(target);
+            ForceForeground(target, restore: plan == FallbackPlan.RestoreThenForeground);
             return true;
         }
         catch (Exception ex)
@@ -133,13 +197,44 @@ public sealed class FocusEnforcer : IFocusEnforcer
         }
     }
 
+    /// <summary>What <see cref="Block"/> does with the remembered allowed window.</summary>
+    internal enum FallbackPlan
+    {
+        /// <summary>Nothing to hand focus back to: the caller surfaces the overlay.</summary>
+        None,
+        /// <summary>The window is on screen: give it the foreground, nothing else.</summary>
+        Foreground,
+        /// <summary>The window is minimized: restore it, then give it the foreground.</summary>
+        RestoreThenForeground,
+    }
+
+    /// <summary>
+    /// How <see cref="Block"/> hands focus back to the remembered allowed window,
+    /// factored out as a pure decision so it is unit-testable without a live
+    /// desktop:
+    /// <list type="bullet">
+    /// <item>Never to the app just taken down: the blocked window itself, the app
+    /// window that owns a blocked dialog, or a dialog of the blocked app (#428).</item>
+    /// <item>Never to a window that has gone from the screen since it was
+    /// remembered: showing it again would put back a window its app hid. The
+    /// taskbar's thumbnail flyout re-shown that way crashed explorer (#437).</item>
+    /// <item>A minimized window is restored; a window already on screen only gets
+    /// the foreground, so its state is left alone.</item>
+    /// </list>
+    /// </summary>
+    internal static FallbackPlan PlanFallback(bool sameAppAsBlocked, bool visible, bool minimized)
+    {
+        if (sameAppAsBlocked || !visible) return FallbackPlan.None;
+        return minimized ? FallbackPlan.RestoreThenForeground : FallbackPlan.Foreground;
+    }
+
     public void Reset()
     {
         lock (_gate)
             _lastAllowed = IntPtr.Zero;
     }
 
-    private static void ForceForeground(nint target)
+    private static void ForceForeground(nint target, bool restore)
     {
         var currentThread = NativeMethods.GetCurrentThreadId();
         var foregroundHwnd = NativeMethods.GetForegroundWindow();
@@ -152,7 +247,8 @@ public sealed class FocusEnforcer : IFocusEnforcer
         {
             if (foregroundThread != 0 && foregroundThread != currentThread)
                 attached = NativeMethods.AttachThreadInput(currentThread, foregroundThread, fAttach: true);
-            NativeMethods.ShowWindow(target, NativeMethods.SW_SHOWNOACTIVATE);
+            if (restore)
+                NativeMethods.ShowWindow(target, NativeMethods.SW_SHOWNOACTIVATE);
             NativeMethods.SetForegroundWindow(target);
         }
         finally

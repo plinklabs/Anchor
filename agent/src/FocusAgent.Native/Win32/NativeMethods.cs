@@ -84,6 +84,9 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern int GetWindowTextLengthW(nint hWnd);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int GetClassNameW(nint hWnd, [Out] StringBuilder lpClassName, int nMaxCount);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern nint OpenProcess(uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwProcessId);
 
