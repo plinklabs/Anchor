@@ -2,6 +2,12 @@ namespace FocusAgent.Core.Focus;
 
 public interface IFocusEnforcer
 {
+    /// <summary>
+    /// Remembers an allowed window as the one <see cref="Block"/> hands focus back
+    /// to. Windows that are no place to return a student to, such as explorer's
+    /// taskbar, its flyouts and the desktop, or a window already hidden, are
+    /// ignored and leave the previous one in place (#437).
+    /// </summary>
     void RememberAllowed(nint windowHandle);
 
     /// <summary>
