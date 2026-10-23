@@ -9,8 +9,9 @@ namespace FocusAgent.IntegrationTests;
 /// app. Explorer is allowed in every session, so a click on the taskbar used to
 /// make the taskbar, its thumbnail flyout or the desktop the window the agent
 /// handed focus back to. Re-showing the flyout's closing window that way crashed
-/// explorer. The student must get their own allowed app back instead, and the
-/// agent must never put a window that went away back on screen.
+/// explorer. The student must get their own allowed app back instead, with the
+/// keyboard (#438), and the agent must never put a window that went away back on
+/// screen.
 ///
 /// The real agent judges real windows on the real foreground hook: an allowed
 /// Notepad (the dev "Notepad (dev)" bundle), the real taskbar, and an off-list
@@ -64,6 +65,35 @@ public sealed class FocusFallbackTests
                 $"(off-list app minimized: {WindowCapture.IsIconic(offList)}, Notepad minimized: {WindowCapture.IsIconic(notepad)}, " +
                 $"foreground: {WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}). " +
                 "The taskbar is no window to hand focus back to (#437).");
+        });
+    }
+
+    [Fact]
+    public async Task BlockingAnApp_GivesTheKeyboardBackToTheStudentsAllowedApp()
+    {
+        await RunAsync(async (_, _, notepad, offList) =>
+        {
+            // The student works in Notepad...
+            Assert.True(
+                WindowCapture.BringToForeground(notepad),
+                "Notepad could not be brought to the foreground " +
+                $"(foreground: {WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}).");
+
+            // ...then brings up the off-list app, which the agent blocks.
+            WindowCapture.RestoreWindow(offList);
+
+            // The foreground window gets what the student types. Minimized from the
+            // agent, the blocked window stayed the foreground window and kept the
+            // keyboard; minimized by its own thread, it hands the foreground on (#438).
+            Assert.True(
+                await WaitUntilAsync(
+                    () => WindowCapture.IsIconic(offList) && WindowCapture.ForegroundWindow() == notepad,
+                    TimeSpan.FromSeconds(5)),
+                "After blocking the off-list app the student's allowed app did not get the keyboard back " +
+                $"(off-list app minimized: {WindowCapture.IsIconic(offList)}, foreground: " +
+                $"{WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())} " +
+                $"[{WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}]). " +
+                "Whatever they type goes to the minimized off-list app (#438).");
         });
     }
 

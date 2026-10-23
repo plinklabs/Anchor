@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.Versioning;
 using System.Text;
 using FocusAgent.Core.Focus;
@@ -8,16 +9,28 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FocusAgent.Native;
 
 /// <summary>
-/// Minimizes off-list windows and pulls focus back to the most recent allowed
-/// window. Uses the documented <c>AttachThreadInput</c> dance because
-/// <c>SetForegroundWindow</c> silently fails when called from a background
-/// process that doesn't own the active input queue.
+/// Minimizes off-list windows and leaves the student in the most recent allowed
+/// window. A blocked window is minimized by its own thread (<c>ShowWindowAsync</c>,
+/// #438): that thread owns the foreground, so Windows hands the foreground on to
+/// the window below it, the app the student came from, as when they click the
+/// minimize button. The agent has no right to the foreground itself:
+/// <c>SetForegroundWindow</c> from it is refused, even with <c>AttachThreadInput</c>,
+/// and a <c>ShowWindow</c> from it leaves the minimized window the foreground
+/// window, which keeps getting what the student types.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class FocusEnforcer : IFocusEnforcer
 {
+    /// <summary>
+    /// How long a blocked window gets to minimize itself before the agent logs that
+    /// its app is not responding. An app that responds does it within about 100 ms.
+    /// </summary>
+    internal static readonly TimeSpan OwnThreadMinimizeTimeout = TimeSpan.FromMilliseconds(500);
+
     private readonly ILogger<FocusEnforcer> _log;
     private readonly object _gate = new();
+    private readonly ConcurrentDictionary<nint, long> _pendingMinimizes = new();
+    private long _minimizeGeneration;
     private nint _lastAllowed;
 
     public FocusEnforcer(ILogger<FocusEnforcer>? log = null)
@@ -102,7 +115,9 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// Minimizing the dialog on its own would leave the off-list app on screen and
     /// strand the dialog as a title bar in a corner.
     /// </summary>
-    public void Minimize(nint windowHandle)
+    public void Minimize(nint windowHandle) => Minimize(windowHandle, onOwnThread: false);
+
+    private void Minimize(nint windowHandle, bool onOwnThread)
     {
         if (windowHandle == IntPtr.Zero) return;
 
@@ -113,9 +128,9 @@ public sealed class FocusEnforcer : IFocusEnforcer
             ownerMinimized: owner != IntPtr.Zero && NativeMethods.IsIconic(owner),
             windowShown: NativeMethods.IsWindowVisible(windowHandle) && !NativeMethods.IsIconic(windowHandle));
         if (minimizeOwner)
-            MinimizeWindow(owner);
+            MinimizeWindow(owner, onOwnThread);
         if (minimizeWindow)
-            MinimizeWindow(windowHandle);
+            MinimizeWindow(windowHandle, onOwnThread);
     }
 
     /// <summary>
@@ -150,24 +165,62 @@ public sealed class FocusEnforcer : IFocusEnforcer
         return root == IntPtr.Zero ? windowHandle : root;
     }
 
-    private void MinimizeWindow(nint windowHandle)
+    /// <summary>
+    /// Minimizes one window: from the agent's own thread, or by posting the request
+    /// to the window's thread (<paramref name="onOwnThread"/>, #438). The posted
+    /// request never holds up the agent, and the window's thread carries it out with
+    /// the foreground rights it has.
+    /// </summary>
+    private void MinimizeWindow(nint windowHandle, bool onOwnThread)
     {
         try
         {
-            if (!NativeMethods.ShowWindow(windowHandle, NativeMethods.SW_MINIMIZE))
-                _log.LogWarning("ShowWindow(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
+            if (!onOwnThread)
+            {
+                if (!NativeMethods.ShowWindow(windowHandle, NativeMethods.SW_MINIMIZE))
+                    _log.LogWarning("ShowWindow(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
+                return;
+            }
+            if (!NativeMethods.ShowWindowAsync(windowHandle, NativeMethods.SW_MINIMIZE))
+            {
+                _log.LogWarning("ShowWindowAsync(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
+                return;
+            }
+            _ = WarnIfNotMinimizedAsync(windowHandle);
         }
         catch (Exception ex)
         {
-            _log.LogError(ex, "ShowWindow threw for 0x{Hwnd:X}", windowHandle);
+            _log.LogError(ex, "Minimizing threw for 0x{Hwnd:X}", windowHandle);
+        }
+    }
+
+    /// <summary>
+    /// Logs a window that has not minimized itself <see cref="OwnThreadMinimizeTimeout"/>
+    /// after it was asked to: its app is not responding. The request stays queued and
+    /// the window goes down the moment the app responds again. Minimizing it from the
+    /// agent would not get it down any sooner: <c>ShowWindow</c> waits for the app too,
+    /// and holds up the caller for as long as the app hangs. A newer request for the
+    /// same window, after the student brought it back, takes over the check.
+    /// </summary>
+    private async Task WarnIfNotMinimizedAsync(nint windowHandle)
+    {
+        var generation = Interlocked.Increment(ref _minimizeGeneration);
+        _pendingMinimizes[windowHandle] = generation;
+        await Task.Delay(OwnThreadMinimizeTimeout).ConfigureAwait(false);
+        if (!_pendingMinimizes.TryRemove(new KeyValuePair<nint, long>(windowHandle, generation)))
+            return;
+        if (NativeMethods.IsWindow(windowHandle) && NativeMethods.IsWindowVisible(windowHandle) &&
+            !NativeMethods.IsIconic(windowHandle))
+        {
+            _log.LogWarning(
+                "0x{Hwnd:X} [{ClassName}] did not minimize within {TimeoutMs} ms: its app is not responding. It goes down as soon as the app responds",
+                windowHandle, ClassNameOf(windowHandle), OwnThreadMinimizeTimeout.TotalMilliseconds);
         }
     }
 
     public bool Block(nint offendingWindowHandle)
     {
         if (offendingWindowHandle == IntPtr.Zero) return false;
-
-        Minimize(offendingWindowHandle);
 
         nint target;
         lock (_gate)
@@ -181,80 +234,61 @@ public sealed class FocusEnforcer : IFocusEnforcer
                 minimized: NativeMethods.IsIconic(target));
         if (plan == FallbackPlan.None)
         {
+            // The caller surfaces the overlay. Minimize from the agent, as the sweep
+            // does: the blocked window then stays the foreground window, where a
+            // window Windows brought forward instead (the desktop, say) would count
+            // as allowed and hide the overlay straight away.
             _log.LogDebug("Block: no valid prior allowed window to restore");
+            Minimize(offendingWindowHandle);
             return false;
         }
 
-        try
+        if (plan == FallbackPlan.Restore)
         {
-            ForceForeground(target, restore: plan == FallbackPlan.RestoreThenForeground);
-            return true;
+            // Back on screen before the blocked window goes down, so Windows can
+            // hand it the foreground.
+            try { NativeMethods.ShowWindow(target, NativeMethods.SW_SHOWNOACTIVATE); }
+            catch (Exception ex) { _log.LogError(ex, "ShowWindow(SW_SHOWNOACTIVATE) threw for 0x{Hwnd:X}", target); }
         }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "ForceForeground threw for 0x{Hwnd:X}", target);
-            return false;
-        }
+        Minimize(offendingWindowHandle, onOwnThread: true);
+        return true;
     }
 
     /// <summary>What <see cref="Block"/> does with the remembered allowed window.</summary>
     internal enum FallbackPlan
     {
-        /// <summary>Nothing to hand focus back to: the caller surfaces the overlay.</summary>
+        /// <summary>Nothing to fall back to: the caller surfaces the overlay.</summary>
         None,
-        /// <summary>The window is on screen: give it the foreground, nothing else.</summary>
-        Foreground,
-        /// <summary>The window is minimized: restore it, then give it the foreground.</summary>
-        RestoreThenForeground,
+        /// <summary>The window is on screen: leave it as it is.</summary>
+        OnScreen,
+        /// <summary>The window is minimized: restore it, without activating it.</summary>
+        Restore,
     }
 
     /// <summary>
-    /// How <see cref="Block"/> hands focus back to the remembered allowed window,
-    /// factored out as a pure decision so it is unit-testable without a live
-    /// desktop:
+    /// What <see cref="Block"/> does with the remembered allowed window, factored
+    /// out as a pure decision so it is unit-testable without a live desktop. The
+    /// window is not given the foreground: the blocked window minimizes itself and
+    /// Windows hands the foreground to the window below it (#438).
     /// <list type="bullet">
-    /// <item>Never to the app just taken down: the blocked window itself, the app
+    /// <item>Never the app just taken down: the blocked window itself, the app
     /// window that owns a blocked dialog, or a dialog of the blocked app (#428).</item>
-    /// <item>Never to a window that has gone from the screen since it was
+    /// <item>Never a window that has gone from the screen since it was
     /// remembered: showing it again would put back a window its app hid. The
     /// taskbar's thumbnail flyout re-shown that way crashed explorer (#437).</item>
-    /// <item>A minimized window is restored; a window already on screen only gets
-    /// the foreground, so its state is left alone.</item>
+    /// <item>A minimized window is restored; a window already on screen is left
+    /// as it is.</item>
     /// </list>
     /// </summary>
     internal static FallbackPlan PlanFallback(bool sameAppAsBlocked, bool visible, bool minimized)
     {
         if (sameAppAsBlocked || !visible) return FallbackPlan.None;
-        return minimized ? FallbackPlan.RestoreThenForeground : FallbackPlan.Foreground;
+        return minimized ? FallbackPlan.Restore : FallbackPlan.OnScreen;
     }
 
     public void Reset()
     {
         lock (_gate)
             _lastAllowed = IntPtr.Zero;
-    }
-
-    private static void ForceForeground(nint target, bool restore)
-    {
-        var currentThread = NativeMethods.GetCurrentThreadId();
-        var foregroundHwnd = NativeMethods.GetForegroundWindow();
-        var foregroundThread = foregroundHwnd == IntPtr.Zero
-            ? 0u
-            : NativeMethods.GetWindowThreadProcessId(foregroundHwnd, out _);
-
-        var attached = false;
-        try
-        {
-            if (foregroundThread != 0 && foregroundThread != currentThread)
-                attached = NativeMethods.AttachThreadInput(currentThread, foregroundThread, fAttach: true);
-            if (restore)
-                NativeMethods.ShowWindow(target, NativeMethods.SW_SHOWNOACTIVATE);
-            NativeMethods.SetForegroundWindow(target);
-        }
-        finally
-        {
-            if (attached)
-                NativeMethods.AttachThreadInput(currentThread, foregroundThread, fAttach: false);
-        }
     }
 }

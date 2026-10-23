@@ -23,9 +23,11 @@ public interface IFocusEnforcer
 
     /// <summary>
     /// Minimizes the off-list window (a dialog together with the app window that
-    /// owns it, like <see cref="Minimize"/>). Returns true if focus was returned
-    /// to a previously remembered allowed window; false if there was nothing
-    /// valid to fall back to (caller should surface the overlay).
+    /// owns it, like <see cref="Minimize"/>). Returns true if a previously
+    /// remembered allowed window is there to fall back to: the blocked window then
+    /// minimizes itself, so Windows hands the foreground to the window below it,
+    /// and a minimized fallback is restored first (#438). Returns false if there
+    /// was nothing valid to fall back to (caller should surface the overlay).
     /// </summary>
     bool Block(nint offendingWindowHandle);
 

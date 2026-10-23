@@ -54,25 +54,23 @@ internal static class NativeMethods
     public static extern bool UnhookWinEvent(nint hWinEventHook);
 
     [DllImport("user32.dll")]
-    public static extern nint GetForegroundWindow();
-
-    [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetForegroundWindow(nint hWnd);
 
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
 
-    [DllImport("kernel32.dll")]
-    public static extern uint GetCurrentThreadId();
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
-
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ShowWindow(nint hWnd, int nCmdShow);
+
+    /// <summary>
+    /// Posts the show request to the thread that owns <paramref name="hWnd"/>, which
+    /// carries it out the next time it handles messages; never waits for it.
+    /// </summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ShowWindowAsync(nint hWnd, int nCmdShow);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
