@@ -1167,6 +1167,7 @@ public class FocusSessionControllerTests
         public Dictionary<nint, nint> ForegroundOf { get; } = new();
         public nint ForegroundWindowOf(nint windowHandle) =>
             ForegroundOf.TryGetValue(windowHandle, out var foreground) ? foreground : IntPtr.Zero;
+        public void BringForward(nint windowHandle) { }
         public void Reset() => ResetCount++;
     }
 

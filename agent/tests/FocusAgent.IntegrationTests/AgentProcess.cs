@@ -277,6 +277,19 @@ internal sealed class AgentProcess : IAsyncDisposable
         return res.StatusCode == System.Net.HttpStatusCode.NoContent;
     }
 
+    /// <summary>
+    /// Click the focus overlay's row for the allowed app <paramref name="app"/> (a
+    /// rule's value, such as <c>notepad</c>) via POST /overlay-app (#453). The click
+    /// runs on the agent's UI thread, as the student's does, and this does not wait
+    /// for it. Returns false when the overlay wasn't up.
+    /// </summary>
+    public async Task<bool> ClickOverlayAppAsync(string app)
+    {
+        using var res = await _http.PostAsync(
+            $"{_controlBase}/overlay-app?app={Uri.EscapeDataString(app)}", content: null);
+        return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
     /// <summary>Wait for the agent process to exit (e.g. after <see cref="QuitAsync"/>).</summary>
     public async Task WaitForExitAsync(TimeSpan timeout)
     {

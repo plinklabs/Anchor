@@ -8,10 +8,11 @@ using Microsoft.Extensions.Logging;
 namespace FocusAgent.Native.Tests;
 
 /// <summary>
-/// <see cref="FocusEnforcer.Block"/> and <see cref="FocusEnforcer.Minimize"/> on
-/// real windows (#438, #440, #451). The agent never waits for an app, whether the
-/// window minimizes itself, the agent minimizes it or the agent restores the
-/// fallback; where the foreground goes then needs
+/// <see cref="FocusEnforcer.Block"/>, <see cref="FocusEnforcer.Minimize"/> and
+/// <see cref="FocusEnforcer.BringForward"/> on real windows (#438, #440, #451,
+/// #453). The agent never waits for an app, whether the window minimizes itself,
+/// the agent minimizes it, or the agent restores the fallback or an app the
+/// student picked on the overlay; where the foreground goes then needs
 /// two processes and is covered by the e2e FocusFallbackTests.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -150,6 +151,51 @@ public class FocusEnforcerWindowTests
         Assert.True(
             await WaitUntilAsync(() => allowed.IsBackOnScreen, TimeSpan.FromSeconds(2)),
             "The fallback did not come back once its app responded again.");
+    }
+
+    [Fact]
+    public async Task Bringing_forward_an_app_that_is_not_responding_never_holds_up_the_agent()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test hung allowed app");
+        var enforcer = new FocusEnforcer(log);
+        allowed.MinimizeWithoutActivating();
+        allowed.Freeze();
+
+        // The student picks the app on the overlay, which brings it forward on the
+        // agent's UI thread. Restoring it there waited until it responded, and held
+        // up every foreground change behind it meanwhile (#453).
+        var clock = Stopwatch.StartNew();
+        enforcer.BringForward(allowed.Handle);
+        clock.Stop();
+
+        Assert.True(
+            clock.Elapsed < TimeSpan.FromSeconds(1),
+            $"BringForward took {clock.ElapsedMilliseconds} ms while the app was not responding.");
+        Assert.True(
+            await WaitUntilAsync(() => log.Messages.Any(m => m.Contains("did not come back")), TimeSpan.FromSeconds(2)),
+            "The agent did not log that the app is not responding.");
+        Assert.False(allowed.IsBackOnScreen, "A window whose thread is frozen came back on screen.");
+
+        // The restore is still on its way: the app comes back the moment it responds.
+        allowed.Thaw();
+        Assert.True(
+            await WaitUntilAsync(() => allowed.IsBackOnScreen, TimeSpan.FromSeconds(2)),
+            "The app did not come back once it responded again.");
+    }
+
+    [Fact]
+    public void A_minimized_app_is_back_on_screen_when_BringForward_returns()
+    {
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        var enforcer = new FocusEnforcer();
+        allowed.MinimizeWithoutActivating();
+
+        enforcer.BringForward(allowed.Handle);
+
+        // Back before it is given the foreground, as when the restore ran on the
+        // caller's thread (#453).
+        Assert.True(allowed.IsBackOnScreen, "The minimized app was not back on screen when BringForward returned.");
     }
 
     [Fact]

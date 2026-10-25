@@ -19,7 +19,8 @@ namespace FocusAgent.Native;
 /// window, which keeps getting what the student types. An app that is not
 /// responding holds up neither way for more than a moment (#440): its window goes
 /// down the moment the app responds. Nor does a minimized fallback whose app is
-/// not responding (#451): it comes back the moment its app responds. With no
+/// not responding (#451), or an allowed app the student picks on the overlay
+/// (#453): it comes back the moment its app responds. With no
 /// allowed window to fall back to, or for a paused browser (#450), the focus
 /// overlay is put directly below the window before it minimizes itself, so the
 /// overlay is the window Windows hands the foreground to (#441).
@@ -44,8 +45,10 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// overlay next, which must come up after the window went down, or the
     /// foreground moves on to another window; and <see cref="Block"/>'s minimized
     /// fallback must be back on screen before the blocked window goes down, or
-    /// Windows has no fallback to hand the foreground to (#438). An app that is not
-    /// responding holds the caller up no longer than this.
+    /// Windows has no fallback to hand the foreground to (#438); and
+    /// <see cref="BringForward"/> gives the foreground to a window that is back on
+    /// screen (#453). An app that is not responding holds the caller up no longer
+    /// than this.
     /// </summary>
     internal static readonly TimeSpan AgentShowWindowWait = TimeSpan.FromMilliseconds(250);
 
@@ -245,8 +248,10 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// <summary>
     /// Carries out the agent's own <c>ShowWindow</c> on another app's window on a
     /// thread of its own, and waits for it no longer than
-    /// <see cref="AgentShowWindowWait"/>: <see cref="MinimizeFromAgent"/> (#440), and
-    /// <see cref="Block"/> restoring a minimized fallback (#451). <c>ShowWindow</c> on
+    /// <see cref="AgentShowWindowWait"/>: <see cref="MinimizeFromAgent"/> (#440),
+    /// <see cref="Block"/> restoring a minimized fallback (#451), and
+    /// <see cref="BringForward"/> restoring an allowed app the student picked on the
+    /// overlay (#453). <c>ShowWindow</c> on
     /// another thread's window waits until that thread handles messages again. Run
     /// on the caller's thread, an app that was not responding held up the agent's
     /// UI thread, and every foreground change behind it, until the app responded,
@@ -286,10 +291,33 @@ public sealed class FocusEnforcer : IFocusEnforcer
         showing.Wait(AgentShowWindowWait);
     }
 
+    public void BringForward(nint windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero) return;
+
+        // Back on screen before it gets the foreground, as when the restore ran on
+        // the caller's thread, the overlay's UI thread. An app that is not
+        // responding held that thread up, and every foreground change behind it,
+        // until it responded (#453); now it holds it up no longer than a moment,
+        // and its window comes back as soon as it responds.
+        ShowFromAgent(windowHandle, NativeMethods.SW_RESTORE);
+        try
+        {
+            // Does not wait for the app: Windows queues the activation for its thread.
+            if (!NativeMethods.SetForegroundWindow(windowHandle))
+                _log.LogDebug("SetForegroundWindow refused 0x{Hwnd:X}", windowHandle);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SetForegroundWindow threw for 0x{Hwnd:X}", windowHandle);
+        }
+    }
+
     private static string CommandName(int command) => command switch
     {
         NativeMethods.SW_MINIMIZE => "SW_MINIMIZE",
         NativeMethods.SW_SHOWNOACTIVATE => "SW_SHOWNOACTIVATE",
+        NativeMethods.SW_RESTORE => "SW_RESTORE",
         _ => command.ToString(System.Globalization.CultureInfo.InvariantCulture),
     };
 

@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using FocusAgent.App.Localization;
 using FocusAgent.Core.Focus;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 
@@ -129,6 +131,28 @@ public sealed partial class FocusOverlayWindow : Window
             return;
         _launcher.LaunchOrActivate(rule);
         _onLaunched(rule);
+    }
+
+    /// <summary>
+    /// Clicks the row for the allowed app <paramref name="app"/> (a rule's value)
+    /// through its automation peer, as UI Automation does: the same Click a
+    /// student's click raises. Dev-only, for the status endpoint's
+    /// <c>POST /overlay-app</c>, which lets the headless e2e take the student's way
+    /// back to an allowed app (#453). Returns false when no row shows that app.
+    /// </summary>
+    internal bool ClickAllowedApp(string app)
+    {
+        foreach (var child in AllowedAppsPanel.Children)
+        {
+            if (child is not Button { Tag: AllowedAppRule rule } button ||
+                !string.Equals(rule.Value, app, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (FrameworkElementAutomationPeer.CreatePeerForElement(button) is not IInvokeProvider invoke)
+                return false;
+            invoke.Invoke();
+            return true;
+        }
+        return false;
     }
 
     private void OnBrowserRepairClicked(object sender, RoutedEventArgs e)

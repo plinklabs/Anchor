@@ -93,6 +93,33 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         _dispatcher.TryEnqueue(HideOnUiThread);
     }
 
+    /// <summary>
+    /// Clicks the overlay's row for the allowed app <paramref name="app"/> (a
+    /// rule's value) on the UI thread, where the student's click runs too.
+    /// Dev-only, for the status endpoint: lets the headless e2e take the student's
+    /// way back to an allowed app (#453). Returns whether the overlay was up to
+    /// click; it does not wait for the click itself.
+    /// </summary>
+    public bool ClickAllowedApp(string app)
+    {
+        if (_disposed || Showing is null) return false;
+        return _dispatcher.TryEnqueue(() =>
+        {
+            FocusOverlayWindow? window;
+            lock (_gate) window = _window;
+            try
+            {
+                _log.LogInformation("Clicking the focus overlay's row for {App}", app);
+                if (window is null || !window.ClickAllowedApp(app))
+                    _log.LogWarning("The focus overlay has no row for {App} to click", app);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Clicking the focus overlay's row for {App} failed", app);
+            }
+        });
+    }
+
     public void Close()
     {
         if (_disposed) return;

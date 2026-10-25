@@ -32,6 +32,12 @@ namespace FocusAgent.IntegrationTests;
 /// what reaches the off-list window. It only ever types while the foreground
 /// window is the off-list window or the agent's, never into another app.
 ///
+/// The overlay lists the allowed apps, and picking one brings it forward. When
+/// that app is not responding, the agent must not wait for it either (#453): the
+/// spec picks the suspended Notepad on the overlay (<c>POST /overlay-app</c>, the
+/// same click on the agent's UI thread) and checks that the next off-list app is
+/// still blocked, and that Notepad comes back once it runs again.
+///
 /// Note: like every spec that starts a session, this minimizes off-list windows
 /// on the live desktop while it runs.
 /// </summary>
@@ -192,6 +198,142 @@ public sealed class FocusFallbackTests
                 $"(Notepad minimized: {WindowCapture.IsIconic(notepad)}). Latest foreground reports, newest first: " +
                 $"{await DescribeLatestReportsAsync(api, sessionId)}.");
         });
+    }
+
+    [Fact]
+    public async Task WhenTheStudentPicksAnAllowedAppThatIsNotRespondingOnTheOverlay_TheAgentStillBlocksOffListApps()
+    {
+        var api = new BackendClient(_backend.Url);
+
+        // Notepad is open but put away before the session, so the student has not
+        // used an allowed app yet: a block shows the overlay, which lists Notepad.
+        // Win11 notepad is a tabbed launcher, so kill leftovers to get a new window.
+        KillNotepad();
+        using (Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })
+               ?? throw new InvalidOperationException("Failed to launch notepad."))
+        {
+        }
+        try
+        {
+            var notepad = await WaitForNotepadWindowAsync(TimeSpan.FromSeconds(10));
+            Assert.True(notepad != IntPtr.Zero, "Notepad did not present a top-level window within 10s.");
+            WindowCapture.MinimizeWithoutActivating(notepad);
+            Assert.True(await WaitUntilAsync(() => WindowCapture.IsIconic(notepad), TimeSpan.FromSeconds(3)),
+                "Notepad could not be minimized.");
+            // Opened before the session, and minimized: a window that comes up can
+            // move the foreground on, to an allowed app of the developer's that
+            // would then be the fallback, and no overlay would come up. For the same
+            // reason the spec leaves the foreground alone until the session runs.
+            using var offList = await OffListWindow.OpenAsync(
+                "Anchor e2e off-list app", TimeSpan.FromSeconds(10), minimized: true);
+            using var nextOffList = await OffListWindow.OpenAsync(
+                "Anchor e2e next off-list app", TimeSpan.FromSeconds(10), minimized: true);
+
+            await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+            using var sampler = new ForegroundSampler(agent.Pid);
+            sampler.Name(offList.Handle, "off-list app");
+            sampler.Name(nextOffList.Handle, "next off-list app");
+            sampler.Name(notepad, "Notepad");
+
+            sampler.Mark("starting the session");
+            var classId = await api.FindClassIdAsync();
+            var appBundle = await api.FindBundleIdAsync(TestConfig.AppBundleName);
+            var session = await api.StartSessionAsync(classId, new[] { appBundle });
+            try
+            {
+                var joined = await agent.WaitForAsync(
+                    s => s.JoinedSessionId == session.Id && AllowsApp(s) && s.StartupSweep is not null,
+                    TimeSpan.FromSeconds(10));
+                Assert.True(
+                    joined?.JoinedSessionId == session.Id && AllowsApp(joined) && joined.StartupSweep is not null,
+                    $"Agent did not join and sweep with '{TestConfig.AppProcessName}' allowed within 10s " +
+                    $"(joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
+
+                // The student brings up the off-list app: a click on its taskbar
+                // button first activates it while it is minimized. With nothing to
+                // fall back to, the agent blocks it and its overlay takes the keyboard
+                // (#441).
+                sampler.Mark("opening the off-list app");
+                var activated = false;
+                for (var attempt = 0; attempt < 3 && !activated; attempt++)
+                {
+                    activated = WindowCapture.ActivateOnce(offList.Handle);
+                    if (!activated) await Task.Delay(200);
+                }
+                var ownInput = WindowCapture.LastInputTick();
+                Assert.True(activated, "Windows refused to give the off-list app the foreground.");
+                var overlay = IntPtr.Zero;
+                string? showing = null;
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                while (DateTime.UtcNow < deadline)
+                {
+                    overlay = WindowCapture.FindFullScreenWindow(agent.Pid);
+                    showing = (await agent.TryGetStatusAsync())?.Overlay;
+                    if (offList.HasGoneDown && showing == "Blocked" && overlay != IntPtr.Zero &&
+                        WindowCapture.ForegroundWindow() == overlay)
+                        break;
+                    await Task.Delay(100);
+                }
+                Assert.True(
+                    showing == "Blocked" && overlay != IntPtr.Zero && offList.HasGoneDown,
+                    $"The agent did not block the off-list app with its overlay (overlay: '{showing ?? "<hidden>"}', " +
+                    $"off-list app down: {offList.HasGoneDown}); with no allowed window to fall back to it should " +
+                    "have (#441). An allowed app that had the foreground since the session started is a window to " +
+                    $"fall back to instead.{Interference(ownInput)} Foreground: {sampler.Describe()}");
+                Assert.True(
+                    WindowCapture.ForegroundWindow() == overlay,
+                    $"The overlay did not get the keyboard, as the student's click on it would give it (#441); the " +
+                    $"foreground is {DescribeForeground()}.{Interference(ownInput)} Foreground: {sampler.Describe()}");
+
+                // Notepad stops responding, and the student picks it on the overlay.
+                using var notResponding = SuspendedProcess.Suspend(WindowCapture.ProcessIdOf(notepad));
+                Assert.False(SuspendedProcess.IsResponding(notepad), "Notepad still responds with its process suspended.");
+                sampler.Mark("picking Notepad on the overlay");
+                Assert.True(
+                    await agent.ClickOverlayAppAsync(TestConfig.AppProcessName),
+                    "The overlay was not up to pick Notepad on.");
+                // The click runs on the agent's UI thread. Restoring Notepad there
+                // waited until Notepad responded: the overlay stayed up, and no
+                // foreground change was judged meanwhile (#453).
+                var overlayGone = await WaitForStatusAsync(agent, s => s.Overlay is null, TimeSpan.FromSeconds(1));
+
+                // Then they open another off-list app, which the agent must block as
+                // always.
+                sampler.Mark("opening the next off-list app");
+                nextOffList.Restore();
+                var nextDown = await WaitUntilAsync(() => nextOffList.HasGoneDown, TimeSpan.FromSeconds(2));
+                Assert.False(
+                    SuspendedProcess.IsResponding(notepad),
+                    "Notepad started responding again before the spec could check the agent.");
+                Assert.True(
+                    nextDown,
+                    "While the allowed app the student picked on the overlay was not responding, the agent did not " +
+                    "block the next off-list app: it was waiting to bring that app forward (#453). " +
+                    $"Foreground: {sampler.Describe()}");
+                Assert.True(
+                    overlayGone,
+                    "The overlay stayed up after the student picked Notepad on it: the click did not get through, " +
+                    $"or waited for Notepad (#453). Foreground: {sampler.Describe()}");
+
+                // Notepad comes back as soon as it responds.
+                notResponding.Dispose();
+                Assert.True(
+                    await WaitUntilAsync(
+                        () => !WindowCapture.IsIconic(notepad) && WindowCapture.GetWindowScreenRect(notepad).Left > MinimizedPosition,
+                        TimeSpan.FromSeconds(3)),
+                    "The allowed app the student picked on the overlay did not come back once it responded again " +
+                    $"(Notepad minimized: {WindowCapture.IsIconic(notepad)}). Foreground: {sampler.Describe()}");
+            }
+            finally
+            {
+                try { await api.EndSessionAsync(session.Id); } catch { /* best-effort */ }
+            }
+        }
+        finally
+        {
+            KillNotepad();
+        }
     }
 
     [Fact]
@@ -410,6 +552,37 @@ public sealed class FocusFallbackTests
 
     private static bool AllowsApp(StatusSnapshot status) =>
         (status.AllowedApps ?? Array.Empty<string>()).Contains(TestConfig.AppProcessName);
+
+    /// <summary>Whether the agent's /status meets <paramref name="predicate"/> within <paramref name="timeout"/>.</summary>
+    private static async Task<bool> WaitForStatusAsync(AgentProcess agent, Func<StatusSnapshot, bool> predicate, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        do
+        {
+            if (await agent.TryGetStatusAsync() is { } status && predicate(status))
+                return true;
+            await Task.Delay(50);
+        }
+        while (DateTime.UtcNow < deadline);
+        return false;
+    }
+
+    /// <summary>
+    /// Says so in a failure message when someone used the desktop since the spec's
+    /// last key (<paramref name="ownInput"/>): a click or key of theirs moves the
+    /// foreground without the agent having a part in it.
+    /// </summary>
+    private static string Interference(uint ownInput) =>
+        WindowCapture.LastInputTick() == ownInput
+            ? ""
+            : " The desktop had input during this step that the spec did not send: someone using it moves the " +
+              "foreground without the agent. Run the spec again without touching it.";
+
+    private static string DescribeForeground()
+    {
+        var foreground = WindowCapture.ForegroundWindow();
+        return $"{WindowCapture.GetProcessName(foreground)} [{WindowCapture.GetClassName(foreground)}]";
+    }
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {

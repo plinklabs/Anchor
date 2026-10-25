@@ -54,6 +54,10 @@ namespace FocusAgent.App.Connectivity;
 ///               -> the paused-Edge overlay's "switch the extension back on"
 ///                  action (#427): opens Edge for the repair window (409 when
 ///                  Edge isn't paused).
+///   POST /overlay-app?app=&lt;rule value&gt;
+///               -> the focus overlay's row for that allowed app (#453): clicks it
+///                  on the UI thread, as the student does, without waiting for
+///                  the click (409 when the overlay isn't up).
 ///
 /// And /status carries <c>extensionPolicy</c> (#405): where the Anchor
 /// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>)
@@ -100,6 +104,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<object?>? _extensionGuard;
     private readonly Func<bool>? _onTurnExtensionBackOn;
     private readonly Func<string?>? _overlay;
+    private readonly Func<string, bool>? _onClickOverlayApp;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -118,7 +123,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Action? onOfferExtensionSetup = null,
         Func<object?>? extensionGuard = null,
         Func<bool>? onTurnExtensionBackOn = null,
-        Func<string?>? overlay = null)
+        Func<string?>? overlay = null,
+        Func<string, bool>? onClickOverlayApp = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -134,6 +140,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _extensionGuard = extensionGuard;
         _onTurnExtensionBackOn = onTurnExtensionBackOn;
         _overlay = overlay;
+        _onClickOverlayApp = onClickOverlayApp;
         _listener = new HttpListener();
     }
 
@@ -226,6 +233,18 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // 409 when Edge isn't paused, so a spec can tell "opened" from "no-op".
                 var opened = _onTurnExtensionBackOn?.Invoke();
                 ctx.Response.StatusCode = opened switch { null => 404, true => 204, false => 409 };
+                ctx.Response.Close();
+                return;
+            }
+
+            if (method == "POST" && path == "/overlay-app")
+            {
+                // 409 when the overlay isn't up, so a spec can tell "clicked" from "no-op".
+                var app = ctx.Request.QueryString["app"];
+                var clicked = string.IsNullOrWhiteSpace(app) ? null : _onClickOverlayApp?.Invoke(app);
+                ctx.Response.StatusCode = string.IsNullOrWhiteSpace(app)
+                    ? 400
+                    : clicked switch { null => 404, true => 204, false => 409 };
                 ctx.Response.Close();
                 return;
             }

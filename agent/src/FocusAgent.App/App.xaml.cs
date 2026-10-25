@@ -320,7 +320,9 @@ public partial class App : Application
                     },
                     onTurnExtensionBackOn: _focus.TurnExtensionBackOn,
                     // #452: which overlay the student is on, if any.
-                    overlay: () => focusOverlay?.Showing);
+                    overlay: () => focusOverlay?.Showing,
+                    // #453: click one of the overlay's allowed apps, as the student does.
+                    onClickOverlayApp: app => focusOverlay?.ClickAllowedApp(app) ?? false);
                 _statusEndpoint.Start(port);
             }
         }

@@ -68,5 +68,15 @@ public interface IFocusEnforcer
     /// </summary>
     nint ForegroundWindowOf(nint windowHandle);
 
+    /// <summary>
+    /// Brings an allowed app's window forward for the student, as picking it on the
+    /// focus overlay does (<see cref="IAppIdentifier.LaunchOrActivate"/>): restored
+    /// if it is minimized, then given the foreground. Never held up by an app that
+    /// is not responding (#453): the caller carries on after a moment, and the
+    /// window comes back as soon as its app responds. The foreground only moves
+    /// while the agent may set it, as right after the student clicked the overlay.
+    /// </summary>
+    void BringForward(nint windowHandle);
+
     void Reset();
 }
