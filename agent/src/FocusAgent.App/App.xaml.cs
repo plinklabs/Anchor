@@ -276,6 +276,11 @@ public partial class App : Application
                 canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null
                                      && !_coordinator.IsClosingForRestart,
                 onQuit: ShutdownCleanly,
+                // #445: no "Exit Anchor" while a session is going on (joined,
+                // being asked to join, or being rejoined after a restart): the
+                // student leaves it from the main window first, which asks and
+                // shows on the teacher's roster.
+                canQuit: CanExit,
                 dispatcher: dispatcher,
                 // #405: after a "not now", startup stops asking; the tray keeps
                 // offering the Edge extension setup while no policy is in place.
@@ -310,6 +315,9 @@ public partial class App : Application
                     // the window and Application.Exit, so it must run on the UI
                     // thread — same marshalling as onCloseWindow above.
                     onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly),
+                    // #445: and under the tray's rule — refused while a session is
+                    // going on, as the tray then offers no Exit.
+                    canQuit: CanExit,
                     // #405: let the headless e2e see where the Edge policy is and
                     // answer the setup window like a click on Allow / Not now.
                     extensionPolicy: () => new
@@ -621,6 +629,17 @@ public partial class App : Application
         });
     }
 
+    /// <summary>
+    /// #445: whether the tray offers "Exit Anchor" (and the status endpoint's quit
+    /// goes through): not while a session is going on — joined, being asked to join,
+    /// or being rejoined after a restart (<see cref="SessionCoordinator.HasSessionGoingOn"/>,
+    /// the same notion that holds back the restart into an update). A one-click exit
+    /// mid-session was easy to use on purpose and to hit by accident, and showed the
+    /// teacher only a "Left"; "Leave session" in the main window asks first. Ending
+    /// the process from Task Manager still shows up as <c>HeartbeatLost</c>.
+    /// </summary>
+    private bool CanExit() => _coordinator?.HasSessionGoingOn != true;
+
     private void ShutdownCleanly()
     {
         // Let the main window's close-to-tray interception step aside for the
@@ -637,7 +656,9 @@ public partial class App : Application
     /// timeout. Time-boxed and best-effort: the bounded wait below is the only
     /// thing standing between a slow or failing network and the student's Quit, so
     /// a stalled report can never delay process exit. No-op outside a session
-    /// (the coordinator gates on <c>JoinedSessionId</c>).
+    /// (the coordinator gates on <c>JoinedSessionId</c>). Since #445 the tray offers
+    /// no Exit during a session (<see cref="CanExit"/>), so this is left for a
+    /// rejoin that lands between that check and the exit.
     /// </summary>
     private void ReportAgentKilledBeforeExit()
     {
@@ -938,7 +959,14 @@ public partial class App : Application
         // the menu is shown; the observer kills it once it has captured.
         DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
 
-        var menu = Tray.TrayMenu.Build(onOpen: () => { }, onJoinByCode: () => { }, onQuit: () => { });
+        // #445: --traymenu-in-session shows the menu as it is during a session. The
+        // menu asks canQuit as it opens, as the real tray's does, and leaves "Exit
+        // Anchor" out; "Join a session…" is disabled, as TrayIconHost does then.
+        var inSession = Program.TrayMenuInSession;
+        var menu = Tray.TrayMenu.Build(
+            onOpen: () => { }, onJoinByCode: () => { }, onQuit: () => { },
+            canQuit: inSession ? () => false : null);
+        if (inSession) menu.JoinItem.IsEnabled = false;
         // Show a representative live state so the status eyebrow renders real text.
         // Presentable demo content (no debug strings) so this same surface is fit to
         // ship as a website screenshot (#251).

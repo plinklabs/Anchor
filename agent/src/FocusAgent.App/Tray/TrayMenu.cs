@@ -41,8 +41,20 @@ internal static class TrayMenu
     /// Compose the brand-styled tray menu. Commands are wired to the supplied
     /// actions; the status text starts at <see cref="DefaultStatusText"/> and is
     /// refreshed by <see cref="TrayIconHost.UpdateStatus"/>.
+    ///
+    /// <paramref name="canQuit"/> (#445) is asked each time the menu opens: while it
+    /// says no (the agent has a session going on), "Exit Anchor" and the rule above
+    /// it are left out, so "Leave session" in the main window, which asks first and
+    /// shows on the teacher's roster, is the way out of a session. A click on Exit
+    /// from a menu opened just before a session began asks again and does nothing.
+    /// Null offers Exit always.
     /// </summary>
-    public static Handles Build(Action onOpen, Action onJoinByCode, Action onQuit, Action? onSetUpExtension = null)
+    public static Handles Build(
+        Action onOpen,
+        Action onJoinByCode,
+        Action onQuit,
+        Action? onSetUpExtension = null,
+        Func<bool>? canQuit = null)
     {
         var flyout = new MenuFlyout
         {
@@ -87,12 +99,28 @@ internal static class TrayMenu
             flyout.Items.Add(setUpExtensionItem);
         }
 
-        flyout.Items.Add(Separator());
+        var exitSeparator = Separator();
+        flyout.Items.Add(exitSeparator);
 
         // #102: the true exit lives here (the main window's button only closes to
         // the tray). "Exit Anchor" — Anchor proper-noun in prose, per §1.
-        var exitItem = ActionItem(Loc.Get("Tray_ExitAnchor"), onQuit);
+        var exitItem = ActionItem(Loc.Get("Tray_ExitAnchor"), () =>
+        {
+            if (canQuit?.Invoke() != false) onQuit();
+        });
         flyout.Items.Add(exitItem);
+
+        // #445: no Exit during a session. Its rule goes with it, so the menu never
+        // ends on a stray hairline.
+        if (canQuit is not null)
+        {
+            flyout.Opening += (_, _) =>
+            {
+                var visibility = canQuit() ? Visibility.Visible : Visibility.Collapsed;
+                exitSeparator.Visibility = visibility;
+                exitItem.Visibility = visibility;
+            };
+        }
 
         return new Handles(flyout, statusItem, joinItem, setUpExtensionItem);
     }

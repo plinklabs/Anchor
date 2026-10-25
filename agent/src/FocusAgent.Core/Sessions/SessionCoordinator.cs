@@ -86,25 +86,42 @@ public sealed class SessionCoordinator : IAsyncDisposable
     }
 
     /// <summary>
+    /// True while the agent has a session going on: one it is in, one it is asking
+    /// the student about (the join confirmation), or a join on its way (a rejoin
+    /// after a restart whose hub call is still out). The same notion that holds back
+    /// the restart into an update (<see cref="TryCloseForRestart"/>, #456); the tray
+    /// offers no "Exit Anchor" while it holds (#445), so the student leaves the
+    /// session from the main window first.
+    /// </summary>
+    public bool HasSessionGoingOn
+    {
+        get { lock (_gate) return SessionGoingOn(); }
+    }
+
+    /// <summary>
     /// Stop taking sessions so the agent can restart into an update (#456), but only
-    /// if it has no session going on: none it is in, none it is asking the student
-    /// about, and no join on its way. The check and the stop are one step under the
-    /// same lock as every session change, so no session can begin in between; from
-    /// then on a session start (broadcast or catch-up) and a rejoin are ignored and
-    /// left to the restarted agent. Returns false, and changes nothing, when a
-    /// session is going on.
+    /// if it has no session going on (<see cref="HasSessionGoingOn"/>): none it is
+    /// in, none it is asking the student about, and no join on its way. The check
+    /// and the stop are one step under the same lock as every session change, so no
+    /// session can begin in between; from then on a session start (broadcast or
+    /// catch-up) and a rejoin are ignored and left to the restarted agent. Returns
+    /// false, and changes nothing, when a session is going on.
     /// </summary>
     public bool TryCloseForRestart()
     {
         lock (_gate)
         {
             if (_closingForRestart) return true;
-            if (_active is not null || _activeSessionId is not null || _joinedSessionId is not null || _joinsInFlight > 0)
+            if (SessionGoingOn())
                 return false;
             _closingForRestart = true;
             return true;
         }
     }
+
+    // Call under _gate.
+    private bool SessionGoingOn() =>
+        _active is not null || _activeSessionId is not null || _joinedSessionId is not null || _joinsInFlight > 0;
 
     /// <summary>
     /// Take sessions again after <see cref="TryCloseForRestart"/>, when the restart

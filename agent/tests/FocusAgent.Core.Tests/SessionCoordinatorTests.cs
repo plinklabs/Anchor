@@ -702,6 +702,113 @@ public class SessionCoordinatorTests
         Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
     }
 
+    // --- #445: a session going on, when the tray offers no Exit ---------------
+
+    [Fact]
+    public void No_session_is_going_on_when_idle_or_closing_for_a_restart()
+    {
+        var coordinator = NewCoordinator(new FakeHub(), new FakeUi());
+
+        Assert.False(coordinator.HasSessionGoingOn);
+
+        Assert.True(coordinator.TryCloseForRestart());
+        Assert.False(coordinator.HasSessionGoingOn);
+    }
+
+    [Fact]
+    public async Task A_session_is_going_on_while_the_student_is_asked_to_join_and_not_after_a_decline()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { ManualResolve = true };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var asking = coordinator.HandleSessionStartedAsync(Payload());
+        await ui.WaitForShownAsync();
+        Assert.True(coordinator.HasSessionGoingOn);
+
+        ui.Resolve(JoinDecision.Declined);
+        await asking;
+        Assert.False(coordinator.HasSessionGoingOn);
+    }
+
+    [Fact]
+    public async Task A_session_is_going_on_while_the_confirmed_join_is_on_its_way()
+    {
+        // After the student says yes, the hub call is still out: no joined session
+        // yet, but leaving now would be leaving it.
+        var gate = new TaskCompletionSource();
+        var hub = new FakeHub { JoinGate = gate.Task };
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var joining = coordinator.HandleSessionStartedAsync(Payload());
+        Assert.Single(hub.JoinCalls);
+        Assert.Null(coordinator.JoinedSessionId);
+        Assert.True(coordinator.HasSessionGoingOn);
+
+        gate.SetResult();
+        await joining;
+        Assert.True(coordinator.HasSessionGoingOn);
+    }
+
+    [Fact]
+    public async Task A_session_is_going_on_while_joined_and_not_once_the_student_left_it()
+    {
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var payload = Payload();
+
+        await coordinator.HandleSessionStartedAsync(payload);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.True(coordinator.HasSessionGoingOn);
+
+        await coordinator.LeaveSessionManuallyAsync();
+        Assert.False(coordinator.HasSessionGoingOn);
+    }
+
+    [Fact]
+    public async Task A_session_is_going_on_while_joined_and_not_once_the_teacher_ended_it()
+    {
+        var coordinator = NewCoordinator(new FakeHub(), new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var payload = Payload();
+
+        await coordinator.HandleSessionStartedAsync(payload);
+        Assert.True(coordinator.HasSessionGoingOn);
+
+        coordinator.HandleSessionEnded(payload.SessionId);
+        Assert.False(coordinator.HasSessionGoingOn);
+    }
+
+    [Fact]
+    public async Task A_session_is_going_on_while_a_rejoin_after_a_restart_is_on_its_way_and_once_rejoined()
+    {
+        var gate = new TaskCompletionSource();
+        var hub = new FakeHub { JoinGate = gate.Task };
+        var coordinator = NewCoordinator(hub, new FakeUi());
+        var payload = Payload();
+
+        var rejoin = coordinator.RejoinAsync(payload);
+        Assert.Null(coordinator.JoinedSessionId);
+        Assert.True(coordinator.HasSessionGoingOn);
+
+        gate.SetResult();
+        await rejoin;
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.True(coordinator.HasSessionGoingOn);
+    }
+
+    [Fact]
+    public async Task No_session_is_going_on_after_a_rejoin_that_failed()
+    {
+        var hub = new FakeHub { JoinGate = Task.FromException(new InvalidOperationException("hub down")) };
+        var coordinator = NewCoordinator(hub, new FakeUi());
+
+        await coordinator.RejoinAsync(Payload());
+
+        Assert.Null(coordinator.JoinedSessionId);
+        Assert.False(coordinator.HasSessionGoingOn);
+    }
+
     private static SessionCoordinator NewCoordinator(FakeHub hub, FakeUi ui)
     {
         var settings = Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) });

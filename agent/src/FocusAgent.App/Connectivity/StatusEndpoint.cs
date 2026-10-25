@@ -40,9 +40,10 @@ namespace FocusAgent.App.Connectivity;
 ///   POST /leave -> the student "Leave session" button: emits ManualLeave and
 ///                  ends the session locally while the agent keeps running.
 ///   POST /close -> the window "Close" button: hides the window to the tray.
-///   POST /quit  -> the tray/window "Quit" action (#110): shuts the agent down
-///                  cleanly, which emits a best-effort AgentKilled event first
-///                  if quit happens mid-session.
+///   POST /quit  -> the tray's "Exit Anchor" action (#110): shuts the agent down
+///                  cleanly. Under the tray's rule (#445): while a session is
+///                  going on the tray offers no Exit, so this answers 409 and the
+///                  agent keeps running.
 ///   POST /extension-consent?answer=allow|not-now
 ///               -> the Edge extension setup window's buttons (#405): answers
 ///                  the open window like a click (404 when none is open). In a
@@ -110,6 +111,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<CancellationToken, Task>? _onLeaveSession;
     private readonly Action? _onCloseWindow;
     private readonly Action? _onQuit;
+    private readonly Func<bool>? _canQuit;
     private readonly Func<object?>? _extensionPolicy;
     private readonly Func<bool, bool>? _onAnswerExtensionConsent;
     private readonly Action? _onOfferExtensionSetup;
@@ -144,7 +146,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<string?>? pendingUpdate = null,
         Func<DateTimeOffset?>? lastUpdateCheck = null,
         Action? onCheckUpdate = null,
-        Action<TimeSpan>? onSimulateSleep = null)
+        Action<TimeSpan>? onSimulateSleep = null,
+        Func<bool>? canQuit = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -165,6 +168,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _lastUpdateCheck = lastUpdateCheck;
         _onCheckUpdate = onCheckUpdate;
         _onSimulateSleep = onSimulateSleep;
+        _canQuit = canQuit;
         _listener = new HttpListener();
     }
 
@@ -226,10 +230,14 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // Respond *before* triggering quit: ShutdownCleanly tears the
                 // process down, so the 204 must already be on the wire. The
                 // callback marshals onto the UI thread (see App.OnLaunched).
-                var canQuit = _onQuit is not null;
-                ctx.Response.StatusCode = canQuit ? 204 : 404;
+                // #445: 409 while a session is going on, when the tray offers no
+                // Exit, so a spec can tell "quitting" from "refused".
+                var status = _onQuit is null ? 404 : _canQuit?.Invoke() == false ? 409 : 204;
+                ctx.Response.StatusCode = status;
                 ctx.Response.Close();
-                if (canQuit) _onQuit!.Invoke();
+                if (status == 204) _onQuit!.Invoke();
+                else if (status == 409)
+                    _log.LogInformation("Quit refused: a session is going on, and the tray offers no Exit then.");
                 return;
             }
 

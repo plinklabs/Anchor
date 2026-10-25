@@ -178,6 +178,43 @@ internal sealed class AgentProcess : IAsyncDisposable
         return new AgentProcess(process, statusPort, psi.ArgumentList.ToList()) { StatusPort = statusPort };
     }
 
+    /// <summary>
+    /// Launch an agent right after killing one that was in a session, as a student
+    /// restarting it after ending it from Task Manager (#445). The killed agent's
+    /// single-instance key can outlive it by a moment, and a launch that finds it
+    /// exits at once with code 0 instead of starting (seen about one time in five
+    /// with no pause in between). Launches again until one answers on /status, so a
+    /// spec doesn't fail on that moment; any other exit, or still exiting at once
+    /// after <paramref name="timeout"/>, throws.
+    /// </summary>
+    public static async Task<AgentProcess> LaunchAfterKillAsync(Func<AgentProcess> launch, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            var agent = launch();
+            while (!agent.HasExited && DateTime.UtcNow < deadline)
+            {
+                if (await agent.TryGetStatusAsync() is not null) return agent;
+                await Task.Delay(100);
+            }
+            // Still starting at the deadline: the caller's own wait reports on it.
+            if (!agent.HasExited) return agent;
+
+            var exitCode = agent.ExitCode;
+            await agent.DisposeAsync();
+            if (exitCode != 0 || DateTime.UtcNow >= deadline)
+            {
+                throw new InvalidOperationException(
+                    $"The relaunched agent exited at once with code {exitCode}" +
+                    (exitCode == 0
+                        ? $"; the killed agent's single-instance key was still held after {timeout.TotalSeconds:N0}s."
+                        : "."));
+            }
+            await Task.Delay(200);
+        }
+    }
+
     public async Task<StatusSnapshot?> TryGetStatusAsync(CancellationToken ct = default)
     {
         try
@@ -249,15 +286,28 @@ internal sealed class AgentProcess : IAsyncDisposable
 
     /// <summary>
     /// Drive the agent's "Quit" action (#110) via POST /quit — the headless
-    /// stand-in for tray → Quit. Distinct from <see cref="Kill"/>: this is a
-    /// clean shutdown, so mid-session it emits a best-effort AgentKilled event
-    /// before the process exits. A hard <see cref="Kill"/> is the crash case and
-    /// emits nothing.
+    /// stand-in for tray → Exit Anchor. Distinct from <see cref="Kill"/>: this is a
+    /// clean shutdown. A hard <see cref="Kill"/> is the crash case. Throws when the
+    /// agent refuses, which it does while a session is going on (#445); see
+    /// <see cref="TryQuitAsync"/>.
     /// </summary>
     public async Task QuitAsync()
     {
         using var res = await _http.PostAsync($"{_controlBase}/quit", content: null);
         res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Pick the tray's "Exit Anchor" (#110) via POST /quit, where it may be refused:
+    /// true when the agent is on its way out, false when it answered 409 because a
+    /// session is going on and the tray offers no Exit then (#445).
+    /// </summary>
+    public async Task<bool> TryQuitAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/quit", content: null);
+        if (res.StatusCode == System.Net.HttpStatusCode.Conflict) return false;
+        res.EnsureSuccessStatusCode();
+        return true;
     }
 
     /// <summary>

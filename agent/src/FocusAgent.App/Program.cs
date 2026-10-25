@@ -71,6 +71,14 @@ public static class Program
     public const string ShowTestTrayMenuArg = "--show-test-traymenu";
 
     /// <summary>
+    /// Dev-only modifier for <see cref="ShowTestTrayMenuArg"/> (#445): show the menu
+    /// as it is while the agent has a session going on, with no "Exit Anchor" (and
+    /// "Join a session…" disabled). Read by the e2e (TrayMenuExitTests) and
+    /// scripts/dev/verify-traymenu.ps1 -InSession.
+    /// </summary>
+    public const string TrayMenuInSessionArg = "--traymenu-in-session";
+
+    /// <summary>
     /// Dev-only flag (#211): show the real <see cref="Extension.GuidedInstallWindow"/>
     /// — the guided-install fallback shown when there is no force-install policy
     /// (the student said "not now" to the UAC step, or isn't an administrator, #405)
@@ -379,6 +387,7 @@ public static class Program
     public static bool ShowTestMainWindow { get; private set; }
     public static bool ShowTestJoinByCode { get; private set; }
     public static bool ShowTestTrayMenu { get; private set; }
+    public static bool TrayMenuInSession { get; private set; }
     public static bool ShowTestGuidedInstall { get; private set; }
     public static bool ShowTestExtensionConsent { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
@@ -548,6 +557,7 @@ public static class Program
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
         ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
         ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));
+        TrayMenuInSession = args.Any(a => string.Equals(a, TrayMenuInSessionArg, StringComparison.OrdinalIgnoreCase));
         ShowTestGuidedInstall = args.Any(a => string.Equals(a, ShowTestGuidedInstallArg, StringComparison.OrdinalIgnoreCase));
         ShowTestExtensionConsent = args.Any(a => string.Equals(a, ShowTestExtensionConsentArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));

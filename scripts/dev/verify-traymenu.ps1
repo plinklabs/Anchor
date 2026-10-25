@@ -21,6 +21,11 @@
     Saves the screenshot under
     `agent/src/FocusAgent.App/bin/x64/Debug/verify-traymenu.png`.
 
+.PARAMETER InSession
+    Show the menu as it is while the agent has a session going on (#445): no
+    "Exit Anchor" and "Join a session..." disabled. Passes --traymenu-in-session.
+    The default OutPath becomes verify-traymenu-in-session.png.
+
 .PARAMETER SkipBuild
     Skip the agent build (agent\FocusAgent.sln, x64) and run the existing
     FocusAgent.App.exe.
@@ -40,8 +45,9 @@
 #>
 
 param(
+    [switch]$InSession,
     [switch]$SkipBuild,
-    [string]$OutPath = "$PSScriptRoot\..\..\agent\src\FocusAgent.App\bin\x64\Debug\verify-traymenu.png",
+    [string]$OutPath = "$PSScriptRoot\..\..\agent\src\FocusAgent.App\bin\x64\Debug\verify-traymenu$(if ($InSession) { '-in-session' }).png",
     [int]$WaitForHwndMs = 8000,
     [int]$CaptureAfterMs = 2000
 )
@@ -202,8 +208,10 @@ public static class TrayMenuCapture
 # verify-toast.ps1 for the rationale.
 [void][TrayMenuCapture]::SetProcessDpiAwarenessContext([TrayMenuCapture]::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
 
-Write-Host "Launching agent: $exePath --show-test-traymenu"
-$proc = Start-Process -FilePath $exePath -ArgumentList '--show-test-traymenu' -PassThru
+$agentArgs = @('--show-test-traymenu')
+if ($InSession) { $agentArgs += '--traymenu-in-session' }
+Write-Host "Launching agent: $exePath $($agentArgs -join ' ')"
+$proc = Start-Process -FilePath $exePath -ArgumentList $agentArgs -PassThru
 try {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $hwnd = [IntPtr]::Zero
