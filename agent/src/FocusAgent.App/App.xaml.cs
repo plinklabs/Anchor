@@ -160,9 +160,9 @@ public partial class App : Application
             // Backend:BaseUrl) has then still checked the feed and can pull the
             // release that fixes it; started last, it never got the chance. Start()
             // doesn't block (the check runs on the thread pool), no-ops unless this
-            // is a real Velopack install (dev runs / the e2e are untouched), and
-            // stages updates for the NEXT launch so a student is never interrupted
-            // mid-session.
+            // is a real Velopack install (dev runs / the e2e are untouched), and only
+            // downloads: the NEXT launch applies the update (Program.Main), so a
+            // student is never interrupted mid-session (#449).
             _updateService = _host.Services.GetRequiredService<AgentUpdateService>();
             _updateService.Start();
 
@@ -322,7 +322,9 @@ public partial class App : Application
                     // #452: which overlay the student is on, if any.
                     overlay: () => focusOverlay?.Showing,
                     // #453: click one of the overlay's allowed apps, as the student does.
-                    onClickOverlayApp: app => focusOverlay?.ClickAllowedApp(app) ?? false);
+                    onClickOverlayApp: app => focusOverlay?.ClickAllowedApp(app) ?? false,
+                    // #449: the downloaded update the next start applies, if any.
+                    pendingUpdate: () => _updateService?.PendingVersion);
                 _statusEndpoint.Start(port);
             }
         }
@@ -332,7 +334,8 @@ public partial class App : Application
             // process goes away: join the startup check if it is still running, or
             // run one (on a host-independent service if the host never came up).
             // Both branches below keep the process alive, bounded, until it has
-            // settled, so a staged fix survives the dialog being closed at once.
+            // settled, so a fix it is downloading survives the dialog being closed at
+            // once and is on disk for the next launch to apply.
             var pendingUpdate = BeginFatalUpdateCheck();
 
             // #248: a headless/dev run (the e2e, a verify script) intentionally
@@ -397,14 +400,18 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// The production update manager over the configured GitHub Releases feed, or
-    /// the dev-only <see cref="ProbeUpdateManager"/> under <c>--test-update-probe</c>
-    /// (#407). Shared by the DI host and <see cref="CreateStandaloneUpdateService"/>.
+    /// The production update manager over the configured GitHub Releases feed, the
+    /// dev-only <see cref="ProbeUpdateManager"/> under <c>--test-update-probe</c>
+    /// (#407), or the production manager over a local feed directory under
+    /// <c>--test-update-feed</c> (#449). Shared by the DI host and
+    /// <see cref="CreateStandaloneUpdateService"/>.
     /// </summary>
     private static IAgentUpdateManager CreateUpdateManager(UpdateSettings settings, ILogger<VelopackUpdateManager> log) =>
         Program.TestUpdateProbe
             ? new ProbeUpdateManager()
-            : VelopackUpdateManager.ForGithub(settings, log);
+            : Program.TestUpdateFeed is { } feed
+                ? VelopackUpdateManager.ForFeedDirectory(feed, log)
+                : VelopackUpdateManager.ForGithub(settings, log);
 
     /// <summary>The startup stages <c>--test-crash-at</c> can fail (#407). See Program.TestCrashAtArg.</summary>
     private static class TestCrashStage
@@ -1326,8 +1333,8 @@ public partial class App : Application
 
         // #224: Velopack auto-update. The manager wraps a real UpdateManager over
         // the configured GitHub Releases feed; the service owns the cadence (startup
-        // + interval) and the install/enabled gating, and downloads + stages deltas
-        // for the next restart. Both are no-ops on a non-install (dev run / e2e).
+        // + interval) and the install/enabled gating, and downloads deltas for the
+        // next start to apply (#449). Both are no-ops on a non-install (dev run / e2e).
         builder.Services.AddSingleton<IAgentUpdateManager>(sp =>
             CreateUpdateManager(
                 sp.GetRequiredService<IOptions<UpdateSettings>>().Value,

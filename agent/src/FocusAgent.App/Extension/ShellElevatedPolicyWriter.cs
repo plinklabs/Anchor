@@ -16,7 +16,7 @@ namespace FocusAgent.App.Extension;
 /// Why <c>reg.exe</c> rather than the agent elevating itself: the prompt then
 /// names a Microsoft-signed Windows tool (a blue prompt, "Verified publisher:
 /// Microsoft Windows") instead of an unsigned app; no agent code ever runs
-/// elevated (in particular not Velopack's startup, which could apply a staged
+/// elevated (in particular not Velopack's startup, which could apply a downloaded
 /// update as the admin); and on uninstall it doesn't depend on the app folder
 /// Velopack is about to delete.
 ///

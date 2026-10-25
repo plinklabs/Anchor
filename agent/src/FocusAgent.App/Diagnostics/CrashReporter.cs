@@ -43,10 +43,10 @@ internal static class CrashReporter
 
     /// <summary>
     /// How long a fatal path keeps the process alive, after its dialog is gone, for
-    /// the update check to finish downloading and staging (#407). Long enough for a
-    /// check and a delta download on a school network; bounded because single-
-    /// instance gating turns a relaunch into a no-op while this process lingers.
-    /// Matches Velopack's own updater, which waits 60 s for the app to exit.
+    /// the update check to finish downloading (#407); the next launch applies what it
+    /// downloaded (#449). Long enough for a check and a delta download on a school
+    /// network; bounded because single-instance gating turns a relaunch into a no-op
+    /// while this process lingers.
     /// </summary>
     internal static readonly TimeSpan PendingUpdateGrace = TimeSpan.FromSeconds(60);
 
@@ -95,9 +95,9 @@ internal static class CrashReporter
 
     /// <summary>
     /// Block until a fatal path's update check (#407) has settled, at most
-    /// <see cref="PendingUpdateGrace"/>, so a fix it found is downloaded and staged
-    /// before the process exits. No-op for null; never throws. Safe on the UI
-    /// thread: the check runs on the thread pool and never needs it.
+    /// <see cref="PendingUpdateGrace"/>, so a fix it found is downloaded before the
+    /// process exits and the next launch applies it. No-op for null; never throws.
+    /// Safe on the UI thread: the check runs on the thread pool and never needs it.
     /// </summary>
     public static void WaitForPendingUpdate(Task? pendingUpdate)
     {

@@ -6,7 +6,7 @@ namespace FocusAgent.App.Updates;
 /// Dev-only stand-in for <see cref="VelopackUpdateManager"/> (#407), selected by
 /// <c>--test-update-probe</c>. It claims to be an installed agent with a newer
 /// release (<see cref="ProbeVersion"/>) on the feed, and appends each phase the
-/// update path reaches (<c>check</c>, <c>download</c>, <c>stage 9.9.9</c>) as a line
+/// update path reaches (<c>check</c>, <c>download</c>, <c>pending 9.9.9</c>) as a line
 /// to the file named by <see cref="Program.UpdateProbePathEnvVar"/>. That lets the
 /// startup-crash e2e prove the real <see cref="AgentUpdateService"/> ran, and
 /// finished, its pass on a launch that crashes, without GitHub, a real install or
@@ -21,7 +21,7 @@ namespace FocusAgent.App.Updates;
 /// </summary>
 internal sealed class ProbeUpdateManager : IAgentUpdateManager
 {
-    /// <summary>The "newer release" the probe reports, recorded on the stage line.</summary>
+    /// <summary>The "newer release" the probe reports, recorded on the pending line.</summary>
     public const string ProbeVersion = "9.9.9";
 
     // Bounded so a run that never releases the download (a human trying the flag)
@@ -55,8 +55,13 @@ internal sealed class ProbeUpdateManager : IAgentUpdateManager
             await Task.Delay(100, cancellationToken).ConfigureAwait(false);
     }
 
-    public void StageUpdateForNextRestart(AgentUpdateCheckResult update) =>
-        Record($"stage {update.TargetVersion}");
+    // The pass's last step, once the download has finished: the version the next
+    // launch would apply.
+    public string? GetPendingRestartVersion()
+    {
+        Record($"pending {ProbeVersion}");
+        return ProbeVersion;
+    }
 
     /// <summary>
     /// Block until the probe's first check has started, or <paramref name="timeout"/>

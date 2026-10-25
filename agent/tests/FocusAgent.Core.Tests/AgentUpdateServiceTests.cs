@@ -11,8 +11,10 @@ namespace FocusAgent.Core.Tests;
 /// <see cref="AgentUpdateService"/> against a fake <see cref="IAgentUpdateManager"/>
 /// (no real Velopack / GitHub) to lock the behaviour the issue asks for: a startup
 /// check, a re-check on the interval, install/enabled gating, single-flighting, and
-/// best-effort tolerance of a throwing check. The real Velopack check path is
-/// proven end-to-end by the IntegrationTests UpdateCheckTests spec.
+/// best-effort tolerance of a throwing check. A pass ends at the download (#449): it
+/// reports what the next start will apply and nothing more. The real Velopack check
+/// path is proven end-to-end by the IntegrationTests UpdateCheckTests spec, and the
+/// download-then-apply-at-next-start path by UpdateApplyTests.
 ///
 /// <para>
 /// Every pass runs on the thread pool and a tick that lands before the previous
@@ -86,7 +88,7 @@ public class AgentUpdateServiceTests
     }
 
     [Fact]
-    public async Task Downloads_and_stages_when_an_update_is_available()
+    public async Task Downloads_and_reports_the_update_the_next_start_applies()
     {
         var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
         var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update };
@@ -97,13 +99,64 @@ public class AgentUpdateServiceTests
         await PassAsync(svc);
 
         Assert.Equal(1, manager.DownloadCount);
-        Assert.Equal(1, manager.StageCount);
+        Assert.Equal(1, manager.PendingQueryCount);
         Assert.True(svc.UpdatePendingRestart);
         Assert.Equal("1.2.3", svc.PendingVersion);
     }
 
     [Fact]
-    public async Task Does_not_download_or_stage_when_up_to_date()
+    public async Task Reports_the_version_Velopack_will_apply_not_the_one_it_asked_for()
+    {
+        // #449: the pending version is read back from the packages folder (what the
+        // next start's auto-apply will pick), never assumed from the check result.
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update, PendingAfterDownload = "1.2.4" };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+
+        svc.Start();
+        await PassAsync(svc);
+
+        Assert.True(svc.UpdatePendingRestart);
+        Assert.Equal("1.2.4", svc.PendingVersion);
+    }
+
+    [Fact]
+    public async Task Does_not_report_a_pending_update_when_the_download_left_nothing_for_the_next_start()
+    {
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update, PendingAfterDownload = null };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+
+        svc.Start();
+        await PassAsync(svc);
+
+        Assert.Equal(1, manager.DownloadCount);
+        Assert.Equal(1, manager.PendingQueryCount);
+        Assert.False(svc.UpdatePendingRestart);
+        Assert.Null(svc.PendingVersion);
+    }
+
+    [Fact]
+    public async Task A_throwing_download_reports_no_pending_update()
+    {
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update, ThrowOnDownload = true };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+
+        svc.Start();
+        await PassAsync(svc);
+
+        Assert.Equal(1, manager.DownloadCount);
+        Assert.Equal(0, manager.PendingQueryCount);
+        Assert.False(svc.UpdatePendingRestart);
+        Assert.Null(svc.PendingVersion);
+    }
+
+    [Fact]
+    public async Task Does_not_download_when_up_to_date()
     {
         var manager = new FakeUpdateManager { IsInstalled = true, NextResult = AgentUpdateCheckResult.None };
         var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
@@ -113,7 +166,7 @@ public class AgentUpdateServiceTests
         await PassAsync(svc);
 
         Assert.Equal(0, manager.DownloadCount);
-        Assert.Equal(0, manager.StageCount);
+        Assert.Equal(0, manager.PendingQueryCount);
         Assert.False(svc.UpdatePendingRestart);
         Assert.Null(svc.PendingVersion);
     }
@@ -217,16 +270,17 @@ public class AgentUpdateServiceTests
         await fatal.WaitAsync(WaitTimeout);
 
         Assert.Equal(1, manager.CheckCount);
-        Assert.Equal(1, manager.StageCount);
+        Assert.Equal(1, manager.DownloadCount);
         Assert.True(svc.UpdatePendingRestart);
     }
 
     [Fact]
-    public async Task CheckNow_runs_a_fresh_pass_without_Start_and_completes_only_once_the_update_is_staged()
+    public async Task CheckNow_runs_a_fresh_pass_without_Start_and_completes_only_once_the_update_is_downloaded()
     {
         // The host-never-came-up case: nothing was started, so the fatal path runs
-        // its own pass — and the task it hands back must cover the download + stage,
-        // since the crash path keeps the process alive exactly that long.
+        // its own pass — and the task it hands back must cover the whole download,
+        // since the crash path keeps the process alive exactly that long and the
+        // next launch can only apply a package that finished downloading.
         var download = new TaskCompletionSource();
         var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
         var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update, DownloadGate = download.Task };
@@ -237,12 +291,13 @@ public class AgentUpdateServiceTests
         await WaitUntilAsync(() => manager.DownloadCount == 1, "the pass to reach the download");
         Assert.Equal(1, manager.CheckCount);
         Assert.False(fatal.IsCompleted, "the fatal-path task completed before the download finished");
-        Assert.Equal(0, manager.StageCount);
+        Assert.Equal(0, manager.PendingQueryCount);
+        Assert.Null(svc.PendingVersion);
 
         download.SetResult();
         await fatal.WaitAsync(WaitTimeout);
 
-        Assert.Equal(1, manager.StageCount);
+        Assert.Equal(1, manager.PendingQueryCount);
         Assert.Equal("1.2.3", svc.PendingVersion);
     }
 
@@ -330,19 +385,27 @@ public class AgentUpdateServiceTests
 
     private sealed class FakeUpdateManager : IAgentUpdateManager
     {
+        private const string Downloaded = "<the downloaded version>";
+
         public bool IsInstalled { get; set; }
         public bool ThrowOnCheck { get; set; }
+        public bool ThrowOnDownload { get; set; }
         public AgentUpdateCheckResult NextResult { get; set; } = AgentUpdateCheckResult.None;
         public Task? CheckGate { get; set; }
         public Task? DownloadGate { get; set; }
 
+        /// <summary>What Velopack reports as pending once a download finished: by
+        /// default the version just downloaded, like a real packages folder.</summary>
+        public string? PendingAfterDownload { get; set; } = Downloaded;
+
         private int _checkCount;
         private int _downloadCount;
-        private int _stageCount;
+        private int _pendingQueryCount;
+        private string? _pending;
 
         public int CheckCount => Volatile.Read(ref _checkCount);
         public int DownloadCount => Volatile.Read(ref _downloadCount);
-        public int StageCount => Volatile.Read(ref _stageCount);
+        public int PendingQueryCount => Volatile.Read(ref _pendingQueryCount);
 
         public async Task<AgentUpdateCheckResult> CheckForUpdateAsync(CancellationToken cancellationToken = default)
         {
@@ -356,11 +419,14 @@ public class AgentUpdateServiceTests
         {
             Interlocked.Increment(ref _downloadCount);
             if (DownloadGate is { } gate) await gate.ConfigureAwait(false);
+            if (ThrowOnDownload) throw new IOException("download failed (test)");
+            Volatile.Write(ref _pending, PendingAfterDownload == Downloaded ? update.TargetVersion : PendingAfterDownload);
         }
 
-        public void StageUpdateForNextRestart(AgentUpdateCheckResult update)
+        public string? GetPendingRestartVersion()
         {
-            Interlocked.Increment(ref _stageCount);
+            Interlocked.Increment(ref _pendingQueryCount);
+            return Volatile.Read(ref _pending);
         }
     }
 }

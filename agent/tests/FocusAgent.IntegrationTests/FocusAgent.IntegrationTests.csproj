@@ -41,6 +41,10 @@
          (EdgeExtensionPolicy) the agent itself uses, so the spec can't drift from
          the shipped extension id / update-url / forcelist value. -->
     <ProjectReference Include="..\..\src\FocusAgent.Core\FocusAgent.Core.csproj" />
+    <!-- #449: built alongside the suite so UpdateApplyTests can copy it into the
+         agent install it assembles as that install's Update.exe. Not referenced
+         as an assembly; the spec reads it from its own bin folder. -->
+    <ProjectReference Include="..\FocusAgent.FakeUpdater\FocusAgent.FakeUpdater.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

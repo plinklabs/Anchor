@@ -64,7 +64,9 @@ namespace FocusAgent.App.Connectivity;
 /// and whether the setup window is open; <c>extensionGuard</c> (#427):
 /// whether the extension's witness is connected and the Edge pause's state; and
 /// <c>overlay</c> (#452): what the focus overlay shows while it is up
-/// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not.
+/// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not; and
+/// <c>pendingUpdate</c> (#449): the version of a downloaded update that the next
+/// agent start applies, null while none is waiting.
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
@@ -105,6 +107,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<bool>? _onTurnExtensionBackOn;
     private readonly Func<string?>? _overlay;
     private readonly Func<string, bool>? _onClickOverlayApp;
+    private readonly Func<string?>? _pendingUpdate;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -124,7 +127,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<object?>? extensionGuard = null,
         Func<bool>? onTurnExtensionBackOn = null,
         Func<string?>? overlay = null,
-        Func<string, bool>? onClickOverlayApp = null)
+        Func<string, bool>? onClickOverlayApp = null,
+        Func<string?>? pendingUpdate = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -141,6 +145,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _onTurnExtensionBackOn = onTurnExtensionBackOn;
         _overlay = overlay;
         _onClickOverlayApp = onClickOverlayApp;
+        _pendingUpdate = pendingUpdate;
         _listener = new HttpListener();
     }
 
@@ -292,6 +297,10 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // #452: which overlay the student is on, if any, so the headless
                 // e2e can tell the paused-browser overlay from the blocked-app one.
                 overlay = _overlay?.Invoke(),
+                // #449: the downloaded update the next agent start applies, so the
+                // headless e2e can tell the update pass finished while the agent
+                // kept running.
+                pendingUpdate = _pendingUpdate?.Invoke(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {
