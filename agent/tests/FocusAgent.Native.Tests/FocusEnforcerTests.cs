@@ -149,4 +149,25 @@ public class FocusEnforcerTests
         Assert.Equal(FocusEnforcer.HandOverPlan.Minimize, FocusEnforcer.PlanHandOver(
             minimized: true, hasForeground: true, isAppWindow: false));
     }
+
+    [Fact]
+    public void A_paused_window_in_the_foreground_is_the_window_the_overlay_takes_over_from()
+    {
+        // #450: the paused browser window that has the keyboard goes to the overlay.
+        Assert.True(FocusEnforcer.IsWindowOrItsDialog(window: 0x20, windowsAppWindow: 0x20, appWindow: 0x20));
+    }
+
+    [Fact]
+    public void A_dialog_of_a_paused_window_in_the_foreground_is_the_window_the_overlay_takes_over_from()
+    {
+        // The file picker of a paused Edge window has the keyboard: it goes to the
+        // overlay, and down with the Edge window that owns it (#428).
+        Assert.True(FocusEnforcer.IsWindowOrItsDialog(window: 0x700, windowsAppWindow: 0x20, appWindow: 0x20));
+    }
+
+    [Fact]
+    public void Another_apps_window_in_the_foreground_leaves_a_paused_window_to_be_minimized()
+    {
+        Assert.False(FocusEnforcer.IsWindowOrItsDialog(window: 0x10, windowsAppWindow: 0x10, appWindow: 0x20));
+    }
 }

@@ -18,9 +18,10 @@ namespace FocusAgent.Native;
 /// and a <c>ShowWindow</c> from it leaves the minimized window the foreground
 /// window, which keeps getting what the student types. An app that is not
 /// responding holds up neither way for more than a moment (#440): its window goes
-/// down the moment the app responds. With no allowed window to fall back to, the
-/// focus overlay is put directly below the blocked window before it minimizes
-/// itself, so the overlay is the window Windows hands the foreground to (#441).
+/// down the moment the app responds. With no allowed window to fall back to, or
+/// for a paused browser (#450), the focus overlay is put directly below the window
+/// before it minimizes itself, so the overlay is the window Windows hands the
+/// foreground to (#441).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class FocusEnforcer : IFocusEnforcer
@@ -225,10 +226,13 @@ public sealed class FocusEnforcer : IFocusEnforcer
 
     /// <summary>
     /// Minimizes one window with the agent's own <c>ShowWindow</c>, on a thread of
-    /// its own (#440). Minimized from the agent, the window stays the foreground
-    /// window, which the session-start sweep and the paused browser rely on: a
-    /// window Windows brought forward instead (the desktop, say) would count as
-    /// allowed and hide the paused-browser overlay at once. But <c>ShowWindow</c> on
+    /// its own (#440), for the session-start sweep and for paused browser windows
+    /// that do not have the foreground. A blocked or paused window with the
+    /// foreground goes to the overlay instead (<see cref="HandOverAsync"/>, #441,
+    /// #450): minimized from the agent, it either stays the foreground window and
+    /// keeps what the student types, or hands the foreground to the window below
+    /// it, which may be an allowed app that hides the overlay (Windows 11 Notepad
+    /// does the latter). But <c>ShowWindow</c> on
     /// another thread's window waits until that thread handles messages again. Run
     /// on the caller's thread, an app that was not responding held up the agent's
     /// UI thread, and every foreground change behind it, until the app responded,
@@ -491,6 +495,23 @@ public sealed class FocusEnforcer : IFocusEnforcer
         if (!hasForeground) return HandOverPlan.AlreadyDown;
         return isAppWindow ? HandOverPlan.RestoreFirst : HandOverPlan.Minimize;
     }
+
+    public nint ForegroundWindowOf(nint windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero) return IntPtr.Zero;
+        var foreground = NativeMethods.GetForegroundWindow();
+        if (foreground == IntPtr.Zero) return IntPtr.Zero;
+        return IsWindowOrItsDialog(foreground, AppWindowOf(foreground), windowHandle) ? foreground : IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="window"/>, whose app window is
+    /// <paramref name="windowsAppWindow"/>, is <paramref name="appWindow"/> itself
+    /// or a dialog that window owns (#428), factored out as a pure decision so it
+    /// is unit-testable without a live desktop.
+    /// </summary>
+    internal static bool IsWindowOrItsDialog(nint window, nint windowsAppWindow, nint appWindow) =>
+        window == appWindow || windowsAppWindow == appWindow;
 
     /// <summary>
     /// Whether <see cref="HandOverAsync"/> may restore <paramref name="windowHandle"/>

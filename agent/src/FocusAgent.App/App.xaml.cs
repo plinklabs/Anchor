@@ -660,7 +660,8 @@ public partial class App : Application
                 new BrowserPausedPrompt(
                     new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
                     TimeSpan.FromSeconds(60),
-                    () => false));
+                    () => false),
+                pausedWindowHandle: IntPtr.Zero);
         else
             overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName, blockedWindowHandle: IntPtr.Zero);
 

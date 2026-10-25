@@ -153,6 +153,127 @@ public sealed class ExtensionOffReMinimizeTests
 }
 
 /// <summary>
+/// #450: while the browser is paused, the paused-browser overlay must have the
+/// keyboard, never the minimized browser. The agent may not take the foreground
+/// itself, and the pause minimized the browser from the agent: a window minimized
+/// that way either stays the foreground window and keeps what the student types
+/// (what #441 measured for the block overlay: 6 of 6 letters reached it), or
+/// hands the foreground to whatever window is below it. Notepad does the latter:
+/// on the agent without the fix the window below it, an allowed app, came
+/// forward, and the agent hid the overlay for it.
+///
+/// Keystrokes go to the foreground window, so the spec asserts that one: the
+/// agent's full-screen overlay, after the pause and after the student activates
+/// the minimized browser again (the first thing a click on its taskbar button
+/// does). It never types: the stand-in browser is a real Notepad, which is no
+/// window a spec may type into. Real foreground changes on a headless desktop are
+/// the flaky part, so this runs in the non-blocking Visual lane, like
+/// <see cref="ExtensionOffReMinimizeTests"/>. A person using the desktop while it
+/// runs moves the foreground too; a failure message says when that happened.
+/// </summary>
+[Trait("Category", "Visual")]
+[Collection(AgentE2ECollection.Name)]
+[SupportedOSPlatform("windows")]
+public sealed class ExtensionOffKeyboardTests
+{
+    private readonly BackendFixture _backend;
+    public ExtensionOffKeyboardTests(BackendFixture backend) => _backend = backend;
+
+    // When the spec last pressed a key of its own (WindowCapture.LastInputTick).
+    private uint _ownInput;
+
+    [Fact]
+    public async Task WhileTheBrowserIsPaused_TheOverlayHasTheKeyboard_NotTheMinimizedBrowser()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var run = await BrowserPauseRun.StartAsync(_backend.Url, api);
+        var hwnd = run.BrowserWindow;
+        using var sampler = new ForegroundSampler(run.Agent.Pid);
+        sampler.Name(hwnd, "browser");
+
+        // The student is in the browser when they switch its extension off.
+        sampler.Mark("switching the extension off");
+        Assert.True(
+            WindowCapture.BringToForeground(hwnd),
+            $"The stand-in browser could not be brought to the foreground (foreground: {DescribeForeground()}).");
+        _ownInput = WindowCapture.LastInputTick();
+        await run.Extension.DisconnectAsync();
+        await run.WaitForGuardAsync(
+            g => g.State == "Paused", BrowserPauseRun.Grace + TimeSpan.FromSeconds(5), "the browser to be paused");
+        await AssertTheOverlayHasTheKeyboardAsync(run, sampler, "the pause");
+
+        // Then they click the paused browser's taskbar button, which first
+        // activates it while it is still minimized.
+        sampler.Mark("activating the paused browser");
+        var activated = false;
+        for (var attempt = 0; attempt < 3 && !activated; attempt++)
+        {
+            activated = WindowCapture.ActivateOnce(hwnd);
+            if (!activated) await Task.Delay(200);
+        }
+        _ownInput = WindowCapture.LastInputTick();
+        Assert.True(activated, "Windows refused to give the paused browser the foreground.");
+        await AssertTheOverlayHasTheKeyboardAsync(run, sampler, "activating the paused browser");
+    }
+
+    /// <summary>
+    /// After <paramref name="step"/>, the browser must be down and the overlay on
+    /// screen with the foreground, and keep it: a window that only had it for a
+    /// moment would not get what the student types next.
+    /// </summary>
+    private async Task AssertTheOverlayHasTheKeyboardAsync(BrowserPauseRun run, ForegroundSampler sampler, string step)
+    {
+        var pid = run.Agent.Pid;
+        var hwnd = run.BrowserWindow;
+        var overlay = IntPtr.Zero;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (DateTime.UtcNow < deadline)
+        {
+            overlay = WindowCapture.FindFullScreenWindow(pid);
+            if (WindowCapture.IsIconic(hwnd) && overlay != IntPtr.Zero && WindowCapture.ForegroundWindow() == overlay)
+                break;
+            await Task.Delay(100);
+        }
+
+        Assert.True(
+            WindowCapture.IsIconic(hwnd),
+            $"The browser was not minimized after {step}.{Interference()} Foreground: {sampler.Describe()}");
+        Assert.True(
+            overlay != IntPtr.Zero,
+            $"The paused-browser overlay was not on screen after {step}.{Interference()} The agent's windows:\n" +
+            $"{WindowCapture.DescribeWindows(pid)}Foreground: {sampler.Describe()}");
+        var hold = DateTime.UtcNow + TimeSpan.FromSeconds(1);
+        do
+        {
+            Assert.True(
+                WindowCapture.ForegroundWindow() == overlay,
+                $"After {step} the keyboard went to {DescribeForeground()} instead of the paused-browser overlay; " +
+                $"the browser is {(WindowCapture.IsIconic(hwnd) ? "minimized" : "on screen")}. " +
+                $"What the student types goes to that window (#450).{Interference()} Foreground: {sampler.Describe()}");
+            await Task.Delay(100);
+        }
+        while (DateTime.UtcNow < hold);
+    }
+
+    /// <summary>
+    /// Says so in a failure message when someone used the desktop during the step:
+    /// a click or key of theirs moves the foreground without the agent having a part
+    /// in it, and an allowed app that comes forward hides the overlay, as it should.
+    /// </summary>
+    private string Interference() =>
+        WindowCapture.LastInputTick() == _ownInput
+            ? ""
+            : " The desktop had input during this step that the spec did not send: someone using it moves the " +
+              "foreground without the agent. Run the spec again without touching it.";
+
+    private static string DescribeForeground()
+    {
+        var foreground = WindowCapture.ForegroundWindow();
+        return $"{WindowCapture.GetProcessName(foreground)} [{WindowCapture.GetClassName(foreground)}]";
+    }
+}
+
+/// <summary>
 /// One #427 scenario: a fresh Notepad standing in for the browser, the agent
 /// launched with a private witness pipe and short pause timings, a fake extension
 /// connected on that pipe, and a session joined with Notepad allowed.

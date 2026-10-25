@@ -532,6 +532,29 @@ internal static class WindowCapture
     }
 
     /// <summary>Diagnostic dump of every top-level window owned by <paramref name="pid"/>.</summary>
+    /// <summary>
+    /// When the desktop last had input, from anyone: the person at it, or a spec's
+    /// own keys (<see cref="ActivateOnce"/>, <see cref="PressLetter"/>). Noted after
+    /// a spec's last key, it tells whether someone has used the desktop since,
+    /// which moves the foreground without the agent having a part in it.
+    /// </summary>
+    public static uint LastInputTick()
+    {
+        var info = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf<LASTINPUTINFO>() };
+        return GetLastInputInfo(ref info) ? info.dwTime : 0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LASTINPUTINFO
+    {
+        public uint cbSize;
+        public uint dwTime;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
     public static string DescribeWindows(int pid)
     {
         var sb = new StringBuilder();

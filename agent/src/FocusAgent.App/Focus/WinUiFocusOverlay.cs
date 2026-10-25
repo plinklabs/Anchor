@@ -16,8 +16,9 @@ namespace FocusAgent.App.Focus;
 /// the session's lifetime — Show/Hide flip <c>HWND_TOPMOST</c> via the
 /// native helper; Close clears <c>HWND_NOTOPMOST</c> before tearing the
 /// window down so the OS doesn't leave a phantom topmost handle. Shown for a
-/// blocked app, it takes the app's window down and the foreground over from it
-/// through the enforcer (#441), so the student's keystrokes come to the overlay.
+/// blocked app (#441) or a paused browser (#450), it takes that window down and
+/// the foreground over from it through the enforcer, so the student's keystrokes
+/// come to the overlay.
 /// </summary>
 [SupportedOSPlatform("windows10.0.17763.0")]
 public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
@@ -45,16 +46,30 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         _enforcer = enforcer;
     }
 
-    public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle)
-    {
-        if (_disposed || !_dispatcher.TryEnqueue(() => _ = ShowOnUiThreadAsync(allowedRules, blockedAppName, blockedWindowHandle)))
-            TakeDownWithoutOverlay(blockedWindowHandle);
-    }
+    public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle) =>
+        Show(
+            window => window.UpdateContent(allowedRules, blockedAppName),
+            blockedWindowHandle,
+            $"with {allowedRules.Count} allowed-app entries",
+            "the blocked app");
 
-    public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
+    public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle) =>
+        Show(
+            window => window.UpdateBrowserPausedContent(allowedRules, prompt),
+            pausedWindowHandle,
+            $"for a paused {prompt.Browser.Value} with {allowedRules.Count} other allowed-app entries",
+            $"the paused {prompt.Browser.Value}");
+
+    /// <summary>
+    /// Shows the overlay with the content <paramref name="update"/> puts in it, and
+    /// takes <paramref name="windowHandle"/> (the blocked app, #441, or the paused
+    /// browser, #450) down and the foreground over from it. The window still goes
+    /// down when the overlay cannot come up.
+    /// </summary>
+    private void Show(Action<FocusOverlayWindow> update, nint windowHandle, string shown, string takenFrom)
     {
-        if (_disposed) return;
-        _dispatcher.TryEnqueue(() => ShowBrowserPausedOnUiThread(allowedRules, prompt));
+        if (_disposed || !_dispatcher.TryEnqueue(() => _ = ShowOnUiThreadAsync(update, windowHandle, shown, takenFrom)))
+            TakeDownWithoutOverlay(windowHandle);
     }
 
     public void Hide()
@@ -77,7 +92,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     }
 
     private async Task ShowOnUiThreadAsync(
-        IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle)
+        Action<FocusOverlayWindow> update, nint windowHandle, string shown, string takenFrom)
     {
         var generation = ++_generation;
         try
@@ -88,31 +103,31 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
                 window = _window ??= CreateWindow();
             }
 
-            window.UpdateContent(allowedRules, blockedAppName);
+            update(window);
             ApplyTopmostAndPosition(window);
-            if (blockedWindowHandle != IntPtr.Zero && _enforcer is not null)
+            if (windowHandle != IntPtr.Zero && _enforcer is not null)
             {
                 // The agent may not take the foreground, so the overlay is put
-                // below the blocked window, which minimizes itself and so hands the
+                // below the window, which minimizes itself and so hands the
                 // foreground to it (#441). It must be on screen for that.
                 var hwnd = WindowNative.GetWindowHandle(window);
                 AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd)).Show(activateWindow: false);
-                var tookOver = await _enforcer.HandOverAsync(blockedWindowHandle, hwnd);
+                var tookOver = await _enforcer.HandOverAsync(windowHandle, hwnd);
                 if (!_dispatcher.HasThreadAccess)
                 {
-                    _dispatcher.TryEnqueue(() => FinishShow(window, generation, tookOver, allowedRules.Count));
+                    _dispatcher.TryEnqueue(() => FinishShow(window, generation, tookOver, shown, takenFrom));
                     return;
                 }
-                FinishShow(window, generation, tookOver, allowedRules.Count);
+                FinishShow(window, generation, tookOver, shown, takenFrom);
                 return;
             }
             window.Activate();
-            _log.LogInformation("Focus overlay shown with {RuleCount} allowed-app entries", allowedRules.Count);
+            _log.LogInformation("Focus overlay shown {Shown}", shown);
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Focus overlay Show failed");
-            TakeDownWithoutOverlay(blockedWindowHandle);
+            TakeDownWithoutOverlay(windowHandle);
         }
     }
 
@@ -120,7 +135,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     /// After the hand-over: back on top of everything, unless a newer show, a hide
     /// or a close came meanwhile.
     /// </summary>
-    private void FinishShow(FocusOverlayWindow window, int generation, bool tookOver, int ruleCount)
+    private void FinishShow(FocusOverlayWindow window, int generation, bool tookOver, string shown, string takenFrom)
     {
         if (generation != _generation)
             return;
@@ -130,12 +145,10 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
             window.Activate();
             if (tookOver)
                 _log.LogInformation(
-                    "Focus overlay shown with {RuleCount} allowed-app entries; it took the keyboard over from the blocked app",
-                    ruleCount);
+                    "Focus overlay shown {Shown}; it took the keyboard over from {TakenFrom}", shown, takenFrom);
             else
                 _log.LogWarning(
-                    "Focus overlay shown with {RuleCount} allowed-app entries, but it did not get the keyboard from the blocked app",
-                    ruleCount);
+                    "Focus overlay shown {Shown}, but it did not get the keyboard from {TakenFrom}", shown, takenFrom);
         }
         catch (Exception ex)
         {
@@ -143,35 +156,12 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         }
     }
 
-    /// <summary>The blocked window still goes down when the overlay cannot come up.</summary>
-    private void TakeDownWithoutOverlay(nint blockedWindowHandle)
+    /// <summary>The blocked or paused window still goes down when the overlay cannot come up.</summary>
+    private void TakeDownWithoutOverlay(nint windowHandle)
     {
-        if (blockedWindowHandle == IntPtr.Zero || _enforcer is null) return;
-        try { _enforcer.Minimize(blockedWindowHandle); }
-        catch (Exception ex) { _log.LogWarning(ex, "Minimizing the blocked window without the overlay failed"); }
-    }
-
-    private void ShowBrowserPausedOnUiThread(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
-    {
-        try
-        {
-            FocusOverlayWindow window;
-            lock (_gate)
-            {
-                window = _window ??= CreateWindow();
-            }
-
-            window.UpdateBrowserPausedContent(allowedRules, prompt);
-            ApplyTopmostAndPosition(window);
-            window.Activate();
-            _log.LogInformation(
-                "Focus overlay shown for a paused {Browser} with {RuleCount} other allowed-app entries",
-                prompt.Browser.Value, allowedRules.Count);
-        }
-        catch (Exception ex)
-        {
-            _log.LogError(ex, "Focus overlay ShowBrowserPaused failed");
-        }
+        if (windowHandle == IntPtr.Zero || _enforcer is null) return;
+        try { _enforcer.Minimize(windowHandle); }
+        catch (Exception ex) { _log.LogWarning(ex, "Minimizing the window without the overlay failed"); }
     }
 
     private void HideOnUiThread()

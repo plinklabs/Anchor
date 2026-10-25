@@ -54,5 +54,14 @@ public interface IFocusEnforcer
     /// </summary>
     Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle);
 
+    /// <summary>
+    /// The foreground window, the one the student's keystrokes go to, when it is
+    /// <paramref name="windowHandle"/> or a dialog that window owns (#428); 0 when
+    /// the foreground is elsewhere. Pausing the browser hands that window over to
+    /// the overlay with <see cref="HandOverAsync"/> rather than minimizing it with
+    /// <see cref="Minimize"/> (#450).
+    /// </summary>
+    nint ForegroundWindowOf(nint windowHandle);
+
     void Reset();
 }

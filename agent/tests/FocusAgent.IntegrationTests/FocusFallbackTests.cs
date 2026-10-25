@@ -152,7 +152,7 @@ public sealed class FocusFallbackTests
             // The student opens an off-list app before any allowed one.
             using var sampler = new ForegroundSampler(agent.Pid);
             using var offList = await OffListWindow.OpenAsync("Anchor e2e off-list app", TimeSpan.FromSeconds(10));
-            sampler.OffList = offList.Handle;
+            sampler.Name(offList.Handle, "off-list app");
             await AssertTheOverlayHasTheKeyboardAsync(agent, offList, sampler, "opening the off-list app");
 
             // Then they activate it again while it is minimized, the first thing a
@@ -322,68 +322,6 @@ public sealed class FocusFallbackTests
         using var payload = JsonDocument.Parse(payloadJson);
         return payload.RootElement.TryGetProperty("processName", out var name) &&
                string.Equals(name.GetString(), processName, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Every window that got the foreground while it runs, for failure messages:
-    /// where the foreground went after a block, and when. Listens on the same
-    /// foreground event the agent does, so a window that has it only briefly shows too.
-    /// </summary>
-    private sealed class ForegroundSampler : IDisposable
-    {
-        private readonly List<string> _changes = new();
-        private readonly Thread _thread;
-        private readonly int _agentPid;
-        private readonly Stopwatch _clock = Stopwatch.StartNew();
-        private readonly ManualResetEventSlim _ready = new();
-        private uint _threadId;
-
-        /// <summary>The off-list window, named as such in the description.</summary>
-        public IntPtr OffList { get; set; }
-
-        public ForegroundSampler(int agentPid)
-        {
-            _agentPid = agentPid;
-            _thread = new Thread(Run) { IsBackground = true, Name = "foreground-sampler" };
-            _thread.Start();
-            _ready.Wait(TimeSpan.FromSeconds(2));
-            Record(WindowCapture.ForegroundWindow(), "now");
-        }
-
-        private void Run()
-        {
-            _threadId = WindowCapture.CurrentThreadId();
-            using var hook = WindowCapture.HookForeground((hwnd, eventName) => Record(hwnd, eventName));
-            _ready.Set();
-            WindowCapture.PumpMessagesUntilQuit();
-        }
-
-        private void Record(IntPtr hwnd, string eventName)
-        {
-            var who = hwnd == OffList ? $"off-list app{(WindowCapture.IsIconic(OffList) ? " (minimized)" : "")}"
-                : WindowCapture.ProcessIdOf(hwnd) == _agentPid ? $"agent [{WindowCapture.GetClassName(hwnd)}]"
-                : $"{WindowCapture.GetProcessName(hwnd)} [{WindowCapture.GetClassName(hwnd)}]";
-            lock (_changes) _changes.Add($"{eventName} {who} @{_clock.ElapsedMilliseconds}ms");
-        }
-
-        /// <summary>Note where a step of the spec begins.</summary>
-        public void Mark(string step)
-        {
-            lock (_changes) _changes.Add($"[{step}] @{_clock.ElapsedMilliseconds}ms");
-        }
-
-        public string Describe()
-        {
-            lock (_changes)
-                return string.Join(" -> ", _changes);
-        }
-
-        public void Dispose()
-        {
-            WindowCapture.PostQuit(_threadId);
-            _thread.Join(TimeSpan.FromSeconds(1));
-            _ready.Dispose();
-        }
     }
 
     private static bool AllowsApp(StatusSnapshot status) =>
