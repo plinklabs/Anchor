@@ -27,7 +27,9 @@ internal sealed record StatusSnapshot(
     // null while it is not.
     [property: JsonPropertyName("overlay")] string? Overlay = null,
     // #449: the downloaded update the next agent start applies, null while none is.
-    [property: JsonPropertyName("pendingUpdate")] string? PendingUpdate = null);
+    [property: JsonPropertyName("pendingUpdate")] string? PendingUpdate = null,
+    // #456: when the last update check started, by the agent's update clock.
+    [property: JsonPropertyName("lastUpdateCheck")] DateTimeOffset? LastUpdateCheck = null);
 
 /// <summary>
 /// The Edge pause as exposed on /status (#427): whether the extension's witness
@@ -81,9 +83,10 @@ internal sealed class AgentProcess : IAsyncDisposable
     private readonly string _statusUrl;
     private readonly string _controlBase;
 
-    private AgentProcess(Process process, int statusPort)
+    private AgentProcess(Process process, int statusPort, IReadOnlyList<string> arguments)
     {
         _process = process;
+        Arguments = arguments;
         _controlBase = $"http://127.0.0.1:{statusPort}";
         _statusUrl = $"{_controlBase}/status";
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
@@ -96,6 +99,12 @@ internal sealed class AgentProcess : IAsyncDisposable
 
     /// <summary>True once the agent process has exited.</summary>
     public bool HasExited => _process.HasExited;
+
+    /// <summary>The exit code, once the agent process has exited.</summary>
+    public int ExitCode => _process.ExitCode;
+
+    /// <summary>The command-line arguments the agent was launched with (#456: it restarts with the same).</summary>
+    public IReadOnlyList<string> Arguments { get; }
 
     /// <summary>
     /// Launch the agent impersonating <paramref name="impersonateOid"/>, pointed
@@ -166,7 +175,7 @@ internal sealed class AgentProcess : IAsyncDisposable
 
         var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the agent process.");
-        return new AgentProcess(process, statusPort) { StatusPort = statusPort };
+        return new AgentProcess(process, statusPort, psi.ArgumentList.ToList()) { StatusPort = statusPort };
     }
 
     public async Task<StatusSnapshot?> TryGetStatusAsync(CancellationToken ct = default)
@@ -294,6 +303,29 @@ internal sealed class AgentProcess : IAsyncDisposable
         using var res = await _http.PostAsync(
             $"{_controlBase}/overlay-app?app={Uri.EscapeDataString(app)}", content: null);
         return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    /// <summary>
+    /// Run an update check now (#456) via POST /check-update, as the interval timer
+    /// would. Does not wait for the check.
+    /// </summary>
+    public async Task CheckUpdateAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/check-update", content: null);
+        res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Play time asleep (#456) via POST /simulate-sleep: the agent's update clock moves
+    /// on by <paramref name="slept"/> while its timers stay put, as across real sleep.
+    /// The wake that follows is sent like Windows sends it; see
+    /// <see cref="WindowCapture.PostToSystemEventsWindowAsync"/>.
+    /// </summary>
+    public async Task SimulateSleepAsync(TimeSpan slept)
+    {
+        var query = $"slept={Uri.EscapeDataString(slept.ToString("c"))}";
+        using var res = await _http.PostAsync($"{_controlBase}/simulate-sleep?{query}", content: null);
+        res.EnsureSuccessStatusCode();
     }
 
     /// <summary>Wait for the agent process to exit (e.g. after <see cref="QuitAsync"/>).</summary>

@@ -60,6 +60,12 @@
          builds on this: the agent's UpdateManager (VelopackUpdateManager +
          AgentUpdateService) checks the GitHub Releases feed and stages deltas. -->
     <PackageReference Include="Velopack" Version="1.2.0" />
+    <!-- #456: resume-from-sleep and unlock notifications (WakeWatcher), so the agent
+         checks for an update after time asleep, which its interval timer leaves
+         out. Already shipped as a dependency of System.Drawing.Common; referenced
+         directly because the agent now uses it itself. Same version, so no new
+         assembly in the package. -->
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

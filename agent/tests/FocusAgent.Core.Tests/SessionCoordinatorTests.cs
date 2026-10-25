@@ -590,6 +590,118 @@ public class SessionCoordinatorTests
         Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
     }
 
+    // --- #456: closing for a restart into an update ---------------------------
+
+    [Fact]
+    public async Task Closing_for_a_restart_succeeds_when_idle_and_then_leaves_a_session_start_to_the_restarted_agent()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        Assert.True(coordinator.TryCloseForRestart());
+        Assert.True(coordinator.IsClosingForRestart);
+
+        await coordinator.HandleSessionStartedAsync(Payload());
+
+        Assert.Empty(ui.Shown);
+        Assert.Empty(hub.JoinCalls);
+        Assert.Null(coordinator.ActiveSessionId);
+        Assert.Null(coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task Closing_for_a_restart_is_refused_while_the_student_is_asked_to_join()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { ManualResolve = true };
+        var coordinator = NewCoordinator(hub, ui);
+
+        var asking = coordinator.HandleSessionStartedAsync(Payload());
+        await ui.WaitForShownAsync();
+
+        Assert.False(coordinator.TryCloseForRestart());
+        Assert.False(coordinator.IsClosingForRestart);
+
+        ui.Resolve(JoinDecision.Declined);
+        await asking;
+        Assert.True(coordinator.TryCloseForRestart());
+    }
+
+    [Fact]
+    public async Task Closing_for_a_restart_is_refused_while_in_a_session_and_allowed_once_it_ended()
+    {
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+        var payload = Payload();
+
+        await coordinator.HandleSessionStartedAsync(payload);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.False(coordinator.TryCloseForRestart());
+
+        coordinator.HandleSessionEnded(payload.SessionId);
+        Assert.True(coordinator.TryCloseForRestart());
+    }
+
+    [Fact]
+    public async Task Closing_for_a_restart_is_refused_while_a_rejoin_is_on_its_way()
+    {
+        // Between the rejoin's check and the hub call returning nothing else shows
+        // the join; restarting there would drop a student who is being put back.
+        var gate = new TaskCompletionSource();
+        var hub = new FakeHub { JoinGate = gate.Task };
+        var coordinator = NewCoordinator(hub, new FakeUi());
+        var payload = Payload();
+
+        var rejoin = coordinator.RejoinAsync(payload);
+        Assert.Single(hub.JoinCalls);
+        Assert.Null(coordinator.JoinedSessionId);
+
+        Assert.False(coordinator.TryCloseForRestart());
+
+        gate.SetResult();
+        await rejoin;
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+        Assert.False(coordinator.TryCloseForRestart());
+    }
+
+    [Fact]
+    public async Task A_rejoin_once_closing_for_a_restart_is_left_to_the_restarted_agent()
+    {
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi());
+
+        Assert.True(coordinator.TryCloseForRestart());
+        await coordinator.RejoinAsync(Payload());
+
+        Assert.Empty(hub.JoinCalls);
+        Assert.Null(coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task Reopening_after_an_aborted_restart_takes_sessions_again_and_can_catch_up_on_one_it_ignored()
+    {
+        var payload = Payload();
+        var hub = new FakeHub();
+        var ui = new FakeUi { NextDecision = JoinDecision.Confirmed };
+        var coordinator = NewCoordinator(hub, ui);
+
+        Assert.True(coordinator.TryCloseForRestart());
+        await coordinator.HandleSessionStartedAsync(payload);
+        Assert.Empty(ui.Shown);
+
+        coordinator.ReopenAfterAbortedRestart();
+        Assert.False(coordinator.IsClosingForRestart);
+
+        // The ignored start wasn't recorded as handled, so the catch-up offers it.
+        hub.StartedSession = payload;
+        await coordinator.CatchUpStartedSessionAsync();
+
+        Assert.Single(ui.Shown);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+    }
+
     private static SessionCoordinator NewCoordinator(FakeHub hub, FakeUi ui)
     {
         var settings = Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) });
@@ -621,10 +733,13 @@ public class SessionCoordinatorTests
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
+        // When set, JoinSessionAsync stays out until it completes: a join on its way.
+        public Task? JoinGate { get; set; }
+
         public Task JoinSessionAsync(Guid sessionId, string? joinCode, CancellationToken ct = default)
         {
             JoinCalls.Add((sessionId, joinCode));
-            return Task.CompletedTask;
+            return JoinGate ?? Task.CompletedTask;
         }
         public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default)
         {

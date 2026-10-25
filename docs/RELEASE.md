@@ -156,8 +156,11 @@ push of an `agent-v*` tag. It builds the WinUI 3 agent self-contained
 (`win-x64`), packages it with **Velopack** (`vpk`), and uploads the
 `Setup.exe` + full/delta `.nupkg` + `RELEASES` feed to the **GitHub Release** for
 that tag. Installed agents read that feed and auto-update (delta) on the next tag:
-a running agent only downloads the release, and the next agent start (usually the
-next login) applies it, so an agent is never stopped mid-session for an update (#449).
+a running agent downloads the release and, as soon as no session is going on,
+restarts itself into it, silently, back in the tray (#456); otherwise the next agent
+start applies it. An agent is never stopped mid-session for an update (#449). Besides
+the check every `Update:CheckInterval` (6 h of awake time), the agent checks on wake
+from sleep and on unlock once the last check is that old by the clock.
 The portable `.zip` is suppressed (`--noPortable`) — the agent is installed, not
 run portably — but the `.nupkg` + `RELEASES` feed is kept; it **is** the
 auto-update channel. Setup carries the Anchor icon and a success page, and

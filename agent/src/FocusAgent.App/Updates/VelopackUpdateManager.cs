@@ -15,12 +15,14 @@ namespace FocusAgent.App.Updates;
 /// check and download against Velopack.
 ///
 /// <para>
-/// It never applies (#449). Velopack's <c>WaitExitThenApplyUpdates</c> starts
-/// Update.exe at once, and Update.exe waits only 60 s for the agent to exit before
-/// it kills the agent, applies, and (with restart off) leaves it closed. So the
-/// download is the last step here: the full package lands in the install's packages
-/// folder, and <c>VelopackApp</c>'s auto-apply in Program.Main applies it the next
-/// time the agent starts.
+/// A check pass never applies (#449). Velopack's <c>WaitExitThenApplyUpdates</c>
+/// starts Update.exe at once, and Update.exe waits only 60 s for the agent to exit
+/// before it kills the agent, applies, and (with restart off) leaves it closed. So
+/// the download is the last step of a pass: the full package lands in the install's
+/// packages folder, and <c>VelopackApp</c>'s auto-apply in Program.Main applies it
+/// the next time the agent starts. The one place that calls
+/// <c>WaitExitThenApplyUpdates</c> is <see cref="ApplyOnExitAndRestart"/>, which the
+/// idle restart (#456) calls right before the agent exits on its own.
 /// </para>
 ///
 /// <para>
@@ -134,4 +136,16 @@ public sealed class VelopackUpdateManager : IAgentUpdateManager
     // The same test VelopackApp.Run's auto-apply makes at startup: the newest full
     // package in the packages folder, if it is newer than the installed version.
     public string? GetPendingRestartVersion() => _inner.UpdatePendingRestart?.Version?.ToString();
+
+    // #456: the idle restart's hand-over. Starts Update.exe with "apply --waitPid
+    // <this process> --package <the waiting package>" and the restart arguments;
+    // it returns at once and the caller exits. Silent: no progress window or prompt.
+    // Update.exe starts the agent again afterwards, on the old version if applying
+    // failed (it then sets VELOPACK_RESTART, which Program.Main reads).
+    public void ApplyOnExitAndRestart(IReadOnlyList<string> restartArgs)
+    {
+        var waiting = _inner.UpdatePendingRestart
+                      ?? throw new InvalidOperationException("No downloaded update is waiting to be applied.");
+        _inner.WaitExitThenApplyUpdates(waiting, silent: true, restart: true, restartArgs: restartArgs.ToArray());
+    }
 }

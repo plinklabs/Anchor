@@ -102,6 +102,30 @@ internal sealed class VelopackFeed : IDisposable
     }
 
     /// <summary>
+    /// Publish this feed's release into <paramref name="directory"/>, an agent's feed
+    /// directory that had nothing in it so far (#456): the release comes out while
+    /// the agent runs. Copies the feed index and the package, not the installer.
+    /// </summary>
+    public void PublishTo(string directory)
+    {
+        System.IO.Directory.CreateDirectory(directory);
+        // The package before the index, so a reader never sees a release whose
+        // package isn't there yet.
+        var files = System.IO.Directory.EnumerateFiles(Directory)
+            .OrderBy(f => f.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase) ? 0 : 1);
+        foreach (var file in files)
+        {
+            var name = Path.GetFileName(file);
+            if (name.StartsWith("releases.", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("RELEASES", StringComparison.OrdinalIgnoreCase) ||
+                name.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+            {
+                File.Copy(file, Path.Combine(directory, name), overwrite: true);
+            }
+        }
+    }
+
+    /// <summary>
     /// Locate the <c>vpk</c> tool. It's a global dotnet tool; resolve it from the
     /// well-known tools dir (works on the CI runner once the workflow installs
     /// it) or fall back to PATH.

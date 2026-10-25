@@ -34,6 +34,15 @@ public sealed class SessionCoordinator : IAsyncDisposable
     // (#356) never replays one the student has already answered.
     private readonly HashSet<Guid> _handledStarts = new();
 
+    // #456: rejoins whose hub call is still out. Between the pre-check and the
+    // call returning, nothing else shows the join, yet it is one.
+    private int _joinsInFlight;
+
+    // #456: set while the agent restarts into an update. Session starts and
+    // rejoins are left for the next process, whose catch-up (#356) and
+    // rehydration (#54) pick them up.
+    private bool _closingForRestart;
+
     public SessionCoordinator(
         ISessionHubConnection hub,
         ISessionUiHost ui,
@@ -65,6 +74,45 @@ public sealed class SessionCoordinator : IAsyncDisposable
     public Guid? JoinedSessionId
     {
         get { lock (_gate) return _joinedSessionId; }
+    }
+
+    /// <summary>
+    /// True once <see cref="TryCloseForRestart"/> has succeeded (#456): the agent is
+    /// on its way out to restart into an update and takes no more sessions.
+    /// </summary>
+    public bool IsClosingForRestart
+    {
+        get { lock (_gate) return _closingForRestart; }
+    }
+
+    /// <summary>
+    /// Stop taking sessions so the agent can restart into an update (#456), but only
+    /// if it has no session going on: none it is in, none it is asking the student
+    /// about, and no join on its way. The check and the stop are one step under the
+    /// same lock as every session change, so no session can begin in between; from
+    /// then on a session start (broadcast or catch-up) and a rejoin are ignored and
+    /// left to the restarted agent. Returns false, and changes nothing, when a
+    /// session is going on.
+    /// </summary>
+    public bool TryCloseForRestart()
+    {
+        lock (_gate)
+        {
+            if (_closingForRestart) return true;
+            if (_active is not null || _activeSessionId is not null || _joinedSessionId is not null || _joinsInFlight > 0)
+                return false;
+            _closingForRestart = true;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Take sessions again after <see cref="TryCloseForRestart"/>, when the restart
+    /// could not be handed over and the agent keeps running (#456).
+    /// </summary>
+    public void ReopenAfterAbortedRestart()
+    {
+        lock (_gate) _closingForRestart = false;
     }
 
     /// <summary>
@@ -112,6 +160,17 @@ public sealed class SessionCoordinator : IAsyncDisposable
         JoinConfirmation confirmation;
         lock (_gate)
         {
+            // #456: the agent is restarting into an update. Not recorded as
+            // handled, so a catch-up can still offer it should the restart be
+            // called off; normally the restarted agent's catch-up does.
+            if (_closingForRestart)
+            {
+                _log.LogInformation(
+                    "Session {SessionId} started while the agent is restarting into an update; the restarted agent picks it up.",
+                    payload.SessionId);
+                return;
+            }
+
             // A catch-up (#356) stands in only for a SessionStarted this agent
             // never handled. One it did handle it is in, is asking about, or
             // the student already answered.
@@ -221,6 +280,14 @@ public sealed class SessionCoordinator : IAsyncDisposable
                 _log.LogDebug("RejoinAsync no-op — already joined {SessionId}.", payload.SessionId);
                 return;
             }
+            // #456: the restarted agent's rehydration rejoins it instead.
+            if (_closingForRestart)
+            {
+                _log.LogInformation(
+                    "Not rejoining session {SessionId}: the agent is restarting into an update.", payload.SessionId);
+                return;
+            }
+            _joinsInFlight++;
         }
 
         try
@@ -229,6 +296,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            lock (_gate) _joinsInFlight--;
             _log.LogWarning(ex, "RejoinAsync: JoinSession failed for {SessionId}", payload.SessionId);
             return;
         }
@@ -236,6 +304,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
         bool fire;
         lock (_gate)
         {
+            _joinsInFlight--;
             _handledStarts.Add(payload.SessionId);
             // Double-check under the gate in case another path joined between
             // our pre-check and the hub call returning.

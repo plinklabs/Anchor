@@ -112,6 +112,58 @@ internal static class WindowCapture
     /// </summary>
     public static void PostClose(IntPtr hwnd) => PostMessageW(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
 
+    /// <summary>
+    /// Windows' resume notice (#456): <c>WM_POWERBROADCAST</c> with
+    /// <c>PBT_APMRESUMESUSPEND</c>, sent after a resume the user caused (opening the
+    /// lid). .NET's SystemEvents turns it into <c>PowerModeChanged(Resume)</c>.
+    /// </summary>
+    public const uint WmPowerBroadcast = 0x0218;
+    public const int PbtApmResumeSuspend = 0x0007;
+
+    /// <summary>
+    /// Windows' unlock notice (#456): <c>WM_WTSSESSION_CHANGE</c> with
+    /// <c>WTS_SESSION_UNLOCK</c>. SystemEvents turns it into
+    /// <c>SessionSwitch(SessionUnlock)</c>.
+    /// </summary>
+    public const uint WmWtsSessionChange = 0x02B1;
+    public const int WtsSessionUnlock = 0x0008;
+
+    /// <summary>
+    /// Post <paramref name="message"/> to <paramref name="pid"/>'s SystemEvents window,
+    /// the hidden top-level window (class <c>.NET-BroadcastEventWindow.*</c>) that
+    /// .NET's SystemEvents creates to receive Windows' power and session broadcasts, so
+    /// the process handles it exactly as it handles the real one. Waits for the window
+    /// to exist (SystemEvents creates it on the first subscription) and returns false
+    /// if it never does.
+    /// </summary>
+    public static async Task<bool> PostToSystemEventsWindowAsync(int pid, uint message, int wParam, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            var windows = new List<IntPtr>();
+            EnumWindows((hWnd, _) =>
+            {
+                GetWindowThreadProcessId(hWnd, out var windowPid);
+                if (windowPid == (uint)pid &&
+                    GetClassName(hWnd).StartsWith(".NET-BroadcastEventWindow", StringComparison.Ordinal))
+                {
+                    windows.Add(hWnd);
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            if (windows.Count > 0)
+            {
+                foreach (var hwnd in windows)
+                    PostMessageW(hwnd, message, new IntPtr(wParam), IntPtr.Zero);
+                return true;
+            }
+            if (DateTime.UtcNow >= deadline) return false;
+            await Task.Delay(100);
+        }
+    }
+
     /// <summary>True while <paramref name="hwnd"/> is a valid window that is shown.</summary>
     public static bool IsVisible(IntPtr hwnd) => IsWindowNative(hwnd) && IsWindowVisible(hwnd);
 

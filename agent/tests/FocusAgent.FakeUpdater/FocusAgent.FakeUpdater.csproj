@@ -1,13 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    A recording stand-in for Velopack's Update.exe, used only by the #449 e2e
-    (FocusAgent.IntegrationTests/UpdateApplyTests.cs). The spec copies it into an
-    agent install it assembles as the install's Update.exe. It applies nothing: it
-    writes down the arguments it was started with and exits, so the spec can see
-    whether, and how, the agent hands a downloaded package to the updater without a
-    real updater replacing files, creating shortcuts or writing an uninstall entry
-    on the machine running the tests.
+    A recording stand-in for Velopack's Update.exe, used only by the #449 / #456
+    e2e (FocusAgent.IntegrationTests/UpdateApplyTests.cs). The spec copies it into
+    an agent install it assembles as the install's Update.exe. It applies nothing:
+    it writes down the arguments it was started with, waits (like the real updater,
+    at most 60 s) for the process named by waitPid to exit and writes down whether
+    it did so on its own, and exits. So the spec can see whether, and how, the agent
+    hands a downloaded package to the updater, and that the updater never has to
+    kill it, without a real updater replacing files, creating shortcuts or writing
+    an uninstall entry on the machine running the tests.
 
     Built through the integration test project's ProjectReference; like that
     project, deliberately NOT in FocusAgent.sln.

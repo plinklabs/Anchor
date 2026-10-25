@@ -66,7 +66,17 @@ namespace FocusAgent.App.Connectivity;
 /// <c>overlay</c> (#452): what the focus overlay shows while it is up
 /// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not; and
 /// <c>pendingUpdate</c> (#449): the version of a downloaded update that the next
-/// agent start applies, null while none is waiting.
+/// agent start applies, null while none is waiting; and <c>lastUpdateCheck</c>
+/// (#456): when the last update check started, by the agent's clock.
+///
+/// Two more POST controls drive the #456 update restart:
+///   POST /check-update
+///               -> run an update check now, as the interval timer does.
+///   POST /simulate-sleep?slept=&lt;hh:mm:ss&gt;
+///               -> what time asleep does to the agent: the update clock jumps
+///                  by <c>slept</c> while the timers stay put. The e2e then sends
+///                  the wake itself, the way Windows does (a power or session
+///                  message to the agent's SystemEvents window).
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
@@ -108,6 +118,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<string?>? _overlay;
     private readonly Func<string, bool>? _onClickOverlayApp;
     private readonly Func<string?>? _pendingUpdate;
+    private readonly Func<DateTimeOffset?>? _lastUpdateCheck;
+    private readonly Action? _onCheckUpdate;
+    private readonly Action<TimeSpan>? _onSimulateSleep;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -128,7 +141,10 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<bool>? onTurnExtensionBackOn = null,
         Func<string?>? overlay = null,
         Func<string, bool>? onClickOverlayApp = null,
-        Func<string?>? pendingUpdate = null)
+        Func<string?>? pendingUpdate = null,
+        Func<DateTimeOffset?>? lastUpdateCheck = null,
+        Action? onCheckUpdate = null,
+        Action<TimeSpan>? onSimulateSleep = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -146,6 +162,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _overlay = overlay;
         _onClickOverlayApp = onClickOverlayApp;
         _pendingUpdate = pendingUpdate;
+        _lastUpdateCheck = lastUpdateCheck;
+        _onCheckUpdate = onCheckUpdate;
+        _onSimulateSleep = onSimulateSleep;
         _listener = new HttpListener();
     }
 
@@ -254,6 +273,27 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 return;
             }
 
+            if (method == "POST" && path == "/check-update")
+            {
+                _onCheckUpdate?.Invoke();
+                ctx.Response.StatusCode = _onCheckUpdate is null ? 404 : 204;
+                ctx.Response.Close();
+                return;
+            }
+
+            if (method == "POST" && path == "/simulate-sleep")
+            {
+                var valid = TimeSpan.TryParse(
+                                ctx.Request.QueryString["slept"],
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                out var slept)
+                            && slept >= TimeSpan.Zero;
+                if (valid) _onSimulateSleep?.Invoke(slept);
+                ctx.Response.StatusCode = !valid ? 400 : _onSimulateSleep is null ? 404 : 204;
+                ctx.Response.Close();
+                return;
+            }
+
             if (path != "/status")
             {
                 ctx.Response.StatusCode = 404;
@@ -301,6 +341,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // headless e2e can tell the update pass finished while the agent
                 // kept running.
                 pendingUpdate = _pendingUpdate?.Invoke(),
+                // #456: when the last update check started, so the headless e2e can
+                // tell whether a wake ran one.
+                lastUpdateCheck = _lastUpdateCheck?.Invoke(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

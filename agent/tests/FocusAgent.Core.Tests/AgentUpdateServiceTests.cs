@@ -14,7 +14,10 @@ namespace FocusAgent.Core.Tests;
 /// best-effort tolerance of a throwing check. A pass ends at the download (#449): it
 /// reports what the next start will apply and nothing more. The real Velopack check
 /// path is proven end-to-end by the IntegrationTests UpdateCheckTests spec, and the
-/// download-then-apply-at-next-start path by UpdateApplyTests.
+/// download-then-apply-at-next-start path by UpdateApplyTests. The #456 additions
+/// are covered here too: the wake/unlock check against a clock that moves through
+/// sleep while the timers don't, the ready-to-apply signal, and the hold-back that
+/// keeps a failed apply from turning into a restart loop.
 ///
 /// <para>
 /// Every pass runs on the thread pool and a tick that lands before the previous
@@ -245,6 +248,211 @@ public class AgentUpdateServiceTests
         Assert.Equal(afterStartup + 1, manager.CheckCount);
     }
 
+    // --- #456: the wake/unlock check (CheckIfDueAsync) -------------------------
+
+    [Fact]
+    public async Task A_wake_after_a_night_asleep_checks_although_the_interval_timer_never_fired()
+    {
+        // The issue's case: two hours open, then the lid closed overnight. The
+        // timer counts awake time only, so it saw two of its six hours.
+        var manager = new FakeUpdateManager { IsInstalled = true };
+        var clock = new SleepingClock();
+        await using var svc = NewService(manager, clock, interval: TimeSpan.FromHours(6));
+
+        svc.Start();
+        await PassAsync(svc);
+        Assert.Equal(clock.GetUtcNow(), svc.LastCheckStartedAt);
+
+        clock.Advance(TimeSpan.FromHours(2));
+        clock.Sleep(TimeSpan.FromHours(14));
+        await PassAsync(svc);
+        Assert.Equal(1, manager.CheckCount);
+
+        await svc.CheckIfDueAsync("resumed from sleep").WaitAsync(WaitTimeout);
+
+        Assert.Equal(2, manager.CheckCount);
+        Assert.Equal(clock.GetUtcNow(), svc.LastCheckStartedAt);
+    }
+
+    [Fact]
+    public async Task A_wake_before_the_interval_has_passed_by_the_clock_does_not_check()
+    {
+        var manager = new FakeUpdateManager { IsInstalled = true };
+        var clock = new SleepingClock();
+        await using var svc = NewService(manager, clock, interval: TimeSpan.FromHours(6));
+
+        svc.Start();
+        await PassAsync(svc);
+        clock.Advance(TimeSpan.FromHours(1));
+        clock.Sleep(TimeSpan.FromHours(4));
+
+        await svc.CheckIfDueAsync("was unlocked").WaitAsync(WaitTimeout);
+        await PassAsync(svc);
+
+        Assert.Equal(1, manager.CheckCount);
+    }
+
+    [Fact]
+    public async Task A_wake_check_restarts_the_interval_so_the_timer_does_not_check_again_right_after()
+    {
+        var manager = new FakeUpdateManager { IsInstalled = true };
+        var clock = new SleepingClock();
+        await using var svc = NewService(manager, clock, interval: TimeSpan.FromHours(6));
+
+        svc.Start();
+        await PassAsync(svc);                       // awake 0 h
+        clock.Advance(TimeSpan.FromHours(5));
+        clock.Sleep(TimeSpan.FromHours(10));
+        await svc.CheckIfDueAsync("resumed from sleep").WaitAsync(WaitTimeout);
+        Assert.Equal(2, manager.CheckCount);        // awake 5 h
+
+        // The old schedule would check at awake 6 h, an hour after the wake check.
+        clock.Advance(TimeSpan.FromHours(1));
+        await PassAsync(svc);
+        Assert.Equal(2, manager.CheckCount);
+
+        // The new one checks six awake hours after the wake check.
+        clock.Advance(TimeSpan.FromHours(5));
+        await PassAsync(svc);
+        Assert.Equal(3, manager.CheckCount);
+    }
+
+    [Fact]
+    public async Task A_wake_does_not_check_when_not_a_velopack_install()
+    {
+        var manager = new FakeUpdateManager { IsInstalled = false };
+        var clock = new SleepingClock();
+        await using var svc = NewService(manager, clock);
+
+        svc.Start();
+        clock.Sleep(TimeSpan.FromDays(3));
+        await svc.CheckIfDueAsync("resumed from sleep").WaitAsync(WaitTimeout);
+        await PassAsync(svc);
+
+        Assert.Equal(0, manager.CheckCount);
+        Assert.Null(svc.LastCheckStartedAt);
+    }
+
+    // --- #456: ready to apply, and no restart loops ----------------------------
+
+    [Fact]
+    public async Task A_pass_that_downloads_an_update_reports_it_ready_to_apply()
+    {
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+        var ready = 0;
+        svc.UpdateReady += (_, _) => Interlocked.Increment(ref ready);
+
+        svc.Start();
+        await PassAsync(svc);
+
+        Assert.Equal(1, ready);
+        Assert.Equal("1.2.3", svc.ReadyToApplyVersion);
+    }
+
+    [Fact]
+    public async Task An_up_to_date_pass_reports_nothing_ready()
+    {
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = AgentUpdateCheckResult.None };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock);
+        var ready = 0;
+        svc.UpdateReady += (_, _) => Interlocked.Increment(ref ready);
+
+        svc.Start();
+        await PassAsync(svc);
+
+        Assert.Equal(0, ready);
+        Assert.Null(svc.ReadyToApplyVersion);
+    }
+
+    [Fact]
+    public async Task A_version_whose_hand_over_failed_is_held_back_until_the_next_pass_finds_it_again()
+    {
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock, interval: TimeSpan.FromHours(6));
+        var ready = 0;
+        svc.UpdateReady += (_, _) => Interlocked.Increment(ref ready);
+
+        svc.Start();
+        await PassAsync(svc);
+        svc.ReportApplyFailed("1.2.3");
+
+        // Still downloaded and pending for the next start, but not to restart into.
+        Assert.Null(svc.ReadyToApplyVersion);
+        Assert.Equal("1.2.3", svc.PendingVersion);
+
+        clock.Advance(TimeSpan.FromHours(6));
+        await PassAsync(svc);
+
+        Assert.Equal(2, ready);
+        Assert.Equal("1.2.3", svc.ReadyToApplyVersion);
+    }
+
+    [Fact]
+    public async Task Restarted_by_the_updater_with_the_update_still_waiting_holds_it_back_through_the_startup_pass()
+    {
+        // The updater's apply failed and it started the old version again: the
+        // package is still there, newer than what runs. Restarting into it at once
+        // would fail the same way, again and again.
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.3", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update, InitiallyPending = "1.2.3" };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock, interval: TimeSpan.FromHours(6), restartedByUpdater: true);
+        var ready = 0;
+        svc.UpdateReady += (_, _) => Interlocked.Increment(ref ready);
+
+        svc.Start();
+        await PassAsync(svc);
+
+        Assert.Equal(0, ready);
+        Assert.Null(svc.ReadyToApplyVersion);
+        Assert.Equal("1.2.3", svc.PendingVersion);
+
+        // The next check tries it again, once.
+        clock.Advance(TimeSpan.FromHours(6));
+        await PassAsync(svc);
+
+        Assert.Equal(1, ready);
+        Assert.Equal("1.2.3", svc.ReadyToApplyVersion);
+    }
+
+    [Fact]
+    public async Task Restarted_by_the_updater_does_not_hold_back_a_newer_release_than_the_one_that_failed()
+    {
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.4", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update, InitiallyPending = "1.2.3" };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock, restartedByUpdater: true);
+
+        svc.Start();
+        await PassAsync(svc);
+
+        Assert.Equal("1.2.4", svc.ReadyToApplyVersion);
+    }
+
+    [Fact]
+    public async Task Restarted_by_the_updater_after_a_working_apply_holds_nothing_back()
+    {
+        // After a working apply nothing newer than the running version waits.
+        var update = new AgentUpdateCheckResult(IsUpdateAvailable: true, TargetVersion: "1.2.4", Payload: new object());
+        var manager = new FakeUpdateManager { IsInstalled = true, NextResult = update };
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        await using var svc = NewService(manager, clock, restartedByUpdater: true);
+        var ready = 0;
+        svc.UpdateReady += (_, _) => Interlocked.Increment(ref ready);
+
+        svc.Start();
+        await PassAsync(svc);
+
+        Assert.Equal(1, ready);
+        Assert.Equal("1.2.4", svc.ReadyToApplyVersion);
+    }
+
     // --- #407: the fatal-path check (CheckNowAsync) ---------------------------
 
     [Fact]
@@ -347,16 +555,44 @@ public class AgentUpdateServiceTests
 
     private static AgentUpdateService NewService(
         FakeUpdateManager manager,
-        FakeTimeProvider clock,
+        TimeProvider clock,
         bool enabled = true,
-        TimeSpan? interval = null)
+        TimeSpan? interval = null,
+        bool restartedByUpdater = false)
     {
         var settings = new UpdateSettings
         {
             Enabled = enabled,
             CheckInterval = interval ?? TimeSpan.FromHours(6),
         };
-        return new AgentUpdateService(manager, Options.Create(settings), clock);
+        return new AgentUpdateService(manager, Options.Create(settings), clock)
+        {
+            RestartedByUpdater = restartedByUpdater,
+        };
+    }
+
+    /// <summary>
+    /// A laptop's clock across sleep (#456): <see cref="GetUtcNow"/> jumps by the time
+    /// asleep (<see cref="Sleep"/>), while the timers, like .NET's on Windows, only
+    /// count time awake (<see cref="Advance"/>).
+    /// </summary>
+    private sealed class SleepingClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _awake = new(DateTimeOffset.UnixEpoch);
+        private TimeSpan _slept;
+
+        public void Advance(TimeSpan awake) => _awake.Advance(awake);
+
+        public void Sleep(TimeSpan asleep) => _slept += asleep;
+
+        public override DateTimeOffset GetUtcNow() => _awake.GetUtcNow() + _slept;
+
+        public override long GetTimestamp() => _awake.GetTimestamp();
+
+        public override long TimestampFrequency => _awake.TimestampFrequency;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            _awake.CreateTimer(callback, state, dueTime, period);
     }
 
     // Generous on purpose: a passing test never waits this long, and a loaded CI
@@ -383,7 +619,7 @@ public class AgentUpdateServiceTests
         }
     }
 
-    private sealed class FakeUpdateManager : IAgentUpdateManager
+    internal sealed class FakeUpdateManager : IAgentUpdateManager
     {
         private const string Downloaded = "<the downloaded version>";
 
@@ -397,6 +633,10 @@ public class AgentUpdateServiceTests
         /// <summary>What Velopack reports as pending once a download finished: by
         /// default the version just downloaded, like a real packages folder.</summary>
         public string? PendingAfterDownload { get; set; } = Downloaded;
+
+        /// <summary>A package already in the packages folder at start (#456): one a
+        /// failed apply left behind, say.</summary>
+        public string? InitiallyPending { init => _pending = value; }
 
         private int _checkCount;
         private int _downloadCount;
@@ -428,5 +668,9 @@ public class AgentUpdateServiceTests
             Interlocked.Increment(ref _pendingQueryCount);
             return Volatile.Read(ref _pending);
         }
+
+        // The service never hands over itself; IdleUpdateRestarter's IAgentRestarter does.
+        public void ApplyOnExitAndRestart(IReadOnlyList<string> restartArgs) =>
+            throw new InvalidOperationException("AgentUpdateService must never start the updater (#449).");
     }
 }

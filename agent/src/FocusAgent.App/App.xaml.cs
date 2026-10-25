@@ -54,6 +54,10 @@ public partial class App : Application
     private StatusEndpoint? _statusEndpoint;
     private JoinByCodeFlow? _joinByCodeFlow;
     private AgentUpdateService? _updateService;
+    // #456: restarts the agent into a downloaded update once it is idle, and the
+    // wake/unlock watch that re-checks for one after time asleep.
+    private IdleUpdateRestarter? _idleRestarter;
+    private WakeWatcher? _wakeWatcher;
     // Held only by the --show-test-toast path so the logger outlives the
     // async show/decide chain rather than getting disposed at OnLaunched return.
     private ILoggerFactory? _testLoggerFactory;
@@ -136,6 +140,9 @@ public partial class App : Application
             UnhandledException += (_, e) =>
             {
                 e.Handled = true;
+                // #456: a crashing agent doesn't restart into an update under its
+                // crash dialog; the next start applies it, as before.
+                _idleRestarter?.Stop();
                 CrashReporter.ReportUiThreadFatal(this, e.Exception);
             };
         }
@@ -266,7 +273,8 @@ public partial class App : Application
                 // Per #34: the menu item is disabled while the agent is
                 // already in (or being walked into) a session — no point
                 // letting the student type a code they can't act on.
-                canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null,
+                canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null
+                                     && !_coordinator.IsClosingForRestart,
                 onQuit: ShutdownCleanly,
                 dispatcher: dispatcher,
                 // #405: after a "not now", startup stops asking; the tray keeps
@@ -285,6 +293,7 @@ public partial class App : Application
             if (Program.StatusEndpointPort is int port)
             {
                 var focusOverlay = _host.Services.GetRequiredService<IFocusOverlay>() as WinUiFocusOverlay;
+                var sleepClock = _host.Services.GetService<SimulatedSleepClock>();
                 _statusEndpoint = new StatusEndpoint(
                     _connection,
                     _coordinator,
@@ -324,8 +333,42 @@ public partial class App : Application
                     // #453: click one of the overlay's allowed apps, as the student does.
                     onClickOverlayApp: app => focusOverlay?.ClickAllowedApp(app) ?? false,
                     // #449: the downloaded update the next start applies, if any.
-                    pendingUpdate: () => _updateService?.PendingVersion);
+                    pendingUpdate: () => _updateService?.PendingVersion,
+                    // #456: when the last update check ran, a check on demand, and
+                    // time asleep: the update clock jumps, the timers don't.
+                    lastUpdateCheck: () => _updateService?.LastCheckStartedAt,
+                    onCheckUpdate: () => _ = _updateService?.CheckOnceAsync(),
+                    onSimulateSleep: sleepClock is null ? null : sleepClock.Sleep);
                 _statusEndpoint.Start(port);
+            }
+
+            // #456: check for an update on wake and unlock once the last check is
+            // Update:CheckInterval old by the clock. The interval timer leaves out
+            // time asleep, so on a laptop that is mostly closed it alone would check
+            // only every few days.
+            _wakeWatcher = new WakeWatcher(OnAgentWoke, _host.Services.GetRequiredService<ILogger<WakeWatcher>>());
+            _wakeWatcher.Start();
+
+            // #456: restart into a downloaded update as soon as no session is going
+            // on, instead of leaving it for the next sign-in. Started last, once
+            // everything a restart must not cut short is wired: the coordinator
+            // (sessions) and the join-by-code dialog (a join the student is typing).
+            // The Edge extension setup window is not a reason to wait: a student can
+            // leave it open for days, and the restarted agent asks again.
+            if (_host.Services.GetRequiredService<IOptions<UpdateSettings>>().Value.RestartWhenIdle)
+            {
+                var joinByCode = _joinByCodeFlow;
+                _idleRestarter = new IdleUpdateRestarter(
+                    _updateService,
+                    _coordinator,
+                    new UpdateRestarter(
+                        _host.Services.GetRequiredService<IAgentUpdateManager>(),
+                        dispatcher,
+                        ExitForUpdateRestart,
+                        logger),
+                    isBusy: () => joinByCode.IsOpen,
+                    log: _host.Services.GetRequiredService<ILogger<IdleUpdateRestarter>>());
+                _idleRestarter.Start();
             }
         }
         catch (Exception ex)
@@ -367,6 +410,8 @@ public partial class App : Application
     /// </summary>
     private Task? BeginFatalUpdateCheck()
     {
+        // #456: from here on the crash path owns the update; no idle restart.
+        _idleRestarter?.Stop();
         try
         {
             _updateService ??= CreateStandaloneUpdateService();
@@ -522,6 +567,58 @@ public partial class App : Application
         if (_extensionConsent?.TryActivate() == true) return;
         if (_extensionRegistrar is { } registrar)
             _ = Task.Run(() => registrar.OfferAgainAsync());
+    }
+
+    /// <summary>
+    /// A wake from sleep or an unlock (#456): check for an update if the last check
+    /// is <c>Update:CheckInterval</c> old by the clock. What it finds is applied
+    /// under the idle rule, like any other check's.
+    /// </summary>
+    private void OnAgentWoke(string reason) => _ = _updateService?.CheckIfDueAsync(reason);
+
+    /// <summary>
+    /// The agent's exit to restart into an update (#456), on the UI thread. Velopack's
+    /// updater is already waiting for this process (see <see cref="UpdateRestarter"/>),
+    /// and the agent is idle: no session, so nothing to report. It goes quietly: no
+    /// window pops up on the way out (the sustained-disconnect auto-open is unhooked),
+    /// and the tray icon is removed now rather than left as a ghost. The extension's
+    /// witness pipe is closed on purpose, before the updater stops the native host;
+    /// the extension reconnects to the restarted agent on its own. The log needs no
+    /// flush: its file sink writes every line through.
+    /// </summary>
+    private void ExitForUpdateRestart()
+    {
+        if (_connection is not null) _connection.StatusChanged -= OnConnectionStatusChanged;
+        _wakeWatcher?.Dispose();
+        _mainWindow?.AllowClose();
+        try
+        {
+            _tray?.Dispose();
+        }
+        catch
+        {
+            // best-effort, on the way out
+        }
+        _tray = null;
+
+        var dispatcher = DispatcherQueue.GetForCurrentThread();
+        var witness = _witnessMonitor;
+        var log = _host?.Services.GetService<ILogger<App>>();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (witness is not null)
+                    await witness.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                log?.LogDebug(ex, "Closing the witness pipe before the update restart failed.");
+            }
+            log?.LogInformation("Exiting so Velopack's updater can apply the update and start the agent again.");
+            if (!dispatcher.TryEnqueue(Exit))
+                Environment.Exit(0);
+        });
     }
 
     private void ShutdownCleanly()
@@ -1339,7 +1436,19 @@ public partial class App : Application
             CreateUpdateManager(
                 sp.GetRequiredService<IOptions<UpdateSettings>>().Value,
                 sp.GetRequiredService<ILogger<VelopackUpdateManager>>()));
-        builder.Services.AddSingleton<AgentUpdateService>();
+        // #456: under --status-endpoint (dev) the update service's clock can be
+        // moved as by a night asleep, for the wake e2e; otherwise it is the system's.
+        if (Program.StatusEndpointPort is not null)
+            builder.Services.AddSingleton<SimulatedSleepClock>();
+        builder.Services.AddSingleton(sp => new AgentUpdateService(
+            sp.GetRequiredService<IAgentUpdateManager>(),
+            sp.GetRequiredService<IOptions<UpdateSettings>>(),
+            (TimeProvider?)sp.GetService<SimulatedSleepClock>() ?? TimeProvider.System,
+            sp.GetRequiredService<ILogger<AgentUpdateService>>())
+        {
+            // A failed apply must not turn into a restart loop.
+            RestartedByUpdater = Program.RestartedByUpdater,
+        });
 
         var logDir = AgentLogPaths.LocalAppDataLogDirectory();
         Directory.CreateDirectory(logDir);
