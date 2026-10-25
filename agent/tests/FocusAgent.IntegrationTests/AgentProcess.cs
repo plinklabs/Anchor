@@ -22,7 +22,12 @@ internal sealed record StatusSnapshot(
     [property: JsonPropertyName("startupSweep")] StartupSweepSnapshot? StartupSweep,
     [property: JsonPropertyName("inPrivateDetections")] int InPrivateDetections,
     [property: JsonPropertyName("extensionPolicy")] ExtensionPolicySnapshot? ExtensionPolicy = null,
-    [property: JsonPropertyName("extensionGuard")] ExtensionGuardSnapshot? ExtensionGuard = null);
+    [property: JsonPropertyName("extensionGuard")] ExtensionGuardSnapshot? ExtensionGuard = null,
+    // #452: what the focus overlay shows while it is up (Blocked / BrowserPaused),
+    // null while it is not.
+    [property: JsonPropertyName("overlay")] string? Overlay = null,
+    // #449: the downloaded update the next agent start applies, null while none is.
+    [property: JsonPropertyName("pendingUpdate")] string? PendingUpdate = null);
 
 /// <summary>
 /// The Edge pause as exposed on /status (#427): whether the extension's witness
@@ -95,7 +100,9 @@ internal sealed class AgentProcess : IAsyncDisposable
     /// <summary>
     /// Launch the agent impersonating <paramref name="impersonateOid"/>, pointed
     /// at the e2e backend. Set <paramref name="autoJoin"/> for flows that need
-    /// the agent to actually join (bundle pushes, heartbeats).
+    /// the agent to actually join (bundle pushes, heartbeats). <paramref name="agentExe"/>
+    /// launches a copy of the agent elsewhere (#449: one inside an install the spec
+    /// assembled) instead of the x64 Debug build.
     /// </summary>
     public static AgentProcess Launch(
         string backendUrl,
@@ -107,18 +114,20 @@ internal sealed class AgentProcess : IAsyncDisposable
         bool pointBackendViaEnv = true,
         TimeSpan? reconnectMaxBackoff = null,
         IEnumerable<string>? extraArgs = null,
-        IReadOnlyDictionary<string, string>? extraEnvironment = null)
+        IReadOnlyDictionary<string, string>? extraEnvironment = null,
+        string? agentExe = null)
     {
         if (!OperatingSystem.IsWindows())
             throw new InvalidOperationException("The agent exe is Windows-only.");
-        if (!File.Exists(TestConfig.AgentExe))
+        agentExe ??= TestConfig.AgentExe;
+        if (!File.Exists(agentExe))
             throw new FileNotFoundException(
-                $"Agent exe not found at {TestConfig.AgentExe}. Build it first: " +
-                "dotnet build agent/FocusAgent.sln -p:Platform=x64", TestConfig.AgentExe);
+                $"Agent exe not found at {agentExe}. Build it first: " +
+                "dotnet build agent/FocusAgent.sln -p:Platform=x64", agentExe);
 
         var statusPort = TestConfig.FreeLoopbackPort();
 
-        var psi = new ProcessStartInfo(TestConfig.AgentExe) { UseShellExecute = false };
+        var psi = new ProcessStartInfo(agentExe) { UseShellExecute = false };
         psi.ArgumentList.Add("--inject-token");
         psi.ArgumentList.Add("--status-endpoint");
         psi.ArgumentList.Add(statusPort.ToString());
@@ -271,6 +280,19 @@ internal sealed class AgentProcess : IAsyncDisposable
     public async Task<bool> TurnExtensionBackOnAsync()
     {
         using var res = await _http.PostAsync($"{_controlBase}/extension-repair", content: null);
+        return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    /// <summary>
+    /// Click the focus overlay's row for the allowed app <paramref name="app"/> (a
+    /// rule's value, such as <c>notepad</c>) via POST /overlay-app (#453). The click
+    /// runs on the agent's UI thread, as the student's does, and this does not wait
+    /// for it. Returns false when the overlay wasn't up.
+    /// </summary>
+    public async Task<bool> ClickOverlayAppAsync(string app)
+    {
+        using var res = await _http.PostAsync(
+            $"{_controlBase}/overlay-app?app={Uri.EscapeDataString(app)}", content: null);
         return res.StatusCode == System.Net.HttpStatusCode.NoContent;
     }
 

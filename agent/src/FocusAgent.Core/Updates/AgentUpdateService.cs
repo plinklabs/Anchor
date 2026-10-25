@@ -8,9 +8,11 @@ namespace FocusAgent.Core.Updates;
 /// <summary>
 /// Drives the agent's auto-update cadence (#224): one check shortly after startup,
 /// then a re-check every <see cref="UpdateSettings.CheckInterval"/>. On a positive
-/// check it downloads the delta and stages it for the <em>next</em> restart — it
-/// never relaunches the agent out from under a student, so single-instance gating
-/// and an in-session student are left undisturbed.
+/// check it only downloads the package; the <em>next</em> agent start applies it
+/// (Velopack's auto-apply in Program.Main). It never starts the updater while the
+/// agent runs (#449: Update.exe would give the agent 60 s to exit and then kill it,
+/// leaving the student without enforcement until the next login), so single-instance
+/// gating and an in-session student are left undisturbed.
 ///
 /// <para>
 /// It is also the agent's repair channel for a release that crashes (#407): the app
@@ -60,11 +62,12 @@ public sealed class AgentUpdateService : IAsyncDisposable
         _log = log ?? NullLogger<AgentUpdateService>.Instance;
     }
 
-    /// <summary>Set after a check stages an update, so a UI/diagnostic surface
-    /// can report "restart to finish updating to vX". Latches true.</summary>
+    /// <summary>Set once a check has downloaded an update that the next agent start
+    /// will apply (as Velopack itself reports it), so a UI/diagnostic surface can
+    /// report "restart to finish updating to vX". Latches true.</summary>
     public bool UpdatePendingRestart { get; private set; }
 
-    /// <summary>The version staged to apply on next restart, or null.</summary>
+    /// <summary>The downloaded version the next agent start applies, or null.</summary>
     public string? PendingVersion { get; private set; }
 
     /// <summary>
@@ -121,7 +124,7 @@ public sealed class AgentUpdateService : IAsyncDisposable
     private void OnTimerFired() => _ = CheckOnceAsync(CancellationToken.None);
 
     /// <summary>
-    /// Run a single check → download → stage pass. Public so tests can drive one
+    /// Run a single check → download pass. Public so tests can drive one
     /// cycle deterministically without waiting on the timer. Single-flighted: a
     /// call that arrives while a prior check is still running is dropped rather
     /// than queued, and returns at once.
@@ -130,8 +133,9 @@ public sealed class AgentUpdateService : IAsyncDisposable
         RunCheck(joinInFlight: false, cancellationToken);
 
     /// <summary>
-    /// The fatal-path check (#407): make sure one check → download → stage pass runs
-    /// now, and return a task that completes when it has. If a pass is already in
+    /// The fatal-path check (#407): make sure one check → download pass runs now,
+    /// and return a task that completes when it has, so the fixed release is on disk
+    /// for the next launch to apply before the process goes. If a pass is already in
     /// flight (typically the startup check, still running when startup crashed) the
     /// caller joins it rather than starting a second; otherwise a fresh pass starts.
     /// Works whether or not <see cref="Start"/> ran, and keeps the same gating (a
@@ -177,12 +181,24 @@ public sealed class AgentUpdateService : IAsyncDisposable
             _log.LogInformation("Auto-update available: {Version}. Downloading delta…", result.TargetVersion);
             await _manager.DownloadUpdateAsync(result, cancellationToken).ConfigureAwait(false);
 
-            _manager.StageUpdateForNextRestart(result);
+            // #449: downloading is the whole job. Nothing here may start the updater,
+            // which would kill this running agent; the package waits in the packages
+            // folder for the next agent start to apply. Read back what that start
+            // will apply rather than assume the download put it where it looks.
+            var pending = _manager.GetPendingRestartVersion();
+            if (pending is null)
+            {
+                _log.LogWarning(
+                    "Auto-update {Version} downloaded, but no newer package is waiting for the next agent start.",
+                    result.TargetVersion);
+                return;
+            }
+
             UpdatePendingRestart = true;
-            PendingVersion = result.TargetVersion;
+            PendingVersion = pending;
             _log.LogInformation(
-                "Auto-update {Version} downloaded and staged; it applies on the next agent restart.",
-                result.TargetVersion);
+                "Auto-update {Version} downloaded; it applies the next time the agent starts.",
+                pending);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

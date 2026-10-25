@@ -43,9 +43,10 @@ jobs:
       - name: Build agent (x64)
         run: dotnet build agent/src/FocusAgent.App/FocusAgent.App.csproj -p:Platform=x64 -c Debug
 
-      # The #224 update-check e2e (UpdateCheckTests) packs a real Velopack feed with
-      # `vpk` and drives the agent's --check-update mode against it. Install the tool
-      # so the test can produce the throwaway feed (resolved from ~/.dotnet/tools).
+      # The #224 update-check e2e (UpdateCheckTests) and the #449 update-apply e2e
+      # (UpdateApplyTests) pack a real Velopack feed with `vpk` and point the agent
+      # at it. Install the tool so the tests can produce the throwaway feed
+      # (resolved from ~/.dotnet/tools).
       - name: Install Velopack tool (vpk)
         run: dotnet tool install -g vpk
 

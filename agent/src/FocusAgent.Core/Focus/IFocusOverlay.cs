@@ -11,18 +11,26 @@ public interface IFocusOverlay
 {
     /// <summary>
     /// Show the overlay topmost. <paramref name="blockedAppName"/> is the
-    /// app that was just minimized (purely informational on the overlay).
+    /// app that was just blocked (purely informational on the overlay).
+    /// <paramref name="blockedWindowHandle"/> is its window, which the overlay
+    /// takes down and takes the foreground over from, so that what the student
+    /// types goes to the overlay and not to the blocked app (#441, see
+    /// <see cref="IFocusEnforcer.HandOverAsync"/>); 0 when there is none.
     /// Idempotent — calling Show while already visible just updates content.
     /// </summary>
-    void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName);
+    void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle);
 
     /// <summary>
     /// Show the overlay for an Edge that is paused because its extension is off
     /// (#427): say why, offer <paramref name="prompt"/>'s way to switch the
     /// extension back on, and list <paramref name="allowedRules"/> (the other
-    /// allowed apps) to carry on with. Idempotent like <see cref="Show"/>.
+    /// allowed apps) to carry on with. <paramref name="pausedWindowHandle"/> is the
+    /// Edge window that has the foreground (#450), or an app blocked while Edge is
+    /// paused with nothing to fall back to (#452), which the overlay takes down and
+    /// takes the foreground over from, like <see cref="Show"/> does with the blocked
+    /// window; 0 when there is none. Idempotent like <see cref="Show"/>.
     /// </summary>
-    void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt);
+    void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle);
 
     /// <summary>
     /// Hide the overlay (kept alive for fast re-show). Safe to call when

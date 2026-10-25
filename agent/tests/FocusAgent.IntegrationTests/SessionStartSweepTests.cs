@@ -130,6 +130,73 @@ public sealed class SessionStartSweepTests
         }
     }
 
+    /// <summary>
+    /// #440: an off-list app that is not responding when the session begins must
+    /// not hold up the sweep. Minimizing a window waits until its app handles
+    /// messages again: done in line, the sweep stalled on the hung app, and every
+    /// off-list window after it stayed on screen until that app responded. The
+    /// hung window itself goes down the moment its app responds. Observes the
+    /// test's own windows, which only the agent's sweep minimizes.
+    /// </summary>
+    [Fact]
+    public async Task OffListAppNotRespondingAtSessionStart_DoesNotHoldUpTheSweep()
+    {
+        var api = new BackendClient(_backend.Url);
+        // Opened last, the hung window is the one above in the Z-order, which is the
+        // order the sweep takes the windows in.
+        using var responsive = await OffListWindow.OpenAsync("Anchor e2e off-list app", TimeSpan.FromSeconds(10));
+        using var hung = await OffListWindow.OpenAsync("Anchor e2e off-list app (not responding)", TimeSpan.FromSeconds(10));
+
+        await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
+        await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+        var classId = await api.FindClassIdAsync();
+
+        // No bundles: both windows are off-list.
+        hung.Freeze(NotRespondingFor);
+        var session = await api.StartSessionAsync(classId);
+        try
+        {
+            var swept = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id && s.StartupSweep is not null, TimeSpan.FromSeconds(5));
+            var responsiveDown = await WaitUntilAsync(() => responsive.HasGoneDown, TimeSpan.FromSeconds(2));
+            Assert.True(hung.IsFrozen, "The off-list app started responding again before the spec could check the sweep.");
+            Assert.True(
+                swept?.JoinedSessionId == session.Id && swept.StartupSweep is not null,
+                "The session-start sweep did not finish while an off-list app was not responding (#440) " +
+                $"(joinedSessionId: {swept?.JoinedSessionId?.ToString() ?? "<none>"}).");
+            Assert.True(
+                responsiveDown,
+                "While an off-list app was not responding, the session-start sweep left another off-list app " +
+                "on screen (#440).");
+            Assert.False(hung.HasGoneDown, "A window whose app is not responding went down.");
+
+            hung.Thaw();
+            Assert.True(
+                await WaitUntilAsync(() => hung.HasGoneDown, TimeSpan.FromSeconds(3)),
+                "The off-list app that was not responding did not go down once it responded again.");
+        }
+        finally
+        {
+            hung.Thaw();
+            await api.EndSessionAsync(session.Id);
+        }
+    }
+
+    // Long enough to outlast the join and the spec's checks; the spec ends it
+    // itself once it has looked.
+    private static readonly TimeSpan NotRespondingFor = TimeSpan.FromSeconds(10);
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return true;
+            await Task.Delay(100);
+        }
+        return condition();
+    }
+
     private static async Task<bool> WaitForNotepadWindowAsync(TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;

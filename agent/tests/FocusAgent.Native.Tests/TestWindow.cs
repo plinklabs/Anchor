@@ -17,6 +17,7 @@ internal sealed class TestWindow : IDisposable
     private const uint WM_APP_FREEZE = 0x8001;
     private const uint WS_OVERLAPPEDWINDOW = 0x00CF0000;
     private const int SW_SHOWNOACTIVATE = 4;
+    private const int SW_SHOWMINNOACTIVE = 7;
     // A frozen window thaws by itself after this, so a test that never thaws it
     // (because the code under test waited for it) still ends.
     private static readonly TimeSpan MaxFreeze = TimeSpan.FromSeconds(10);
@@ -36,6 +37,19 @@ internal sealed class TestWindow : IDisposable
 
     public nint Handle { get; private set; }
 
+    /// <summary>
+    /// Minimized and moved off the screen. Windows marks a window that the agent
+    /// minimizes as minimized at once, but it stays where it was until its app has
+    /// handled the request.
+    /// </summary>
+    public bool HasGoneDown => IsIconic(Handle) && GetWindowRect(Handle, out var rect) && rect.Left <= MinimizedPosition;
+
+    /// <summary>
+    /// Restored and back where it was: not minimized, and no longer parked off the
+    /// screen where Windows keeps a minimized window.
+    /// </summary>
+    public bool IsBackOnScreen => !IsIconic(Handle) && GetWindowRect(Handle, out var rect) && rect.Left > MinimizedPosition;
+
     public static TestWindow Open(string title)
     {
         var window = new TestWindow(title);
@@ -54,6 +68,17 @@ internal sealed class TestWindow : IDisposable
     }
 
     public void Thaw() => _thaw.Set();
+
+    /// <summary>
+    /// Minimizes the window without activating another, as the student does when
+    /// they put an app away, and returns once it is down.
+    /// </summary>
+    public void MinimizeWithoutActivating()
+    {
+        ShowWindow(Handle, SW_SHOWMINNOACTIVE);
+        if (!HasGoneDown)
+            throw new InvalidOperationException("Test window did not minimize.");
+    }
 
     public void Dispose()
     {
@@ -84,6 +109,18 @@ internal sealed class TestWindow : IDisposable
             TranslateMessage(ref msg);
             DispatchMessageW(ref msg);
         }
+    }
+
+    // Where Windows parks a minimized top-level window.
+    private const int MinimizedPosition = -32000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -126,4 +163,12 @@ internal sealed class TestWindow : IDisposable
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(nint hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(nint hWnd, out RECT rect);
 }

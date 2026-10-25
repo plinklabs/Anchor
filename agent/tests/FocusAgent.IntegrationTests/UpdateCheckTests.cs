@@ -31,8 +31,6 @@ namespace FocusAgent.IntegrationTests;
 [SupportedOSPlatform("windows")]
 public sealed class UpdateCheckTests
 {
-    private const string VelopackAppId = "Anchor.Agent";
-
     [Fact]
     public async Task CheckUpdate_reports_a_newer_release_from_a_local_feed()
     {
@@ -101,101 +99,6 @@ public sealed class UpdateCheckTests
         finally
         {
             try { File.Delete(resultPath); } catch { }
-        }
-    }
-
-    /// <summary>
-    /// A throwaway Velopack release feed produced by the real <c>vpk pack</c> tool
-    /// in a temp directory, removed on dispose. Packs a tiny stand-in exe under the
-    /// agent's pack id — the check path only reads the feed/nupkg metadata, so the
-    /// payload exe never has to be the real agent.
-    /// </summary>
-    private sealed class VelopackFeed : IDisposable
-    {
-        public string Directory { get; }
-        private readonly string _root;
-
-        private VelopackFeed(string root, string directory)
-        {
-            _root = root;
-            Directory = directory;
-        }
-
-        public static async Task<VelopackFeed> PackAsync(string version)
-        {
-            var root = Path.Combine(Path.GetTempPath(), $"anchor-vpk-{Guid.NewGuid():N}");
-            var srcDir = Path.Combine(root, "src");
-            var feedDir = Path.Combine(root, "feed");
-            System.IO.Directory.CreateDirectory(srcDir);
-            System.IO.Directory.CreateDirectory(feedDir);
-
-            // A minimal but real PE as the package's main exe — vpk requires the
-            // --mainExe to exist in the pack dir. The check path never executes it.
-            var stubExe = Path.Combine(Environment.SystemDirectory, "where.exe");
-            File.Copy(stubExe, Path.Combine(srcDir, "Anchor.Agent.exe"), overwrite: true);
-
-            var vpk = ResolveVpk();
-            var psi = new ProcessStartInfo(vpk)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            foreach (var arg in new[]
-                     {
-                         "pack",
-                         "--packId", VelopackAppId,
-                         "--packVersion", version,
-                         "--packDir", srcDir,
-                         "--mainExe", "Anchor.Agent.exe",
-                         "--outputDir", feedDir,
-                     })
-            {
-                psi.ArgumentList.Add(arg);
-            }
-
-            using var process = Process.Start(psi)
-                ?? throw new InvalidOperationException("Failed to start vpk.");
-            var stdout = await process.StandardOutput.ReadToEndAsync();
-            var stderr = await process.StandardError.ReadToEndAsync();
-            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(120)))
-                await process.WaitForExitAsync(cts.Token);
-
-            if (process.ExitCode != 0)
-            {
-                try { System.IO.Directory.Delete(root, recursive: true); } catch { }
-                throw new InvalidOperationException(
-                    $"vpk pack failed (exit {process.ExitCode}).\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}");
-            }
-
-            // Sanity: the SimpleFileSource feed file the agent reads must exist.
-            Assert.True(
-                File.Exists(Path.Combine(feedDir, "releases.win.json")),
-                "vpk pack did not produce releases.win.json in the feed dir.");
-
-            return new VelopackFeed(root, feedDir);
-        }
-
-        /// <summary>
-        /// Locate the <c>vpk</c> tool. It's a global dotnet tool; resolve it from the
-        /// well-known tools dir (works on the CI runner once the workflow installs
-        /// it) or fall back to PATH.
-        /// </summary>
-        private static string ResolveVpk()
-        {
-            var home = Environment.GetEnvironmentVariable("USERPROFILE")
-                       ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var toolPath = Path.Combine(home, ".dotnet", "tools", "vpk.exe");
-            if (File.Exists(toolPath)) return toolPath;
-
-            // Fall back to PATH (vpk on the system path). If neither resolves, the
-            // pack call below fails loudly with a clear message rather than skipping.
-            return "vpk";
-        }
-
-        public void Dispose()
-        {
-            try { System.IO.Directory.Delete(_root, recursive: true); } catch { /* best-effort */ }
         }
     }
 }

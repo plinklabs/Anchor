@@ -54,11 +54,19 @@ namespace FocusAgent.App.Connectivity;
 ///               -> the paused-Edge overlay's "switch the extension back on"
 ///                  action (#427): opens Edge for the repair window (409 when
 ///                  Edge isn't paused).
+///   POST /overlay-app?app=&lt;rule value&gt;
+///               -> the focus overlay's row for that allowed app (#453): clicks it
+///                  on the UI thread, as the student does, without waiting for
+///                  the click (409 when the overlay isn't up).
 ///
 /// And /status carries <c>extensionPolicy</c> (#405): where the Anchor
 /// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>)
-/// and whether the setup window is open; and <c>extensionGuard</c> (#427):
-/// whether the extension's witness is connected and the Edge pause's state.
+/// and whether the setup window is open; <c>extensionGuard</c> (#427):
+/// whether the extension's witness is connected and the Edge pause's state; and
+/// <c>overlay</c> (#452): what the focus overlay shows while it is up
+/// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not; and
+/// <c>pendingUpdate</c> (#449): the version of a downloaded update that the next
+/// agent start applies, null while none is waiting.
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
@@ -97,6 +105,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Action? _onOfferExtensionSetup;
     private readonly Func<object?>? _extensionGuard;
     private readonly Func<bool>? _onTurnExtensionBackOn;
+    private readonly Func<string?>? _overlay;
+    private readonly Func<string, bool>? _onClickOverlayApp;
+    private readonly Func<string?>? _pendingUpdate;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -114,7 +125,10 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<bool, bool>? onAnswerExtensionConsent = null,
         Action? onOfferExtensionSetup = null,
         Func<object?>? extensionGuard = null,
-        Func<bool>? onTurnExtensionBackOn = null)
+        Func<bool>? onTurnExtensionBackOn = null,
+        Func<string?>? overlay = null,
+        Func<string, bool>? onClickOverlayApp = null,
+        Func<string?>? pendingUpdate = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -129,6 +143,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _onOfferExtensionSetup = onOfferExtensionSetup;
         _extensionGuard = extensionGuard;
         _onTurnExtensionBackOn = onTurnExtensionBackOn;
+        _overlay = overlay;
+        _onClickOverlayApp = onClickOverlayApp;
+        _pendingUpdate = pendingUpdate;
         _listener = new HttpListener();
     }
 
@@ -225,6 +242,18 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 return;
             }
 
+            if (method == "POST" && path == "/overlay-app")
+            {
+                // 409 when the overlay isn't up, so a spec can tell "clicked" from "no-op".
+                var app = ctx.Request.QueryString["app"];
+                var clicked = string.IsNullOrWhiteSpace(app) ? null : _onClickOverlayApp?.Invoke(app);
+                ctx.Response.StatusCode = string.IsNullOrWhiteSpace(app)
+                    ? 400
+                    : clicked switch { null => 404, true => 204, false => 409 };
+                ctx.Response.Close();
+                return;
+            }
+
             if (path != "/status")
             {
                 ctx.Response.StatusCode = 404;
@@ -265,6 +294,13 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // #427: whether the extension's witness is connected and where the
                 // Edge pause stands, so the headless e2e can follow a switch-off.
                 extensionGuard = _extensionGuard?.Invoke(),
+                // #452: which overlay the student is on, if any, so the headless
+                // e2e can tell the paused-browser overlay from the blocked-app one.
+                overlay = _overlay?.Invoke(),
+                // #449: the downloaded update the next agent start applies, so the
+                // headless e2e can tell the update pass finished while the agent
+                // kept running.
+                pendingUpdate = _pendingUpdate?.Invoke(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

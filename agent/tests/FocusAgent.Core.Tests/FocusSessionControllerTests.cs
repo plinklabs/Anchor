@@ -238,6 +238,25 @@ public class FocusSessionControllerTests
         // teacher-picked — flows through to the overlay's allowed-apps list.
         Assert.Equal(new[] { "winword" }, shown.Rules.Select(r => r.Value).ToArray());
         Assert.Equal(0, fixtures.Overlay.HideCount);
+        // #441: the overlay gets the blocked window to take the foreground over
+        // from, and the controller leaves the minimize to it: minimized from the
+        // agent, the window would keep what the student types.
+        Assert.Equal((nint)0x200, shown.BlockedWindow);
+        Assert.Empty(fixtures.Enforcer.Minimized);
+    }
+
+    [Fact]
+    public async Task Blocked_window_still_goes_down_when_the_overlay_cannot_come_up()
+    {
+        var fixtures = new Fixtures();
+        fixtures.Enforcer.BlockRestoresFallback = false;
+        fixtures.Overlay.ShowThrows = new InvalidOperationException("no overlay");
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
+
+        Assert.Equal(new[] { (nint)0x200 }, fixtures.Enforcer.Minimized);
     }
 
     [Fact]
@@ -447,10 +466,11 @@ public class FocusSessionControllerTests
     };
 
     /// <summary>
-    /// A joined session with Edge and Word allowed and both on screen, the
-    /// extension connected, then switched off.
+    /// A joined session with Edge and Word allowed (or <paramref name="apps"/>) and
+    /// both on screen, the extension connected, then switched off.
     /// </summary>
-    private static async Task<(FocusSessionController, Fixtures, Guid)> JoinThenSwitchExtensionOffAsync()
+    private static async Task<(FocusSessionController, Fixtures, Guid)> JoinThenSwitchExtensionOffAsync(
+        IReadOnlyList<AllowedAppDto>? apps = null)
     {
         var fixtures = new Fixtures { WithGuard = true };
         fixtures.Windows.Windows.AddRange(new[]
@@ -460,7 +480,7 @@ public class FocusSessionControllerTests
         });
         var (controller, _) = BuildController(fixtures);
         fixtures.Transport.RaiseConnected();
-        var payload = NewPayload(apps: EdgeAndWord);
+        var payload = NewPayload(apps: apps ?? EdgeAndWord);
         await fixtures.Hub.RaiseSessionStarted(payload);
         Assert.Empty(fixtures.Enforcer.Minimized); // both allowed at session start
 
@@ -483,17 +503,21 @@ public class FocusSessionControllerTests
     }
 
     [Fact]
-    public async Task Pausing_edge_minimizes_the_edge_window_on_screen_and_explains_why()
+    public async Task Pausing_edge_hands_the_edge_window_in_the_foreground_to_the_overlay_and_explains_why()
     {
         // The window the student switched the extension off in is already in the
         // foreground; no foreground change will come for it, so the pause itself
-        // has to bring it down.
+        // has to bring it down. The overlay takes it down and the keyboard over
+        // from it (#450): minimized from the agent, it kept what the student typed,
+        // or handed the foreground to an allowed app below it, which hid the overlay.
         var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
 
         fixtures.Clock.Advance(ExtensionGrace);
 
-        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
+        Assert.Empty(fixtures.Enforcer.Minimized);
         var shown = Assert.Single(fixtures.Overlay.PausedShown);
+        Assert.Equal((nint)0x20, shown.PausedWindow);
         // Edge is left out of the way-back rows: a paused Edge goes nowhere.
         Assert.Equal(new[] { "winword" }, shown.Rules.Select(r => r.Value).ToArray());
         Assert.Equal("msedge", shown.Prompt.Browser.Value);
@@ -502,7 +526,63 @@ public class FocusSessionControllerTests
     }
 
     [Fact]
-    public async Task Paused_edge_is_minimized_on_every_foreground_and_reported_as_blocked()
+    public async Task Pausing_edge_minimizes_the_other_edge_windows_and_hands_only_the_one_in_the_foreground_over()
+    {
+        // The others have no keyboard to hand on.
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Windows.Windows.Add(OpenWindowFor("msedge", hwnd: 0x21));
+        fixtures.Enforcer.ForegroundOf[0x21] = 0x21;
+
+        fixtures.Clock.Advance(ExtensionGrace);
+
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
+        Assert.Equal((nint)0x21, Assert.Single(fixtures.Overlay.PausedShown).PausedWindow);
+    }
+
+    [Fact]
+    public async Task Pausing_edge_while_the_student_is_in_another_app_minimizes_every_edge_window()
+    {
+        // Word keeps the keyboard; the overlay has no window to take it over from.
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Windows.Windows.Add(OpenWindowFor("msedge", hwnd: 0x21));
+        fixtures.Enforcer.ForegroundOf[0x10] = 0x10;
+
+        fixtures.Clock.Advance(ExtensionGrace);
+
+        Assert.Equal(new[] { (nint)0x20, (nint)0x21 }, fixtures.Enforcer.Minimized);
+        Assert.Equal(IntPtr.Zero, Assert.Single(fixtures.Overlay.PausedShown).PausedWindow);
+    }
+
+    [Fact]
+    public async Task Pausing_edge_while_its_file_picker_has_the_foreground_hands_the_picker_over()
+    {
+        // The picker is where the keystrokes go; it goes down with the Edge window
+        // that owns it (#428).
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x700;
+
+        fixtures.Clock.Advance(ExtensionGrace);
+
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Equal((nint)0x700, Assert.Single(fixtures.Overlay.PausedShown).PausedWindow);
+    }
+
+    [Fact]
+    public async Task A_paused_edge_window_still_goes_down_when_the_overlay_cannot_come_up()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
+        fixtures.Overlay.ShowThrows = new InvalidOperationException("no overlay");
+
+        fixtures.Clock.Advance(ExtensionGrace);
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
+
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        Assert.Equal(new[] { (nint)0x20, (nint)0x20 }, fixtures.Enforcer.Minimized);
+    }
+
+    [Fact]
+    public async Task Paused_edge_goes_to_the_overlay_on_every_foreground_and_is_reported_as_blocked()
     {
         var (_, fixtures, sessionId) = await JoinThenSwitchExtensionOffAsync();
         fixtures.Clock.Advance(ExtensionGrace);
@@ -512,11 +592,15 @@ public class FocusSessionControllerTests
         fixtures.Clock.Advance(TimeSpan.FromMilliseconds(100));
         fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
 
-        // Minimized every time, without handing focus to Word: the overlay must
-        // stay up to say why Edge went away and how to get it back.
-        Assert.Equal(new[] { (nint)0x20, (nint)0x20, (nint)0x20 }, fixtures.Enforcer.Minimized);
+        // Handed to the overlay every time, without handing focus to Word: the
+        // overlay must stay up to say why Edge went away and how to get it back,
+        // and takes the keyboard over from Edge (#450). Out of the foreground when
+        // the pause came, the window was minimized then.
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
         Assert.Empty(fixtures.Enforcer.Blocked);
-        Assert.Equal(3, fixtures.Overlay.PausedShown.Count);
+        Assert.Equal(
+            new[] { IntPtr.Zero, (nint)0x20, (nint)0x20 },
+            fixtures.Overlay.PausedShown.Select(s => s.PausedWindow).ToArray());
         var reported = Assert.Single(fixtures.Reporter.Reports);
         Assert.Equal(sessionId, reported.SessionId);
         Assert.Equal("msedge", reported.Change.App.ProcessName);
@@ -592,13 +676,17 @@ public class FocusSessionControllerTests
 
         // Edge may come forward so the student can reach edge://extensions.
         fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
         Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
         Assert.Contains((nint)0x20, fixtures.Enforcer.Remembered);
 
-        // They didn't switch it on in time: the pause comes back on screen.
+        // They didn't switch it on in time: the pause comes back on screen, and the
+        // overlay takes the keyboard over from the Edge window they are in (#450).
         fixtures.Clock.Advance(ExtensionRepair);
-        Assert.Equal(new[] { (nint)0x20, (nint)0x20 }, fixtures.Enforcer.Minimized);
-        Assert.Equal(2, fixtures.Overlay.PausedShown.Count);
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
+        Assert.Equal(
+            new[] { IntPtr.Zero, (nint)0x20 },
+            fixtures.Overlay.PausedShown.Select(s => s.PausedWindow).ToArray());
     }
 
     [Fact]
@@ -611,6 +699,121 @@ public class FocusSessionControllerTests
 
         var (withoutGuard, _) = BuildController();
         Assert.False(withoutGuard.TurnExtensionBackOn());
+    }
+
+    // --- #452: a paused Edge window is no fallback after a block ---------------
+
+    [Fact]
+    public async Task Blocking_an_app_while_edge_is_paused_never_falls_back_to_the_paused_edge_window()
+    {
+        // The student was in Edge when they switched the extension off, so its
+        // window is the one a block falls back to. Restored to fall back to, it came
+        // back on screen and took the foreground until its own events paused it
+        // again: Edge flashed up, and took what the student typed meanwhile.
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Enforcer.BlockRestoresFallback = true;
+
+        fixtures.Watcher.Raise(ForegroundFor("spotify", hwnd: 0x40));
+
+        Assert.Empty(fixtures.Enforcer.Blocked);
+        // The paused-browser overlay takes the blocked app down and the keyboard
+        // over from it, and still leaves the paused Edge out of the way back.
+        Assert.Equal(
+            new[] { (nint)0x20, (nint)0x40 },
+            fixtures.Overlay.PausedShown.Select(s => s.PausedWindow).ToArray());
+        Assert.Equal(new[] { "winword" }, fixtures.Overlay.PausedShown[^1].Rules.Select(r => r.Value).ToArray());
+        Assert.Empty(fixtures.Overlay.Shown);
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        var reported = fixtures.Reporter.Reports[^1];
+        Assert.Equal("spotify", reported.Change.App.ProcessName);
+        Assert.True(reported.Blocked);
+    }
+
+    [Fact]
+    public async Task A_taskbar_click_after_edge_leaves_edge_the_fallback_which_a_block_skips_while_edge_is_paused()
+    {
+        // The taskbar is no window to fall back to (#437), so Edge stays the
+        // fallback; the pause comes while the student is on the taskbar, and they
+        // open an off-list app from it.
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync(
+            apps: EdgeAndWord.Append(new AllowedAppDto("ProcessName", "explorer")).ToArray());
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        fixtures.Enforcer.NoFallback.Add(0x5);
+        fixtures.Watcher.Raise(ForegroundFor("explorer", hwnd: 0x5));
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Enforcer.BlockRestoresFallback = true;
+
+        fixtures.Watcher.Raise(ForegroundFor("spotify", hwnd: 0x40));
+
+        Assert.Empty(fixtures.Enforcer.Blocked);
+        Assert.Equal((nint)0x40, fixtures.Overlay.PausedShown[^1].PausedWindow);
+        Assert.Empty(fixtures.Overlay.Shown);
+    }
+
+    [Fact]
+    public async Task Blocking_an_app_while_edge_is_paused_falls_back_to_an_allowed_app_used_since()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        fixtures.Watcher.Raise(ForegroundFor("winword", hwnd: 0x10));
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Enforcer.BlockRestoresFallback = true;
+        var pausedShown = fixtures.Overlay.PausedShown.Count;
+
+        fixtures.Watcher.Raise(ForegroundFor("spotify", hwnd: 0x40));
+
+        Assert.Equal(new[] { (nint)0x40 }, fixtures.Enforcer.Blocked);
+        Assert.Equal(pausedShown, fixtures.Overlay.PausedShown.Count);
+        Assert.Empty(fixtures.Overlay.Shown);
+    }
+
+    [Fact]
+    public async Task Edge_is_a_fallback_again_once_the_extension_reconnects()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Enforcer.BlockRestoresFallback = true;
+
+        fixtures.Transport.RaiseConnected();
+        fixtures.Watcher.Raise(ForegroundFor("spotify", hwnd: 0x40));
+
+        Assert.Equal(new[] { (nint)0x40 }, fixtures.Enforcer.Blocked);
+        Assert.Single(fixtures.Overlay.PausedShown); // the pause's own
+        Assert.Empty(fixtures.Overlay.Shown);
+    }
+
+    [Fact]
+    public async Task With_nothing_to_fall_back_to_while_edge_is_paused_a_block_brings_up_the_paused_browser_overlay()
+    {
+        // The blocked-app overlay would offer the paused Edge as a way back and
+        // drop the explanation of the pause and the way to end it.
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Clock.Advance(ExtensionGrace);
+
+        fixtures.Watcher.Raise(ForegroundFor("spotify", hwnd: 0x40));
+
+        Assert.Equal(new[] { (nint)0x40 }, fixtures.Enforcer.Blocked);
+        var shown = fixtures.Overlay.PausedShown[^1];
+        Assert.Equal((nint)0x40, shown.PausedWindow);
+        Assert.Equal(new[] { "winword" }, shown.Rules.Select(r => r.Value).ToArray());
+        Assert.Empty(fixtures.Overlay.Shown);
+    }
+
+    [Fact]
+    public async Task An_app_blocked_while_edge_is_paused_still_goes_down_when_the_overlay_cannot_come_up()
+    {
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Overlay.ShowThrows = new InvalidOperationException("no overlay");
+
+        fixtures.Watcher.Raise(ForegroundFor("spotify", hwnd: 0x40));
+
+        Assert.Equal((nint)0x40, fixtures.Enforcer.Minimized[^1]);
     }
 
     // --- #428: a dialog another process shows for an app is judged as that app ---
@@ -747,11 +950,14 @@ public class FocusSessionControllerTests
 
         fixtures.Watcher.Raise(PickerFor(hwnd: 0x700, ownerProcess: "msedge", ownerHwnd: 0x20));
 
-        // The pause minimized Edge's window; the picker that came forward goes down too.
-        Assert.Equal(new[] { (nint)0x20, (nint)0x700 }, fixtures.Enforcer.Minimized);
+        // The pause minimized Edge's window; the picker that came forward goes to
+        // the overlay too, which takes it down and the keyboard over from it (#450).
+        Assert.Equal(new[] { (nint)0x20 }, fixtures.Enforcer.Minimized);
         Assert.Empty(fixtures.Enforcer.Blocked);
         Assert.DoesNotContain((nint)0x700, fixtures.Enforcer.Remembered);
-        Assert.Equal(2, fixtures.Overlay.PausedShown.Count);
+        Assert.Equal(
+            new[] { IntPtr.Zero, (nint)0x700 },
+            fixtures.Overlay.PausedShown.Select(s => s.PausedWindow).ToArray());
         var reported = Assert.Single(fixtures.Reporter.Reports);
         Assert.Equal(sessionId, reported.SessionId);
         Assert.Equal("msedge", reported.Change.OwningApp.ProcessName);
@@ -936,13 +1142,32 @@ public class FocusSessionControllerTests
         /// "no fallback" — which is what should trigger the overlay.
         /// </summary>
         public bool BlockRestoresFallback { get; set; }
-        public void RememberAllowed(nint windowHandle) => Remembered.Add(windowHandle);
+        /// <summary>
+        /// Windows <see cref="RememberAllowed"/> turns down as a fallback, as the real
+        /// enforcer does with explorer's taskbar (#437).
+        /// </summary>
+        public HashSet<nint> NoFallback { get; } = new();
+        public bool RememberAllowed(nint windowHandle)
+        {
+            Remembered.Add(windowHandle);
+            return !NoFallback.Contains(windowHandle);
+        }
         public void Minimize(nint windowHandle) => Minimized.Add(windowHandle);
         public bool Block(nint offendingWindowHandle)
         {
             Blocked.Add(offendingWindowHandle);
             return BlockRestoresFallback;
         }
+        public Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle) =>
+            Task.FromResult(true);
+        /// <summary>
+        /// The foreground window per app window (#450): the window itself, or a
+        /// dialog it owns. Nothing has the foreground by default.
+        /// </summary>
+        public Dictionary<nint, nint> ForegroundOf { get; } = new();
+        public nint ForegroundWindowOf(nint windowHandle) =>
+            ForegroundOf.TryGetValue(windowHandle, out var foreground) ? foreground : IntPtr.Zero;
+        public void BringForward(nint windowHandle) { }
         public void Reset() => ResetCount++;
     }
 
@@ -954,14 +1179,25 @@ public class FocusSessionControllerTests
 
     private sealed class RecordingOverlay : IFocusOverlay
     {
-        public List<(IReadOnlyList<AllowedAppRule> Rules, string? BlockedAppName)> Shown { get; } = new();
-        public List<(IReadOnlyList<AllowedAppRule> Rules, BrowserPausedPrompt Prompt)> PausedShown { get; } = new();
+        public List<(IReadOnlyList<AllowedAppRule> Rules, string? BlockedAppName, nint BlockedWindow)> Shown { get; } = new();
+        /// <summary>
+        /// When set, <see cref="Show"/> and <see cref="ShowBrowserPaused"/> throw it,
+        /// as an overlay that cannot come up.
+        /// </summary>
+        public Exception? ShowThrows { get; set; }
+        public List<(IReadOnlyList<AllowedAppRule> Rules, BrowserPausedPrompt Prompt, nint PausedWindow)> PausedShown { get; } = new();
         public int HideCount { get; private set; }
         public int CloseCount { get; private set; }
-        public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName)
-            => Shown.Add((allowedRules, blockedAppName));
-        public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
-            => PausedShown.Add((allowedRules, prompt));
+        public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle)
+        {
+            if (ShowThrows is { } ex) throw ex;
+            Shown.Add((allowedRules, blockedAppName, blockedWindowHandle));
+        }
+        public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle)
+        {
+            if (ShowThrows is { } ex) throw ex;
+            PausedShown.Add((allowedRules, prompt, pausedWindowHandle));
+        }
         public void Hide() => HideCount++;
         public void Close() => CloseCount++;
     }

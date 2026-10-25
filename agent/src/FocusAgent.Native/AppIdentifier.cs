@@ -11,6 +11,17 @@ namespace FocusAgent.Native;
 public sealed class AppIdentifier : IAppIdentifier
 {
     private readonly ConcurrentDictionary<int, AppInfo> _cache = new();
+    private readonly IFocusEnforcer _enforcer;
+
+    /// <param name="enforcer">
+    /// Brings a running app's window forward for <see cref="LaunchOrActivate"/>
+    /// (#453): the agent's own enforcer, or one of this identifier's own when none
+    /// is given (the agent's self-test modes).
+    /// </param>
+    public AppIdentifier(IFocusEnforcer? enforcer = null)
+    {
+        _enforcer = enforcer ?? new FocusEnforcer();
+    }
 
     public AppInfo? Identify(nint windowHandle, int processId)
     {
@@ -53,7 +64,7 @@ public sealed class AppIdentifier : IAppIdentifier
         }
     }
 
-    private static bool ActivateByPath(string exePath)
+    private bool ActivateByPath(string exePath)
     {
         var normalized = TryNormalizePath(exePath);
         if (normalized is null) return false;
@@ -73,7 +84,7 @@ public sealed class AppIdentifier : IAppIdentifier
         return false;
     }
 
-    private static bool ActivateByProcessName(string name)
+    private bool ActivateByProcessName(string name)
     {
         var trimmed = name.Trim();
         if (trimmed.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
@@ -95,15 +106,18 @@ public sealed class AppIdentifier : IAppIdentifier
         return false;
     }
 
-    private static bool TryActivateMainWindow(Process proc)
+    private bool TryActivateMainWindow(Process proc)
     {
         nint hwnd;
         try { hwnd = proc.MainWindowHandle; } catch { return false; }
         if (hwnd == IntPtr.Zero) return false;
         try
         {
-            NativeMethods.ShowWindow(hwnd, NativeMethods.SW_RESTORE);
-            NativeMethods.SetForegroundWindow(hwnd);
+            // Not with a ShowWindow of its own: the overlay calls this on its UI
+            // thread, and a ShowWindow on an app that is not responding held that
+            // thread up, and every foreground change behind it, until the app
+            // responded (#453). The enforcer restores it from a thread of its own.
+            _enforcer.BringForward(hwnd);
             return true;
         }
         catch

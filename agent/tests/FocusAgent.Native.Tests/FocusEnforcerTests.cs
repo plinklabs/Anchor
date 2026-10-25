@@ -111,4 +111,63 @@ public class FocusEnforcerTests
         Assert.Equal(FocusEnforcer.FallbackPlan.None, FocusEnforcer.PlanFallback(
             sameAppAsBlocked: true, visible: true, minimized: false));
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_blocked_window_on_screen_hands_the_overlay_the_foreground_by_minimizing_itself(bool hasForeground)
+    {
+        // It hands the foreground on as it goes down (#441).
+        Assert.Equal(FocusEnforcer.HandOverPlan.Minimize, FocusEnforcer.PlanHandOver(
+            minimized: false, hasForeground: hasForeground, isAppWindow: true));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_minimized_window_without_the_foreground_is_left_as_it_is(bool isAppWindow)
+    {
+        // It has nothing to hand on, and putting the overlay below it, at the bottom
+        // of the Z-order, would lose the overlay the foreground.
+        Assert.Equal(FocusEnforcer.HandOverPlan.AlreadyDown, FocusEnforcer.PlanHandOver(
+            minimized: true, hasForeground: false, isAppWindow: isAppWindow));
+    }
+
+    [Fact]
+    public void A_minimized_window_that_has_the_foreground_is_restored_to_hand_it_over()
+    {
+        // Minimizing it again hands nothing on, so it would keep the keyboard: the
+        // first step of a click on its taskbar button activates it while minimized.
+        Assert.Equal(FocusEnforcer.HandOverPlan.RestoreFirst, FocusEnforcer.PlanHandOver(
+            minimized: true, hasForeground: true, isAppWindow: true));
+    }
+
+    [Fact]
+    public void A_dialog_is_never_restored_to_hand_it_over()
+    {
+        // A dialog goes down with the window that owns it (#428).
+        Assert.Equal(FocusEnforcer.HandOverPlan.Minimize, FocusEnforcer.PlanHandOver(
+            minimized: true, hasForeground: true, isAppWindow: false));
+    }
+
+    [Fact]
+    public void A_paused_window_in_the_foreground_is_the_window_the_overlay_takes_over_from()
+    {
+        // #450: the paused browser window that has the keyboard goes to the overlay.
+        Assert.True(FocusEnforcer.IsWindowOrItsDialog(window: 0x20, windowsAppWindow: 0x20, appWindow: 0x20));
+    }
+
+    [Fact]
+    public void A_dialog_of_a_paused_window_in_the_foreground_is_the_window_the_overlay_takes_over_from()
+    {
+        // The file picker of a paused Edge window has the keyboard: it goes to the
+        // overlay, and down with the Edge window that owns it (#428).
+        Assert.True(FocusEnforcer.IsWindowOrItsDialog(window: 0x700, windowsAppWindow: 0x20, appWindow: 0x20));
+    }
+
+    [Fact]
+    public void Another_apps_window_in_the_foreground_leaves_a_paused_window_to_be_minimized()
+    {
+        Assert.False(FocusEnforcer.IsWindowOrItsDialog(window: 0x10, windowsAppWindow: 0x10, appWindow: 0x20));
+    }
 }

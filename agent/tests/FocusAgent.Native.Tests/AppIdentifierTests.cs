@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.Versioning;
 using FocusAgent.Core.Focus;
 using FocusAgent.Native;
+using FocusAgent.Native.Win32;
 
 namespace FocusAgent.Native.Tests;
 
@@ -89,6 +90,26 @@ public class AppIdentifierTests
     }
 
     [Fact]
+    public void LaunchOrActivate_brings_a_running_apps_window_forward_through_the_enforcer()
+    {
+        // The overlay calls this on its UI thread when the student picks an allowed
+        // app. A ShowWindow of its own on an app that is not responding held that
+        // thread up, and every foreground change behind it, until the app responded
+        // (#453): the enforcer restores the window from a thread of its own.
+        using var window = TestWindow.Open("Anchor test allowed app");
+        using var current = Process.GetCurrentProcess();
+        var enforcer = new RecordingEnforcer();
+        var identifier = new AppIdentifier(enforcer);
+        var rule = new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = current.ProcessName };
+
+        Assert.True(identifier.LaunchOrActivate(rule));
+
+        var broughtForward = Assert.Single(enforcer.BroughtForward);
+        NativeMethods.GetWindowThreadProcessId(broughtForward, out var pid);
+        Assert.Equal((uint)current.Id, pid);
+    }
+
+    [Fact]
     public void LaunchOrActivate_unknown_process_name_returns_false()
     {
         var identifier = new AppIdentifier();
@@ -99,5 +120,18 @@ public class AppIdentifierTests
         };
 
         Assert.False(identifier.LaunchOrActivate(rule));
+    }
+
+    /// <summary>Records the windows it is asked to bring forward, and touches none.</summary>
+    private sealed class RecordingEnforcer : IFocusEnforcer
+    {
+        public List<nint> BroughtForward { get; } = new();
+        public void BringForward(nint windowHandle) => BroughtForward.Add(windowHandle);
+        public bool RememberAllowed(nint windowHandle) => true;
+        public void Minimize(nint windowHandle) { }
+        public bool Block(nint offendingWindowHandle) => false;
+        public Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle) => Task.FromResult(false);
+        public nint ForegroundWindowOf(nint windowHandle) => IntPtr.Zero;
+        public void Reset() { }
     }
 }
