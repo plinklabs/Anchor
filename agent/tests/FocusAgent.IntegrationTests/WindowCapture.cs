@@ -143,6 +143,15 @@ internal static class WindowCapture
     public static void MinimizeWindow(IntPtr hwnd) => ShowWindow(hwnd, SW_MINIMIZE);
 
     /// <summary>
+    /// Minimize <paramref name="hwnd"/> without activating another window. Once the
+    /// test process has sent input (a spec that types, #441), Windows lets it set
+    /// the foreground, and <see cref="MinimizeWindow"/> then hands the foreground to
+    /// whatever window is next in the Z-order: on a developer's desktop an allowed
+    /// app of their own, which the agent takes as the student's app.
+    /// </summary>
+    public static void MinimizeWithoutActivating(IntPtr hwnd) => ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+
+    /// <summary>
     /// Restore <paramref name="hwnd"/> from minimized without activating it. Like
     /// <see cref="RestoreWindow"/> it raises EVENT_SYSTEM_MINIMIZEEND, so the agent
     /// judges the window, but the foreground stays where it was (#437).
@@ -179,28 +188,9 @@ internal static class WindowCapture
     /// </summary>
     public static bool BringToForeground(IntPtr hwnd)
     {
-        // AttachThreadInput needs a message queue on the calling thread, and a
-        // test's thread-pool thread may not have one yet: PeekMessage creates it.
-        PeekMessageW(out _, IntPtr.Zero, 0, 0, PM_NOREMOVE);
         for (var attempt = 0; attempt < 3; attempt++)
         {
-            keybd_event(VK_NONAME, 0, 0, UIntPtr.Zero);
-            keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-            var current = GetCurrentThreadId();
-            var foreground = GetForegroundWindow();
-            var foregroundThread = foreground == IntPtr.Zero ? 0u : GetWindowThreadProcessId(foreground, out _);
-            var attached = false;
-            try
-            {
-                if (foregroundThread != 0 && foregroundThread != current)
-                    attached = AttachThreadInput(current, foregroundThread, true);
-                SetForegroundWindow(hwnd);
-            }
-            finally
-            {
-                if (attached)
-                    AttachThreadInput(current, foregroundThread, false);
-            }
+            ActivateOnce(hwnd);
 
             var deadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(500);
             while (DateTime.UtcNow < deadline)
@@ -210,6 +200,134 @@ internal static class WindowCapture
             }
         }
         return GetForegroundWindow() == hwnd;
+    }
+
+    /// <summary>
+    /// One attempt of <see cref="BringToForeground"/>, without waiting for the
+    /// result or trying again: for a window the agent takes down the moment it
+    /// gets the foreground, where a second attempt would activate it again while
+    /// it is minimized (#441). Returns whether Windows accepted the request.
+    /// </summary>
+    public static bool ActivateOnce(IntPtr hwnd)
+    {
+        // AttachThreadInput needs a message queue on the calling thread, and a
+        // test's thread-pool thread may not have one yet: PeekMessage creates it.
+        PeekMessageW(out _, IntPtr.Zero, 0, 0, PM_NOREMOVE);
+        keybd_event(VK_NONAME, 0, 0, UIntPtr.Zero);
+        keybd_event(VK_NONAME, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        var current = GetCurrentThreadId();
+        var foreground = GetForegroundWindow();
+        var foregroundThread = foreground == IntPtr.Zero ? 0u : GetWindowThreadProcessId(foreground, out _);
+        var attached = false;
+        try
+        {
+            if (foregroundThread != 0 && foregroundThread != current)
+                attached = AttachThreadInput(current, foregroundThread, true);
+            return SetForegroundWindow(hwnd);
+        }
+        finally
+        {
+            if (attached)
+                AttachThreadInput(current, foregroundThread, false);
+        }
+    }
+
+    /// <summary>
+    /// Press and release the letter key <paramref name="letter"/> (A–Z), as the
+    /// student typing would: it goes to whichever window has the keyboard. A spec
+    /// checks that window first (<see cref="ProcessIdOf"/>) and only types into
+    /// its own windows or the agent's, never into an app of the person running it.
+    /// </summary>
+    public static void PressLetter(char letter)
+    {
+        if (letter is < 'A' or > 'Z')
+            throw new ArgumentOutOfRangeException(nameof(letter), letter, "Only the letter keys A-Z.");
+        keybd_event((byte)letter, 0, 0, UIntPtr.Zero);
+        keybd_event((byte)letter, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
+
+    /// <summary>
+    /// Listen for foreground changes and minimize/restore transitions on the
+    /// calling thread, which must pump messages (<see cref="PumpMessagesUntilQuit"/>)
+    /// for the callbacks to arrive. Dispose to stop.
+    /// </summary>
+    public static IDisposable HookForeground(Action<IntPtr, string> onEvent)
+    {
+        WinEventProc callback = (_, eventType, hwnd, idObject, idChild, _, _) =>
+        {
+            if (idObject != 0 || idChild != 0 || hwnd == IntPtr.Zero) return;
+            onEvent(hwnd, eventType switch
+            {
+                EVENT_SYSTEM_FOREGROUND => "foreground",
+                EVENT_SYSTEM_MINIMIZESTART => "minimized",
+                EVENT_SYSTEM_MINIMIZEEND => "restored",
+                _ => $"event 0x{eventType:X}",
+            });
+        };
+        var foreground = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, callback, 0, 0, 0);
+        var minimize = SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, IntPtr.Zero, callback, 0, 0, 0);
+        return new WinEventHooks(callback, foreground, minimize);
+    }
+
+    private sealed class WinEventHooks(WinEventProc callback, params IntPtr[] hooks) : IDisposable
+    {
+        // Held so the delegate outlives the native hooks that call it.
+        private readonly WinEventProc _callback = callback;
+
+        public void Dispose()
+        {
+            foreach (var hook in hooks)
+                if (hook != IntPtr.Zero) UnhookWinEvent(hook);
+            GC.KeepAlive(_callback);
+        }
+    }
+
+    /// <summary>The calling thread's native id, for <see cref="PostQuit"/>.</summary>
+    public static uint CurrentThreadId() => GetCurrentThreadId();
+
+    /// <summary>Pump the calling thread's messages until <see cref="PostQuit"/>.</summary>
+    public static void PumpMessagesUntilQuit()
+    {
+        while (GetMessageW(out var msg, IntPtr.Zero, 0, 0) > 0)
+            DispatchMessageW(ref msg);
+    }
+
+    /// <summary>End <see cref="PumpMessagesUntilQuit"/> on the thread <paramref name="threadId"/>.</summary>
+    public static void PostQuit(uint threadId) => PostThreadMessageW(threadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+
+    /// <summary>The id of the process that shows <paramref name="hwnd"/>, or 0.</summary>
+    public static int ProcessIdOf(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return 0;
+        GetWindowThreadProcessId(hwnd, out var pid);
+        return (int)pid;
+    }
+
+    /// <summary>
+    /// The visible WinUI window of <paramref name="pid"/> that covers its whole
+    /// monitor, or <see cref="IntPtr.Zero"/>: the agent's focus overlay, its only
+    /// full-screen surface (#103). Allows the couple of pixels of rounding the
+    /// overlay spec allows.
+    /// </summary>
+    public static IntPtr FindFullScreenWindow(int pid)
+    {
+        const int tolerancePx = 2;
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((hWnd, _) =>
+        {
+            GetWindowThreadProcessId(hWnd, out var windowPid);
+            if (windowPid != (uint)pid || !IsWindowVisible(hWnd)) return true;
+            if (!GetClassName(hWnd).StartsWith("WinUIDesktop", StringComparison.OrdinalIgnoreCase)) return true;
+            if (!GetWindowRect(hWnd, out var r)) return true;
+            var monitor = GetMonitorRectForWindow(hWnd);
+            if (Math.Abs(r.Left - monitor.Left) > tolerancePx || Math.Abs(r.Top - monitor.Top) > tolerancePx ||
+                Math.Abs(r.Right - r.Left - monitor.Width) > tolerancePx ||
+                Math.Abs(r.Bottom - r.Top - monitor.Height) > tolerancePx)
+                return true;
+            found = hWnd;
+            return false;
+        }, IntPtr.Zero);
+        return found;
     }
 
     /// <summary>
@@ -428,6 +546,7 @@ internal static class WindowCapture
             sb.Append("  hwnd=0x").Append(hWnd.ToInt64().ToString("X"))
               .Append(" rect=").Append(r.Left).Append(',').Append(r.Top)
               .Append(' ').Append(r.Right - r.Left).Append('x').Append(r.Bottom - r.Top)
+              .Append(IsWindowVisible(hWnd) ? " visible" : " hidden")
               .Append(" class=\"").Append(cls).Append("\"\n");
             return true;
         }, IntPtr.Zero);
@@ -441,6 +560,7 @@ internal static class WindowCapture
     private const int SW_MINIMIZE = 6;
     private const int SW_HIDE = 0;
     private const int SW_SHOWNOACTIVATE = 4;
+    private const int SW_SHOWMINNOACTIVE = 7;
     private const uint GW_OWNER = 4;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
@@ -556,6 +676,30 @@ internal static class WindowCapture
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PeekMessageW(out NativeMsg lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
+
+    private const uint WM_QUIT = 0x0012;
+    private const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    private const uint EVENT_SYSTEM_MINIMIZESTART = 0x0016;
+    private const uint EVENT_SYSTEM_MINIMIZEEND = 0x0017;
+
+    private delegate void WinEventProc(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmod, WinEventProc proc, uint idProcess, uint idThread, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnhookWinEvent(IntPtr hook);
+
+    [DllImport("user32.dll")]
+    private static extern int GetMessageW(out NativeMsg lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr DispatchMessageW(ref NativeMsg lpMsg);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostThreadMessageW(uint idThread, uint msg, IntPtr wParam, IntPtr lParam);
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);

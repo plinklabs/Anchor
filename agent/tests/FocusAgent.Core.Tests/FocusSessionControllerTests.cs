@@ -238,6 +238,25 @@ public class FocusSessionControllerTests
         // teacher-picked — flows through to the overlay's allowed-apps list.
         Assert.Equal(new[] { "winword" }, shown.Rules.Select(r => r.Value).ToArray());
         Assert.Equal(0, fixtures.Overlay.HideCount);
+        // #441: the overlay gets the blocked window to take the foreground over
+        // from, and the controller leaves the minimize to it: minimized from the
+        // agent, the window would keep what the student types.
+        Assert.Equal((nint)0x200, shown.BlockedWindow);
+        Assert.Empty(fixtures.Enforcer.Minimized);
+    }
+
+    [Fact]
+    public async Task Blocked_window_still_goes_down_when_the_overlay_cannot_come_up()
+    {
+        var fixtures = new Fixtures();
+        fixtures.Enforcer.BlockRestoresFallback = false;
+        fixtures.Overlay.ShowThrows = new InvalidOperationException("no overlay");
+        var (_, _) = BuildController(fixtures);
+        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        fixtures.Watcher.Raise(ForegroundFor("notepad", hwnd: 0x200));
+
+        Assert.Equal(new[] { (nint)0x200 }, fixtures.Enforcer.Minimized);
     }
 
     [Fact]
@@ -943,6 +962,8 @@ public class FocusSessionControllerTests
             Blocked.Add(offendingWindowHandle);
             return BlockRestoresFallback;
         }
+        public Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle) =>
+            Task.FromResult(true);
         public void Reset() => ResetCount++;
     }
 
@@ -954,12 +975,17 @@ public class FocusSessionControllerTests
 
     private sealed class RecordingOverlay : IFocusOverlay
     {
-        public List<(IReadOnlyList<AllowedAppRule> Rules, string? BlockedAppName)> Shown { get; } = new();
+        public List<(IReadOnlyList<AllowedAppRule> Rules, string? BlockedAppName, nint BlockedWindow)> Shown { get; } = new();
+        /// <summary>When set, <see cref="Show"/> throws it, as an overlay that cannot come up.</summary>
+        public Exception? ShowThrows { get; set; }
         public List<(IReadOnlyList<AllowedAppRule> Rules, BrowserPausedPrompt Prompt)> PausedShown { get; } = new();
         public int HideCount { get; private set; }
         public int CloseCount { get; private set; }
-        public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName)
-            => Shown.Add((allowedRules, blockedAppName));
+        public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle)
+        {
+            if (ShowThrows is { } ex) throw ex;
+            Shown.Add((allowedRules, blockedAppName, blockedWindowHandle));
+        }
         public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
             => PausedShown.Add((allowedRules, prompt));
         public void Hide() => HideCount++;

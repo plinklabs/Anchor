@@ -111,4 +111,42 @@ public class FocusEnforcerTests
         Assert.Equal(FocusEnforcer.FallbackPlan.None, FocusEnforcer.PlanFallback(
             sameAppAsBlocked: true, visible: true, minimized: false));
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_blocked_window_on_screen_hands_the_overlay_the_foreground_by_minimizing_itself(bool hasForeground)
+    {
+        // It hands the foreground on as it goes down (#441).
+        Assert.Equal(FocusEnforcer.HandOverPlan.Minimize, FocusEnforcer.PlanHandOver(
+            minimized: false, hasForeground: hasForeground, isAppWindow: true));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_minimized_window_without_the_foreground_is_left_as_it_is(bool isAppWindow)
+    {
+        // It has nothing to hand on, and putting the overlay below it, at the bottom
+        // of the Z-order, would lose the overlay the foreground.
+        Assert.Equal(FocusEnforcer.HandOverPlan.AlreadyDown, FocusEnforcer.PlanHandOver(
+            minimized: true, hasForeground: false, isAppWindow: isAppWindow));
+    }
+
+    [Fact]
+    public void A_minimized_window_that_has_the_foreground_is_restored_to_hand_it_over()
+    {
+        // Minimizing it again hands nothing on, so it would keep the keyboard: the
+        // first step of a click on its taskbar button activates it while minimized.
+        Assert.Equal(FocusEnforcer.HandOverPlan.RestoreFirst, FocusEnforcer.PlanHandOver(
+            minimized: true, hasForeground: true, isAppWindow: true));
+    }
+
+    [Fact]
+    public void A_dialog_is_never_restored_to_hand_it_over()
+    {
+        // A dialog goes down with the window that owns it (#428).
+        Assert.Equal(FocusEnforcer.HandOverPlan.Minimize, FocusEnforcer.PlanHandOver(
+            minimized: true, hasForeground: true, isAppWindow: false));
+    }
 }

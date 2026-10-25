@@ -22,6 +22,11 @@ namespace FocusAgent.IntegrationTests;
 /// state. Real foreground events on a headless desktop are the flaky part, so
 /// this runs in the non-blocking Visual lane, like <see cref="ReMinimizeOnRestoreTests"/>.
 ///
+/// With no allowed window to fall back to, the agent shows its focus overlay,
+/// which must get the keyboard (#441). That spec types after the block and counts
+/// what reaches the off-list window. It only ever types while the foreground
+/// window is the off-list window or the agent's, never into another app.
+///
 /// Note: like every spec that starts a session, this minimizes off-list windows
 /// on the live desktop while it runs.
 /// </summary>
@@ -52,7 +57,7 @@ public sealed class FocusFallbackTests
 
             // Notepad is minimized meanwhile, so whether the agent hands focus back
             // to it shows: it comes back up.
-            WindowCapture.MinimizeWindow(notepad);
+            WindowCapture.MinimizeWithoutActivating(notepad);
             Assert.True(await WaitUntilAsync(() => WindowCapture.IsIconic(notepad), TimeSpan.FromSeconds(3)),
                 "Notepad could not be minimized.");
 
@@ -125,6 +130,105 @@ public sealed class FocusFallbackTests
         });
     }
 
+    [Fact]
+    public async Task WithNothingToFallBackTo_TheOverlayGetsTheKeyboard_SoTypingNeverReachesTheBlockedApp()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
+        await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+
+        // No bundles, and the student has not used an allowed app yet: there is no
+        // window to hand focus back to, so a block shows the overlay.
+        var classId = await api.FindClassIdAsync();
+        var session = await api.StartSessionAsync(classId);
+        try
+        {
+            var joined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id && s.StartupSweep is not null, TimeSpan.FromSeconds(10));
+            Assert.True(
+                joined?.JoinedSessionId == session.Id && joined.StartupSweep is not null,
+                $"Agent did not join and sweep within 10s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
+
+            // The student opens an off-list app before any allowed one.
+            using var sampler = new ForegroundSampler(agent.Pid);
+            using var offList = await OffListWindow.OpenAsync("Anchor e2e off-list app", TimeSpan.FromSeconds(10));
+            sampler.OffList = offList.Handle;
+            await AssertTheOverlayHasTheKeyboardAsync(agent, offList, sampler, "opening the off-list app");
+
+            // Then they activate it again while it is minimized, the first thing a
+            // click on its taskbar button does.
+            await AssertTheOverlayHasTheKeyboardAsync(agent, offList, sampler, "activating the minimized off-list app");
+        }
+        finally
+        {
+            try { await api.EndSessionAsync(session.Id); } catch { /* best-effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Bring <paramref name="offList"/> to the foreground as the student would, then
+    /// type: after the block, the overlay must be on screen with the keyboard, and
+    /// not a single letter may reach the off-list app (#441).
+    /// </summary>
+    private static async Task AssertTheOverlayHasTheKeyboardAsync(
+        AgentProcess agent, OffListWindow offList, ForegroundSampler sampler, string step)
+    {
+        const int lettersTyped = 6;
+
+        sampler.Mark(step);
+        var activated = false;
+        for (var attempt = 0; attempt < 3 && !activated; attempt++)
+        {
+            activated = WindowCapture.ActivateOnce(offList.Handle);
+            if (!activated) await Task.Delay(200);
+        }
+        Assert.True(activated, $"Windows refused to give the off-list app the foreground ({step}).");
+
+        // The agent blocks it: the window goes down, and the overlay takes the
+        // foreground over from it. Minimized from the agent, the window kept the
+        // foreground instead, without the student seeing it.
+        await WaitUntilAsync(
+            () => WindowCapture.IsIconic(offList.Handle) && WindowCapture.ForegroundWindow() != offList.Handle,
+            TimeSpan.FromSeconds(2));
+        Assert.True(WindowCapture.IsIconic(offList.Handle), $"The agent did not block the off-list app ({step}).");
+        await Task.Delay(300);
+
+        var before = offList.KeystrokesReceived;
+        for (var i = 0; i < lettersTyped; i++)
+        {
+            // Only ever type into the off-list window or the agent's: anything else
+            // is an app of the person running the suite.
+            var foreground = WindowCapture.ForegroundWindow();
+            var pid = WindowCapture.ProcessIdOf(foreground);
+            Assert.True(
+                pid == agent.Pid || pid == Environment.ProcessId,
+                $"After {step} the keyboard went to {WindowCapture.GetProcessName(foreground)} " +
+                $"[{WindowCapture.GetClassName(foreground)}] instead of the overlay (#441). Stopped typing. " +
+                $"Foreground: {sampler.Describe()}");
+            WindowCapture.PressLetter((char)('A' + i));
+            await Task.Delay(100);
+        }
+        await Task.Delay(300);
+
+        var reached = offList.KeystrokesReceived - before;
+        Assert.True(
+            reached == 0,
+            $"{reached} of the {lettersTyped} letters typed after {step} reached the minimized off-list app, " +
+            $"which still has the foreground (#441). Foreground: {sampler.Describe()}");
+
+        // And the student sees why: the overlay is on screen, with the keyboard.
+        var overlay = WindowCapture.FindFullScreenWindow(agent.Pid);
+        Assert.True(
+            overlay != IntPtr.Zero,
+            $"The overlay was not on screen after {step}. The agent's windows:\n{WindowCapture.DescribeWindows(agent.Pid)}" +
+            $"Foreground: {sampler.Describe()}");
+        Assert.True(
+            WindowCapture.ForegroundWindow() == overlay,
+            $"After {step} the overlay is not the foreground window (foreground: " +
+            $"{WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())} " +
+            $"[{WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}]). Foreground: {sampler.Describe()}");
+    }
+
     /// <summary>
     /// One #437 scenario: a fresh Notepad and an off-list window on screen, a
     /// session joined with Notepad allowed, the off-list window minimized by the
@@ -169,7 +273,7 @@ public sealed class FocusFallbackTests
 
                 // The student works in Notepad: bring it back from minimized without
                 // activating it, so the agent judges it while the foreground stays put.
-                WindowCapture.MinimizeWindow(notepad);
+                WindowCapture.MinimizeWithoutActivating(notepad);
                 Assert.True(await WaitUntilAsync(() => WindowCapture.IsIconic(notepad), TimeSpan.FromSeconds(3)),
                     "Notepad could not be minimized.");
                 WindowCapture.RestoreWithoutActivating(notepad);
@@ -218,6 +322,68 @@ public sealed class FocusFallbackTests
         using var payload = JsonDocument.Parse(payloadJson);
         return payload.RootElement.TryGetProperty("processName", out var name) &&
                string.Equals(name.GetString(), processName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Every window that got the foreground while it runs, for failure messages:
+    /// where the foreground went after a block, and when. Listens on the same
+    /// foreground event the agent does, so a window that has it only briefly shows too.
+    /// </summary>
+    private sealed class ForegroundSampler : IDisposable
+    {
+        private readonly List<string> _changes = new();
+        private readonly Thread _thread;
+        private readonly int _agentPid;
+        private readonly Stopwatch _clock = Stopwatch.StartNew();
+        private readonly ManualResetEventSlim _ready = new();
+        private uint _threadId;
+
+        /// <summary>The off-list window, named as such in the description.</summary>
+        public IntPtr OffList { get; set; }
+
+        public ForegroundSampler(int agentPid)
+        {
+            _agentPid = agentPid;
+            _thread = new Thread(Run) { IsBackground = true, Name = "foreground-sampler" };
+            _thread.Start();
+            _ready.Wait(TimeSpan.FromSeconds(2));
+            Record(WindowCapture.ForegroundWindow(), "now");
+        }
+
+        private void Run()
+        {
+            _threadId = WindowCapture.CurrentThreadId();
+            using var hook = WindowCapture.HookForeground((hwnd, eventName) => Record(hwnd, eventName));
+            _ready.Set();
+            WindowCapture.PumpMessagesUntilQuit();
+        }
+
+        private void Record(IntPtr hwnd, string eventName)
+        {
+            var who = hwnd == OffList ? $"off-list app{(WindowCapture.IsIconic(OffList) ? " (minimized)" : "")}"
+                : WindowCapture.ProcessIdOf(hwnd) == _agentPid ? $"agent [{WindowCapture.GetClassName(hwnd)}]"
+                : $"{WindowCapture.GetProcessName(hwnd)} [{WindowCapture.GetClassName(hwnd)}]";
+            lock (_changes) _changes.Add($"{eventName} {who} @{_clock.ElapsedMilliseconds}ms");
+        }
+
+        /// <summary>Note where a step of the spec begins.</summary>
+        public void Mark(string step)
+        {
+            lock (_changes) _changes.Add($"[{step}] @{_clock.ElapsedMilliseconds}ms");
+        }
+
+        public string Describe()
+        {
+            lock (_changes)
+                return string.Join(" -> ", _changes);
+        }
+
+        public void Dispose()
+        {
+            WindowCapture.PostQuit(_threadId);
+            _thread.Join(TimeSpan.FromSeconds(1));
+            _ready.Dispose();
+        }
     }
 
     private static bool AllowsApp(StatusSnapshot status) =>

@@ -398,11 +398,18 @@ public sealed class FocusSessionController : IAsyncDisposable
                 var restored = _enforcer.Block(change.WindowHandle);
                 if (!restored)
                 {
+                    // #441: the overlay takes the window down itself and the
+                    // foreground over from it, so what the student types goes to
+                    // the overlay rather than to the minimized app.
                     _log.LogInformation(
                         "No allowed-window fallback after blocking {ProcessName}; surfacing overlay",
                         app.ProcessName);
-                    try { _overlay.Show(matcher.UserRules, app.ProcessName); }
-                    catch (Exception ex) { _log.LogWarning(ex, "Overlay.Show threw"); }
+                    try { _overlay.Show(matcher.UserRules, app.ProcessName, change.WindowHandle); }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Overlay.Show threw; minimizing {ProcessName} without it", app.ProcessName);
+                        _enforcer.Minimize(change.WindowHandle);
+                    }
                 }
             }
         }

@@ -662,7 +662,7 @@ public partial class App : Application
                     TimeSpan.FromSeconds(60),
                     () => false));
         else
-            overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName);
+            overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName, blockedWindowHandle: IntPtr.Zero);
 
         // Deterministic show -> close -> linger cycle so both consumers can observe
         // it without a real backend or off-list app:

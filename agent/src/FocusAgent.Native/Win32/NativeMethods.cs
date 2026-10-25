@@ -58,6 +58,9 @@ internal static class NativeMethods
     public static extern bool SetForegroundWindow(nint hWnd);
 
     [DllImport("user32.dll")]
+    public static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(nint hWnd, out uint lpdwProcessId);
 
     [DllImport("user32.dll")]
@@ -121,6 +124,7 @@ internal static class NativeMethods
     public static extern nint GetWindow(nint hWnd, uint uCmd);
 
     public const uint GW_OWNER = 4;
+    public const uint GW_HWNDNEXT = 2;
 
     [DllImport("user32.dll")]
     public static extern nint GetAncestor(nint hWnd, uint gaFlags);

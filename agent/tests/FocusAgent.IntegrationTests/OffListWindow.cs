@@ -12,6 +12,9 @@ namespace FocusAgent.IntegrationTests;
 /// so the agent can minimize it and the spec can restore it, like any app. It
 /// can stop handling messages for a while (<see cref="Freeze"/>,
 /// <see cref="HangWhenMinimized"/>), as an app that is not responding (#440).
+/// And it counts the keystrokes it receives (#441), so a spec can tell whether
+/// what the student types reaches the blocked app, which is the only window a
+/// spec may type into besides the agent's own.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class OffListWindow : IDisposable
@@ -32,6 +35,14 @@ internal sealed class OffListWindow : IDisposable
     private readonly ManualResetEventSlim _thaw = new();
     private TimeSpan _hangFor;
     private int _hangWhenMinimized;
+    private int _keystrokes;
+
+    /// <summary>
+    /// Key presses the window has received: <c>WM_KEYDOWN</c>, and
+    /// <c>WM_SYSKEYDOWN</c>, which is how a minimized window that still has the
+    /// foreground gets them.
+    /// </summary>
+    public int KeystrokesReceived => Volatile.Read(ref _keystrokes);
 
     private OffListWindow(string title, bool minimized)
     {
@@ -176,6 +187,8 @@ internal sealed class OffListWindow : IDisposable
 
     private static IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        if (msg is WmKeyDown or WmSysKeyDown && Open.TryGetValue(hwnd, out var window))
+            Interlocked.Increment(ref window._keystrokes);
         // Handled here rather than in the pump: a message loop Windows runs inside
         // the window procedure, while the window is minimized or restored, may be
         // the one that takes it from the queue.
@@ -209,6 +222,8 @@ internal sealed class OffListWindow : IDisposable
     private const uint WmDestroy = 0x0002;
     private const uint WmSize = 0x0005;
     private const uint WmClose = 0x0010;
+    private const uint WmKeyDown = 0x0100;
+    private const uint WmSysKeyDown = 0x0104;
     private const uint WmAppHang = 0x8000 + 1;
     private static readonly IntPtr SizeMinimized = new(1);
     private const uint WsOverlappedWindow = 0x00CF0000;

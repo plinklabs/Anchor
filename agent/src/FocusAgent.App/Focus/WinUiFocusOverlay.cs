@@ -15,32 +15,40 @@ namespace FocusAgent.App.Focus;
 /// WinUI 3 host of the focus-enforcement overlay (issue #33). Lives across
 /// the session's lifetime — Show/Hide flip <c>HWND_TOPMOST</c> via the
 /// native helper; Close clears <c>HWND_NOTOPMOST</c> before tearing the
-/// window down so the OS doesn't leave a phantom topmost handle.
+/// window down so the OS doesn't leave a phantom topmost handle. Shown for a
+/// blocked app, it takes the app's window down and the foreground over from it
+/// through the enforcer (#441), so the student's keystrokes come to the overlay.
 /// </summary>
 [SupportedOSPlatform("windows10.0.17763.0")]
 public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
 {
     private readonly DispatcherQueue _dispatcher;
     private readonly IAppIdentifier _launcher;
+    private readonly IFocusEnforcer? _enforcer;
     private readonly ILogger<WinUiFocusOverlay> _log;
     private readonly object _gate = new();
     private FocusOverlayWindow? _window;
     private bool _disposed;
+    // Bumped on the UI thread by every show, hide and close: a hand-over that
+    // finishes after a newer one leaves the overlay to that newer one.
+    private int _generation;
 
     public WinUiFocusOverlay(
         DispatcherQueue dispatcher,
         IAppIdentifier launcher,
-        ILogger<WinUiFocusOverlay>? log = null)
+        ILogger<WinUiFocusOverlay>? log = null,
+        IFocusEnforcer? enforcer = null)
     {
         _dispatcher = dispatcher;
         _launcher = launcher;
         _log = log ?? NullLogger<WinUiFocusOverlay>.Instance;
+        _enforcer = enforcer;
     }
 
-    public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName)
+    public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle)
     {
-        if (_disposed) return;
-        _dispatcher.TryEnqueue(() => ShowOnUiThread(allowedRules, blockedAppName));
+        if (_disposed || !_dispatcher.TryEnqueue(() => _ = ShowOnUiThreadAsync(allowedRules, blockedAppName, blockedWindowHandle)))
+            TakeDownWithoutOverlay(blockedWindowHandle);
     }
 
     public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
@@ -68,8 +76,10 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         try { CloseOnUiThread(); } catch { /* shutdown best-effort */ }
     }
 
-    private void ShowOnUiThread(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName)
+    private async Task ShowOnUiThreadAsync(
+        IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle)
     {
+        var generation = ++_generation;
         try
         {
             FocusOverlayWindow window;
@@ -80,13 +90,65 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
 
             window.UpdateContent(allowedRules, blockedAppName);
             ApplyTopmostAndPosition(window);
+            if (blockedWindowHandle != IntPtr.Zero && _enforcer is not null)
+            {
+                // The agent may not take the foreground, so the overlay is put
+                // below the blocked window, which minimizes itself and so hands the
+                // foreground to it (#441). It must be on screen for that.
+                var hwnd = WindowNative.GetWindowHandle(window);
+                AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd)).Show(activateWindow: false);
+                var tookOver = await _enforcer.HandOverAsync(blockedWindowHandle, hwnd);
+                if (!_dispatcher.HasThreadAccess)
+                {
+                    _dispatcher.TryEnqueue(() => FinishShow(window, generation, tookOver, allowedRules.Count));
+                    return;
+                }
+                FinishShow(window, generation, tookOver, allowedRules.Count);
+                return;
+            }
             window.Activate();
             _log.LogInformation("Focus overlay shown with {RuleCount} allowed-app entries", allowedRules.Count);
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Focus overlay Show failed");
+            TakeDownWithoutOverlay(blockedWindowHandle);
         }
+    }
+
+    /// <summary>
+    /// After the hand-over: back on top of everything, unless a newer show, a hide
+    /// or a close came meanwhile.
+    /// </summary>
+    private void FinishShow(FocusOverlayWindow window, int generation, bool tookOver, int ruleCount)
+    {
+        if (generation != _generation)
+            return;
+        try
+        {
+            SetTopmost(WindowNative.GetWindowHandle(window));
+            window.Activate();
+            if (tookOver)
+                _log.LogInformation(
+                    "Focus overlay shown with {RuleCount} allowed-app entries; it took the keyboard over from the blocked app",
+                    ruleCount);
+            else
+                _log.LogWarning(
+                    "Focus overlay shown with {RuleCount} allowed-app entries, but it did not get the keyboard from the blocked app",
+                    ruleCount);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Focus overlay Show failed after the hand-over");
+        }
+    }
+
+    /// <summary>The blocked window still goes down when the overlay cannot come up.</summary>
+    private void TakeDownWithoutOverlay(nint blockedWindowHandle)
+    {
+        if (blockedWindowHandle == IntPtr.Zero || _enforcer is null) return;
+        try { _enforcer.Minimize(blockedWindowHandle); }
+        catch (Exception ex) { _log.LogWarning(ex, "Minimizing the blocked window without the overlay failed"); }
     }
 
     private void ShowBrowserPausedOnUiThread(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
@@ -114,6 +176,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
 
     private void HideOnUiThread()
     {
+        _generation++;
         try
         {
             FocusOverlayWindow? window;
@@ -133,6 +196,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
 
     private void CloseOnUiThread()
     {
+        _generation++;
         FocusOverlayWindow? window;
         lock (_gate)
         {
@@ -214,12 +278,15 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         // window, but #33 makes the explicit HWND_TOPMOST call the contract (and
         // CloseOnUiThread clears it on teardown), so keep it regardless of how
         // the presenter maps internally.
+        SetTopmost(hwnd);
+    }
+
+    private static void SetTopmost(nint hwnd) =>
         NativeMethods.SetWindowPos(
             hwnd,
             NativeMethods.HWND_TOPMOST,
             0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
-    }
 
     private static void ClearTopmost(nint hwnd)
     {
