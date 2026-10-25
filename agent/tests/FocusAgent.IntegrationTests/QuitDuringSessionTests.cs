@@ -126,12 +126,10 @@ public sealed class QuitDuringSessionTests
             // auto-join and a long join confirmation this time, so within the wait
             // below only that silent rejoin can put it back in the session.
             await agent.DisposeAsync();
-            agent = await AgentProcess.LaunchAfterKillAsync(
-                () => AgentProcess.Launch(
-                    _backend.Url,
-                    TestConfig.StudentOid,
-                    extraEnvironment: new Dictionary<string, string> { ["Realtime__JoinConfirmationDuration"] = "00:01:00" }),
-                TimeSpan.FromSeconds(15));
+            agent = AgentProcess.Launch(
+                _backend.Url,
+                TestConfig.StudentOid,
+                extraEnvironment: new Dictionary<string, string> { ["Realtime__JoinConfirmationDuration"] = "00:01:00" });
             await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
             var rejoined = await agent.WaitForAsync(
                 s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
@@ -144,8 +142,7 @@ public sealed class QuitDuringSessionTests
         }
         finally
         {
-            // End the session before the agent goes, as the other specs do, so the
-            // next spec's agent doesn't start right after one killed in a session.
+            // End the session before the agent goes, as the other specs do.
             try
             {
                 if (sessionId is Guid id) await api.EndSessionAsync(id);

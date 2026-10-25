@@ -178,43 +178,6 @@ internal sealed class AgentProcess : IAsyncDisposable
         return new AgentProcess(process, statusPort, psi.ArgumentList.ToList()) { StatusPort = statusPort };
     }
 
-    /// <summary>
-    /// Launch an agent right after killing one that was in a session, as a student
-    /// restarting it after ending it from Task Manager (#445). The killed agent's
-    /// single-instance key can outlive it by a moment, and a launch that finds it
-    /// exits at once with code 0 instead of starting (seen about one time in five
-    /// with no pause in between). Launches again until one answers on /status, so a
-    /// spec doesn't fail on that moment; any other exit, or still exiting at once
-    /// after <paramref name="timeout"/>, throws.
-    /// </summary>
-    public static async Task<AgentProcess> LaunchAfterKillAsync(Func<AgentProcess> launch, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (true)
-        {
-            var agent = launch();
-            while (!agent.HasExited && DateTime.UtcNow < deadline)
-            {
-                if (await agent.TryGetStatusAsync() is not null) return agent;
-                await Task.Delay(100);
-            }
-            // Still starting at the deadline: the caller's own wait reports on it.
-            if (!agent.HasExited) return agent;
-
-            var exitCode = agent.ExitCode;
-            await agent.DisposeAsync();
-            if (exitCode != 0 || DateTime.UtcNow >= deadline)
-            {
-                throw new InvalidOperationException(
-                    $"The relaunched agent exited at once with code {exitCode}" +
-                    (exitCode == 0
-                        ? $"; the killed agent's single-instance key was still held after {timeout.TotalSeconds:N0}s."
-                        : "."));
-            }
-            await Task.Delay(200);
-        }
-    }
-
     public async Task<StatusSnapshot?> TryGetStatusAsync(CancellationToken ct = default)
     {
         try

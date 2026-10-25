@@ -1,9 +1,10 @@
 using FocusAgent.App.Extension;
 using FocusAgent.App.Startup;
 using FocusAgent.App.Tamper;
+using FocusAgent.Core.Startup;
+using FocusAgent.Native;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using Microsoft.Windows.AppLifecycle;
 using Velopack;
 
 namespace FocusAgent.App;
@@ -586,8 +587,13 @@ public static class Program
         // launch needs to be its own process). Skip it in those modes only.
         if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !ShowTestExtensionConsent && !VerifyDsTheme && !ShowTestCrash && !VerifyI18n && TestCrashAt is null)
         {
-            var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
-            if (!keyInstance.IsCurrent)
+            // #461: step aside only for an agent that is running. One that was just
+            // killed still holds the key while Windows tears it down; the claim waits
+            // for it to be gone instead of leaving the student with no agent.
+            if (!SingleInstanceClaim.TryClaim(
+                    new AppInstanceKey(SingleInstanceKey),
+                    new KeyHolderProcesses(),
+                    SingleInstanceClaim.ExitingHolderBudget))
             {
                 return 0;
             }
