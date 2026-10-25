@@ -25,9 +25,10 @@ public interface IFocusOverlay
     /// (#427): say why, offer <paramref name="prompt"/>'s way to switch the
     /// extension back on, and list <paramref name="allowedRules"/> (the other
     /// allowed apps) to carry on with. <paramref name="pausedWindowHandle"/> is the
-    /// Edge window that has the foreground, which the overlay takes down and takes
-    /// the foreground over from, like <see cref="Show"/> does with the blocked
-    /// window (#450); 0 when no Edge window has it. Idempotent like <see cref="Show"/>.
+    /// Edge window that has the foreground (#450), or an app blocked while Edge is
+    /// paused with nothing to fall back to (#452), which the overlay takes down and
+    /// takes the foreground over from, like <see cref="Show"/> does with the blocked
+    /// window; 0 when there is none. Idempotent like <see cref="Show"/>.
     /// </summary>
     void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle);
 

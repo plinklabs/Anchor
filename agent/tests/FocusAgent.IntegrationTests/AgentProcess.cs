@@ -22,7 +22,10 @@ internal sealed record StatusSnapshot(
     [property: JsonPropertyName("startupSweep")] StartupSweepSnapshot? StartupSweep,
     [property: JsonPropertyName("inPrivateDetections")] int InPrivateDetections,
     [property: JsonPropertyName("extensionPolicy")] ExtensionPolicySnapshot? ExtensionPolicy = null,
-    [property: JsonPropertyName("extensionGuard")] ExtensionGuardSnapshot? ExtensionGuard = null);
+    [property: JsonPropertyName("extensionGuard")] ExtensionGuardSnapshot? ExtensionGuard = null,
+    // #452: what the focus overlay shows while it is up (Blocked / BrowserPaused),
+    // null while it is not.
+    [property: JsonPropertyName("overlay")] string? Overlay = null);
 
 /// <summary>
 /// The Edge pause as exposed on /status (#427): whether the extension's witness

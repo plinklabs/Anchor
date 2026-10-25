@@ -284,6 +284,7 @@ public partial class App : Application
             // screenshots. Off by default.
             if (Program.StatusEndpointPort is int port)
             {
+                var focusOverlay = _host.Services.GetRequiredService<IFocusOverlay>() as WinUiFocusOverlay;
                 _statusEndpoint = new StatusEndpoint(
                     _connection,
                     _coordinator,
@@ -317,7 +318,9 @@ public partial class App : Application
                         witnessConnected = witnessMonitor.IsConnected,
                         state = extensionGuard.State.ToString(),
                     },
-                    onTurnExtensionBackOn: _focus.TurnExtensionBackOn);
+                    onTurnExtensionBackOn: _focus.TurnExtensionBackOn,
+                    // #452: which overlay the student is on, if any.
+                    overlay: () => focusOverlay?.Showing);
                 _statusEndpoint.Start(port);
             }
         }

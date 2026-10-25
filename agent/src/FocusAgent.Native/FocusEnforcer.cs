@@ -102,11 +102,11 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// Remembers <paramref name="windowHandle"/> as the window to hand focus back
     /// to after a block, unless it is no window to return a student to (#437): one
     /// of explorer's shell windows, or a window that is already gone from the
-    /// screen. Those leave the previous fallback in place.
+    /// screen. Those leave the previous fallback in place, and return false.
     /// </summary>
-    public void RememberAllowed(nint windowHandle)
+    public bool RememberAllowed(nint windowHandle)
     {
-        if (windowHandle == IntPtr.Zero) return;
+        if (windowHandle == IntPtr.Zero) return false;
 
         var className = ClassNameOf(windowHandle);
         if (!IsFallbackCandidate(className, visible: NativeMethods.IsWindowVisible(windowHandle)))
@@ -114,11 +114,12 @@ public sealed class FocusEnforcer : IFocusEnforcer
             _log.LogDebug(
                 "Not remembering 0x{Hwnd:X} [{ClassName}] as the focus fallback: a shell or hidden window",
                 windowHandle, className);
-            return;
+            return false;
         }
 
         lock (_gate)
             _lastAllowed = windowHandle;
+        return true;
     }
 
     /// <summary>

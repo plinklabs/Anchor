@@ -14,7 +14,8 @@ namespace FocusAgent.Core.Focus;
 /// stops it on <see cref="SessionCoordinator.SessionLeft"/>, classifies each
 /// change against the allowlist, drives the enforcer, and reports. While the
 /// <see cref="ExtensionGuard"/> has Edge paused (its extension is off, #427),
-/// Edge is handled like an off-list app on top of the allowlist.
+/// Edge is handled like an off-list app on top of the allowlist, and no window of
+/// it is fallen back to after a block (#452).
 /// </summary>
 public sealed class FocusSessionController : IAsyncDisposable
 {
@@ -35,6 +36,10 @@ public sealed class FocusSessionController : IAsyncDisposable
     private string? _lastReportedProcessName;
     private DateTimeOffset _lastReportedAt;
     private StartupSweepResult? _lastSweep;
+    // The app of the window the enforcer falls back to after a block, or null
+    // when it has none: a window of the browser is no fallback while the guard
+    // has it paused (#452).
+    private AppInfo? _fallbackApp;
 
     public FocusSessionController(
         SessionCoordinator sessions,
@@ -120,6 +125,7 @@ public sealed class FocusSessionController : IAsyncDisposable
                 _matcher = matcher;
                 _lastReportedProcessName = null;
                 _lastReportedAt = DateTimeOffset.MinValue;
+                _fallbackApp = null;
             }
             _enforcer.Reset();
             _watcher.Start();
@@ -227,6 +233,7 @@ public sealed class FocusSessionController : IAsyncDisposable
                     return;
                 _activeSessionId = null;
                 _matcher = null;
+                _fallbackApp = null;
             }
             _watcher.Stop();
             _enforcer.Reset();
@@ -308,9 +315,9 @@ public sealed class FocusSessionController : IAsyncDisposable
 
     /// <summary>
     /// Tells the student Edge is paused. <paramref name="pausedWindow"/>, an Edge
-    /// window that has the foreground, goes to the overlay, which takes it down and
-    /// the keyboard over from it (#450); it is minimized without the overlay when
-    /// the overlay cannot come up.
+    /// window that has the foreground (#450) or an app blocked while Edge is paused
+    /// (#452), goes to the overlay, which takes it down and the keyboard over from
+    /// it; it is minimized without the overlay when the overlay cannot come up.
     /// </summary>
     private void ShowBrowserPausedOverlay(ExtensionGuard guard, AllowlistMatcher matcher, nint pausedWindow)
     {
@@ -321,7 +328,7 @@ public sealed class FocusSessionController : IAsyncDisposable
         try { _overlay.ShowBrowserPaused(others, prompt, pausedWindow); }
         catch (Exception ex)
         {
-            _log.LogWarning(ex, "Overlay.ShowBrowserPaused threw; minimizing the paused window without it");
+            _log.LogWarning(ex, "Overlay.ShowBrowserPaused threw; minimizing the window without it");
             if (pausedWindow != IntPtr.Zero)
                 _enforcer.Minimize(pausedWindow);
         }
@@ -399,7 +406,12 @@ public sealed class FocusSessionController : IAsyncDisposable
             {
                 // The enforcer skips explorer's shell windows here (#437): a click
                 // on the allowed taskbar leaves the student's own app the fallback.
-                _enforcer.RememberAllowed(change.WindowHandle);
+                // Which app the fallback is matters once the browser is paused (#452).
+                if (_enforcer.RememberAllowed(change.WindowHandle))
+                {
+                    lock (_gate)
+                        _fallbackApp = app;
+                }
                 try { _overlay.Hide(); }
                 catch (Exception ex) { _log.LogWarning(ex, "Overlay.Hide threw"); }
             }
@@ -420,8 +432,31 @@ public sealed class FocusSessionController : IAsyncDisposable
                 _log.LogWarning(
                     "Blocking off-list foreground app {ProcessName} (pid={Pid}) in session {SessionId}",
                     app.ProcessName, change.ProcessId, id);
-                var restored = _enforcer.Block(change.WindowHandle);
-                if (!restored)
+                // #452: a window of a paused browser is no place to send the student
+                // back to. Restored as the fallback, it came back on screen and took
+                // the foreground until its own events paused it again: Edge flashed
+                // up, and what the student typed meanwhile went to it.
+                var pauseGuard = _guard is { IsBrowserPaused: true } pausingGuard ? pausingGuard : null;
+                var fallbackPaused = pauseGuard is not null && FallbackIsBrowserOf(pauseGuard);
+                var restored = !fallbackPaused && _enforcer.Block(change.WindowHandle);
+                if (!restored && pauseGuard is not null)
+                {
+                    // While Edge is paused the overlay is the paused-browser one: it
+                    // says why Edge is gone and how to get it back, and does not offer
+                    // the paused Edge as a way back, as the blocked-app overlay's rows
+                    // would. It takes the window down and the foreground over from it
+                    // all the same (#441, #450).
+                    if (fallbackPaused)
+                        _log.LogInformation(
+                            "Not falling back to the paused {Browser} after blocking {ProcessName}; surfacing the paused-browser overlay",
+                            pauseGuard.BrowserRule.Value, app.ProcessName);
+                    else
+                        _log.LogInformation(
+                            "No allowed-window fallback after blocking {ProcessName} while {Browser} is paused; surfacing the paused-browser overlay",
+                            app.ProcessName, pauseGuard.BrowserRule.Value);
+                    ShowBrowserPausedOverlay(pauseGuard, matcher, change.WindowHandle);
+                }
+                else if (!restored)
                 {
                     // #441: the overlay takes the window down itself and the
                     // foreground over from it, so what the student types goes to
@@ -463,6 +498,20 @@ public sealed class FocusSessionController : IAsyncDisposable
         }
 
         _ = ReportAsync(id, change, blocked: !allowed);
+    }
+
+    /// <summary>
+    /// Whether the window the enforcer falls back to after a block is a window of
+    /// the browser <paramref name="guard"/> guards (#452). It was remembered while
+    /// the browser was allowed, before the pause; a window remembered since is
+    /// another allowed app's.
+    /// </summary>
+    private bool FallbackIsBrowserOf(ExtensionGuard guard)
+    {
+        AppInfo? fallback;
+        lock (_gate)
+            fallback = _fallbackApp;
+        return fallback is not null && guard.IsBrowser(fallback);
     }
 
     private async Task ReportAsync(Guid sessionId, ForegroundChange change, bool blocked)

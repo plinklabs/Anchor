@@ -68,6 +68,27 @@ public class FocusEnforcerWindowTests
     }
 
     [Fact]
+    public void RememberAllowed_says_whether_the_window_is_now_the_fallback()
+    {
+        const int SwHide = 0;
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        using var hidden = TestWindow.Open("Anchor test hidden allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        NativeMethods.ShowWindow(hidden.Handle, SwHide);
+        var enforcer = new FocusEnforcer();
+
+        // The caller keeps the app of the window it falls back to, so a paused
+        // browser's window is never fallen back to (#452): it has to know which
+        // windows the enforcer turned down (#437).
+        Assert.True(enforcer.RememberAllowed(allowed.Handle));
+        Assert.False(enforcer.RememberAllowed(hidden.Handle));
+        Assert.False(enforcer.RememberAllowed(IntPtr.Zero));
+
+        // Turned down, they left the allowed window the fallback.
+        Assert.True(enforcer.Block(offList.Handle));
+    }
+
+    [Fact]
     public void A_minimized_fallback_is_back_on_screen_when_Block_returns()
     {
         var log = new ListLogger<FocusEnforcer>();

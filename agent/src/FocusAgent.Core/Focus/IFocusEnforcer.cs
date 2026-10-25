@@ -6,9 +6,12 @@ public interface IFocusEnforcer
     /// Remembers an allowed window as the one <see cref="Block"/> hands focus back
     /// to. Windows that are no place to return a student to, such as explorer's
     /// taskbar, its flyouts and the desktop, or a window already hidden, are
-    /// ignored and leave the previous one in place (#437).
+    /// ignored and leave the previous one in place (#437). Returns whether
+    /// <paramref name="windowHandle"/> is now the window to fall back to, so the
+    /// caller knows which app that window belongs to: a paused browser's window is
+    /// no fallback while the pause lasts (#452).
     /// </summary>
-    void RememberAllowed(nint windowHandle);
+    bool RememberAllowed(nint windowHandle);
 
     /// <summary>
     /// Minimizes a single window without touching foreground. Used by the

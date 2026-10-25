@@ -33,6 +33,16 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     // Bumped on the UI thread by every show, hide and close: a hand-over that
     // finishes after a newer one leaves the overlay to that newer one.
     private int _generation;
+    // What the overlay shows while it is up, null while it is not (see Showing).
+    private string? _showing;
+
+    /// <summary>
+    /// What the overlay shows while it is up: <c>Blocked</c> for a blocked app
+    /// (#33), <c>BrowserPaused</c> for a paused browser (#427); null while it is
+    /// hidden or closed. Dev-only, for /status: lets the headless e2e tell which
+    /// overlay the student is on (#452).
+    /// </summary>
+    public string? Showing => Volatile.Read(ref _showing);
 
     public WinUiFocusOverlay(
         DispatcherQueue dispatcher,
@@ -49,6 +59,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle) =>
         Show(
             window => window.UpdateContent(allowedRules, blockedAppName),
+            "Blocked",
             blockedWindowHandle,
             $"with {allowedRules.Count} allowed-app entries",
             "the blocked app");
@@ -56,19 +67,23 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle) =>
         Show(
             window => window.UpdateBrowserPausedContent(allowedRules, prompt),
+            "BrowserPaused",
             pausedWindowHandle,
             $"for a paused {prompt.Browser.Value} with {allowedRules.Count} other allowed-app entries",
-            $"the paused {prompt.Browser.Value}");
+            // The paused browser's window (#450), or an app blocked meanwhile (#452).
+            $"0x{pausedWindowHandle:X}");
 
     /// <summary>
-    /// Shows the overlay with the content <paramref name="update"/> puts in it, and
-    /// takes <paramref name="windowHandle"/> (the blocked app, #441, or the paused
-    /// browser, #450) down and the foreground over from it. The window still goes
-    /// down when the overlay cannot come up.
+    /// Shows the overlay with the content <paramref name="update"/> puts in it
+    /// (<paramref name="content"/>, for <see cref="Showing"/>), and takes
+    /// <paramref name="windowHandle"/> (the blocked app, #441, the paused browser,
+    /// #450, or an app blocked while the browser is paused, #452) down and the
+    /// foreground over from it. The window still goes down when the overlay cannot
+    /// come up.
     /// </summary>
-    private void Show(Action<FocusOverlayWindow> update, nint windowHandle, string shown, string takenFrom)
+    private void Show(Action<FocusOverlayWindow> update, string content, nint windowHandle, string shown, string takenFrom)
     {
-        if (_disposed || !_dispatcher.TryEnqueue(() => _ = ShowOnUiThreadAsync(update, windowHandle, shown, takenFrom)))
+        if (_disposed || !_dispatcher.TryEnqueue(() => _ = ShowOnUiThreadAsync(update, content, windowHandle, shown, takenFrom)))
             TakeDownWithoutOverlay(windowHandle);
     }
 
@@ -92,7 +107,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     }
 
     private async Task ShowOnUiThreadAsync(
-        Action<FocusOverlayWindow> update, nint windowHandle, string shown, string takenFrom)
+        Action<FocusOverlayWindow> update, string content, nint windowHandle, string shown, string takenFrom)
     {
         var generation = ++_generation;
         try
@@ -104,6 +119,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
             }
 
             update(window);
+            Volatile.Write(ref _showing, content);
             ApplyTopmostAndPosition(window);
             if (windowHandle != IntPtr.Zero && _enforcer is not null)
             {
@@ -127,6 +143,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         catch (Exception ex)
         {
             _log.LogError(ex, "Focus overlay Show failed");
+            Volatile.Write(ref _showing, null);
             TakeDownWithoutOverlay(windowHandle);
         }
     }
@@ -167,6 +184,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     private void HideOnUiThread()
     {
         _generation++;
+        Volatile.Write(ref _showing, null);
         try
         {
             FocusOverlayWindow? window;
@@ -187,6 +205,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     private void CloseOnUiThread()
     {
         _generation++;
+        Volatile.Write(ref _showing, null);
         FocusOverlayWindow? window;
         lock (_gate)
         {

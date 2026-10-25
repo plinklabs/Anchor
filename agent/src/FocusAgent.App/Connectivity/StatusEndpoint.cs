@@ -57,8 +57,10 @@ namespace FocusAgent.App.Connectivity;
 ///
 /// And /status carries <c>extensionPolicy</c> (#405): where the Anchor
 /// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>)
-/// and whether the setup window is open; and <c>extensionGuard</c> (#427):
-/// whether the extension's witness is connected and the Edge pause's state.
+/// and whether the setup window is open; <c>extensionGuard</c> (#427):
+/// whether the extension's witness is connected and the Edge pause's state; and
+/// <c>overlay</c> (#452): what the focus overlay shows while it is up
+/// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not.
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
@@ -97,6 +99,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Action? _onOfferExtensionSetup;
     private readonly Func<object?>? _extensionGuard;
     private readonly Func<bool>? _onTurnExtensionBackOn;
+    private readonly Func<string?>? _overlay;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -114,7 +117,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<bool, bool>? onAnswerExtensionConsent = null,
         Action? onOfferExtensionSetup = null,
         Func<object?>? extensionGuard = null,
-        Func<bool>? onTurnExtensionBackOn = null)
+        Func<bool>? onTurnExtensionBackOn = null,
+        Func<string?>? overlay = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -129,6 +133,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _onOfferExtensionSetup = onOfferExtensionSetup;
         _extensionGuard = extensionGuard;
         _onTurnExtensionBackOn = onTurnExtensionBackOn;
+        _overlay = overlay;
         _listener = new HttpListener();
     }
 
@@ -265,6 +270,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // #427: whether the extension's witness is connected and where the
                 // Edge pause stands, so the headless e2e can follow a switch-off.
                 extensionGuard = _extensionGuard?.Invoke(),
+                // #452: which overlay the student is on, if any, so the headless
+                // e2e can tell the paused-browser overlay from the blocked-app one.
+                overlay = _overlay?.Invoke(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

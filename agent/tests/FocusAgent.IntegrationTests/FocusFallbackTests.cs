@@ -360,25 +360,38 @@ public sealed class FocusFallbackTests
 
     /// <summary>
     /// Wait until the agent's most recent foreground report names
-    /// <paramref name="processName"/>: proof it has judged that window.
+    /// <paramref name="processName"/>: proof it has judged that window. Shared with
+    /// <see cref="ExtensionOffFallbackTests"/> (#452).
     /// </summary>
-    private static async Task WaitForLatestReportAsync(BackendClient api, Guid sessionId, string processName, string what)
+    internal static async Task WaitForLatestReportAsync(BackendClient api, Guid sessionId, string processName, string what)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        List<BackendClient.SessionEvent> events;
-        do
-        {
-            events = await api.GetSessionEventsAsync(sessionId);
-            // recentEvents is newest first.
-            var latest = events.FirstOrDefault(e => e.Kind == ForegroundChange);
-            if (latest is not null && Names(latest.PayloadJson, processName))
-                return;
-            await Task.Delay(250);
-        }
-        while (DateTime.UtcNow < deadline);
+        if (await LatestReportNamesAsync(api, sessionId, processName, TimeSpan.FromSeconds(10)))
+            return;
+        var events = await api.GetSessionEventsAsync(sessionId);
         Assert.Fail(
             $"The agent did not report {what} ({processName}) as the latest foreground change within 10s. " +
             $"Events: {string.Join("; ", events.Select(e => $"{e.Kind} {e.PayloadJson}"))}.");
+    }
+
+    /// <summary>
+    /// Whether the agent's most recent foreground report names
+    /// <paramref name="processName"/> within <paramref name="timeout"/>.
+    /// </summary>
+    internal static async Task<bool> LatestReportNamesAsync(
+        BackendClient api, Guid sessionId, string processName, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        do
+        {
+            var events = await api.GetSessionEventsAsync(sessionId);
+            // recentEvents is newest first.
+            var latest = events.FirstOrDefault(e => e.Kind == ForegroundChange);
+            if (latest is not null && Names(latest.PayloadJson, processName))
+                return true;
+            await Task.Delay(250);
+        }
+        while (DateTime.UtcNow < deadline);
+        return false;
     }
 
     /// <summary>The agent's latest foreground reports, newest first, for failure messages.</summary>
