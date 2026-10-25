@@ -195,6 +195,14 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             await _db.SaveChangesAsync(ct);
             _activeParticipants.Update(participant);
 
+            // The agent and the extension stop pinging once the student has
+            // left, so drop their heartbeat tracking, as AgentKilled does: left
+            // in place, their last pings would age into a HeartbeatLost and an
+            // extension_silent flag for a student who left normally (#448).
+            // After the cache update above, so a ping arriving from now on is
+            // rejected rather than tracked again.
+            _heartbeats.Clear(sessionId, user.Id);
+
             await _broadcaster.ParticipantStateChangedAsync(
                 new ParticipantStateChangedPayload(
                     sessionId, user.Id, user.DisplayName,
@@ -247,6 +255,13 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         });
 
         await _db.SaveChangesAsync(ct);
+
+        // A student can decline a session their agent was already in: when a
+        // restarted agent's silent rejoin fails, its catch-up offers that
+        // session again (#356). An agent doesn't ping a session it declined, so
+        // drop the tracking its earlier pings left, which would otherwise age
+        // into a HeartbeatLost for a student the roster shows as Declined (#448).
+        _heartbeats.Clear(session.Id, user.Id);
 
         await _broadcaster.ParticipantStateChangedAsync(
             new ParticipantStateChangedPayload(

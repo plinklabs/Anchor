@@ -61,11 +61,14 @@ public sealed class HeartbeatTracker
 
     /// <summary>
     /// Drops every witness source for a single participant. Used when a
-    /// participant leaves a session deliberately (e.g. #110 AgentKilled): once
-    /// they're gone the now-dead agent's last ping must not age into a spurious
-    /// <c>HeartbeatLost</c>, and a still-running extension is blocked from
-    /// re-recording because <c>ReportEvent</c>/<c>Heartbeat</c> now reject the
-    /// left participant.
+    /// participant stops taking part: <c>LeaveSession</c>, <c>DeclineSession</c>
+    /// and the #110 AgentKilled event (#448). Once they're gone their agent's
+    /// and extension's last pings must not age into a spurious
+    /// <c>HeartbeatLost</c> or <c>extension_silent</c>. A still-running
+    /// extension can't record again once the participant has left, because the
+    /// hub's heartbeat methods reject a left participant; a ping that slips in
+    /// just before is dropped by <see cref="HeartbeatMonitor"/>, which reports
+    /// only active participants.
     /// </summary>
     public void Clear(Guid sessionId, Guid userId)
     {

@@ -18,10 +18,20 @@ namespace Anchor.Api.Realtime;
 /// absence-net (#149): a <see cref="EventKind.TamperDetected"/> with kind
 /// <see cref="TamperKinds.ExtensionSilent"/>. The tamper flag is sticky, so a
 /// returning extension re-arms silently rather than emitting a reconnect.
+///
+/// <para>
+/// Only an active participant can go missing. Every way of stopping (leaving,
+/// declining, quitting the agent, the session ending) drops the participant's
+/// tracking, but a ping that passed the hub's active check just before the
+/// participant left can still land after that. So before reporting, the
+/// monitor checks the participant is still active, and drops the tracking of
+/// one who isn't instead (#448).
+/// </para>
 /// </summary>
 public sealed class HeartbeatMonitor : BackgroundService
 {
     private readonly HeartbeatTracker _tracker;
+    private readonly ActiveParticipantCache _activeParticipants;
     private readonly ISessionBroadcaster _broadcaster;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly TimeProvider _clock;
@@ -30,6 +40,7 @@ public sealed class HeartbeatMonitor : BackgroundService
 
     public HeartbeatMonitor(
         HeartbeatTracker tracker,
+        ActiveParticipantCache activeParticipants,
         ISessionBroadcaster broadcaster,
         IServiceScopeFactory scopeFactory,
         TimeProvider clock,
@@ -37,6 +48,7 @@ public sealed class HeartbeatMonitor : BackgroundService
         ILogger<HeartbeatMonitor> log)
     {
         _tracker = tracker;
+        _activeParticipants = activeParticipants;
         _broadcaster = broadcaster;
         _scopeFactory = scopeFactory;
         _clock = clock;
@@ -91,6 +103,19 @@ public sealed class HeartbeatMonitor : BackgroundService
 
             if (isStale && !p.Reported)
             {
+                if (!await _activeParticipants
+                        .IsActiveAsync(db.SessionParticipants.AsNoTracking(), p.SessionId, p.UserId, ct)
+                        .ConfigureAwait(false))
+                {
+                    // Left, or the session ended: a stopped participant's
+                    // silence is expected, not an outage to report.
+                    _tracker.Clear(p.SessionId, p.UserId);
+                    _log.LogDebug(
+                        "Dropped heartbeat tracking of inactive participant session={SessionId} user={UserId}",
+                        p.SessionId, p.UserId);
+                    continue;
+                }
+
                 await EmitStaleAsync(db, p, now, ct).ConfigureAwait(false);
                 _tracker.MarkReported(p.SessionId, p.UserId, p.Source);
             }

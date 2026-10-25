@@ -268,6 +268,45 @@ public sealed class HeartbeatMonitorTests : IClassFixture<HeartbeatMonitorTests.
             e.SessionId == sessionId && e.UserId == userId && e.Kind == EventKind.AgentReconnected));
     }
 
+    [Fact]
+    public async Task Participant_who_is_no_longer_active_is_never_reported_and_stops_being_tracked()
+    {
+        // #448: leaving drops the participant's tracking, but a ping that passed
+        // the hub's active check just before the leave can land after it. Its
+        // silence must not reach the teacher as a lost agent or a silent
+        // extension.
+        var (sessionId, userId) = await SeedSessionAndStudentAsync();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            var participant = await db.SessionParticipants
+                .SingleAsync(p => p.SessionId == sessionId && p.UserId == userId);
+            participant.LeftAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+            _factory.Services.GetRequiredService<ActiveParticipantCache>().Update(participant);
+        }
+
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Agent);
+        tracker.Record(sessionId, userId, clock.GetUtcNow(), WitnessSource.Extension);
+
+        clock.Advance(TimeSpan.FromSeconds(25));
+        await monitor.ScanOnceAsync(CancellationToken.None);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            Assert.False(await db.Events.AnyAsync(e => e.SessionId == sessionId && e.UserId == userId));
+        }
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        Assert.DoesNotContain(broadcaster.HeartbeatLostCalls, c => c.SessionId == sessionId && c.UserId == userId);
+        Assert.DoesNotContain(broadcaster.TamperDetectedCalls, c => c.SessionId == sessionId && c.UserId == userId);
+        Assert.False(tracker.TryGet(sessionId, userId, out _, WitnessSource.Agent));
+        Assert.False(tracker.TryGet(sessionId, userId, out _, WitnessSource.Extension));
+    }
+
     private HeartbeatMonitor BuildMonitor(HeartbeatTracker tracker, FakeTimeProvider clock)
     {
         var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
@@ -278,7 +317,9 @@ public sealed class HeartbeatMonitorTests : IClassFixture<HeartbeatMonitorTests.
             TimeoutMultiplier = 2,
             ScanIntervalSeconds = 5,
         });
-        return new HeartbeatMonitor(tracker, broadcaster, scopeFactory, clock, options, NullLogger<HeartbeatMonitor>.Instance);
+        var activeParticipants = _factory.Services.GetRequiredService<ActiveParticipantCache>();
+        return new HeartbeatMonitor(
+            tracker, activeParticipants, broadcaster, scopeFactory, clock, options, NullLogger<HeartbeatMonitor>.Instance);
     }
 
     private async Task<(Guid SessionId, Guid UserId)> SeedSessionAndStudentAsync()
