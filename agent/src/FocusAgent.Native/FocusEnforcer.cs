@@ -16,20 +16,34 @@ namespace FocusAgent.Native;
 /// minimize button. The agent has no right to the foreground itself:
 /// <c>SetForegroundWindow</c> from it is refused, even with <c>AttachThreadInput</c>,
 /// and a <c>ShowWindow</c> from it leaves the minimized window the foreground
-/// window, which keeps getting what the student types.
+/// window, which keeps getting what the student types. An app that is not
+/// responding holds up neither way for more than a moment (#440): its window goes
+/// down the moment the app responds.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class FocusEnforcer : IFocusEnforcer
 {
     /// <summary>
-    /// How long a blocked window gets to minimize itself before the agent logs that
-    /// its app is not responding. An app that responds does it within about 100 ms.
+    /// How long a window gets to go down, whether it minimizes itself or the agent
+    /// minimizes it, before the agent logs that its app is not responding. An app
+    /// that responds does it within about 100 ms.
     /// </summary>
     internal static readonly TimeSpan OwnThreadMinimizeTimeout = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// How long <see cref="Minimize"/> waits for the agent's <c>ShowWindow</c> before
+    /// it returns (#440). An app that responds is down well within it, so the caller
+    /// finds the window down, as when the call ran on the caller's thread: the
+    /// overlay it shows next must come up after the window went down, or the
+    /// foreground moves on to another window. An app that is not responding holds
+    /// the caller up no longer than this.
+    /// </summary>
+    internal static readonly TimeSpan AgentMinimizeWait = TimeSpan.FromMilliseconds(250);
 
     private readonly ILogger<FocusEnforcer> _log;
     private readonly object _gate = new();
     private readonly ConcurrentDictionary<nint, long> _pendingMinimizes = new();
+    private readonly ConcurrentDictionary<nint, long> _minimizingFromAgent = new();
     private long _minimizeGeneration;
     private nint _lastAllowed;
 
@@ -166,10 +180,10 @@ public sealed class FocusEnforcer : IFocusEnforcer
     }
 
     /// <summary>
-    /// Minimizes one window: from the agent's own thread, or by posting the request
-    /// to the window's thread (<paramref name="onOwnThread"/>, #438). The posted
-    /// request never holds up the agent, and the window's thread carries it out with
-    /// the foreground rights it has.
+    /// Minimizes one window: from the agent (<see cref="MinimizeFromAgent"/>), or by
+    /// posting the request to the window's thread (<paramref name="onOwnThread"/>,
+    /// #438). The posted request never holds up the agent, and the window's thread
+    /// carries it out with the foreground rights it has.
     /// </summary>
     private void MinimizeWindow(nint windowHandle, bool onOwnThread)
     {
@@ -177,8 +191,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
         {
             if (!onOwnThread)
             {
-                if (!NativeMethods.ShowWindow(windowHandle, NativeMethods.SW_MINIMIZE))
-                    _log.LogWarning("ShowWindow(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
+                MinimizeFromAgent(windowHandle);
                 return;
             }
             if (!NativeMethods.ShowWindowAsync(windowHandle, NativeMethods.SW_MINIMIZE))
@@ -195,12 +208,74 @@ public sealed class FocusEnforcer : IFocusEnforcer
     }
 
     /// <summary>
+    /// Minimizes one window with the agent's own <c>ShowWindow</c>, on a thread of
+    /// its own (#440). Minimized from the agent, the window stays the foreground
+    /// window, which the session-start sweep, the paused browser and the overlay
+    /// rely on: a window Windows brought forward instead (the desktop, say) would
+    /// count as allowed and hide the overlay at once. But <c>ShowWindow</c> on
+    /// another thread's window waits until that thread handles messages again. Run
+    /// on the caller's thread, an app that was not responding held up the agent's
+    /// UI thread, and every foreground change behind it, until the app responded,
+    /// and the window went down no sooner. Now the caller waits no longer than
+    /// <see cref="AgentMinimizeWait"/>, and the window goes down the moment its app
+    /// responds. A second request for a window that is still on its way down adds
+    /// nothing, so it is dropped.
+    /// </summary>
+    private void MinimizeFromAgent(nint windowHandle)
+    {
+        var request = Interlocked.Increment(ref _minimizeGeneration);
+        if (!_minimizingFromAgent.TryAdd(windowHandle, request))
+        {
+            _log.LogDebug("0x{Hwnd:X} is already being minimized", windowHandle);
+            return;
+        }
+        // A thread of its own rather than the thread pool: a ShowWindow that waits
+        // for an app that is not responding ties its thread up for as long as the
+        // app hangs.
+        var minimizing = Task.Factory.StartNew(() =>
+        {
+            try
+            {
+                if (!NativeMethods.ShowWindow(windowHandle, NativeMethods.SW_MINIMIZE))
+                    _log.LogWarning("ShowWindow(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "ShowWindow(SW_MINIMIZE) threw for 0x{Hwnd:X}", windowHandle);
+            }
+            finally
+            {
+                _minimizingFromAgent.TryRemove(new KeyValuePair<nint, long>(windowHandle, request));
+            }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        _ = WarnIfStillMinimizingAsync(windowHandle, request);
+        minimizing.Wait(AgentMinimizeWait);
+    }
+
+    /// <summary>
+    /// Logs that the app of a window the agent is minimizing is not responding,
+    /// when its <c>ShowWindow</c> has not returned <see cref="OwnThreadMinimizeTimeout"/>
+    /// later. Not judged by <c>IsIconic</c>: Windows marks the window minimized
+    /// before its app has handled the request, while the window is still on screen.
+    /// </summary>
+    private async Task WarnIfStillMinimizingAsync(nint windowHandle, long request)
+    {
+        await Task.Delay(OwnThreadMinimizeTimeout).ConfigureAwait(false);
+        if (_minimizingFromAgent.TryGetValue(windowHandle, out var current) && current == request)
+        {
+            _log.LogWarning(
+                "0x{Hwnd:X} [{ClassName}] did not minimize within {TimeoutMs} ms: its app is not responding. It goes down as soon as the app responds",
+                windowHandle, ClassNameOf(windowHandle), OwnThreadMinimizeTimeout.TotalMilliseconds);
+        }
+    }
+
+    /// <summary>
     /// Logs a window that has not minimized itself <see cref="OwnThreadMinimizeTimeout"/>
     /// after it was asked to: its app is not responding. The request stays queued and
     /// the window goes down the moment the app responds again. Minimizing it from the
-    /// agent would not get it down any sooner: <c>ShowWindow</c> waits for the app too,
-    /// and holds up the caller for as long as the app hangs. A newer request for the
-    /// same window, after the student brought it back, takes over the check.
+    /// agent would not get it down any sooner: <c>ShowWindow</c> waits for the app too.
+    /// A newer request for the same window, after the student brought it back, takes
+    /// over the check.
     /// </summary>
     private async Task WarnIfNotMinimizedAsync(nint windowHandle)
     {

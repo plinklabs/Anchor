@@ -8,10 +8,10 @@ using Microsoft.Extensions.Logging;
 namespace FocusAgent.Native.Tests;
 
 /// <summary>
-/// <see cref="FocusEnforcer.Block"/> on real windows (#438). The blocked window is
-/// minimized by its own thread, so the agent never waits for an app; where the
-/// foreground goes then needs two processes and is covered by the e2e
-/// FocusFallbackTests.
+/// <see cref="FocusEnforcer.Block"/> and <see cref="FocusEnforcer.Minimize"/> on
+/// real windows (#438, #440). The agent never waits for an app, whether the window
+/// minimizes itself or the agent minimizes it; where the foreground goes then needs
+/// two processes and is covered by the e2e FocusFallbackTests.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public class FocusEnforcerWindowTests
@@ -64,6 +64,74 @@ public class FocusEnforcerWindowTests
         Assert.True(
             await WaitUntilAsync(() => NativeMethods.IsIconic(offList.Handle), TimeSpan.FromSeconds(2)),
             "The blocked window did not go down once its app responded again.");
+    }
+
+    [Fact]
+    public async Task Minimizing_an_app_that_is_not_responding_never_holds_up_the_agent()
+    {
+        // The session-start sweep and the paused browser minimize from the agent (#440).
+        var log = new ListLogger<FocusEnforcer>();
+        using var offList = TestWindow.Open("Anchor test hung off-list app");
+        var enforcer = new FocusEnforcer(log);
+        offList.Freeze();
+
+        var clock = Stopwatch.StartNew();
+        enforcer.Minimize(offList.Handle);
+        clock.Stop();
+
+        Assert.True(
+            clock.Elapsed < TimeSpan.FromSeconds(1),
+            $"Minimize took {clock.ElapsedMilliseconds} ms while the off-list app was not responding.");
+        Assert.True(
+            await WaitUntilAsync(() => log.Messages.Any(m => m.Contains("did not minimize")), TimeSpan.FromSeconds(3)),
+            "The agent did not log that the app is not responding.");
+        Assert.False(offList.HasGoneDown, "A window whose thread is frozen went down.");
+
+        // The minimize is still on its way: the window goes down the moment its app
+        // responds.
+        offList.Thaw();
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window did not go down once its app responded again.");
+    }
+
+    [Fact]
+    public async Task Blocking_an_app_that_is_not_responding_with_nothing_to_fall_back_to_never_holds_up_the_agent()
+    {
+        // The overlay path: no allowed window has been remembered (#440).
+        var log = new ListLogger<FocusEnforcer>();
+        using var offList = TestWindow.Open("Anchor test hung off-list app");
+        var enforcer = new FocusEnforcer(log);
+        offList.Freeze();
+
+        var clock = Stopwatch.StartNew();
+        Assert.False(enforcer.Block(offList.Handle));
+        clock.Stop();
+
+        Assert.True(
+            clock.Elapsed < TimeSpan.FromSeconds(1),
+            $"Block took {clock.ElapsedMilliseconds} ms while the off-list app was not responding.");
+        offList.Thaw();
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The blocked window did not go down once its app responded again.");
+    }
+
+    [Fact]
+    public async Task A_window_minimized_from_the_agent_goes_down_without_a_warning()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer(log);
+
+        enforcer.Minimize(offList.Handle);
+
+        // Down by the time Minimize returns, as when it ran on the caller's thread:
+        // the overlay the caller shows next must come up after the window went down
+        // (#440).
+        Assert.True(offList.HasGoneDown, "The window was not down yet when Minimize returned.");
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout + TimeSpan.FromMilliseconds(300));
+        Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
     }
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)

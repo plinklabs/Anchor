@@ -36,6 +36,13 @@ internal sealed class TestWindow : IDisposable
 
     public nint Handle { get; private set; }
 
+    /// <summary>
+    /// Minimized and moved off the screen. Windows marks a window that the agent
+    /// minimizes as minimized at once, but it stays where it was until its app has
+    /// handled the request.
+    /// </summary>
+    public bool HasGoneDown => IsIconic(Handle) && GetWindowRect(Handle, out var rect) && rect.Left <= MinimizedPosition;
+
     public static TestWindow Open(string title)
     {
         var window = new TestWindow(title);
@@ -86,6 +93,18 @@ internal sealed class TestWindow : IDisposable
         }
     }
 
+    // Where Windows parks a minimized top-level window.
+    private const int MinimizedPosition = -32000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct MSG
     {
@@ -126,4 +145,12 @@ internal sealed class TestWindow : IDisposable
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(nint hWnd);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(nint hWnd, out RECT rect);
 }

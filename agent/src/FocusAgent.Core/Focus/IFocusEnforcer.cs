@@ -17,7 +17,9 @@ public interface IFocusEnforcer
     /// restore a previously-allowed window, because a bulk sweep has no single
     /// window to hand focus back to. A dialog goes down with the app window that
     /// owns it (#428): minimizing the owner hides its dialogs too, and they come
-    /// back with the app.
+    /// back with the app. Never held up by an app that is not responding (#440):
+    /// the caller carries on after a moment, and the window goes down the moment its
+    /// app responds.
     /// </summary>
     void Minimize(nint windowHandle);
 
@@ -28,6 +30,8 @@ public interface IFocusEnforcer
     /// minimizes itself, so Windows hands the foreground to the window below it,
     /// and a minimized fallback is restored first (#438). Returns false if there
     /// was nothing valid to fall back to (caller should surface the overlay).
+    /// Never held up by a blocked app that is not responding, like
+    /// <see cref="Minimize"/> (#440).
     /// </summary>
     bool Block(nint offendingWindowHandle);
 
