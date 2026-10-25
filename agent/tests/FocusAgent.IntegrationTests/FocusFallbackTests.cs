@@ -22,6 +22,11 @@ namespace FocusAgent.IntegrationTests;
 /// state. Real foreground events on a headless desktop are the flaky part, so
 /// this runs in the non-blocking Visual lane, like <see cref="ReMinimizeOnRestoreTests"/>.
 ///
+/// A minimized allowed app is restored to fall back to. When that app is not
+/// responding, the agent must not wait for it (#451): the spec suspends Notepad's
+/// process (<see cref="SuspendedProcess"/>) and checks that off-list apps are
+/// still blocked meanwhile, and that Notepad comes back once it runs again.
+///
 /// With no allowed window to fall back to, the agent shows its focus overlay,
 /// which must get the keyboard (#441). That spec types after the block and counts
 /// what reaches the off-list window. It only ever types while the foreground
@@ -36,6 +41,8 @@ namespace FocusAgent.IntegrationTests;
 public sealed class FocusFallbackTests
 {
     private const string ForegroundChange = "ForegroundChange";
+    // Where Windows parks a minimized top-level window.
+    private const int MinimizedPosition = -32000;
 
     private readonly BackendFixture _backend;
     public FocusFallbackTests(BackendFixture backend) => _backend = backend;
@@ -127,6 +134,63 @@ public sealed class FocusFallbackTests
                     "show a hidden window to hand focus back to it (#437).");
                 await Task.Delay(100);
             }
+        });
+    }
+
+    [Fact]
+    public async Task WhileTheStudentsMinimizedAllowedAppIsNotResponding_TheAgentStillBlocksOffListApps()
+    {
+        await RunAsync(async (api, sessionId, notepad, offList) =>
+        {
+            // Opened first: a window that comes up can move the foreground on, to an
+            // allowed app of the developer's that would then be the fallback instead
+            // of Notepad.
+            using var nextOffList = await OffListWindow.OpenAsync(
+                "Anchor e2e next off-list app", TimeSpan.FromSeconds(10), minimized: true);
+
+            // The student works in Notepad, then puts it away, so the agent restores
+            // it to fall back to when it blocks an app. Then Notepad stops responding.
+            WindowCapture.MinimizeWithoutActivating(notepad);
+            Assert.True(await WaitUntilAsync(() => WindowCapture.IsIconic(notepad), TimeSpan.FromSeconds(3)),
+                "Notepad could not be minimized.");
+            WindowCapture.RestoreWithoutActivating(notepad);
+            Assert.True(await WaitUntilAsync(() => !WindowCapture.IsIconic(notepad), TimeSpan.FromSeconds(3)),
+                "Notepad could not be restored.");
+            await WaitForLatestReportAsync(api, sessionId, TestConfig.AppProcessName, "Notepad");
+            WindowCapture.MinimizeWithoutActivating(notepad);
+            Assert.True(await WaitUntilAsync(() => WindowCapture.IsIconic(notepad), TimeSpan.FromSeconds(3)),
+                "Notepad could not be minimized.");
+            using var notResponding = SuspendedProcess.Suspend(WindowCapture.ProcessIdOf(notepad));
+            Assert.False(SuspendedProcess.IsResponding(notepad), "Notepad still responds with its process suspended.");
+
+            // They open an off-list app, then another. Restoring Notepad from the
+            // agent's UI thread waited until Notepad responded: the first app went
+            // down no sooner, and the second was not even judged meanwhile (#451).
+            WindowCapture.RestoreWindow(offList);
+            var firstDown = await WaitUntilAsync(() => WindowCapture.IsIconic(offList), TimeSpan.FromSeconds(2));
+            nextOffList.Restore();
+            var nextDown = await WaitUntilAsync(() => nextOffList.HasGoneDown, TimeSpan.FromSeconds(2));
+            Assert.False(
+                SuspendedProcess.IsResponding(notepad),
+                "Notepad started responding again before the spec could check the agent.");
+            Assert.True(
+                firstDown,
+                "While the student's allowed app was not responding, the agent did not block an off-list app: " +
+                "it was waiting to restore the allowed app to fall back to (#451).");
+            Assert.True(
+                nextDown,
+                "While the student's allowed app was not responding, the agent did not block the next off-list app " +
+                "(#451).");
+
+            // Notepad comes back as soon as it responds.
+            notResponding.Dispose();
+            Assert.True(
+                await WaitUntilAsync(
+                    () => !WindowCapture.IsIconic(notepad) && WindowCapture.GetWindowScreenRect(notepad).Left > MinimizedPosition,
+                    TimeSpan.FromSeconds(3)),
+                "The student's allowed app did not come back once it responded again " +
+                $"(Notepad minimized: {WindowCapture.IsIconic(notepad)}). Latest foreground reports, newest first: " +
+                $"{await DescribeLatestReportsAsync(api, sessionId)}.");
         });
     }
 
@@ -315,6 +379,13 @@ public sealed class FocusFallbackTests
         Assert.Fail(
             $"The agent did not report {what} ({processName}) as the latest foreground change within 10s. " +
             $"Events: {string.Join("; ", events.Select(e => $"{e.Kind} {e.PayloadJson}"))}.");
+    }
+
+    /// <summary>The agent's latest foreground reports, newest first, for failure messages.</summary>
+    private static async Task<string> DescribeLatestReportsAsync(BackendClient api, Guid sessionId)
+    {
+        var events = await api.GetSessionEventsAsync(sessionId);
+        return string.Join("; ", events.Where(e => e.Kind == ForegroundChange).Take(6).Select(e => e.PayloadJson));
     }
 
     private static bool Names(string payloadJson, string processName)

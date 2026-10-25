@@ -32,7 +32,9 @@ public interface IFocusEnforcer
     /// nothing valid to fall back to: the window is left as it is, for the caller
     /// to surface the overlay and hand the window over to it with
     /// <see cref="HandOverAsync"/> (#441). Never held up by a blocked app that is not
-    /// responding, like <see cref="Minimize"/> (#440).
+    /// responding, like <see cref="Minimize"/> (#440), nor by a minimized fallback
+    /// whose app is not responding (#451): the blocked window goes down all the
+    /// same, and the fallback comes back as soon as its app responds.
     /// </summary>
     bool Block(nint offendingWindowHandle);
 

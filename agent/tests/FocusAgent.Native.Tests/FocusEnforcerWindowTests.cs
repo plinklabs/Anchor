@@ -9,8 +9,9 @@ namespace FocusAgent.Native.Tests;
 
 /// <summary>
 /// <see cref="FocusEnforcer.Block"/> and <see cref="FocusEnforcer.Minimize"/> on
-/// real windows (#438, #440). The agent never waits for an app, whether the window
-/// minimizes itself or the agent minimizes it; where the foreground goes then needs
+/// real windows (#438, #440, #451). The agent never waits for an app, whether the
+/// window minimizes itself, the agent minimizes it or the agent restores the
+/// fallback; where the foreground goes then needs
 /// two processes and is covered by the e2e FocusFallbackTests.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -64,6 +65,70 @@ public class FocusEnforcerWindowTests
         Assert.True(
             await WaitUntilAsync(() => NativeMethods.IsIconic(offList.Handle), TimeSpan.FromSeconds(2)),
             "The blocked window did not go down once its app responded again.");
+    }
+
+    [Fact]
+    public void A_minimized_fallback_is_back_on_screen_when_Block_returns()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer(log);
+        enforcer.RememberAllowed(allowed.Handle);
+        allowed.MinimizeWithoutActivating();
+
+        Assert.True(enforcer.Block(offList.Handle));
+
+        // Back before the blocked window goes down, or Windows has no fallback on
+        // screen to hand the foreground to (#438). Restoring it from a thread of its
+        // own must not lose that (#451).
+        Assert.True(allowed.IsBackOnScreen, "The minimized fallback was not back on screen when Block returned.");
+    }
+
+    [Fact]
+    public async Task Restoring_a_fallback_app_that_is_not_responding_never_holds_up_the_agent()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test hung allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        using var nextOffList = TestWindow.Open("Anchor test next off-list app");
+        var enforcer = new FocusEnforcer(log);
+        enforcer.RememberAllowed(allowed.Handle);
+        allowed.MinimizeWithoutActivating();
+        allowed.Freeze();
+
+        // The student opens an off-list app, then another, while the app the agent
+        // falls back to is not responding. Restoring it from the agent's thread
+        // waited until it responded, and held up every foreground change behind it
+        // meanwhile (#451).
+        var clock = Stopwatch.StartNew();
+        Assert.True(enforcer.Block(offList.Handle));
+        var firstBlock = clock.Elapsed;
+        clock.Restart();
+        Assert.True(enforcer.Block(nextOffList.Handle));
+        var nextBlock = clock.Elapsed;
+
+        Assert.True(
+            firstBlock < TimeSpan.FromSeconds(1),
+            $"Block took {firstBlock.TotalMilliseconds:N0} ms while the fallback app was not responding.");
+        Assert.True(
+            nextBlock < TimeSpan.FromSeconds(1),
+            $"The next Block took {nextBlock.TotalMilliseconds:N0} ms while the fallback app was not responding.");
+        // Both go down all the same.
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown && nextOffList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The blocked windows did not go down while the fallback app was not responding.");
+        Assert.True(
+            await WaitUntilAsync(() => log.Messages.Any(m => m.Contains("did not come back")), TimeSpan.FromSeconds(2)),
+            "The agent did not log that the fallback app is not responding.");
+        Assert.False(allowed.IsBackOnScreen, "A window whose thread is frozen came back on screen.");
+
+        // The restore is still on its way: the fallback comes back the moment its
+        // app responds.
+        allowed.Thaw();
+        Assert.True(
+            await WaitUntilAsync(() => allowed.IsBackOnScreen, TimeSpan.FromSeconds(2)),
+            "The fallback did not come back once its app responded again.");
     }
 
     [Fact]

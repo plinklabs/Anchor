@@ -18,31 +18,36 @@ namespace FocusAgent.Native;
 /// and a <c>ShowWindow</c> from it leaves the minimized window the foreground
 /// window, which keeps getting what the student types. An app that is not
 /// responding holds up neither way for more than a moment (#440): its window goes
-/// down the moment the app responds. With no allowed window to fall back to, or
-/// for a paused browser (#450), the focus overlay is put directly below the window
-/// before it minimizes itself, so the overlay is the window Windows hands the
-/// foreground to (#441).
+/// down the moment the app responds. Nor does a minimized fallback whose app is
+/// not responding (#451): it comes back the moment its app responds. With no
+/// allowed window to fall back to, or for a paused browser (#450), the focus
+/// overlay is put directly below the window before it minimizes itself, so the
+/// overlay is the window Windows hands the foreground to (#441).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class FocusEnforcer : IFocusEnforcer
 {
     /// <summary>
     /// How long a window gets to go down, whether it minimizes itself or the agent
-    /// minimizes it, before the agent logs that its app is not responding. An app
-    /// that responds does it within about 100 ms. It is also how long
-    /// <see cref="HandOverAsync"/> waits for the overlay to get the foreground.
+    /// minimizes it, or a minimized fallback gets to come back, before the agent
+    /// logs that its app is not responding. An app that responds does it within
+    /// about 100 ms. It is also how long <see cref="HandOverAsync"/> waits for the
+    /// overlay to get the foreground.
     /// </summary>
     internal static readonly TimeSpan OwnThreadMinimizeTimeout = TimeSpan.FromMilliseconds(500);
 
     /// <summary>
-    /// How long <see cref="Minimize"/> waits for the agent's <c>ShowWindow</c> before
-    /// it returns (#440). An app that responds is down well within it, so the caller
-    /// finds the window down, as when the call ran on the caller's thread: the
-    /// overlay it shows next must come up after the window went down, or the
-    /// foreground moves on to another window. An app that is not responding holds
-    /// the caller up no longer than this.
+    /// How long the agent waits for its own <c>ShowWindow</c> on another app's
+    /// window before it carries on (#440, #451). An app that responds has handled
+    /// it well within this, so the caller finds the window as it asked, as when the
+    /// call ran on the caller's thread: <see cref="Minimize"/>'s caller shows the
+    /// overlay next, which must come up after the window went down, or the
+    /// foreground moves on to another window; and <see cref="Block"/>'s minimized
+    /// fallback must be back on screen before the blocked window goes down, or
+    /// Windows has no fallback to hand the foreground to (#438). An app that is not
+    /// responding holds the caller up no longer than this.
     /// </summary>
-    internal static readonly TimeSpan AgentMinimizeWait = TimeSpan.FromMilliseconds(250);
+    internal static readonly TimeSpan AgentShowWindowWait = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// How soon after <see cref="HandOverAsync"/> restored a minimized window to
@@ -58,7 +63,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
     private readonly ILogger<FocusEnforcer> _log;
     private readonly object _gate = new();
     private readonly ConcurrentDictionary<nint, long> _pendingMinimizes = new();
-    private readonly ConcurrentDictionary<nint, long> _minimizingFromAgent = new();
+    private readonly ConcurrentDictionary<(nint Window, int Command), long> _showingFromAgent = new();
     private long _minimizeGeneration;
     private nint _lastAllowed;
     private nint _lastRestoredToHandOver;
@@ -225,67 +230,91 @@ public sealed class FocusEnforcer : IFocusEnforcer
     }
 
     /// <summary>
-    /// Minimizes one window with the agent's own <c>ShowWindow</c>, on a thread of
-    /// its own (#440), for the session-start sweep and for paused browser windows
-    /// that do not have the foreground. A blocked or paused window with the
-    /// foreground goes to the overlay instead (<see cref="HandOverAsync"/>, #441,
-    /// #450): minimized from the agent, it either stays the foreground window and
-    /// keeps what the student types, or hands the foreground to the window below
-    /// it, which may be an allowed app that hides the overlay (Windows 11 Notepad
-    /// does the latter). But <c>ShowWindow</c> on
+    /// Minimizes one window with the agent's own <c>ShowWindow</c>
+    /// (<see cref="ShowFromAgent"/>, #440), for the session-start sweep and for
+    /// paused browser windows that do not have the foreground. A blocked or paused
+    /// window with the foreground goes to the overlay instead
+    /// (<see cref="HandOverAsync"/>, #441, #450): minimized from the agent, it either
+    /// stays the foreground window and keeps what the student types, or hands the
+    /// foreground to the window below it, which may be an allowed app that hides the
+    /// overlay (Windows 11 Notepad does the latter).
+    /// </summary>
+    private void MinimizeFromAgent(nint windowHandle) => ShowFromAgent(windowHandle, NativeMethods.SW_MINIMIZE);
+
+    /// <summary>
+    /// Carries out the agent's own <c>ShowWindow</c> on another app's window on a
+    /// thread of its own, and waits for it no longer than
+    /// <see cref="AgentShowWindowWait"/>: <see cref="MinimizeFromAgent"/> (#440), and
+    /// <see cref="Block"/> restoring a minimized fallback (#451). <c>ShowWindow</c> on
     /// another thread's window waits until that thread handles messages again. Run
     /// on the caller's thread, an app that was not responding held up the agent's
     /// UI thread, and every foreground change behind it, until the app responded,
-    /// and the window went down no sooner. Now the caller waits no longer than
-    /// <see cref="AgentMinimizeWait"/>, and the window goes down the moment its app
-    /// responds. A second request for a window that is still on its way down adds
-    /// nothing, so it is dropped.
+    /// and its window changed no sooner. Now the window changes the moment its app
+    /// responds. The same request for a window whose earlier one has not been
+    /// carried out yet adds nothing, so it is dropped without waiting.
     /// </summary>
-    private void MinimizeFromAgent(nint windowHandle)
+    private void ShowFromAgent(nint windowHandle, int command)
     {
+        var key = (windowHandle, command);
         var request = Interlocked.Increment(ref _minimizeGeneration);
-        if (!_minimizingFromAgent.TryAdd(windowHandle, request))
+        if (!_showingFromAgent.TryAdd(key, request))
         {
-            _log.LogDebug("0x{Hwnd:X} is already being minimized", windowHandle);
+            _log.LogDebug("ShowWindow({Command}) for 0x{Hwnd:X} is still on its way", CommandName(command), windowHandle);
             return;
         }
         // A thread of its own rather than the thread pool: a ShowWindow that waits
         // for an app that is not responding ties its thread up for as long as the
         // app hangs.
-        var minimizing = Task.Factory.StartNew(() =>
+        var showing = Task.Factory.StartNew(() =>
         {
             try
             {
-                if (!NativeMethods.ShowWindow(windowHandle, NativeMethods.SW_MINIMIZE))
-                    _log.LogWarning("ShowWindow(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
+                if (!NativeMethods.ShowWindow(windowHandle, command))
+                    _log.LogWarning("ShowWindow({Command}) returned false for 0x{Hwnd:X}", CommandName(command), windowHandle);
             }
             catch (Exception ex)
             {
-                _log.LogError(ex, "ShowWindow(SW_MINIMIZE) threw for 0x{Hwnd:X}", windowHandle);
+                _log.LogError(ex, "ShowWindow({Command}) threw for 0x{Hwnd:X}", CommandName(command), windowHandle);
             }
             finally
             {
-                _minimizingFromAgent.TryRemove(new KeyValuePair<nint, long>(windowHandle, request));
+                _showingFromAgent.TryRemove(new KeyValuePair<(nint, int), long>(key, request));
             }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        _ = WarnIfStillMinimizingAsync(windowHandle, request);
-        minimizing.Wait(AgentMinimizeWait);
+        _ = WarnIfStillShowingAsync(key, request);
+        showing.Wait(AgentShowWindowWait);
     }
 
+    private static string CommandName(int command) => command switch
+    {
+        NativeMethods.SW_MINIMIZE => "SW_MINIMIZE",
+        NativeMethods.SW_SHOWNOACTIVATE => "SW_SHOWNOACTIVATE",
+        _ => command.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    };
+
     /// <summary>
-    /// Logs that the app of a window the agent is minimizing is not responding,
-    /// when its <c>ShowWindow</c> has not returned <see cref="OwnThreadMinimizeTimeout"/>
-    /// later. Not judged by <c>IsIconic</c>: Windows marks the window minimized
-    /// before its app has handled the request, while the window is still on screen.
+    /// Logs that the app of a window the agent is minimizing or restoring is not
+    /// responding, when its <c>ShowWindow</c> has not returned
+    /// <see cref="OwnThreadMinimizeTimeout"/> later. Not judged by <c>IsIconic</c>:
+    /// Windows marks the window minimized before its app has handled the request,
+    /// while the window is still on screen.
     /// </summary>
-    private async Task WarnIfStillMinimizingAsync(nint windowHandle, long request)
+    private async Task WarnIfStillShowingAsync((nint Window, int Command) key, long request)
     {
         await Task.Delay(OwnThreadMinimizeTimeout).ConfigureAwait(false);
-        if (_minimizingFromAgent.TryGetValue(windowHandle, out var current) && current == request)
+        if (!_showingFromAgent.TryGetValue(key, out var current) || current != request)
+            return;
+        if (key.Command == NativeMethods.SW_MINIMIZE)
         {
             _log.LogWarning(
                 "0x{Hwnd:X} [{ClassName}] did not minimize within {TimeoutMs} ms: its app is not responding. It goes down as soon as the app responds",
-                windowHandle, ClassNameOf(windowHandle), OwnThreadMinimizeTimeout.TotalMilliseconds);
+                key.Window, ClassNameOf(key.Window), OwnThreadMinimizeTimeout.TotalMilliseconds);
+        }
+        else
+        {
+            _log.LogWarning(
+                "0x{Hwnd:X} [{ClassName}] did not come back within {TimeoutMs} ms: its app is not responding. It comes back as soon as the app responds",
+                key.Window, ClassNameOf(key.Window), OwnThreadMinimizeTimeout.TotalMilliseconds);
         }
     }
 
@@ -341,9 +370,11 @@ public sealed class FocusEnforcer : IFocusEnforcer
         if (plan == FallbackPlan.Restore)
         {
             // Back on screen before the blocked window goes down, so Windows can
-            // hand it the foreground.
-            try { NativeMethods.ShowWindow(target, NativeMethods.SW_SHOWNOACTIVATE); }
-            catch (Exception ex) { _log.LogError(ex, "ShowWindow(SW_SHOWNOACTIVATE) threw for 0x{Hwnd:X}", target); }
+            // hand it the foreground. A fallback whose app is not responding holds
+            // the block up no longer than a moment (#451): the blocked window goes
+            // down all the same, and the fallback comes back as soon as its app
+            // responds.
+            ShowFromAgent(target, NativeMethods.SW_SHOWNOACTIVATE);
         }
         Minimize(offendingWindowHandle, onOwnThread: true);
         return true;
