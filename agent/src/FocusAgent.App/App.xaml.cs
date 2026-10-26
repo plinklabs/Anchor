@@ -712,7 +712,7 @@ public partial class App : Application
     private void RunToastSelfTest()
     {
         var dispatcher = DispatcherQueue.GetForCurrentThread();
-        var logDir = AgentLogPaths.LocalAppDataLogDirectory();
+        var logDir = Program.LogDirectory;
         Directory.CreateDirectory(logDir);
         var serilog = new LoggerConfiguration()
             .MinimumLevel.Debug()
@@ -763,7 +763,7 @@ public partial class App : Application
     private void RunOverlaySelfTest()
     {
         var dispatcher = DispatcherQueue.GetForCurrentThread();
-        var logDir = AgentLogPaths.LocalAppDataLogDirectory();
+        var logDir = Program.LogDirectory;
         Directory.CreateDirectory(logDir);
         var serilog = new LoggerConfiguration()
             .MinimumLevel.Debug()
@@ -910,7 +910,7 @@ public partial class App : Application
             typeof(App).Assembly
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
                 ?.InformationalVersion?.Split('+', 2)[0],
-            Path.Combine(AgentLogPaths.LocalAppDataLogDirectory(), "startup-error.log"));
+            Path.Combine(Program.LogDirectory, "startup-error.log"));
 
         _crashSelfTestWindow = new CrashReportWindow(
             "Anchor couldn't start", detail, CrashDiagnostics.BuildFullStack(synthetic));
@@ -1353,8 +1353,10 @@ public partial class App : Application
             .Bind(builder.Configuration.GetSection(DiagnosticsSettings.SectionName));
         var diagnostics = builder.Configuration.GetSection(DiagnosticsSettings.SectionName).Get<DiagnosticsSettings>()
                           ?? new DiagnosticsSettings();
+        // #463: without the setting, the launch's log folder, which a dev launch
+        // without --inject-token (a --test-crash-at run) also moves.
         var logDir = string.IsNullOrWhiteSpace(diagnostics.LogDirectory)
-            ? AgentLogPaths.LocalAppDataLogDirectory()
+            ? Program.LogDirectory
             : diagnostics.LogDirectory;
 
         builder.Services.AddSingleton(dispatcher);

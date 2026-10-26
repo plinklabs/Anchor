@@ -16,8 +16,9 @@ namespace FocusAgent.App.Diagnostics;
 ///
 /// It is deliberately self-contained: it must not touch the DI host, config, or
 /// logging, because those are exactly what may have failed. It reuses only
-/// <see cref="AgentLogPaths"/> (a pure path helper) and reads the version straight
-/// off the assembly. Two surfaces:
+/// <see cref="Program.LogDirectory"/> (a pure path helper over the launch's flags
+/// and <see cref="AgentLogPaths.LogDirectoryEnvVar"/>, #463) and reads the version
+/// straight off the assembly. Two surfaces:
 /// <list type="bullet">
 ///   <item>a rich, selectable <see cref="CrashReportWindow"/> for the cases where
 ///   we own the UI thread and the message pump is alive (startup + UI-thread
@@ -121,8 +122,7 @@ internal static class CrashReporter
     {
         try
         {
-            var dir = AgentLogPaths.LocalAppDataLogDirectory();
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(Program.LogDirectory);
             File.AppendAllText(
                 LogFilePath(),
                 $"{DateTimeOffset.Now:O}{Environment.NewLine}{ex}{Environment.NewLine}{Environment.NewLine}");
@@ -208,7 +208,7 @@ internal static class CrashReporter
     {
         try
         {
-            return Path.Combine(AgentLogPaths.LocalAppDataLogDirectory(), "startup-error.log");
+            return Path.Combine(Program.LogDirectory, "startup-error.log");
         }
         catch
         {

@@ -120,7 +120,14 @@ dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.
 
 The suite boots its own backend on a dedicated port (5282) against a throwaway
 SQLite DB under the temp dir, so it never touches a running dev backend or
-`anchor.dev.db`. It runs in CI on a Windows runner via
+`anchor.dev.db`. Likewise every agent it launches logs to a temporary folder of
+the run (`%TEMP%\anchor-agent-e2e-run-logs-<id>`, deleted when the run ends or,
+if Windows still holds a log then, by the next run), never to
+`%LOCALAPPDATA%\Anchor\FocusAgent\logs`, where an agent installed on the same box
+keeps its own logs (#463): the suite sets `Diagnostics__LogDirectory`, which the
+agent honours on any dev launch, crash log and self-tests included. Set
+`Diagnostics__LogDirectory` yourself before `dotnet test` to keep the logs of a
+run in a folder of your choice. The suite runs in CI on a Windows runner via
 [`.github/workflows/agent-e2e.yml`](../.github/workflows/agent-e2e.yml).
 
 ### Published package (#403)

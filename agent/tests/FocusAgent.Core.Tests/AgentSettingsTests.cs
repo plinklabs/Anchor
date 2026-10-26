@@ -72,4 +72,28 @@ public class AgentSettingsTests
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             path);
     }
+
+    [Fact]
+    public void LaunchLogDirectory_MovesADevLaunchToTheFolderItNames()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "anchor-agent-e2e-logs-test");
+
+        Assert.Equal(folder, AgentLogPaths.LaunchLogDirectory(devLaunch: true, folder));
+    }
+
+    [Theory]
+    [InlineData(false, @"C:\elsewhere")]
+    [InlineData(false, null)]
+    [InlineData(true, null)]
+    [InlineData(true, "")]
+    [InlineData(true, "   ")]
+    public void LaunchLogDirectory_StaysInLocalAppDataForTheNormalLaunchOrWithoutAFolder(
+        bool devLaunch, string? overrideDirectory)
+    {
+        // #463: the normal, user-facing launch ignores the variable, so a student
+        // can't move the log the test phase uploads (#446).
+        Assert.Equal(
+            AgentLogPaths.LocalAppDataLogDirectory(),
+            AgentLogPaths.LaunchLogDirectory(devLaunch, overrideDirectory));
+    }
 }

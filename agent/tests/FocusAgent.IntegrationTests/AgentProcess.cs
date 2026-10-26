@@ -85,7 +85,10 @@ internal sealed record StartupSweepSnapshot(
 /// Config is overridden per launch via environment variables, which the agent
 /// honours only under <c>--inject-token</c> (see App.BuildHost): the backend URL
 /// (so the agent talks to the throwaway e2e backend, not the dev default), which
-/// seeded student to impersonate, and the heartbeat cadence.
+/// seeded student to impersonate, and the heartbeat cadence. The agent logs to the
+/// run's temporary folder, <see cref="AgentTestLogs.Folder"/>, which it inherits
+/// from the test process (#463); a spec can pass its own folder through
+/// <c>extraEnvironment</c> (<c>Diagnostics__LogDirectory</c>).
 /// </summary>
 internal sealed class AgentProcess : IAsyncDisposable
 {

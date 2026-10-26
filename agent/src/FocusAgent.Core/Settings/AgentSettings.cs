@@ -168,11 +168,13 @@ public sealed record WitnessSettings
 /// <summary>
 /// Where the agent's logs live (#446). Empty, the defaults production uses: the
 /// agent's logs under <c>%LOCALAPPDATA%\Anchor\FocusAgent\logs</c> and Velopack's
-/// log under <c>%LOCALAPPDATA%\velopack</c>. The agent e2e sets them per launch
-/// through environment variables (<c>Diagnostics__LogDirectory</c> etc.), which the
-/// agent only reads under <c>--inject-token</c>, so a test agent writes and
+/// log under <c>%LOCALAPPDATA%\velopack</c>. The agent e2e sets them on every agent
+/// it launches through environment variables (<c>Diagnostics__LogDirectory</c> etc.),
+/// which the agent only reads under <c>--inject-token</c>, so a test agent writes and
 /// uploads its own temporary logs and never reads those of an agent installed on
-/// the same box.
+/// the same box. <c>Diagnostics__LogDirectory</c> also moves the crash log and the
+/// logs of the other dev launches, the self-tests and <c>--test-crash-at</c> (#463,
+/// see <see cref="Logging.AgentLogPaths.LaunchLogDirectory"/>).
 /// </summary>
 public sealed record DiagnosticsSettings
 {
