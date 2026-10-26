@@ -41,7 +41,8 @@ public sealed class PublishedPackageTests(PublishedPackageFixture publish)
         Assert.False(
             agent.HasExited,
             "The published agent exited after showing its main window; see " +
-            "%LOCALAPPDATA%\\Anchor\\FocusAgent\\logs\\startup-error.log and the Application event log.");
+            $"{Path.Combine(AgentTestLogs.Folder, "startup-error.log")} (the run deletes it; set " +
+            "Diagnostics__LogDirectory before the run to keep it) and the Application event log.");
         Assert.True(WindowCapture.IsWindow(hwnd), "The published agent's main window closed on its own.");
     }
 

@@ -13,7 +13,8 @@ namespace FocusAgent.IntegrationTests;
 ///
 /// Self-test modes skip single-instance gating (see <c>Program.Main</c>), and
 /// the window probe matches on this process's PID, so a developer's own running
-/// agent never collides with the throwaway self-test process.
+/// agent never collides with the throwaway self-test process. Like every agent
+/// the suite launches, it logs to <see cref="AgentTestLogs.Folder"/> (#463).
 /// </summary>
 internal sealed class AgentSelfTestProcess : IAsyncDisposable
 {

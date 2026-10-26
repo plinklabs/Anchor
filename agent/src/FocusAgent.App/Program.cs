@@ -1,6 +1,7 @@
 using FocusAgent.App.Extension;
 using FocusAgent.App.Startup;
 using FocusAgent.App.Tamper;
+using FocusAgent.Core.Logging;
 using FocusAgent.Core.Startup;
 using FocusAgent.Native;
 using Microsoft.UI.Dispatching;
@@ -442,6 +443,14 @@ public static class Program
         ShowTestCrash || VerifyI18n;
 
     /// <summary>
+    /// Whether this launch carries any dev / headless / self-test / test-crash /
+    /// test-update flag, as opposed to the normal, user-facing launch that passes
+    /// none of them.
+    /// </summary>
+    public static bool IsDevLaunch =>
+        SuppressCrashDialog || TestCrashAt is not null || TestUpdateProbe || TestUpdateFeed is not null;
+
+    /// <summary>
     /// Whether this launch may show a real UAC prompt (#405): only a normal,
     /// user-facing launch. Every dev / headless / self-test / test-crash flag rules
     /// it out, because a prompt takes over the secure desktop and waits for an answer
@@ -449,8 +458,20 @@ public static class Program
     /// Production environment, so a Debug run (<c>dotnet run</c>, the e2e) never
     /// elevates either.
     /// </summary>
-    public static bool AllowsRealElevation =>
-        !SuppressCrashDialog && TestCrashAt is null && !TestUpdateProbe && TestUpdateFeed is null;
+    public static bool AllowsRealElevation => !IsDevLaunch;
+
+    /// <summary>
+    /// The folder this launch writes its logs to: the daily logs, the self-tests'
+    /// logs and the crash log (#463). A dev launch (<see cref="IsDevLaunch"/>) honours
+    /// <see cref="AgentLogPaths.LogDirectoryEnvVar"/>, which the agent e2e sets on
+    /// every agent it launches, so a test agent never writes into the log of an
+    /// agent installed on the same box. The normal launch always logs to
+    /// <c>%LOCALAPPDATA%\Anchor\FocusAgent\logs</c>: a student can't move the log the
+    /// test phase uploads (#446) with an environment variable.
+    /// </summary>
+    public static string LogDirectory =>
+        AgentLogPaths.LaunchLogDirectory(
+            IsDevLaunch, Environment.GetEnvironmentVariable(AgentLogPaths.LogDirectoryEnvVar));
 
     /// <summary>
     /// How long the uninstall hook waits for the student to answer the UAC prompt
