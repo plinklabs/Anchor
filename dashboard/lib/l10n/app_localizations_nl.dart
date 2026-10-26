@@ -187,6 +187,37 @@ class AppLocalizationsNl extends AppLocalizations {
   String get homeEnd => 'Beëindigen';
 
   @override
+  String get homeEndLabel => 'Sessie eindigt';
+
+  @override
+  String homeEndThisPeriod(String time) {
+    return 'Op het einde van dit lesuur ($time)';
+  }
+
+  @override
+  String homeEndNextPeriod(String time) {
+    return 'Op het einde van het volgende lesuur ($time)';
+  }
+
+  @override
+  String get homeEndSpecificTime => 'Op een uur dat ik kies';
+
+  @override
+  String get homeEndTimeLabel => 'Einduur';
+
+  @override
+  String get homeEndTimeInvalid => 'Gebruik een uur zoals 11:30.';
+
+  @override
+  String homeEndTimeTooLate(String time) {
+    return 'Kies een uur ten laatste om $time.';
+  }
+
+  @override
+  String get homeEndPeriodChanged =>
+      'Het lesuur is intussen veranderd. Kijk na wanneer de sessie eindigt en start ze dan opnieuw.';
+
+  @override
   String get classesLoadError =>
       'Kon de klassen niet laden. Probeer het opnieuw.';
 
@@ -441,6 +472,11 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String sessionTitleSpec(String datetime) {
     return 'Sessie $datetime';
+  }
+
+  @override
+  String sessionEndsAt(String time) {
+    return 'eindigt om $time';
   }
 
   @override
@@ -906,6 +942,67 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get schoolsEmpty =>
       'Geen scholen gevonden. Scholen komen uit je directory; zodra leerkrachten bij een school horen, verschijnt die hier.';
+
+  @override
+  String schoolsLessonPeriodCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count lesuren',
+      one: '1 lesuur',
+      zero: 'Geen lesuren',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get schoolsEditLessonPeriods => 'Lesuren';
+
+  @override
+  String schoolsLessonPeriodsTitle(String name) {
+    return 'Lesuren · $name';
+  }
+
+  @override
+  String get schoolsLessonPeriodsIntro =>
+      'Eén lesrooster voor elke schooldag, in schooltijd. Leerkrachten van deze school kunnen een sessie dan laten eindigen op het einde van het huidige of het volgende lesuur.';
+
+  @override
+  String schoolsLessonPeriodNumber(int number) {
+    return 'Lesuur $number';
+  }
+
+  @override
+  String get schoolsLessonPeriodStart => 'Begin';
+
+  @override
+  String get schoolsLessonPeriodEnd => 'Einde';
+
+  @override
+  String get schoolsAddLessonPeriod => 'Lesuur toevoegen';
+
+  @override
+  String get schoolsRemoveLessonPeriod => 'Lesuur verwijderen';
+
+  @override
+  String get schoolsLessonPeriodsEmpty =>
+      'Nog geen lesuren. Leerkrachten van deze school kiezen voor elke sessie zelf een einduur.';
+
+  @override
+  String get schoolsLessonPeriodInvalidTime => 'Gebruik een uur zoals 08:25.';
+
+  @override
+  String get schoolsLessonPeriodEndBeforeStart =>
+      'Een lesuur moet eindigen na het begin.';
+
+  @override
+  String get schoolsLessonPeriodsOverlap =>
+      'Dit lesuur overlapt met een ander lesuur.';
+
+  @override
+  String schoolsLessonPeriodsSaveError(String name) {
+    return 'Kon de lesuren van $name niet opslaan. Probeer het opnieuw.';
+  }
 
   @override
   String get historyLoadError =>

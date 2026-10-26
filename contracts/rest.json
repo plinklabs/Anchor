@@ -27,7 +27,8 @@
     "ClassMembershipRole": ["Member", "Teacher"],
     "ClassMembershipImportStatus": ["Added", "AlreadyMember", "NotFoundInEntra", "WrongSchool"],
     "BundleEntryKind": ["Domain", "App"],
-    "BundleEntryMatchType": ["Exact", "Wildcard", "Suffix", "SignedPublisher"]
+    "BundleEntryMatchType": ["Exact", "Wildcard", "Suffix", "SignedPublisher"],
+    "SessionEndMode": ["ThisPeriod", "NextPeriod", "SpecificTime"]
   },
   "routes": {
     "GET me": {
@@ -63,6 +64,7 @@
         "joinCode": "string",
         "startedAt": "date-time",
         "endedAt": "date-time?",
+        "endsAt": "date-time?",
         "summaries": [
           {
             "userId": "string",
@@ -103,8 +105,21 @@
         ]
       }
     },
+    "GET sessions/end-options": {
+      "query": ["classId"],
+      "response": {
+        "thisPeriodEndsAt": "date-time?",
+        "nextPeriodEndsAt": "date-time?",
+        "latestEndsAt": "date-time?"
+      }
+    },
     "POST sessions": {
-      "request": { "classId": "string", "bundleIds": ["string"] },
+      "request": {
+        "classId": "string",
+        "bundleIds": ["string"],
+        "endMode": "SessionEndMode?",
+        "endsAt": "date-time?"
+      },
       "response": {
         "id": "string",
         "classId": "string",
@@ -354,11 +369,32 @@
       ]
     },
     "GET admin/schools": {
-      "response": [{ "name": "string", "isActive": "boolean" }]
+      "response": [
+        {
+          "name": "string",
+          "isActive": "boolean",
+          "lessonPeriods": [{ "start": "string", "end": "string" }]
+        }
+      ]
     },
     "POST admin/schools/activation": {
       "request": { "name": "string?", "isActive": "boolean" },
-      "response": { "name": "string", "isActive": "boolean" }
+      "response": {
+        "name": "string",
+        "isActive": "boolean",
+        "lessonPeriods": [{ "start": "string", "end": "string" }]
+      }
+    },
+    "PUT admin/schools/lesson-periods": {
+      "request": {
+        "name": "string?",
+        "lessonPeriods": [{ "start": "string", "end": "string" }]
+      },
+      "response": {
+        "name": "string",
+        "isActive": "boolean",
+        "lessonPeriods": [{ "start": "string", "end": "string" }]
+      }
     }
   },
   "notCovered": ["GET sessions/rejoinable", "POST sessions/join-by-code"]

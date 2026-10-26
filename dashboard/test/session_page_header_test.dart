@@ -21,9 +21,10 @@ class _FakeBundles extends BundlesApi {
 }
 
 class _FakeSessions extends SessionsApi {
-  _FakeSessions({required this.startedAt}) : super(_dummyClient());
+  _FakeSessions({required this.startedAt, this.endsAt}) : super(_dummyClient());
 
   final DateTime startedAt;
+  final DateTime? endsAt;
 
   @override
   Future<SessionDetail> getSession(String sessionId) async => SessionDetail(
@@ -33,6 +34,7 @@ class _FakeSessions extends SessionsApi {
     joinCode: '',
     startedAt: startedAt,
     endedAt: null,
+    endsAt: endsAt,
     summaries: const [],
     recentEvents: const [],
     participants: const [],
@@ -45,7 +47,39 @@ class _FakeSessions extends SessionsApi {
       const [];
 }
 
+Widget _page(_FakeSessions sessions) => MaterialApp(
+  localizationsDelegates: AppLocalizations.localizationsDelegates,
+  supportedLocales: AppLocalizations.supportedLocales,
+  home: SessionPage(
+    sessionId: '11111111-2222-3333-4444-555555555555',
+    tokens: AuthTokenStore(),
+    sessions: sessions,
+    bundles: _FakeBundles(),
+    apiBaseUrl: Uri.parse('http://localhost'),
+  ),
+);
+
 void main() {
+  testWidgets('the header says when a live session is planned to end (#447)', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _page(
+        _FakeSessions(
+          startedAt: DateTime(2026, 10, 26, 9, 15),
+          endsAt: DateTime(2026, 10, 26, 10, 5),
+        ),
+      ),
+    );
+    // As below: no pumpAndSettle, the real hub client never settles.
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Session 2026-10-26 09:15 · ends 10:05'), findsOneWidget);
+    // The teacher can still end it earlier.
+    expect(find.text('End session'), findsOneWidget);
+  });
+
   testWidgets(
     'AppBar title shows session start date/time, not the GUID (#99)',
     (tester) async {

@@ -185,6 +185,37 @@ class AppLocalizationsEn extends AppLocalizations {
   String get homeEnd => 'End';
 
   @override
+  String get homeEndLabel => 'Session ends';
+
+  @override
+  String homeEndThisPeriod(String time) {
+    return 'At the end of this period ($time)';
+  }
+
+  @override
+  String homeEndNextPeriod(String time) {
+    return 'At the end of the next period ($time)';
+  }
+
+  @override
+  String get homeEndSpecificTime => 'At a time I pick';
+
+  @override
+  String get homeEndTimeLabel => 'End time';
+
+  @override
+  String get homeEndTimeInvalid => 'Use a time like 11:30.';
+
+  @override
+  String homeEndTimeTooLate(String time) {
+    return 'Pick a time no later than $time.';
+  }
+
+  @override
+  String get homeEndPeriodChanged =>
+      'The lesson period has changed in the meantime. Check when the session ends, then start it again.';
+
+  @override
   String get classesLoadError => 'Could not load classes. Please try again.';
 
   @override
@@ -434,6 +465,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String sessionTitleSpec(String datetime) {
     return 'Session $datetime';
+  }
+
+  @override
+  String sessionEndsAt(String time) {
+    return 'ends $time';
   }
 
   @override
@@ -893,6 +929,66 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get schoolsEmpty =>
       'No schools found. Schools come from your directory; once teachers belong to one, it will appear here.';
+
+  @override
+  String schoolsLessonPeriodCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count lesson periods',
+      one: '1 lesson period',
+      zero: 'No lesson periods',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get schoolsEditLessonPeriods => 'Lesson periods';
+
+  @override
+  String schoolsLessonPeriodsTitle(String name) {
+    return 'Lesson periods · $name';
+  }
+
+  @override
+  String get schoolsLessonPeriodsIntro =>
+      'One timetable for every school day, in school time. Teachers of this school can then end a session at the end of the current or the next period.';
+
+  @override
+  String schoolsLessonPeriodNumber(int number) {
+    return 'Period $number';
+  }
+
+  @override
+  String get schoolsLessonPeriodStart => 'Start';
+
+  @override
+  String get schoolsLessonPeriodEnd => 'End';
+
+  @override
+  String get schoolsAddLessonPeriod => 'Add period';
+
+  @override
+  String get schoolsRemoveLessonPeriod => 'Remove period';
+
+  @override
+  String get schoolsLessonPeriodsEmpty =>
+      'No lesson periods yet. Teachers of this school pick an end time for each session.';
+
+  @override
+  String get schoolsLessonPeriodInvalidTime => 'Use a time like 08:25.';
+
+  @override
+  String get schoolsLessonPeriodEndBeforeStart =>
+      'A period has to end after it starts.';
+
+  @override
+  String get schoolsLessonPeriodsOverlap => 'This period overlaps another one.';
+
+  @override
+  String schoolsLessonPeriodsSaveError(String name) {
+    return 'Could not save the lesson periods of $name. Please try again.';
+  }
 
   @override
   String get historyLoadError =>

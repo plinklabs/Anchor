@@ -466,7 +466,14 @@ class _SessionPageState extends State<SessionPage> {
     final h = started.hour.toString().padLeft(2, '0');
     final mi = started.minute.toString().padLeft(2, '0');
     final datetime = '$y-$mo-$d $h:$mi';
-    return l10n.sessionTitleSpec(datetime);
+    final spec = l10n.sessionTitleSpec(datetime);
+    // While the session runs, the spec says when it is planned to end (#447);
+    // the teacher can still end it earlier.
+    final endsAt = _detail?.endsAt?.toLocal();
+    if (endsAt == null || _ended) return spec;
+    final eh = endsAt.hour.toString().padLeft(2, '0');
+    final emi = endsAt.minute.toString().padLeft(2, '0');
+    return '$spec · ${l10n.sessionEndsAt('$eh:$emi')}';
   }
 
   @override

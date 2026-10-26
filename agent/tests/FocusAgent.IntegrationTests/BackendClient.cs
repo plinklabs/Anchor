@@ -55,6 +55,19 @@ internal sealed class BackendClient
     }
 
     /// <summary>
+    /// POST /sessions with a planned end (#447): a specific time, as the
+    /// dashboard sends when the teacher picks one. The backend ends the session
+    /// at that time.
+    /// </summary>
+    public async Task<StartedSession> StartSessionEndingAtAsync(
+        Guid classId, DateTimeOffset endsAt, string oid = TestConfig.TeacherOid)
+    {
+        using var res = await SendAsync(HttpMethod.Post, "/sessions", oid,
+            new { classId, bundleIds = Array.Empty<Guid>(), endMode = "SpecificTime", endsAt });
+        return await ReadAsync<StartedSession>(res);
+    }
+
+    /// <summary>
     /// GET /sessions/rejoinable as a student: the running sessions they are still
     /// in, which an agent of theirs silently rejoins as soon as it connects (#54).
     /// </summary>

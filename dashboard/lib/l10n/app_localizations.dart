@@ -410,6 +410,54 @@ abstract class AppLocalizations {
   /// **'End'**
   String get homeEnd;
 
+  /// Label of the start form's choice of when the session ends (#447).
+  ///
+  /// In en, this message translates to:
+  /// **'Session ends'**
+  String get homeEndLabel;
+
+  /// No description provided for @homeEndThisPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'At the end of this period ({time})'**
+  String homeEndThisPeriod(String time);
+
+  /// No description provided for @homeEndNextPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'At the end of the next period ({time})'**
+  String homeEndNextPeriod(String time);
+
+  /// No description provided for @homeEndSpecificTime.
+  ///
+  /// In en, this message translates to:
+  /// **'At a time I pick'**
+  String get homeEndSpecificTime;
+
+  /// No description provided for @homeEndTimeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'End time'**
+  String get homeEndTimeLabel;
+
+  /// No description provided for @homeEndTimeInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a time like 11:30.'**
+  String get homeEndTimeInvalid;
+
+  /// No description provided for @homeEndTimeTooLate.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a time no later than {time}.'**
+  String homeEndTimeTooLate(String time);
+
+  /// No description provided for @homeEndPeriodChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The lesson period has changed in the meantime. Check when the session ends, then start it again.'**
+  String get homeEndPeriodChanged;
+
   /// No description provided for @classesLoadError.
   ///
   /// In en, this message translates to:
@@ -817,6 +865,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Session {datetime}'**
   String sessionTitleSpec(String datetime);
+
+  /// The planned end of a live session, after its start in the header (#447).
+  ///
+  /// In en, this message translates to:
+  /// **'ends {time}'**
+  String sessionEndsAt(String time);
 
   /// No description provided for @sessionHeadlineFallback.
   ///
@@ -1549,6 +1603,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No schools found. Schools come from your directory; once teachers belong to one, it will appear here.'**
   String get schoolsEmpty;
+
+  /// No description provided for @schoolsLessonPeriodCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No lesson periods} =1{1 lesson period} other{{count} lesson periods}}'**
+  String schoolsLessonPeriodCount(int count);
+
+  /// No description provided for @schoolsEditLessonPeriods.
+  ///
+  /// In en, this message translates to:
+  /// **'Lesson periods'**
+  String get schoolsEditLessonPeriods;
+
+  /// No description provided for @schoolsLessonPeriodsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Lesson periods · {name}'**
+  String schoolsLessonPeriodsTitle(String name);
+
+  /// No description provided for @schoolsLessonPeriodsIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'One timetable for every school day, in school time. Teachers of this school can then end a session at the end of the current or the next period.'**
+  String get schoolsLessonPeriodsIntro;
+
+  /// No description provided for @schoolsLessonPeriodNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Period {number}'**
+  String schoolsLessonPeriodNumber(int number);
+
+  /// No description provided for @schoolsLessonPeriodStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start'**
+  String get schoolsLessonPeriodStart;
+
+  /// No description provided for @schoolsLessonPeriodEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'End'**
+  String get schoolsLessonPeriodEnd;
+
+  /// No description provided for @schoolsAddLessonPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'Add period'**
+  String get schoolsAddLessonPeriod;
+
+  /// No description provided for @schoolsRemoveLessonPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove period'**
+  String get schoolsRemoveLessonPeriod;
+
+  /// No description provided for @schoolsLessonPeriodsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No lesson periods yet. Teachers of this school pick an end time for each session.'**
+  String get schoolsLessonPeriodsEmpty;
+
+  /// No description provided for @schoolsLessonPeriodInvalidTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a time like 08:25.'**
+  String get schoolsLessonPeriodInvalidTime;
+
+  /// No description provided for @schoolsLessonPeriodEndBeforeStart.
+  ///
+  /// In en, this message translates to:
+  /// **'A period has to end after it starts.'**
+  String get schoolsLessonPeriodEndBeforeStart;
+
+  /// No description provided for @schoolsLessonPeriodsOverlap.
+  ///
+  /// In en, this message translates to:
+  /// **'This period overlaps another one.'**
+  String get schoolsLessonPeriodsOverlap;
+
+  /// No description provided for @schoolsLessonPeriodsSaveError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the lesson periods of {name}. Please try again.'**
+  String schoolsLessonPeriodsSaveError(String name);
 
   /// No description provided for @historyLoadError.
   ///

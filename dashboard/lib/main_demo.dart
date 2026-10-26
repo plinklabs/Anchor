@@ -99,9 +99,17 @@ class _DemoSessions extends SessionsApi {
       : demoLiveSessionDetail();
 
   @override
+  Future<SessionEndOptions> endOptions(String classId) async =>
+      SessionEndOptions(
+        thisPeriodEndsAt: demoSessionEndsAt,
+        nextPeriodEndsAt: demoNextPeriodEndsAt,
+      );
+
+  @override
   Future<StartSessionResponse> startSession(
     String classId, {
     List<String> bundleIds = const <String>[],
+    SessionEnd? end,
   }) async => StartSessionResponse(
     id: demoSessionId,
     classId: classId,

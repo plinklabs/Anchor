@@ -203,6 +203,28 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                     b.ToTable("SessionEventSummaries", (string)null);
                 });
 
+            modelBuilder.Entity("Anchor.Domain.Schools.LessonPeriod", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<TimeOnly>("End")
+                        .HasColumnType("time");
+
+                    b.Property<Guid>("SchoolId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<TimeOnly>("Start")
+                        .HasColumnType("time");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SchoolId");
+
+                    b.ToTable("LessonPeriods", (string)null);
+                });
+
             modelBuilder.Entity("Anchor.Domain.Schools.School", b =>
                 {
                     b.Property<Guid>("Id")
@@ -235,6 +257,9 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTimeOffset?>("EndedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("EndsAt")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<string>("JoinCode")
@@ -435,6 +460,15 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Anchor.Domain.Schools.LessonPeriod", b =>
+                {
+                    b.HasOne("Anchor.Domain.Schools.School", null)
+                        .WithMany("LessonPeriods")
+                        .HasForeignKey("SchoolId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Anchor.Domain.Sessions.Session", b =>
                 {
                     b.HasOne("Anchor.Domain.Classes.Class", "Class")
@@ -530,6 +564,11 @@ namespace Anchor.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Anchor.Domain.Classes.Class", b =>
                 {
                     b.Navigation("Memberships");
+                });
+
+            modelBuilder.Entity("Anchor.Domain.Schools.School", b =>
+                {
+                    b.Navigation("LessonPeriods");
                 });
 
             modelBuilder.Entity("Anchor.Domain.Sessions.Session", b =>

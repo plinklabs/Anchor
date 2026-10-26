@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
@@ -14,7 +16,8 @@ import '../widgets/api_error_text.dart';
 /// this page is just the flush-left editorial column beneath that eyebrow. Any
 /// still-running sessions read first as quiet hairline instrument cards (#126),
 /// then the start-session composer — one oversized Fraunces line, the class
-/// picker, and the single magenta spark on the page: the Start button.
+/// picker, when the session ends (#447), and the single magenta spark on the
+/// page: the Start button.
 class HomePage extends StatefulWidget {
   const HomePage({super.key, required this.tokens, required this.sessions});
 
@@ -33,7 +36,23 @@ class _HomePageState extends State<HomePage> {
   List<ActiveSession> _activeSessions = const [];
   final Set<String> _endingSessions = {};
 
+  // When the session ends (#447): the period ends the selected class's school
+  // offers right now (null while they load), the teacher's choice, and the
+  // time typed for a specific end. [_endOptionsLoad] counts the loads, so a
+  // slow answer for a class the teacher has since switched away from is
+  // dropped.
+  SessionEndOptions? _endOptions;
+  int _endOptionsLoad = 0;
+  _EndChoice _endChoice = _EndChoice.specificTime;
+  final TextEditingController _endTime = TextEditingController();
+
   bool _didLoad = false;
+
+  @override
+  void dispose() {
+    _endTime.dispose();
+    super.dispose();
+  }
 
   @override
   void didChangeDependencies() {
@@ -76,7 +95,7 @@ class _HomePageState extends State<HomePage> {
         _classes = classes;
         _selected = preferred;
       });
-      await _loadActiveSessions();
+      await Future.wait([_loadActiveSessions(), _loadEndOptions(preferred)]);
     } catch (e) {
       if (!mounted) return;
       setState(
@@ -104,10 +123,82 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Loads when a session of [klass] can end if it starts now (#447): the end
+  /// of this and the next lesson period at its school. The end of this period
+  /// is the default; without one, the teacher picks a time, which starts out
+  /// [_defaultSessionLength] away. Non-fatal: if the options don't load, the
+  /// teacher still picks a time.
+  Future<void> _loadEndOptions(ClassSummary? klass) async {
+    if (klass == null) return;
+    final load = ++_endOptionsLoad;
+    setState(() => _endOptions = null);
+    SessionEndOptions options;
+    try {
+      options = await widget.sessions.endOptions(klass.id);
+    } catch (_) {
+      options = SessionEndOptions();
+    }
+    if (!mounted || load != _endOptionsLoad) return;
+    setState(() {
+      _endOptions = options;
+      _endChoice = options.thisPeriodEndsAt != null
+          ? _EndChoice.thisPeriod
+          : _EndChoice.specificTime;
+      _endTime.text = _clockTime(_defaultEndTime(options, DateTime.now()));
+    });
+  }
+
+  /// When the session ends if the teacher picks the time in [_endTime],
+  /// starting at [now]: today, or tomorrow once today's has passed. Null when
+  /// the field doesn't hold a time.
+  DateTime? _pickedEnd(DateTime now) {
+    final match = RegExp(
+      r'^(\d{1,2}):(\d{2})$',
+    ).firstMatch(_endTime.text.trim());
+    if (match == null) return null;
+    final hour = int.parse(match.group(1)!);
+    final minute = int.parse(match.group(2)!);
+    if (hour > 23 || minute > 59) return null;
+    final today = DateTime(now.year, now.month, now.day, hour, minute);
+    return today.isAfter(now)
+        ? today
+        : DateTime(now.year, now.month, now.day + 1, hour, minute);
+  }
+
+  /// What's wrong with the picked end time, or null when nothing is (or the
+  /// teacher ends the session at a period's end).
+  String? _endTimeProblem(AppLocalizations l10n, DateTime now) {
+    if (_endChoice != _EndChoice.specificTime) return null;
+    final at = _pickedEnd(now);
+    if (at == null) return l10n.homeEndTimeInvalid;
+    final latest = _endOptions?.latestEndsAt?.toLocal();
+    if (latest != null && at.isAfter(latest)) {
+      return l10n.homeEndTimeTooLate(_clockTime(latest));
+    }
+    return null;
+  }
+
   Future<void> _startSession() async {
     final l10n = AppLocalizations.of(context);
     final klass = _selected;
     if (klass == null) return;
+    // The end is worked out at the click: a time picked earlier may have
+    // passed in the meantime.
+    final now = DateTime.now();
+    final SessionEnd end;
+    switch (_endChoice) {
+      case _EndChoice.thisPeriod:
+        end = const SessionEnd.thisPeriod();
+      case _EndChoice.nextPeriod:
+        end = const SessionEnd.nextPeriod();
+      case _EndChoice.specificTime:
+        final at = _pickedEnd(now);
+        if (at == null || _endTimeProblem(l10n, now) != null) {
+          setState(() {});
+          return;
+        }
+        end = SessionEnd.at(at);
+    }
     setState(() {
       _busy = true;
       _error = null;
@@ -115,18 +206,24 @@ class _HomePageState extends State<HomePage> {
     try {
       // Sessions now start with no bundles — baseline-only enforcement. The
       // teacher adds bundles from the live session view (#93).
-      final session = await widget.sessions.startSession(klass.id);
+      final session = await widget.sessions.startSession(klass.id, end: end);
       if (!mounted) return;
       context.go('/session/${session.id}');
     } catch (e) {
       if (!mounted) return;
+      // The lesson period ran out while the teacher was choosing: say so,
+      // and offer what applies now.
+      final periodChanged = isNoLessonPeriodConflict(e);
       setState(
-        () => _error = describeApiError(
-          e,
-          generic: l10n.homeStartError,
-          notAuthorized: l10n.apiError403,
-        ),
+        () => _error = periodChanged
+            ? ApiErrorMessage(l10n.homeEndPeriodChanged)
+            : describeApiError(
+                e,
+                generic: l10n.homeStartError,
+                notAuthorized: l10n.apiError403,
+              ),
       );
+      if (periodChanged) unawaited(_loadEndOptions(klass));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -276,16 +373,35 @@ class _HomePageState extends State<HomePage> {
                       ],
                       onChanged: _busy
                           ? null
-                          : (ClassSummary? value) =>
-                                setState(() => _selected = value),
+                          : (ClassSummary? value) {
+                              setState(() => _selected = value);
+                              _loadEndOptions(value);
+                            },
                     ),
+                  ),
+                  const SizedBox(height: PlinkSpacing.s4),
+                  _EndPicker(
+                    // Built afresh for each answer, so the field starts on
+                    // the choice made for the options it offers.
+                    key: ValueKey<SessionEndOptions?>(_endOptions),
+                    options: _endOptions,
+                    choice: _endChoice,
+                    endTime: _endTime,
+                    problem: _endTimeProblem(l10n, DateTime.now()),
+                    enabled: !_busy,
+                    onChoice: (choice) => setState(() => _endChoice = choice),
+                    onEndTimeChanged: () => setState(() {}),
                   ),
                   const SizedBox(height: PlinkSpacing.s5),
                   // The single primary (magenta) action — the one spark on the
                   // page. The DS theme paints ElevatedButton in the spark.
                   ElevatedButton(
                     key: const Key('start-session'),
-                    onPressed: _busy || _selected == null
+                    onPressed:
+                        _busy ||
+                            _selected == null ||
+                            _endOptions == null ||
+                            _endTimeProblem(l10n, DateTime.now()) != null
                         ? null
                         : _startSession,
                     child: _busy
@@ -321,6 +437,138 @@ class _HomePageState extends State<HomePage> {
 /// Horizontal page gutter — keeps the home column on the same flush-left margin
 /// as the shell's eyebrow and app-bar (the editorial column).
 const double _gutter = PlinkSpacing.s6; // 32
+
+/// How a session the teacher starts ends (#447).
+enum _EndChoice { thisPeriod, nextPeriod, specificTime }
+
+/// How far away a picked end time starts out when no period end applies: about
+/// a lesson period.
+const Duration _defaultSessionLength = Duration(minutes: 50);
+
+/// The end time the picker starts out with at [now]: the end of this period if
+/// there is one, otherwise [_defaultSessionLength] away, rounded up to five
+/// minutes; never later than the latest end the backend takes.
+DateTime _defaultEndTime(SessionEndOptions options, DateTime now) {
+  var end = options.thisPeriodEndsAt?.toLocal();
+  if (end == null) {
+    final later = now.add(_defaultSessionLength);
+    final extra = (5 - later.minute % 5) % 5;
+    end = DateTime(
+      later.year,
+      later.month,
+      later.day,
+      later.hour,
+      later.minute + extra,
+    );
+  }
+  final latest = options.latestEndsAt?.toLocal();
+  return latest != null && end.isAfter(latest) ? latest : end;
+}
+
+/// A local wall-clock time as `HH:mm`.
+String _clockTime(DateTime at) {
+  final local = at.toLocal();
+  return '${local.hour.toString().padLeft(2, '0')}:'
+      '${local.minute.toString().padLeft(2, '0')}';
+}
+
+/// When the session ends (#447): at the end of this lesson period (the default
+/// while there is one), of the next one, or at a time the teacher types. The
+/// period choices name their end time; a school without lesson periods, or a
+/// start outside every period, offers only a time. While the options load the
+/// choice is disabled.
+class _EndPicker extends StatelessWidget {
+  const _EndPicker({
+    super.key,
+    required this.options,
+    required this.choice,
+    required this.endTime,
+    required this.problem,
+    required this.enabled,
+    required this.onChoice,
+    required this.onEndTimeChanged,
+  });
+
+  final SessionEndOptions? options;
+  final _EndChoice choice;
+  final TextEditingController endTime;
+  final String? problem;
+  final bool enabled;
+  final ValueChanged<_EndChoice> onChoice;
+  final VoidCallback onEndTimeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppLocalizations l10n = AppLocalizations.of(context);
+    final SessionEndOptions? loaded = options;
+    final DateTime? thisPeriod = loaded?.thisPeriodEndsAt;
+    final DateTime? nextPeriod = loaded?.nextPeriodEndsAt;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: DropdownButtonFormField<_EndChoice>(
+            key: const Key('end-picker'),
+            initialValue: choice,
+            isExpanded: true,
+            decoration: InputDecoration(labelText: l10n.homeEndLabel),
+            items: <DropdownMenuItem<_EndChoice>>[
+              if (thisPeriod != null)
+                DropdownMenuItem<_EndChoice>(
+                  value: _EndChoice.thisPeriod,
+                  child: Text(
+                    l10n.homeEndThisPeriod(_clockTime(thisPeriod)),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              if (nextPeriod != null)
+                DropdownMenuItem<_EndChoice>(
+                  value: _EndChoice.nextPeriod,
+                  child: Text(
+                    l10n.homeEndNextPeriod(_clockTime(nextPeriod)),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              DropdownMenuItem<_EndChoice>(
+                value: _EndChoice.specificTime,
+                child: Text(
+                  l10n.homeEndSpecificTime,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+            onChanged: enabled && loaded != null
+                ? (_EndChoice? value) {
+                    if (value != null) onChoice(value);
+                  }
+                : null,
+          ),
+        ),
+        if (loaded != null && choice == _EndChoice.specificTime) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: TextField(
+              key: const Key('end-time'),
+              controller: endTime,
+              enabled: enabled,
+              keyboardType: TextInputType.datetime,
+              onChanged: (_) => onEndTimeChanged(),
+              decoration: InputDecoration(
+                labelText: l10n.homeEndTimeLabel,
+                hintText: '11:30',
+                errorText: problem,
+                errorMaxLines: 2,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
 
 /// A still-running session, drawn as a quiet hairline instrument card (#168):
 /// a LIVE spark badge + the started time as a mono spec, the class name, and

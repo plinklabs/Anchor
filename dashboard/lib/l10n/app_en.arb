@@ -79,6 +79,26 @@
   },
   "homeResume": "Resume",
   "homeEnd": "End",
+  "homeEndLabel": "Session ends",
+  "@homeEndLabel": {
+    "description": "Label of the start form's choice of when the session ends (#447)."
+  },
+  "homeEndThisPeriod": "At the end of this period ({time})",
+  "@homeEndThisPeriod": {
+    "placeholders": { "time": { "type": "String" } }
+  },
+  "homeEndNextPeriod": "At the end of the next period ({time})",
+  "@homeEndNextPeriod": {
+    "placeholders": { "time": { "type": "String" } }
+  },
+  "homeEndSpecificTime": "At a time I pick",
+  "homeEndTimeLabel": "End time",
+  "homeEndTimeInvalid": "Use a time like 11:30.",
+  "homeEndTimeTooLate": "Pick a time no later than {time}.",
+  "@homeEndTimeTooLate": {
+    "placeholders": { "time": { "type": "String" } }
+  },
+  "homeEndPeriodChanged": "The lesson period has changed in the meantime. Check when the session ends, then start it again.",
 
   "classesLoadError": "Could not load classes. Please try again.",
   "classesLoadSchoolsError": "Couldn't load schools. The selector may be incomplete.",
@@ -168,6 +188,11 @@
   "sessionTitleFallback": "Session",
   "sessionTitleSpec": "Session {datetime}",
   "@sessionTitleSpec": { "placeholders": { "datetime": { "type": "String" } } },
+  "sessionEndsAt": "ends {time}",
+  "@sessionEndsAt": {
+    "description": "The planned end of a live session, after its start in the header (#447).",
+    "placeholders": { "time": { "type": "String" } }
+  },
   "sessionHeadlineFallback": "Live session",
   "sessionConnecting": "Connecting to the live feed…",
   "sessionReconnecting": "Connection lost — reconnecting. Live updates are paused.",
@@ -330,6 +355,30 @@
   "schoolsHeader": "Schools",
   "schoolsIntro": "Active schools appear in the Classes school selector for teachers. Deactivate the ones your teachers don’t need.",
   "schoolsEmpty": "No schools found. Schools come from your directory; once teachers belong to one, it will appear here.",
+  "schoolsLessonPeriodCount": "{count, plural, =0{No lesson periods} =1{1 lesson period} other{{count} lesson periods}}",
+  "@schoolsLessonPeriodCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "schoolsEditLessonPeriods": "Lesson periods",
+  "schoolsLessonPeriodsTitle": "Lesson periods · {name}",
+  "@schoolsLessonPeriodsTitle": {
+    "placeholders": { "name": { "type": "String" } }
+  },
+  "schoolsLessonPeriodsIntro": "One timetable for every school day, in school time. Teachers of this school can then end a session at the end of the current or the next period.",
+  "schoolsLessonPeriodNumber": "Period {number}",
+  "@schoolsLessonPeriodNumber": {
+    "placeholders": { "number": { "type": "int" } }
+  },
+  "schoolsLessonPeriodStart": "Start",
+  "schoolsLessonPeriodEnd": "End",
+  "schoolsAddLessonPeriod": "Add period",
+  "schoolsRemoveLessonPeriod": "Remove period",
+  "schoolsLessonPeriodsEmpty": "No lesson periods yet. Teachers of this school pick an end time for each session.",
+  "schoolsLessonPeriodInvalidTime": "Use a time like 08:25.",
+  "schoolsLessonPeriodEndBeforeStart": "A period has to end after it starts.",
+  "schoolsLessonPeriodsOverlap": "This period overlaps another one.",
+  "schoolsLessonPeriodsSaveError": "Could not save the lesson periods of {name}. Please try again.",
+  "@schoolsLessonPeriodsSaveError": { "placeholders": { "name": { "type": "String" } } },
 
   "historyLoadError": "Could not load past sessions. Please try again.",
   "historyEmpty": "No past sessions yet. Sessions appear here after you end them.",

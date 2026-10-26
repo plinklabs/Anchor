@@ -143,8 +143,11 @@ if (enableEventPruner)
 }
 
 // Ending a session is shared by the teacher's End and the auto-end of forgotten
-// sessions (#345).
+// sessions (#345) and of sessions at their planned end (#447).
 builder.Services.AddScoped<SessionEnder>();
+builder.Services.AddSingleton<SessionEndSchedule>();
+builder.Services.AddScoped<SessionEndPlanner>();
+builder.Services.Configure<LessonPeriodOptions>(builder.Configuration.GetSection(LessonPeriodOptions.SectionName));
 builder.Services.Configure<SessionAutoEndOptions>(builder.Configuration.GetSection(SessionAutoEndOptions.SectionName));
 var autoEndSection = builder.Configuration.GetSection(SessionAutoEndOptions.SectionName);
 var enableAutoEnder = autoEndSection.GetValue<bool?>(nameof(SessionAutoEndOptions.EnableAutoEnder)) ?? true;

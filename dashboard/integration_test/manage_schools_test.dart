@@ -17,7 +17,8 @@ import 'support/e2e_binding.dart';
 // a school via its toggle. Exercises the route wiring, the sub-nav entry, and
 // the page composition end to end so a broken nested route or a real-layout
 // regression (e.g. the toggle overflowing the row) can't hide behind isolated
-// widget tests.
+// widget tests. The same goes for entering a school's lesson periods (#447):
+// the row's action, the editor dialog over the real shell, and the saved row.
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -76,9 +77,31 @@ class _FakeSchools extends SchoolsApi {
   ];
 
   final List<(String, bool)> calls = [];
+  final List<String> lessonPeriodCalls = [];
 
   /// What setActive throws, when a test sets it (#383).
   Object? setActiveError;
+
+  @override
+  Future<School> setLessonPeriods(
+    String name,
+    List<LessonPeriod> periods,
+  ) async {
+    lessonPeriodCalls.add(
+      '$name: ${[for (final p in periods) '${p.start}-${p.end}'].join(', ')}',
+    );
+    final current = schools.firstWhere((s) => s.name == name);
+    final updated = School(
+      name: name,
+      isActive: current.isActive,
+      lessonPeriods: periods,
+    );
+    schools = [
+      for (final s in schools)
+        if (s.name == name) updated else s,
+    ];
+    return updated;
+  }
 
   @override
   Future<List<School>> listSchools() async => schools;
@@ -157,6 +180,55 @@ void main() {
     );
     expect(toggle.value, isFalse);
 
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('admin enters a school\'s lesson periods (#447)', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final schools = _FakeSchools();
+    await tester.pumpWidget(_app(schools));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('nav-admin')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('admin-nav-schools')));
+    await tester.pumpAndSettle();
+    expect(find.text('Active · No lesson periods'), findsNWidgets(2));
+
+    await tester.tap(find.byKey(const Key('school-periods-Sint-Jan')));
+    await tester.pumpAndSettle();
+    expect(find.text('Lesson periods · Sint-Jan'), findsOneWidget);
+
+    // Two periods back to back: the second starts where the first ended.
+    await tester.tap(find.byKey(const Key('lesson-period-add')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('lesson-period-start-0')),
+      '08:25',
+    );
+    await tester.enterText(
+      find.byKey(const Key('lesson-period-end-0')),
+      '09:15',
+    );
+    await tester.tap(find.byKey(const Key('lesson-period-add')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('lesson-period-end-1')),
+      '10:05',
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byKey(const Key('lesson-periods-save')));
+    await tester.pumpAndSettle();
+
+    expect(schools.lessonPeriodCalls, ['Sint-Jan: 08:25-09:15, 09:15-10:05']);
+    expect(find.text('Lesson periods · Sint-Jan'), findsNothing);
+    expect(find.text('Active · 2 lesson periods'), findsOneWidget);
+    expect(find.text('Active · No lesson periods'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

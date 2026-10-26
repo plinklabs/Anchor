@@ -246,7 +246,8 @@ public sealed class SessionAutoEnderTests : IClassFixture<SessionAutoEnderTests.
         return await condition();
     }
 
-    private SessionAutoEnder BuildAutoEnder(TimeSpan? maxDuration = null, TimeProvider? clock = null)
+    private SessionAutoEnder BuildAutoEnder(
+        TimeSpan? maxDuration = null, TimeProvider? clock = null, SessionEndSchedule? schedule = null)
     {
         var options = new TestOptionsMonitor(new SessionAutoEndOptions
         {
@@ -257,6 +258,7 @@ public sealed class SessionAutoEnderTests : IClassFixture<SessionAutoEnderTests.
             _factory.Services.GetRequiredService<IServiceScopeFactory>(),
             clock ?? _clock,
             options,
+            schedule ?? new SessionEndSchedule(),
             NullLogger<SessionAutoEnder>.Instance);
     }
 

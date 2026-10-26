@@ -16,6 +16,7 @@ public sealed class AnchorDbContext : DbContext
 
     public DbSet<User> Users => Set<User>();
     public DbSet<School> Schools => Set<School>();
+    public DbSet<LessonPeriod> LessonPeriods => Set<LessonPeriod>();
     public DbSet<Class> Classes => Set<Class>();
     public DbSet<ClassMembership> ClassMemberships => Set<ClassMembership>();
     public DbSet<Bundle> Bundles => Set<Bundle>();
