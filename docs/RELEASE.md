@@ -163,8 +163,10 @@ the check every `Update:CheckInterval` (6 h of awake time), the agent checks on 
 from sleep and on unlock once the last check is that old by the clock.
 The portable `.zip` is suppressed (`--noPortable`) — the agent is installed, not
 run portably — but the `.nupkg` + `RELEASES` feed is kept; it **is** the
-auto-update channel. Setup carries the Anchor icon and a success page, and
-launches the agent automatically once installed.
+auto-update channel. Setup carries the Anchor icon and a success page, and, run
+by hand, launches the agent automatically once installed. A silent install
+(`--silent`, as Intune runs it) shows no success page and doesn't start the
+agent; the Intune install script below starts it.
 
 - The packaged `appsettings.Production.json` ships as a template with `#{...}#`
   placeholders (#203); pack time substitutes them from per-deployment repo
@@ -192,7 +194,9 @@ launches the agent automatically once installed.
   then starts the agent right away, which a silent Setup doesn't.
   `pack-release.ps1` puts it next to `Setup.exe`, and the workflow attaches it to
   the release once `vpk` has created it. Its parameters, exit codes and log
-  location are in its help: `Get-Help .\Install-AnchorAgent.ps1 -Full`.
+  location are in its help: `Get-Help .\Install-AnchorAgent.ps1 -Full`. How to
+  roll the agent out with it (packaging, detection rule, return codes, the Edge
+  extension policy, updates and uninstall) is in [`INTUNE.md`](INTUNE.md).
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
 - `pack-release.ps1` fails the build when the publish folder has no

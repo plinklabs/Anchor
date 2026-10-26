@@ -394,11 +394,25 @@ Logs roll daily into `%LOCALAPPDATA%\Anchor\FocusAgent\logs\focusagent-*.log`
 ## Packaging & distribution
 
 The agent ships **unpackaged**, distributed via **Velopack** on GitHub Releases
-(see [`docs/RELEASE.md`](../docs/RELEASE.md)). There is no MSIX/Store path —
-Anchor is BYOD and is never pushed to devices via Intune/MDM. Startup at login is
-handled by a per-user `HKCU\...\Run` entry written by the Velopack install hook,
-not a packaged startup task (see `FocusAgent.Core.Startup.StartupRegistrar`,
-#225).
+(see [`docs/RELEASE.md`](../docs/RELEASE.md)). There is no MSIX/Store path.
+Every release carries the Velopack `Anchor.Agent-win-Setup.exe` and the Intune
+install script `Install-AnchorAgent.ps1` (#457), and the agent reaches a laptop
+in one of two ways:
+
+- **Through Intune** (most students; about 95% at the school Anchor was built
+  for): IT packages `Setup.exe` and the script as a Win32 app that installs in
+  user context. The script runs `Setup.exe --silent` when the agent isn't
+  installed yet, then starts the agent right away. Packaging, detection rule,
+  return codes, the Edge extension policy and uninstall are in
+  [`docs/INTUNE.md`](../docs/INTUNE.md).
+- **By hand** (a student's own laptop with a personal account): the student
+  runs `Setup.exe`, which installs the agent and starts it.
+
+Either way the agent installs per user into `%LOCALAPPDATA%\Anchor.Agent`, with
+no admin rights, and updates itself from the release feed; Intune never pushes
+new versions. Startup at login is handled by a per-user `HKCU\...\Run` entry
+written by the Velopack install hook, not a packaged startup task (see
+`FocusAgent.Core.Startup.StartupRegistrar`, #225).
 
 The csproj still sets `EnableMsixTooling`: without it the unpackaged publish
 leaves out `FocusAgent.App.pri` (the compiled XAML and strings) and the

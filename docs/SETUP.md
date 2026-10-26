@@ -21,6 +21,9 @@ Related references:
   folded into Step 3 below.
 - [`docs/RELEASE.md`](RELEASE.md) — the deploy pipeline and the authoritative
   inventory of every secret/variable the workflows consume.
+- [`docs/INTUNE.md`](INTUNE.md) — once the backend runs and you have cut an agent
+  release: rolling the agent out to school laptops through Intune, and the
+  Edge extension policy that goes with it.
 - [ROADMAP.md](../ROADMAP.md) — where fork bootstrap (workstream D) fits.
 
 ## What you're building

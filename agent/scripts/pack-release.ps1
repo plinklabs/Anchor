@@ -33,9 +33,12 @@
          missing or blank one fails the build.
       6. `vpk pack` the publish folder into ./artifacts/velopack, with the app
          icon, a success/conclusion page, and the portable bundle suppressed
-         (#247). Setup.exe runs the freshly-installed agent automatically — that
-         is Velopack's default post-install behaviour, so no extra flag is
-         needed for the "launch after install" acceptance criterion.
+         (#247). Run by hand, Setup.exe starts the freshly installed agent
+         itself: that is Velopack's default post-install behaviour, so no
+         extra flag is needed for the "launch after install" acceptance
+         criterion. A silent install (Setup.exe --silent, as Intune runs it)
+         shows no pages and doesn't start the agent; Install-AnchorAgent.ps1
+         (step 7) starts it instead (#457, #458).
       7. Copy the Intune install script (release-assets/Install-AnchorAgent.ps1,
          #457) into ./artifacts/velopack next to Setup.exe. IT packages the two
          together as the agent's Intune Win32 app; agent-release.yml uploads
@@ -173,7 +176,9 @@ if ($SkipPack) {
 #              run portably, so the zip is just release-page noise (#247). The
 #              nupkg/RELEASES auto-update feed is intentionally NOT dropped.
 # --instConclusion gives Setup a final success page so the install isn't a silent
-#              no-op (#247); Velopack already auto-launches the agent afterwards.
+#              no-op (#247). After an interactive install Velopack starts the
+#              agent itself; after a silent one (--silent) it shows no page and
+#              doesn't start it, so Install-AnchorAgent.ps1 does (#457).
 $mainExe = 'FocusAgent.App.exe'
 $iconPath = Join-Path $agentDir 'src/FocusAgent.App/Assets/TrayIcon.ico'
 $conclusionPath = Join-Path $scriptDir 'release-assets/install-conclusion.txt'
