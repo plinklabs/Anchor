@@ -13,6 +13,14 @@ export interface StartedSession {
   classId: string;
 }
 
+/** One student on the teacher's roster, as GET /sessions/{id} lists them. */
+export interface RosterRow {
+  userId: string;
+  displayName: string;
+  state: string;
+  tampered: boolean;
+}
+
 export class BackendClient {
   // Plain field (not a TS parameter property): the harness's node-run scripts
   // execute this under Node's strip-only TypeScript mode, which rejects
@@ -87,6 +95,15 @@ export class BackendClient {
     oid: string = TEACHER_OID,
   ): Promise<void> {
     await this.send('PUT', `/sessions/${sessionId}/bundles`, oid, { bundleIds });
+  }
+
+  /**
+   * GET /sessions/{id} as the session's teacher: the roster the dashboard's
+   * live page loads, with each student's live state (#444).
+   */
+  async roster(sessionId: string, oid: string = TEACHER_OID): Promise<RosterRow[]> {
+    const detail = await this.json<{ participants: RosterRow[] }>('GET', `/sessions/${sessionId}`, oid);
+    return detail.participants;
   }
 
   private async json<T>(method: string, path: string, oid: string, body?: unknown): Promise<T> {

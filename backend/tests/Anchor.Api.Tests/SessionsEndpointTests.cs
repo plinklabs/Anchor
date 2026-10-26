@@ -795,6 +795,46 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task GET_session_resolves_agent_missing_for_a_joiner_whose_agent_never_pinged()
+    {
+        // #444: the agent and the extension each join, so JoinedAt alone doesn't
+        // show the agent took part. The hub starts waiting for the agent's first
+        // heartbeat when the student joins; past the 30s join grace with none,
+        // the roster says the agent is missing.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 4);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        var extensionOnly = scenario.Students[0];
+        var justJoined = scenario.Students[1];
+        var lateAgent = scenario.Students[2];
+        var nothingJoined = scenario.Students[3];
+
+        var joinedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await SetParticipantStateAsync(session.Id, extensionOnly.Id, joinedAt: joinedAt);
+        await SetParticipantStateAsync(session.Id, justJoined.Id, joinedAt: DateTimeOffset.UtcNow.AddSeconds(-5));
+        await SetParticipantStateAsync(session.Id, lateAgent.Id, joinedAt: joinedAt);
+
+        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        tracker.ExpectAgent(session.Id, extensionOnly.Id, joinedAt);
+        tracker.ExpectAgent(session.Id, justJoined.Id, DateTimeOffset.UtcNow.AddSeconds(-5));
+        tracker.ExpectAgent(session.Id, lateAgent.Id, joinedAt);
+        tracker.Record(session.Id, lateAgent.Id, DateTimeOffset.UtcNow);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var body = await client.GetFromJsonAsync<SessionDetailResponse>($"/sessions/{session.Id}");
+
+        Assert.NotNull(body);
+        string StateOf(Guid userId) => body!.Participants.Single(p => p.UserId == userId).State;
+        Assert.Equal(nameof(ParticipantLiveState.AgentMissing), StateOf(extensionOnly.Id));
+        Assert.Equal(nameof(ParticipantLiveState.Joined), StateOf(justJoined.Id));
+        Assert.Equal(nameof(ParticipantLiveState.Joined), StateOf(lateAgent.Id));
+        Assert.Equal(nameof(ParticipantLiveState.NeverJoined), StateOf(nothingJoined.Id));
+    }
+
+    [Fact]
     public async Task GET_session_flags_tampered_participants_in_roster_snapshot()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);

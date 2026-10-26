@@ -477,6 +477,13 @@ class AppLocalizationsNl extends AppLocalizations {
   String get sessionStateStale => 'Agent rapporteert niet meer';
 
   @override
+  String get sessionStateAgentMissing => 'Agent niet verbonden';
+
+  @override
+  String get sessionStateAgentMissingTooltip =>
+      'Alleen de browserextensie is aangesloten. Apps worden op deze laptop niet geblokkeerd.';
+
+  @override
   String get sessionStateLeft => 'Verlaten';
 
   @override

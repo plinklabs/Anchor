@@ -21,7 +21,8 @@
       "ManualLeave",
       "JoinDeclined",
       "UnblockApproved",
-      "TamperDetected"
+      "TamperDetected",
+      "AgentMissing"
     ],
     "ClassMembershipRole": ["Member", "Teacher"],
     "ClassMembershipImportStatus": ["Added", "AlreadyMember", "NotFoundInEntra", "WrongSchool"],

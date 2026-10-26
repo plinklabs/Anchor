@@ -178,6 +178,14 @@
   "sessionEndedBanner": "Session ended — event stream stopped.",
   "sessionWaitingEvents": "Waiting for events…",
   "sessionStateStale": "Agent stopped reporting",
+  "sessionStateAgentMissing": "Agent not connected",
+  "@sessionStateAgentMissing": {
+    "description": "Live roster state of a student who joined, but whose agent never sent a heartbeat: usually only the Edge extension joined, so apps aren't blocked on that laptop (#444)."
+  },
+  "sessionStateAgentMissingTooltip": "Only the browser extension joined. Apps aren't being blocked on this laptop.",
+  "@sessionStateAgentMissingTooltip": {
+    "description": "Tooltip on the 'Agent not connected' roster state, saying what it means for the teacher (#444)."
+  },
   "sessionStateLeft": "Left",
   "sessionStateDeclined": "Declined",
   "sessionStateNotJoined": "Not joined",

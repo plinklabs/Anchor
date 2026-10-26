@@ -138,6 +138,8 @@
   "sessionEndedBanner": "Sessie beëindigd — de gebeurtenissenstroom is gestopt.",
   "sessionWaitingEvents": "Wachten op gebeurtenissen…",
   "sessionStateStale": "Agent rapporteert niet meer",
+  "sessionStateAgentMissing": "Agent niet verbonden",
+  "sessionStateAgentMissingTooltip": "Alleen de browserextensie is aangesloten. Apps worden op deze laptop niet geblokkeerd.",
   "sessionStateLeft": "Verlaten",
   "sessionStateDeclined": "Geweigerd",
   "sessionStateNotJoined": "Niet aangesloten",

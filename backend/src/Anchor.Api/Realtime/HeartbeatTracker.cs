@@ -13,6 +13,14 @@ namespace Anchor.Api.Realtime;
 /// participant: the agent and extension share a <c>userId</c>, and tracking them
 /// separately is what stops one witness's pings from masking the other's
 /// silence (#149).
+///
+/// <para>
+/// An agent entry can also exist before the agent has pinged at all, once
+/// <see cref="ExpectAgent"/> says it should be there (#444). Both the agent and
+/// the extension join a session, so a join alone doesn't show the agent took
+/// part; an entry that only ever waits for its first ping is how the
+/// <see cref="HeartbeatMonitor"/> notices an agent that never showed up.
+/// </para>
 /// </summary>
 public sealed class HeartbeatTracker
 {
@@ -24,7 +32,25 @@ public sealed class HeartbeatTracker
         _entries.AddOrUpdate(
             key,
             _ => new Entry(at, Reported: false),
-            (_, existing) => existing with { LastSeenAt = at });
+            // Keeps Reported: an agent reported missing that now pings goes
+            // through the monitor's resumed path, like one reported lost.
+            (_, existing) => existing with { LastSeenAt = at, AwaitingFirstPing = false });
+    }
+
+    /// <summary>
+    /// Starts waiting for the participant's agent, from <paramref name="since"/>,
+    /// unless it is already tracked (#444). Called when the participant joins
+    /// and on each of their extension's pings, so the wait also starts after a
+    /// backend restart, when an extension keeps pinging without joining again.
+    /// An agent that has pinged, or is already awaited, is left as it is: the
+    /// extension joining after the agent never makes it look absent, and a
+    /// later call never restarts the wait.
+    /// </summary>
+    public void ExpectAgent(Guid sessionId, Guid userId, DateTimeOffset since)
+    {
+        _entries.TryAdd(
+            new ParticipantKey(sessionId, userId, WitnessSource.Agent),
+            new Entry(since, Reported: false, AwaitingFirstPing: true));
     }
 
     public bool TryGet(Guid sessionId, Guid userId, out Entry entry, WitnessSource source = WitnessSource.Agent)
@@ -37,7 +63,8 @@ public sealed class HeartbeatTracker
     public IReadOnlyList<TrackedParticipant> Snapshot()
     {
         return _entries
-            .Select(kv => new TrackedParticipant(kv.Key.SessionId, kv.Key.UserId, kv.Key.Source, kv.Value.LastSeenAt, kv.Value.Reported))
+            .Select(kv => new TrackedParticipant(
+                kv.Key.SessionId, kv.Key.UserId, kv.Key.Source, kv.Value.LastSeenAt, kv.Value.Reported, kv.Value.AwaitingFirstPing))
             .ToArray();
     }
 
@@ -93,7 +120,22 @@ public sealed class HeartbeatTracker
 
     public readonly record struct ParticipantKey(Guid SessionId, Guid UserId, WitnessSource Source);
 
-    public readonly record struct Entry(DateTimeOffset LastSeenAt, bool Reported);
+    /// <summary>
+    /// One witness's liveness. While <see cref="AwaitingFirstPing"/> is true the
+    /// witness hasn't pinged yet, and <see cref="LastSeenAt"/> is when it was
+    /// first expected (#444).
+    /// </summary>
+    public readonly record struct Entry(DateTimeOffset LastSeenAt, bool Reported, bool AwaitingFirstPing = false);
 }
 
-public sealed record TrackedParticipant(Guid SessionId, Guid UserId, WitnessSource Source, DateTimeOffset LastSeenAt, bool Reported);
+/// <summary>
+/// One tracked witness, as <see cref="HeartbeatTracker.Snapshot"/> returns it.
+/// See <see cref="HeartbeatTracker.Entry"/> for <see cref="AwaitingFirstPing"/>.
+/// </summary>
+public sealed record TrackedParticipant(
+    Guid SessionId,
+    Guid UserId,
+    WitnessSource Source,
+    DateTimeOffset LastSeenAt,
+    bool Reported,
+    bool AwaitingFirstPing = false);

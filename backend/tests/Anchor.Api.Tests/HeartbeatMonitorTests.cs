@@ -307,6 +307,126 @@ public sealed class HeartbeatMonitorTests : IClassFixture<HeartbeatMonitorTests.
         Assert.False(tracker.TryGet(sessionId, userId, out _, WitnessSource.Extension));
     }
 
+    [Fact]
+    public async Task Agent_that_never_pings_after_the_join_is_reported_missing_once_the_grace_passes()
+    {
+        // #444: only the extension joined. Its join starts the wait for the
+        // agent, which never sends a heartbeat.
+        var (sessionId, userId) = await SeedSessionAndStudentAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+
+        tracker.ExpectAgent(sessionId, userId, clock.GetUtcNow());
+
+        // 25s: past the 20s heartbeat timeout, still inside the 30s join grace.
+        clock.Advance(TimeSpan.FromSeconds(25));
+        await monitor.ScanOnceAsync(CancellationToken.None);
+        Assert.Empty(await EventKindsAsync(sessionId, userId));
+
+        // 31s: past the grace. One report per absence, not one per scan.
+        clock.Advance(TimeSpan.FromSeconds(6));
+        await monitor.ScanOnceAsync(CancellationToken.None);
+        await monitor.ScanOnceAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { EventKind.AgentMissing }, await EventKindsAsync(sessionId, userId));
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var pushed = Assert.Single(broadcaster.ParticipantStateChangedCalls, c => c.SessionId == sessionId && c.UserId == userId);
+        Assert.Equal(nameof(ParticipantLiveState.AgentMissing), pushed.State);
+        Assert.Equal("Student", pushed.DisplayName);
+        // An agent that was never there is not a lost one.
+        Assert.DoesNotContain(broadcaster.HeartbeatLostCalls, c => c.SessionId == sessionId && c.UserId == userId);
+    }
+
+    [Fact]
+    public async Task Agent_that_turns_up_late_clears_the_report_and_is_then_watched_like_any_agent()
+    {
+        var (sessionId, userId) = await SeedSessionAndStudentAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+
+        tracker.ExpectAgent(sessionId, userId, clock.GetUtcNow());
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await monitor.ScanOnceAsync(CancellationToken.None); // AgentMissing
+
+        // The agent starts after all and pings.
+        clock.Advance(TimeSpan.FromSeconds(5));
+        tracker.Record(sessionId, userId, clock.GetUtcNow());
+        await monitor.ScanOnceAsync(CancellationToken.None); // AgentReconnected
+
+        // Now it has been there, going silent is a lost heartbeat, after the
+        // usual timeout rather than the join grace.
+        clock.Advance(TimeSpan.FromSeconds(21));
+        await monitor.ScanOnceAsync(CancellationToken.None); // HeartbeatLost
+
+        Assert.Equal(
+            new[] { EventKind.AgentMissing, EventKind.AgentReconnected, EventKind.HeartbeatLost },
+            await EventKindsAsync(sessionId, userId));
+    }
+
+    [Fact]
+    public async Task Agent_that_pings_within_the_grace_is_never_reported_missing()
+    {
+        // The usual join: the agent's toast (5s), then its first ping one
+        // interval (10s) after it joined.
+        var (sessionId, userId) = await SeedSessionAndStudentAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+
+        tracker.ExpectAgent(sessionId, userId, clock.GetUtcNow());
+        for (var second = 5; second <= 120; second += 5)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            if (second >= 15 && second % 10 == 5)
+                tracker.Record(sessionId, userId, clock.GetUtcNow());
+            await monitor.ScanOnceAsync(CancellationToken.None);
+        }
+
+        Assert.Empty(await EventKindsAsync(sessionId, userId));
+    }
+
+    [Fact]
+    public async Task Expecting_the_agent_again_neither_restarts_the_wait_nor_hides_a_lost_agent()
+    {
+        // The extension's pings expect the agent as well (after a backend
+        // restart nothing else would). Neither may move an earlier start of the
+        // wait, nor turn an agent that has pinged back into an awaited one.
+        var (sessionId, awaited) = await SeedSessionAndStudentAsync();
+        var pinged = await SeedExtraParticipantAsync(sessionId, "Pinged Student");
+        var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        var tracker = new HeartbeatTracker();
+        var monitor = BuildMonitor(tracker, clock);
+
+        tracker.ExpectAgent(sessionId, awaited, clock.GetUtcNow());
+        tracker.Record(sessionId, pinged, clock.GetUtcNow());
+        for (var second = 10; second <= 30; second += 10)
+        {
+            clock.Advance(TimeSpan.FromSeconds(10));
+            tracker.ExpectAgent(sessionId, awaited, clock.GetUtcNow());
+            tracker.ExpectAgent(sessionId, pinged, clock.GetUtcNow());
+        }
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await monitor.ScanOnceAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { EventKind.AgentMissing }, await EventKindsAsync(sessionId, awaited));
+        Assert.Equal(new[] { EventKind.HeartbeatLost }, await EventKindsAsync(sessionId, pinged));
+    }
+
+    private async Task<EventKind[]> EventKindsAsync(Guid sessionId, Guid userId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        return (await db.Events.AsNoTracking()
+                .Where(e => e.SessionId == sessionId && e.UserId == userId)
+                .Select(e => new { e.Kind, e.OccurredAt })
+                .ToListAsync())
+            .OrderBy(e => e.OccurredAt)
+            .Select(e => e.Kind)
+            .ToArray();
+    }
+
     private HeartbeatMonitor BuildMonitor(HeartbeatTracker tracker, FakeTimeProvider clock)
     {
         var broadcaster = _factory.Services.GetRequiredService<ISessionBroadcaster>();
@@ -316,6 +436,7 @@ public sealed class HeartbeatMonitorTests : IClassFixture<HeartbeatMonitorTests.
             IntervalSeconds = 10,
             TimeoutMultiplier = 2,
             ScanIntervalSeconds = 5,
+            AgentJoinGraceSeconds = 30,
         });
         var activeParticipants = _factory.Services.GetRequiredService<ActiveParticipantCache>();
         return new HeartbeatMonitor(

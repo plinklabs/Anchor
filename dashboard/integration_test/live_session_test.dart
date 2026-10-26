@@ -38,6 +38,8 @@ import 'support/e2e_binding.dart';
 //     the raw exception (#383),
 //   - the join code says how the teacher takes part in the session themselves
 //     (#410),
+//   - a student whose agent never connected (only the extension joined) shows
+//     on the live roster, explained, until the agent turns up (#444),
 //   - on a short window the page scrolls to every panel and the feed, and the
 //     join code sits in the header row, dropping under the title on a narrow
 //     one (#422).
@@ -311,6 +313,27 @@ class _FakeBundles extends BundlesApi {
   ];
 }
 
+/// The colour of the status dot on the live feed's row whose payload contains
+/// [payloadText].
+Color? _feedDotColor(WidgetTester tester, String payloadText) {
+  final row = find
+      .ancestor(
+        of: find.textContaining(payloadText),
+        matching: find.byType(Row),
+      )
+      .first;
+  final dot = find.descendant(
+    of: row,
+    matching: find.byWidgetPredicate(
+      (w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration! as BoxDecoration).shape == BoxShape.circle,
+    ),
+  );
+  return (tester.widget<Container>(dot).decoration! as BoxDecoration).color;
+}
+
 typedef _Harness = ({
   _StubHub hub,
   _FakeSessions sessions,
@@ -415,6 +438,81 @@ void main() {
     // Ada is still "in session" — tampering is orthogonal to live state.
     expect(find.text('In session'), findsOneWidget);
   });
+
+  testWidgets(
+    'a student whose agent never connects shows on the live roster until it '
+    'turns up (#444)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [
+          _participant('Ada', ParticipantLiveState.joined),
+          _participant('Bo', ParticipantLiveState.joined),
+        ],
+      );
+      expect(find.text('Students (2/2 in session)'), findsOneWidget);
+
+      // Only Bo's extension joined. Once the join grace passes without an
+      // agent heartbeat, the backend's monitor pushes the roster state change;
+      // the page re-fetches the roster, whose snapshot now says so.
+      h.sessions.roster = [
+        _participant('Ada', ParticipantLiveState.joined),
+        _participant('Bo', ParticipantLiveState.agentMissing),
+      ];
+      h.hub.emit('ParticipantStateChanged', {
+        'userId': 'Bo',
+        'displayName': 'Bo',
+        'state': 'AgentMissing',
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Agent not connected'), findsOneWidget);
+      expect(find.text('Students (1/2 in session)'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Bo')).dy,
+        lessThan(tester.getTopLeft(find.text('Ada')).dy),
+      );
+      final error = Theme.of(tester.element(find.text('Bo'))).colorScheme.error;
+      // The feed row for that push carries the stronger marker.
+      expect(_feedDotColor(tester, 'state=AgentMissing'), error);
+
+      // Hovering the state says what it means for the class.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(find.text('Agent not connected')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          "Only the browser extension joined. Apps aren't being blocked on "
+          'this laptop.',
+        ),
+        findsOneWidget,
+      );
+      await mouse.moveTo(Offset.zero);
+      await tester.pumpAndSettle();
+
+      // Bo's agent starts after all: it joins (a Joined push) and its first
+      // heartbeat clears the report (AgentReconnected).
+      h.hub.emit('ParticipantStateChanged', {
+        'userId': 'Bo',
+        'displayName': 'Bo',
+        'state': 'Joined',
+      });
+      h.sessions.roster = [
+        _participant('Ada', ParticipantLiveState.joined),
+        _participant('Bo', ParticipantLiveState.joined),
+      ];
+      h.hub.emit('AgentReconnected', {'userId': 'Bo'});
+      await tester.pumpAndSettle();
+
+      expect(find.text('Agent not connected'), findsNothing);
+      expect(find.text('Students (2/2 in session)'), findsOneWidget);
+      // An ordinary join is no cause for attention.
+      expect(_feedDotColor(tester, 'state=Joined'), isNot(error));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('an unblock-request push surfaces the pending panel (#132)', (
     tester,

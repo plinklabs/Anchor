@@ -965,6 +965,13 @@ class _Feed extends StatelessWidget {
 /// the ones a teacher might act on.
 const Set<String> _attentionKinds = <String>{'HeartbeatLost', 'TamperDetected'};
 
+/// Whether [event] gets the stronger marker: one of [_attentionKinds], or the
+/// roster state change saying a student's agent never connected (#444).
+bool _needsAttention(SessionEvent event) =>
+    _attentionKinds.contains(event.kind) ||
+    (event.kind == 'ParticipantStateChanged' &&
+        event.payload['state'] == 'AgentMissing');
+
 class _EventRow extends StatelessWidget {
   const _EventRow({required this.event});
 
@@ -984,7 +991,7 @@ class _EventRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool attention = _attentionKinds.contains(event.kind);
+    final bool attention = _needsAttention(event);
     final Color dot = attention
         ? Theme.of(context).colorScheme.error
         : PlinkColors.muted;
@@ -1038,7 +1045,8 @@ class _EventRow extends StatelessWidget {
 
 /// Visual treatment for one live participant state (#100). The stale state is
 /// the loudest — per design §5.4 it's "agent stopped reporting", the signal
-/// teachers actually act on.
+/// teachers actually act on — together with an agent that never connected
+/// (#444): either way apps aren't being enforced on that laptop.
 class _RosterStateStyle {
   const _RosterStateStyle(this.icon, this.sortRank);
   final IconData icon;
@@ -1051,25 +1059,29 @@ class _RosterStateStyle {
     switch (state) {
       case ParticipantLiveState.heartbeatStale:
         return const _RosterStateStyle(Icons.sensors_off, 0);
+      case ParticipantLiveState.agentMissing:
+        return const _RosterStateStyle(Icons.desktop_access_disabled, 1);
       case ParticipantLiveState.left:
-        return const _RosterStateStyle(Icons.logout, 1);
+        return const _RosterStateStyle(Icons.logout, 2);
       case ParticipantLiveState.declined:
-        return const _RosterStateStyle(Icons.cancel_outlined, 2);
+        return const _RosterStateStyle(Icons.cancel_outlined, 3);
       case ParticipantLiveState.neverJoined:
-        return const _RosterStateStyle(Icons.radio_button_unchecked, 3);
+        return const _RosterStateStyle(Icons.radio_button_unchecked, 4);
       case ParticipantLiveState.joined:
-        return const _RosterStateStyle(Icons.check_circle, 4);
+        return const _RosterStateStyle(Icons.check_circle, 5);
       case ParticipantLiveState.unknown:
-        return const _RosterStateStyle(Icons.help_outline, 5);
+        return const _RosterStateStyle(Icons.help_outline, 6);
     }
   }
 
-  /// Brand-token colours only — no off-palette green/orange. Stale is the one
-  /// state painted in the error colour (the signal to act on); everyone else is
-  /// calm ink / muted, leaning on the label, never colour alone.
+  /// Brand-token colours only — no off-palette green/orange. Stale and a
+  /// missing agent are the states painted in the error colour (the signals to
+  /// act on); everyone else is calm ink / muted, leaning on the label, never
+  /// colour alone.
   Color color(ColorScheme scheme) {
     switch (icon) {
       case Icons.sensors_off:
+      case Icons.desktop_access_disabled:
         return scheme.error;
       case Icons.check_circle:
         return PlinkColors.ink60;
@@ -1084,6 +1096,8 @@ String _rosterStateLabel(AppLocalizations l10n, ParticipantLiveState s) {
   switch (s) {
     case ParticipantLiveState.heartbeatStale:
       return l10n.sessionStateStale;
+    case ParticipantLiveState.agentMissing:
+      return l10n.sessionStateAgentMissing;
     case ParticipantLiveState.left:
       return l10n.sessionStateLeft;
     case ParticipantLiveState.declined:
@@ -1161,8 +1175,13 @@ class _RosterRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final style = _RosterStateStyle.of(participant.state);
     final color = style.color(theme.colorScheme);
+    final Widget stateLabel = Text(
+      _rosterStateLabel(l10n, participant.state),
+      style: _monoLabel(color),
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s2),
       child: Row(
@@ -1190,10 +1209,15 @@ class _RosterRow extends StatelessWidget {
             ),
             const SizedBox(width: PlinkSpacing.s2),
           ],
-          Text(
-            _rosterStateLabel(AppLocalizations.of(context), participant.state),
-            style: _monoLabel(color),
-          ),
+          // A missing agent (#444) says what it means for the class on hover:
+          // the label alone doesn't tell a teacher that apps go unblocked.
+          if (participant.state == ParticipantLiveState.agentMissing)
+            Tooltip(
+              message: l10n.sessionStateAgentMissingTooltip,
+              child: stateLabel,
+            )
+          else
+            stateLabel,
         ],
       ),
     );

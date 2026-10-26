@@ -878,6 +878,18 @@ abstract class AppLocalizations {
   /// **'Agent stopped reporting'**
   String get sessionStateStale;
 
+  /// Live roster state of a student who joined, but whose agent never sent a heartbeat: usually only the Edge extension joined, so apps aren't blocked on that laptop (#444).
+  ///
+  /// In en, this message translates to:
+  /// **'Agent not connected'**
+  String get sessionStateAgentMissing;
+
+  /// Tooltip on the 'Agent not connected' roster state, saying what it means for the teacher (#444).
+  ///
+  /// In en, this message translates to:
+  /// **'Only the browser extension joined. Apps aren\'t being blocked on this laptop.'**
+  String get sessionStateAgentMissingTooltip;
+
   /// No description provided for @sessionStateLeft.
   ///
   /// In en, this message translates to:

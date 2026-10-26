@@ -178,6 +178,10 @@ enum ParticipantLiveState {
   neverJoined,
   joined,
   heartbeatStale,
+
+  /// Joined, but their agent never sent a heartbeat (#444): usually only the
+  /// Edge extension joined, so apps aren't being enforced on that laptop.
+  agentMissing,
   declined,
   left,
   unknown;
@@ -190,6 +194,8 @@ enum ParticipantLiveState {
         return ParticipantLiveState.joined;
       case 'HeartbeatStale':
         return ParticipantLiveState.heartbeatStale;
+      case 'AgentMissing':
+        return ParticipantLiveState.agentMissing;
       case 'Declined':
         return ParticipantLiveState.declined;
       case 'Left':

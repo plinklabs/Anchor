@@ -153,6 +153,13 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (participant is not null)
             _activeParticipants.Update(participant);
 
+        // The agent and the extension both join, so this join may be the
+        // extension's alone. Start waiting for the agent's first heartbeat; the
+        // monitor reports it missing if none arrives in time (#444). Already
+        // tracked, as when the agent joined first, it stays as it is.
+        if (joined)
+            _heartbeats.ExpectAgent(session.Id, user.Id, now);
+
         if (isOwningTeacher)
         {
             // Only the owning teacher's connections subscribe to the session
@@ -295,7 +302,15 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (!await _activeParticipants.IsActiveAsync(_db.SessionParticipants.AsNoTracking(), sessionId, user.Id, ct))
             throw new HubException("Not an active participant of this session.");
 
-        _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow(), source);
+        var now = _clock.GetUtcNow();
+        _heartbeats.Record(sessionId, user.Id, now, source);
+
+        // A pinging extension means its student's agent should be pinging too.
+        // JoinSession already started waiting for it, but a backend restart
+        // empties the tracker, and the extension keeps pinging without joining
+        // again, so its pings start the wait anew (#444).
+        if (source == WitnessSource.Extension)
+            _heartbeats.ExpectAgent(sessionId, user.Id, now);
     }
 
     /// <summary>

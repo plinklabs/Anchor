@@ -468,6 +468,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionStateStale => 'Agent stopped reporting';
 
   @override
+  String get sessionStateAgentMissing => 'Agent not connected';
+
+  @override
+  String get sessionStateAgentMissingTooltip =>
+      'Only the browser extension joined. Apps aren\'t being blocked on this laptop.';
+
+  @override
   String get sessionStateLeft => 'Left';
 
   @override
