@@ -47,6 +47,7 @@ public partial class App : Application
     private ExtensionSelfRegistrar? _extensionRegistrar;
     private ExtensionPolicyConsentLauncher? _extensionConsent;
     private InPrivateWitnessMonitor? _inPrivateMonitor;
+    private LogUploadService? _logUpload;
     private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
@@ -158,7 +159,14 @@ public partial class App : Application
             _host.Start();
 
             var logger = _host.Services.GetRequiredService<ILogger<App>>();
-            logger.LogInformation("FocusAgent starting (unpackaged WinUI 3)");
+            // #446: the version, and the process id and start time, which date the
+            // updater log's lines (they carry only a time of day) for the log upload.
+            using (var self = System.Diagnostics.Process.GetCurrentProcess())
+            {
+                logger.LogInformation(
+                    "FocusAgent {Version} starting (unpackaged WinUI 3), process {ProcessId} started at {ProcessStartedAt:o}",
+                    StatusEndpoint.AgentVersion, self.Id, new DateTimeOffset(self.StartTime));
+            }
 
             // #224 + #407: start the Velopack auto-update cadence FIRST — a check
             // now, then every Update:CheckInterval — before config validation and
@@ -256,6 +264,9 @@ public partial class App : Application
             // Also resolve the rehydration service eagerly so it's ready when
             // the connection manager fires its first Connected event below.
             _rehydration = _host.Services.GetRequiredService<SessionRehydrationService>();
+            // #446: the test phase's log upload, run on every Connected below. Off
+            // unless the backend turns it on (it then reports no windows).
+            _logUpload = _host.Services.GetRequiredService<LogUploadService>();
             _focus = _host.Services.GetRequiredService<FocusSessionController>();
             _connection = _host.Services.GetRequiredService<ConnectionManager>();
 
@@ -346,7 +357,10 @@ public partial class App : Application
                     // time asleep: the update clock jumps, the timers don't.
                     lastUpdateCheck: () => _updateService?.LastCheckStartedAt,
                     onCheckUpdate: () => _ = _updateService?.CheckOnceAsync(),
-                    onSimulateSleep: sleepClock is null ? null : sleepClock.Sleep);
+                    onSimulateSleep: sleepClock is null ? null : sleepClock.Sleep,
+                    // #446: what the log uploads did, so the headless e2e can tell
+                    // a pass ran (and whether it uploaded anything).
+                    logUpload: () => _logUpload?.Status);
                 _statusEndpoint.Start(port);
             }
 
@@ -534,6 +548,11 @@ public partial class App : Application
                 // the new connection to the student's user group.
                 if (_rehydration is { } rehydrate)
                     _ = rehydrate.NotifyConnectedAsync();
+                // #446: and upload the log lines of any session window the backend
+                // still asks for. In the background: it never holds up startup or
+                // the connection, and a window that fails stays pending on the
+                // backend, so the next connect tries it again.
+                _ = _logUpload?.NotifyConnectedAsync();
                 break;
         }
     }
@@ -1330,6 +1349,13 @@ public partial class App : Application
             .Bind(builder.Configuration.GetSection(DevSettings.SectionName));
         builder.Services.AddOptions<UpdateSettings>()
             .Bind(builder.Configuration.GetSection(UpdateSettings.SectionName));
+        builder.Services.AddOptions<DiagnosticsSettings>()
+            .Bind(builder.Configuration.GetSection(DiagnosticsSettings.SectionName));
+        var diagnostics = builder.Configuration.GetSection(DiagnosticsSettings.SectionName).Get<DiagnosticsSettings>()
+                          ?? new DiagnosticsSettings();
+        var logDir = string.IsNullOrWhiteSpace(diagnostics.LogDirectory)
+            ? AgentLogPaths.LocalAppDataLogDirectory()
+            : diagnostics.LogDirectory;
 
         builder.Services.AddSingleton(dispatcher);
         builder.Services.AddSingleton(TimeProvider.System);
@@ -1370,6 +1396,20 @@ public partial class App : Application
         builder.Services.AddHttpClient<IJoinByCodeClient, HttpJoinByCodeClient>();
         builder.Services.AddSingleton<JoinByCodeFlow>();
         builder.Services.AddSingleton<ConnectionManager>();
+        // #446 -- the test phase's log upload: REST client + the service that cuts
+        // the lines inside each session window the backend asks for out of the
+        // agent's logs and uploads them.
+        builder.Services.AddHttpClient<ILogUploadClient, HttpLogUploadClient>();
+        builder.Services.AddSingleton(sp => new LogUploadService(
+            sp.GetRequiredService<ILogUploadClient>(),
+            new LogUploadSources(
+                logDir,
+                string.IsNullOrWhiteSpace(diagnostics.UpdaterLogPath)
+                    ? AgentLogPaths.VelopackLogPath(Program.VelopackAppId)
+                    : diagnostics.UpdaterLogPath),
+            StatusEndpoint.AgentVersion,
+            TimeProvider.System,
+            sp.GetRequiredService<ILogger<LogUploadService>>()));
 
         builder.Services.AddSingleton<IAppIdentifier, AppIdentifier>();
         builder.Services.AddSingleton<IForegroundWatcher, ForegroundWatcher>();
@@ -1478,7 +1518,8 @@ public partial class App : Application
             RestartedByUpdater = Program.RestartedByUpdater,
         });
 
-        var logDir = AgentLogPaths.LocalAppDataLogDirectory();
+        // #446: Diagnostics:LogDirectory (dev/e2e only) moves the log, so a test
+        // agent writes, and uploads, its own temporary log.
         Directory.CreateDirectory(logDir);
 
         var serilog = new LoggerConfiguration()

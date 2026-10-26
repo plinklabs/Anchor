@@ -390,12 +390,23 @@ and never reads an Azure SignalR connection string, so Bicep provisions none.
 switches to `AddAzureSignalR()` — see
 [Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
 
-`Heartbeat`, `EventRetention`, `SessionAutoEnd`, and `Logging` have committed
-defaults in `appsettings.json` and only need App Service overrides to tune them —
-not for a baseline deploy. For example, `EventRetention__RawEventDays` (default
-14) sets how many days raw session events are kept, and
+`Heartbeat`, `EventRetention`, `SessionAutoEnd`, `LogUpload`, and `Logging` have
+committed defaults in `appsettings.json` and only need App Service overrides to
+tune them — not for a baseline deploy. For example, `EventRetention__RawEventDays`
+(default 14) sets how many days raw session events are kept, and
 `SessionAutoEnd__MaxDuration` (default `04:00:00`) how long a session may run
 before it is treated as forgotten and ended.
+
+`LogUpload__Enabled` (default `false`) switches on the test phase's agent log
+uploads (#446): each agent then uploads its log lines from a window around each
+session its student was on the roster of — from `LogUpload__WindowBefore`
+(default `00:30:00`) before the session started to `LogUpload__WindowAfter`
+(default `00:10:00`) after it ended — and nothing else. Uploads are kept
+`LogUpload__RetentionDays` (default 14) and only admins can download them
+(`GET /admin/log-uploads`, then `GET /admin/log-uploads/{sessionId}/{userId}`,
+a gzipped text file). Setting it back to `false` stops the uploads without an
+agent release. Students (and parents) should be told that technical logs are
+collected while it is on.
 
 ## Cutting a release
 

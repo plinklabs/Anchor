@@ -166,6 +166,46 @@ internal sealed class BackendClient
 
     public sealed record SessionEvent(string Kind, string PayloadJson);
 
+    /// <summary>
+    /// GET /me?promote-me=admin — the dev backend's explicit admin opt-in (#75).
+    /// The user's role becomes Admin, so it no longer passes as a teacher: call it
+    /// after the spec's last teacher action, and reset the backend afterwards.
+    /// </summary>
+    public async Task PromoteToAdminAsync(string oid = TestConfig.TeacherOid)
+    {
+        using var res = await SendAsync(HttpMethod.Get, "/me?promote-me=admin", oid);
+        _ = res;
+    }
+
+    /// <summary>One stored agent log upload (#446), as GET /admin/log-uploads lists it.</summary>
+    public sealed record LogUpload(
+        Guid SessionId,
+        Guid UserId,
+        string DisplayName,
+        DateTimeOffset WindowFrom,
+        DateTimeOffset WindowTo,
+        bool IsComplete,
+        DateTimeOffset UploadedAt,
+        string? AgentVersion,
+        int SizeBytes);
+
+    /// <summary>GET /admin/log-uploads?sessionId= — the uploads stored for a session (admin only).</summary>
+    public Task<List<LogUpload>> GetLogUploadsAsync(Guid sessionId, string oid = TestConfig.TeacherOid) =>
+        GetJsonAsync<List<LogUpload>>($"/admin/log-uploads?sessionId={sessionId}", oid);
+
+    /// <summary>
+    /// GET /admin/log-uploads/{sessionId}/{userId} — one upload, gunzipped to the
+    /// text the agent sent (admin only).
+    /// </summary>
+    public async Task<string> DownloadLogUploadAsync(Guid sessionId, Guid userId, string oid = TestConfig.TeacherOid)
+    {
+        using var res = await SendAsync(HttpMethod.Get, $"/admin/log-uploads/{sessionId}/{userId}", oid);
+        await using var gzip = new System.IO.Compression.GZipStream(
+            await res.Content.ReadAsStreamAsync(), System.IO.Compression.CompressionMode.Decompress);
+        using var reader = new StreamReader(gzip, System.Text.Encoding.UTF8);
+        return await reader.ReadToEndAsync();
+    }
+
     private async Task<JsonDocument> GetSessionDetailAsync(Guid sessionId, string oid)
     {
         using var res = await SendAsync(HttpMethod.Get, $"/sessions/{sessionId}", oid);

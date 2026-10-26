@@ -1,5 +1,6 @@
 using Anchor.Api;
 using Anchor.Api.Auth;
+using Anchor.Api.Diagnostics;
 using Anchor.Api.Events;
 using Anchor.Api.Realtime;
 using Anchor.Api.Schools;
@@ -140,6 +141,16 @@ var enableEventPruner = retentionSection.GetValue<bool?>(nameof(EventRetentionOp
 if (enableEventPruner)
 {
     builder.Services.AddHostedService<EventPruner>();
+}
+
+// The agents' log uploads of the test phase (#446): off unless LogUpload:Enabled.
+// Uploads are pruned whether or not the switch is on.
+builder.Services.Configure<LogUploadOptions>(builder.Configuration.GetSection(LogUploadOptions.SectionName));
+var logUploadSection = builder.Configuration.GetSection(LogUploadOptions.SectionName);
+var enableLogUploadPruner = logUploadSection.GetValue<bool?>(nameof(LogUploadOptions.EnablePruner)) ?? true;
+if (enableLogUploadPruner)
+{
+    builder.Services.AddHostedService<LogUploadPruner>();
 }
 
 // Ending a session is shared by the teacher's End and the auto-end of forgotten

@@ -29,7 +29,20 @@ internal sealed record StatusSnapshot(
     // #449: the downloaded update the next agent start applies, null while none is.
     [property: JsonPropertyName("pendingUpdate")] string? PendingUpdate = null,
     // #456: when the last update check started, by the agent's update clock.
-    [property: JsonPropertyName("lastUpdateCheck")] DateTimeOffset? LastUpdateCheck = null);
+    [property: JsonPropertyName("lastUpdateCheck")] DateTimeOffset? LastUpdateCheck = null,
+    // #446: what the log uploads did in this agent process.
+    [property: JsonPropertyName("logUpload")] LogUploadSnapshot? LogUpload = null);
+
+/// <summary>
+/// The log uploads as exposed on /status (#446): how many passes ran in this agent
+/// process (one per connect), how many session windows they uploaded, when the
+/// last pass ended and its error, if any.
+/// </summary>
+internal sealed record LogUploadSnapshot(
+    [property: JsonPropertyName("passes")] int Passes,
+    [property: JsonPropertyName("uploaded")] int Uploaded,
+    [property: JsonPropertyName("lastPassAt")] DateTimeOffset? LastPassAt,
+    [property: JsonPropertyName("lastError")] string? LastError);
 
 /// <summary>
 /// The Edge pause as exposed on /status (#427): whether the extension's witness

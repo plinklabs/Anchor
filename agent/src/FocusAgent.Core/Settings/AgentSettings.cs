@@ -165,6 +165,26 @@ public sealed record WitnessSettings
     public string BrowserProcessName { get; init; } = "msedge";
 }
 
+/// <summary>
+/// Where the agent's logs live (#446). Empty, the defaults production uses: the
+/// agent's logs under <c>%LOCALAPPDATA%\Anchor\FocusAgent\logs</c> and Velopack's
+/// log under <c>%LOCALAPPDATA%\velopack</c>. The agent e2e sets them per launch
+/// through environment variables (<c>Diagnostics__LogDirectory</c> etc.), which the
+/// agent only reads under <c>--inject-token</c>, so a test agent writes and
+/// uploads its own temporary logs and never reads those of an agent installed on
+/// the same box.
+/// </summary>
+public sealed record DiagnosticsSettings
+{
+    public const string SectionName = "Diagnostics";
+
+    /// <summary>The folder the agent writes its daily logs to, and the crash log lives in.</summary>
+    public string LogDirectory { get; init; } = "";
+
+    /// <summary>Velopack's log for this app, which the log upload reads.</summary>
+    public string UpdaterLogPath { get; init; } = "";
+}
+
 public sealed record DevSettings
 {
     public const string SectionName = "Dev";

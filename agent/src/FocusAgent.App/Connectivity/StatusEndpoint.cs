@@ -68,7 +68,9 @@ namespace FocusAgent.App.Connectivity;
 /// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not; and
 /// <c>pendingUpdate</c> (#449): the version of a downloaded update that the next
 /// agent start applies, null while none is waiting; and <c>lastUpdateCheck</c>
-/// (#456): when the last update check started, by the agent's clock.
+/// (#456): when the last update check started, by the agent's clock; and
+/// <c>logUpload</c> (#446): how many log-upload passes ran in this process, how
+/// many session windows they uploaded, when the last one ended and its error.
 ///
 /// Two more POST controls drive the #456 update restart:
 ///   POST /check-update
@@ -123,6 +125,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<DateTimeOffset?>? _lastUpdateCheck;
     private readonly Action? _onCheckUpdate;
     private readonly Action<TimeSpan>? _onSimulateSleep;
+    private readonly Func<object?>? _logUpload;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -147,7 +150,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<DateTimeOffset?>? lastUpdateCheck = null,
         Action? onCheckUpdate = null,
         Action<TimeSpan>? onSimulateSleep = null,
-        Func<bool>? canQuit = null)
+        Func<bool>? canQuit = null,
+        Func<object?>? logUpload = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -169,6 +173,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _onCheckUpdate = onCheckUpdate;
         _onSimulateSleep = onSimulateSleep;
         _canQuit = canQuit;
+        _logUpload = logUpload;
         _listener = new HttpListener();
     }
 
@@ -352,6 +357,10 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // #456: when the last update check started, so the headless e2e can
                 // tell whether a wake ran one.
                 lastUpdateCheck = _lastUpdateCheck?.Invoke(),
+                // #446: what the log uploads did in this process (passes run,
+                // windows uploaded, when the last pass ended, its error if any),
+                // so the headless e2e can tell a pass ran.
+                logUpload = _logUpload?.Invoke(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

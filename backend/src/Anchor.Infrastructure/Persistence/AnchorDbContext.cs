@@ -28,6 +28,7 @@ public sealed class AnchorDbContext : DbContext
     public DbSet<SessionWideUnblockGrant> SessionWideUnblockGrants => Set<SessionWideUnblockGrant>();
     public DbSet<Event> Events => Set<Event>();
     public DbSet<SessionEventSummary> SessionEventSummaries => Set<SessionEventSummary>();
+    public DbSet<SessionLogUpload> SessionLogUploads => Set<SessionLogUpload>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
