@@ -33,11 +33,19 @@ public sealed class ParticipantLiveStateResolver
         DateTimeOffset? declinedAt,
         DateTimeOffset? leftAt)
     {
-        // Precedence mirrors the realistic transition order: a Left row wins
-        // over the JoinedAt that preceded it; a join after a decline (JoinedAt
-        // set, never cleared) reads as Joined, not Declined.
+        // A Left row wins over the JoinedAt that preceded it.
         if (leftAt is not null)
             return ParticipantLiveState.Left;
+
+        // Of a join and a decline, the later one is the student's answer. The
+        // extension joins on SessionStarted without waiting for the student's
+        // answer in the agent, so a decline usually lands on a row it already
+        // joined, and reads as Declined, as the hub broadcast it and as the
+        // backend treats it (#471). A tie is a decline too: JoinSession doesn't
+        // join a declined row, so a join is never recorded after a decline
+        // that stays set. Joining again by code clears the decline.
+        if (declinedAt is not null && (joinedAt is null || declinedAt >= joinedAt))
+            return ParticipantLiveState.Declined;
 
         if (joinedAt is not null)
         {
@@ -65,9 +73,6 @@ public sealed class ParticipantLiveStateResolver
 
             return ParticipantLiveState.Joined;
         }
-
-        if (declinedAt is not null)
-            return ParticipantLiveState.Declined;
 
         return ParticipantLiveState.NeverJoined;
     }

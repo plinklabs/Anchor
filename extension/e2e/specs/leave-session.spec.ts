@@ -12,12 +12,17 @@
 // the student is no longer in the session. Joining again by code brings the
 // filtering back, through the SessionStarted it sends.
 //
+// The teacher's roster says so too (#471). The extension joins on
+// SessionStarted before the student answers the agent's join prompt, so a
+// decline lands on a joined row; the roster the dashboard loads showed such a
+// student as joined.
+//
 // The harness runs no agent: StudentAgent makes the agent's hub calls as the
 // seeded student.
 
 import { test as base, expect } from '../fixtures.ts';
 import { expectRedirectedToBlockPage } from '../asserts.ts';
-import { OFFLIST_HOST } from '../config.ts';
+import { OFFLIST_HOST, STUDENT_DISPLAY_NAME } from '../config.ts';
 import { StudentAgent, type AgentExit } from '../student-agent.ts';
 import type { BackendClient, StartedSession } from '../backend.ts';
 import type { LoadedExtension } from '../extension.ts';
@@ -37,10 +42,11 @@ const PING_REJECTED = 'ExtensionHeartbeat failed';
 /** Long enough for the extension's 10 s heartbeat to tick at least once. */
 const ONE_HEARTBEAT_MS = 12_000;
 
-const EXITS: ReadonlyArray<{ how: AgentExit; doing: string }> = [
-  { how: 'leave', doing: 'leaving the session' },
-  { how: 'decline', doing: 'declining the session' },
-  { how: 'quit', doing: 'quitting an older agent from the tray' },
+/** Each exit, and the state the teacher's roster shows the student in after it. */
+const EXITS: ReadonlyArray<{ how: AgentExit; doing: string; rosterState: string }> = [
+  { how: 'leave', doing: 'leaving the session', rosterState: 'Left' },
+  { how: 'decline', doing: 'declining the session', rosterState: 'Declined' },
+  { how: 'quit', doing: 'quitting an older agent from the tray', rosterState: 'Left' },
 ];
 
 test('leaving the session releases the blocked tab, lets off-list sites load and stops the pings, and joining again by code blocks them again', async ({
@@ -69,8 +75,8 @@ test('leaving the session releases the blocked tab, lets off-list sites load and
   expect(activeSession?.sessionId).toBe(session.id);
 });
 
-for (const { how, doing } of EXITS.filter((e) => e.how !== 'leave')) {
-  test(`${doing} releases the blocked tab and lets off-list sites load`, async ({
+for (const { how, doing, rosterState } of EXITS.filter((e) => e.how !== 'leave')) {
+  test(`${doing} releases the blocked tab, lets off-list sites load and shows the student as ${rosterState} on the roster`, async ({
     ext,
     backend,
     staticServer,
@@ -82,6 +88,9 @@ for (const { how, doing } of EXITS.filter((e) => e.how !== 'leave')) {
 
     await expectReleased(page, ext);
     await expectOfflistLoads(ext, staticServer);
+    // The roster the teacher's live page loads, which it fetches again on
+    // each change: the extension's earlier join doesn't count (#471).
+    expect(await rosterStateOf(backend, session.id)).toBe(rosterState);
   });
 }
 
@@ -119,6 +128,13 @@ async function startSessionWithABlockedTab(
   const session = await backend.startSession(classId, [bundleId]);
   await expectRedirectedToBlockPage(page, ext, OFFLIST_HOST);
   return { page, session };
+}
+
+async function rosterStateOf(backend: BackendClient, sessionId: string): Promise<string> {
+  const rows = await backend.roster(sessionId);
+  const row = rows.find((r) => r.displayName === STUDENT_DISPLAY_NAME);
+  if (!row) throw new Error(`${STUDENT_DISPLAY_NAME} is not on the roster: ${JSON.stringify(rows)}`);
+  return row.state;
 }
 
 async function expectReleased(page: Page, ext: LoadedExtension): Promise<void> {

@@ -757,8 +757,8 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     public async Task GET_session_resolves_per_participant_live_state_including_heartbeat_stale()
     {
         // One student per state (#100): never-joined (untouched), joined+fresh,
-        // joined+stale, declined, left.
-        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 5);
+        // joined+stale, declined, left, and declined after joining (#471).
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 6);
         var session = await TestSeed.AddSessionAsync(
             _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
 
@@ -767,12 +767,17 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         var joinedStale = scenario.Students[2];
         var declined = scenario.Students[3];
         var left = scenario.Students[4];
+        var declinedAfterJoining = scenario.Students[5];
 
         await SetParticipantStateAsync(session.Id, joinedFresh.Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
         await SetParticipantStateAsync(session.Id, joinedStale.Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
         await SetParticipantStateAsync(session.Id, declined.Id, declinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
         await SetParticipantStateAsync(session.Id, left.Id,
             joinedAt: DateTimeOffset.UtcNow.AddMinutes(-3), leftAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+        // The extension joins on SessionStarted, before the student answers
+        // the agent's join prompt with a decline.
+        await SetParticipantStateAsync(session.Id, declinedAfterJoining.Id,
+            joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2), declinedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
 
         // Heartbeat liveness lives in the singleton tracker, not the DB. A fresh
         // ping reads Joined; a ping older than the 20s default timeout reads stale.
@@ -792,6 +797,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(nameof(ParticipantLiveState.HeartbeatStale), StateOf(joinedStale.Id));
         Assert.Equal(nameof(ParticipantLiveState.Declined), StateOf(declined.Id));
         Assert.Equal(nameof(ParticipantLiveState.Left), StateOf(left.Id));
+        Assert.Equal(nameof(ParticipantLiveState.Declined), StateOf(declinedAfterJoining.Id));
     }
 
     [Fact]
