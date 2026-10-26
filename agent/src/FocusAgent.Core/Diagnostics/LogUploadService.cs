@@ -28,9 +28,11 @@ public sealed record LogUploadStatus(int Passes, int Uploaded, DateTimeOffset? L
 ///
 /// <para>
 /// A pass runs in the background and never holds up startup or the
-/// connection; it never throws. A window that fails to upload is still pending
-/// on the backend, so the next connect (a reconnect or the next start) tries it
-/// again. Overlapping triggers wait their turn.
+/// connection; it never throws. It uploads every window the backend lists
+/// (oldest first: the first to go from the laptop's two weeks of logs), and a
+/// window that fails doesn't hold up the ones after it. A window that failed is
+/// still pending on the backend, so the next connect (a reconnect or the next
+/// start) tries it again. Overlapping triggers wait their turn.
 /// </para>
 /// </summary>
 public sealed class LogUploadService
@@ -173,16 +175,18 @@ public sealed class LogUploadService
     }
 
     /// <summary>
-    /// The pass's view of the logs on disk, read once for all its windows: the
-    /// agent's daily files that can hold lines of a window (the day before the
-    /// earliest window through today), the end of the crash log and the end of
-    /// the updater log. Files the agent is still writing are read shared. A
-    /// file that can't be read counts as empty.
+    /// The pass's view of the logs on disk, read and parsed once for all its
+    /// windows (on the first connect after uploads are switched on, that is
+    /// every session of the last two weeks): the agent's daily files that can
+    /// hold lines of a window (the day before the earliest window through
+    /// today), the end of the crash log and the end of the updater log. Each
+    /// window is then only a filter over the parsed entries. Files the agent is
+    /// still writing are read shared. A file that can't be read counts as empty.
     /// </summary>
     private sealed class LocalLogs
     {
-        private readonly IReadOnlyList<IReadOnlyList<string>> _agentFiles;
-        private readonly IReadOnlyList<string> _crashLines;
+        private readonly IReadOnlyList<LogEntry> _agentEntries;
+        private readonly IReadOnlyList<LogEntry> _crashEntries;
         private readonly IReadOnlyList<string> _updaterLines;
         private readonly IReadOnlyList<AgentProcessStart> _starts;
         private readonly DateTimeOffset _now;
@@ -197,21 +201,27 @@ public sealed class LogUploadService
         {
             _timeZone = timeZone;
             var firstDay = TimeZoneInfo.ConvertTime(windows.Min(w => w.From), timeZone).Date.AddDays(-1);
-            _agentFiles = AgentLogFiles(sources.LogDirectory, firstDay)
-                .Select(path => ReadLines(path, tailBytes: null, log))
-                .ToList();
-            _crashLines = ReadLines(Path.Combine(sources.LogDirectory, LogUploadSources.CrashLogFileName), TailBytes, log);
+            var agentEntries = new List<LogEntry>();
+            var starts = new List<AgentProcessStart>();
+            foreach (var path in AgentLogFiles(sources.LogDirectory, firstDay))
+            {
+                var lines = ReadLines(path, tailBytes: null, log);
+                // File by file: an entry never runs on from one daily file into the next.
+                agentEntries.AddRange(AgentLogCutter.ParseAgentLog(lines));
+                starts.AddRange(AgentLogCutter.FindProcessStarts(lines));
+            }
+            _agentEntries = agentEntries;
+            _starts = starts;
+            _crashEntries = AgentLogCutter.ParseCrashLog(
+                ReadLines(Path.Combine(sources.LogDirectory, LogUploadSources.CrashLogFileName), TailBytes, log));
             _updaterLines = ReadLines(sources.UpdaterLogPath, TailBytes, log);
-            _starts = _agentFiles.SelectMany(AgentLogCutter.FindProcessStarts).ToList();
             // After the reads: every line read was written before it.
             _now = clock.GetUtcNow();
         }
 
-        // File by file: an entry never runs on from one daily file into the next.
-        public IReadOnlyList<string> AgentLog(LogWindow window) =>
-            _agentFiles.SelectMany(lines => AgentLogCutter.CutAgentLog(lines, window)).ToList();
+        public IReadOnlyList<string> AgentLog(LogWindow window) => AgentLogCutter.Cut(_agentEntries, window).ToList();
 
-        public IReadOnlyList<string> CrashLog(LogWindow window) => AgentLogCutter.CutCrashLog(_crashLines, window).ToList();
+        public IReadOnlyList<string> CrashLog(LogWindow window) => AgentLogCutter.Cut(_crashEntries, window).ToList();
 
         public IReadOnlyList<string> UpdaterLog(LogWindow window) =>
             UpdaterLogCutter.Cut(_updaterLines, _starts, window, _now, _timeZone);

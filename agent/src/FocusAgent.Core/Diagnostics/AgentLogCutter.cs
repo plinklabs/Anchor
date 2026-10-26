@@ -10,6 +10,9 @@ namespace FocusAgent.Core.Diagnostics;
 /// </summary>
 public sealed record AgentProcessStart(int ProcessId, DateTimeOffset StartedAt);
 
+/// <summary>One log entry: its timestamp and its text, continuation lines included.</summary>
+public readonly record struct LogEntry(DateTimeOffset At, string Text);
+
 /// <summary>
 /// Cuts the lines inside a session window out of the agent's own logs (#446),
 /// pure string work so it is unit-tested without files. Two formats:
@@ -48,11 +51,27 @@ public static class AgentLogCutter
 
     /// <summary>The agent log's entries inside <paramref name="window"/>, each with its continuation lines.</summary>
     public static IEnumerable<string> CutAgentLog(IEnumerable<string> lines, LogWindow window) =>
-        Cut(Entries(lines, TryParseAgentTimestamp), window);
+        Cut(ParseAgentLog(lines), window);
 
     /// <summary>The crash log's entries inside <paramref name="window"/>, each with its exception text.</summary>
     public static IEnumerable<string> CutCrashLog(IEnumerable<string> lines, LogWindow window) =>
-        Cut(Entries(lines, TryParseCrashTimestamp), window);
+        Cut(ParseCrashLog(lines), window);
+
+    /// <summary>
+    /// One agent log file's entries, parsed once, so a pass with many windows
+    /// cuts each of them from the same entries instead of parsing the files
+    /// again for every window.
+    /// </summary>
+    public static IReadOnlyList<LogEntry> ParseAgentLog(IEnumerable<string> lines) =>
+        Entries(lines, TryParseAgentTimestamp).ToList();
+
+    /// <summary>The crash log's entries, parsed once.</summary>
+    public static IReadOnlyList<LogEntry> ParseCrashLog(IEnumerable<string> lines) =>
+        Entries(lines, TryParseCrashTimestamp).ToList();
+
+    /// <summary>The texts of the entries inside <paramref name="window"/>, in order.</summary>
+    public static IEnumerable<string> Cut(IEnumerable<LogEntry> entries, LogWindow window) =>
+        entries.Where(e => window.Contains(e.At)).Select(e => e.Text);
 
     /// <summary>
     /// The agent process starts logged in <paramref name="lines"/> (the agent's
@@ -91,10 +110,7 @@ public static class AgentLogCutter
 
     private delegate bool TimestampParser(string line, out DateTimeOffset at);
 
-    private static IEnumerable<string> Cut(IEnumerable<(DateTimeOffset At, string Text)> entries, LogWindow window) =>
-        entries.Where(e => window.Contains(e.At)).Select(e => e.Text);
-
-    private static IEnumerable<(DateTimeOffset At, string Text)> Entries(IEnumerable<string> lines, TimestampParser parse)
+    private static IEnumerable<LogEntry> Entries(IEnumerable<string> lines, TimestampParser parse)
     {
         DateTimeOffset? at = null;
         var text = new List<string>();
@@ -102,7 +118,7 @@ public static class AgentLogCutter
         {
             if (parse(line, out var next))
             {
-                if (at is { } done) yield return (done, string.Join('\n', TrimTrailingBlankLines(text)));
+                if (at is { } done) yield return new LogEntry(done, string.Join('\n', TrimTrailingBlankLines(text)));
                 at = next;
                 text.Clear();
                 text.Add(line);
@@ -113,7 +129,7 @@ public static class AgentLogCutter
             }
             // else: before the first timestamp, of unknown time: left out.
         }
-        if (at is { } last) yield return (last, string.Join('\n', TrimTrailingBlankLines(text)));
+        if (at is { } last) yield return new LogEntry(last, string.Join('\n', TrimTrailingBlankLines(text)));
     }
 
     private static IEnumerable<string> TrimTrailingBlankLines(List<string> lines)

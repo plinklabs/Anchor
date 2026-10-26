@@ -46,8 +46,9 @@ public sealed class LogUploadsController : ControllerBase
     }
 
     /// <summary>
-    /// The caller's session windows the backend still needs an upload of,
-    /// oldest first, and the largest upload it takes per window. A window stays
+    /// The caller's session windows the backend still needs an upload of, all
+    /// of them, oldest first (the first to go from the laptop's two weeks of
+    /// logs), and the largest upload it takes per window. A window stays
     /// pending until the backend holds a complete upload of it: one cut once the
     /// session had ended and the window had closed. An open window (a running
     /// session) is reported up to now, so an agent that connects mid-session

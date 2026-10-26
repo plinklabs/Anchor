@@ -20,13 +20,15 @@ namespace FocusAgent.IntegrationTests;
 ///
 /// <para>
 /// With the shared backend's defaults (uploads off) the agent sends nothing,
-/// through a session and a restart. Then the backend is switched on, with a
+/// through two lessons and a restart. Then the backend is switched on, with a
 /// five-second window end so the spec needn't wait ten minutes: the running
-/// agent reconnects and uploads the window, which the backend then holds with
-/// exactly the agent log entries inside it, the crash and updater lines inside
-/// it, and nothing from before or after. Downloading it needs an admin, so the
-/// spec promotes the seeded teacher at the end and resets the backend's
-/// database afterwards.
+/// agent reconnects and uploads every window the backend lists — both lessons',
+/// and in the full suite those of the sessions earlier specs left for the same
+/// seeded student — and the backend then holds, for each lesson, exactly the
+/// agent log entries inside its window, the crash and updater lines inside it,
+/// and nothing from before or after. Downloading needs an admin, so the spec
+/// promotes the seeded teacher at the end and resets the backend's database
+/// afterwards.
 /// </para>
 /// </summary>
 [Collection(AgentE2ECollection.Name)]
@@ -90,15 +92,16 @@ public sealed class LogUploadTests
                 firstStartedAt = new DateTimeOffset(process.StartTime);
             }
 
+            // Two lessons of this student, so the agent always has more than one
+            // window to upload (in the full suite the specs before this one leave
+            // many more of the same student's sessions): each upload has to be
+            // cut to its own window. The second starts after the first's window
+            // has closed, so its lines fall outside that window.
             var classId = await api.FindClassIdAsync();
-            var session = await api.StartSessionAsync(classId);
-            var joined = await agent.WaitForAsync(s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
-            Assert.True(joined?.JoinedSessionId == session.Id, "Agent did not auto-join within 8s.");
-            await Task.Delay(TimeSpan.FromSeconds(2));
-            await api.EndSessionAsync(session.Id);
-            var endedAt = await api.GetSessionEndedAtAsync(session.Id)
-                          ?? throw new InvalidOperationException("The session did not end.");
-            await agent.WaitForAsync(s => s.JoinedSessionId is null, TimeSpan.FromSeconds(8));
+            var earlier = await RunLessonAsync(api, agent, classId);
+            await WaitUntilAsync(earlier.EndedAt + WindowAfter + TimeSpan.FromSeconds(1));
+            var lesson = await RunLessonAsync(api, agent, classId);
+            var endedAt = lesson.EndedAt;
 
             // Past the window's end (once the backend is switched on below), the
             // laptop is closed: the agent goes away, and lines after the window
@@ -142,47 +145,66 @@ public sealed class LogUploadTests
                 ["LogUpload__Enabled"] = "true",
                 ["LogUpload__WindowAfter"] = WindowAfter.ToString("c"),
             });
-            var on = await agent.WaitForAsync(s => s.LogUpload is { Uploaded: >= 1 }, TimeSpan.FromSeconds(45));
-            Assert.True(on?.LogUpload is { Uploaded: 1 },
-                $"The agent did not upload the session window after the backend was switched on " +
-                $"(logUpload: {on?.LogUpload}).");
+            // One pass uploads every window the backend lists: this spec's two
+            // lessons, and whatever sessions of the same student earlier specs left.
+            var on = await agent.WaitForAsync(s => s.LogUpload?.Passes > off.Passes, TimeSpan.FromSeconds(45));
+            Assert.True(on?.LogUpload is { LastError: null, Uploaded: >= 2 },
+                $"The agent's pass after the backend was switched on did not upload both lessons' windows " +
+                $"without an error (logUpload: {on?.LogUpload?.ToString() ?? "<no pass>"}).");
 
-            // --- what the backend holds --------------------------------------
+            // --- what the backend holds: each window, exactly -----------------
             await api.PromoteToAdminAsync();
-            var upload = Assert.Single(await api.GetLogUploadsAsync(session.Id));
-            Assert.True(upload.IsComplete);
-            Assert.Equal(TestConfig.ExpectedAgentVersion, upload.AgentVersion);
-            Assert.True(upload.UploadedAt >= switchedOnAt, "An upload was stored while uploads were off.");
-            Assert.Equal(endedAt + WindowAfter, upload.WindowTo);
-            var window = (From: upload.WindowFrom, To: upload.WindowTo);
-            var text = (await api.DownloadLogUploadAsync(session.Id, upload.UserId)).ReplaceLineEndings("\n");
-            var sections = Sections(text);
+            var earlierLog = await AssertUploadAsync(earlier);
+            var agentLog = await AssertUploadAsync(lesson);
 
-            Assert.Contains($"Session: {session.Id}", sections[""]);
-            Assert.Contains($"Agent version: {TestConfig.ExpectedAgentVersion}", sections[""]);
-
-            // Exactly the agent log entries inside the window, as the local files
-            // hold them: the seeded one, and the first agent's own (its start, the
-            // sign-in, the session) — but not the second agent's.
-            var expected = EntriesInside(logs, window.From, window.To);
-            Assert.Equal(expected, Entries(sections["Agent log"]));
-            var agentLog = string.Join('\n', sections["Agent log"]);
+            // The first agent's own lines (its start, the sign-in, the lessons) and
+            // the seeded one inside the window, but not the second agent's.
             Assert.Contains("SEED-INSIDE agent started before class\n   at Seed.Inside.Frame() SEED-INSIDE-TRACE", agentLog);
             Assert.Contains($"process {firstPid} started at", agentLog);
             Assert.Contains("Sign-in succeeded", agentLog);
             Assert.DoesNotContain($"process {agent.Pid} started at", agentLog);
-            foreach (var outside in new[] { "SEED-OLD-FILE", "SEED-BEFORE", "SEED-AFTER" })
-                Assert.DoesNotContain(outside, text);
+            // Each upload cut to its own window: the later lesson's window opens
+            // 30 minutes before it, over the earlier lesson; the earlier lesson's
+            // window closed before the later one started.
+            Assert.Contains(earlier.Id.ToString(), agentLog);
+            Assert.DoesNotContain(lesson.Id.ToString(), earlierLog);
 
-            Assert.Equal(
-                [CrashLine(seededAt.AddMinutes(-10)), "System.Exception: SEED-CRASH-INSIDE"],
-                sections["Crash log"]);
-            Assert.Equal(
-                [
-                    $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(1):HH:mm:ss}] [Information] Initializing WindowsVelopackLocator",
-                    $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-INSIDE",
-                ],
-                sections["Updater log"]);
+            // One lesson's upload: complete, sent after the switch, and holding
+            // exactly the agent log entries the local files hold inside its window,
+            // the crash and updater lines inside it, and nothing from outside it.
+            // Returns its agent log section.
+            async Task<string> AssertUploadAsync(Lesson of)
+            {
+                var upload = Assert.Single(await api.GetLogUploadsAsync(of.Id));
+                Assert.True(upload.IsComplete);
+                Assert.Equal(TestConfig.ExpectedAgentVersion, upload.AgentVersion);
+                Assert.True(upload.UploadedAt >= switchedOnAt, "An upload was stored while uploads were off.");
+                Assert.Equal(of.EndedAt + WindowAfter, upload.WindowTo);
+                var text = (await api.DownloadLogUploadAsync(of.Id, upload.UserId)).ReplaceLineEndings("\n");
+                var sections = Sections(text);
+
+                Assert.Contains($"Session: {of.Id}", sections[""]);
+                Assert.Contains($"Agent version: {TestConfig.ExpectedAgentVersion}", sections[""]);
+                Assert.Equal(EntriesInside(logs, upload.WindowFrom, upload.WindowTo), Entries(sections["Agent log"]));
+                foreach (var outside in new[]
+                         {
+                             "SEED-OLD-FILE", "SEED-BEFORE", "SEED-AFTER", "SEED-CRASH-BEFORE", "SEED-CRASH-AFTER",
+                             "SEED-UPDATER-BEFORE", "SEED-UPDATER-AFTER",
+                         })
+                {
+                    Assert.DoesNotContain(outside, text);
+                }
+                Assert.Equal(
+                    [CrashLine(seededAt.AddMinutes(-10)), "System.Exception: SEED-CRASH-INSIDE"],
+                    sections["Crash log"]);
+                Assert.Equal(
+                    [
+                        $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(1):HH:mm:ss}] [Information] Initializing WindowsVelopackLocator",
+                        $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-INSIDE",
+                    ],
+                    sections["Updater log"]);
+                return string.Join('\n', sections["Agent log"]);
+            }
         }
         finally
         {
@@ -193,6 +215,22 @@ public sealed class LogUploadTests
             await _backend.ResetAsync();
             try { Directory.Delete(logs, recursive: true); } catch { }
         }
+    }
+
+    private sealed record Lesson(Guid Id, DateTimeOffset EndedAt);
+
+    /// <summary>A short lesson the agent joins: started, joined, ended, left.</summary>
+    private static async Task<Lesson> RunLessonAsync(BackendClient api, AgentProcess agent, Guid classId)
+    {
+        var session = await api.StartSessionAsync(classId);
+        var joined = await agent.WaitForAsync(s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
+        Assert.True(joined?.JoinedSessionId == session.Id, "Agent did not auto-join within 8s.");
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        await api.EndSessionAsync(session.Id);
+        var endedAt = await api.GetSessionEndedAtAsync(session.Id)
+                      ?? throw new InvalidOperationException("The session did not end.");
+        await agent.WaitForAsync(s => s.JoinedSessionId is null, TimeSpan.FromSeconds(8));
+        return new Lesson(session.Id, endedAt);
     }
 
     private static string AgentLine(DateTimeOffset at, string message) =>

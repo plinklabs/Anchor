@@ -140,6 +140,55 @@ public sealed class LogUploadServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Every_pending_window_is_uploaded_each_cut_to_its_own_window()
+    {
+        // The first connect after uploads are switched on can list every session
+        // of the last two weeks. An earlier lesson 08:00-08:50 (window 07:30-09:00)
+        // and the 10:00-11:00 one (window 09:30-11:10).
+        var earlier = new LogWindow(
+            Guid.NewGuid(),
+            new DateTimeOffset(2026, 10, 21, 7, 30, 0, Offset),
+            new DateTimeOffset(2026, 10, 21, 9, 0, 0, Offset));
+        Write("focusagent-20261021.log",
+            "2026-10-21 07:45:00.000 +02:00 [INF] Earlier: in the earlier lesson",
+            "2026-10-21 09:10:00.000 +02:00 [INF] Between: between the two windows",
+            "2026-10-21 10:15:00.000 +02:00 [INF] Later: in the later lesson");
+        _client.Pending = new PendingLogWindows(1024 * 1024, [earlier, _window]);
+        var service = Service();
+
+        await service.NotifyConnectedAsync();
+
+        Assert.Equal([earlier.SessionId, _window.SessionId], _client.Uploads.Select(u => u.Window.SessionId));
+        Assert.Equal(new LogUploadStatus(1, 2, _clock.GetUtcNow(), null), service.Status);
+        var first = Gunzip(_client.Uploads[0].Gzip);
+        var second = Gunzip(_client.Uploads[1].Gzip);
+        Assert.Contains("in the earlier lesson", first);
+        Assert.DoesNotContain("in the later lesson", first);
+        Assert.Contains("in the later lesson", second);
+        Assert.DoesNotContain("in the earlier lesson", second);
+        Assert.DoesNotContain("between the two windows", first + second);
+    }
+
+    [Fact]
+    public async Task A_window_that_fails_does_not_hold_up_the_windows_after_it()
+    {
+        var earlier = new LogWindow(
+            Guid.NewGuid(),
+            new DateTimeOffset(2026, 10, 21, 7, 30, 0, Offset),
+            new DateTimeOffset(2026, 10, 21, 9, 0, 0, Offset));
+        Write("focusagent-20261021.log", "2026-10-21 10:15:00.000 +02:00 [INF] Later: in the later lesson");
+        _client.Pending = new PendingLogWindows(1024 * 1024, [earlier, _window]);
+        _client.FailSessions.Add(earlier.SessionId);
+        var service = Service();
+
+        await service.NotifyConnectedAsync();
+
+        Assert.Equal([_window.SessionId], _client.Uploads.Select(u => u.Window.SessionId));
+        Assert.Equal(1, service.Status.Uploaded);
+        Assert.NotNull(service.Status.LastError);
+    }
+
+    [Fact]
     public async Task A_backend_that_cant_be_reached_is_asked_again_on_the_next_connect()
     {
         _client.FailPending = true;
@@ -209,6 +258,7 @@ public sealed class LogUploadServiceTests : IDisposable
         public PendingLogWindows Pending { get; set; } = new(1024 * 1024, []);
         public bool FailPending { get; set; }
         public bool FailUploads { get; set; }
+        public HashSet<Guid> FailSessions { get; } = new();
         public ManualResetEventSlim? BlockPending { get; set; }
         public List<Upload> Uploads { get; } = new();
 
@@ -221,7 +271,8 @@ public sealed class LogUploadServiceTests : IDisposable
 
         public Task<LogUploadOutcome> UploadAsync(LogWindow window, string agentVersion, byte[] gzip, CancellationToken ct = default)
         {
-            if (FailUploads) throw new HttpRequestException("connection dropped");
+            if (FailUploads || FailSessions.Contains(window.SessionId))
+                throw new HttpRequestException("connection dropped");
             lock (Uploads) Uploads.Add(new Upload(window, agentVersion, gzip));
             return Task.FromResult(LogUploadOutcome.Stored);
         }
