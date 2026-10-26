@@ -44,7 +44,9 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0" />
+    <!-- 10.0.13, not 10.0.0: SignalR.Client 10.0.13 (below) needs Logging
+         >= 10.0.13, and NuGet fails the restore (NU1605) on a lower direct pin. -->
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.13" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
     <PackageReference Include="Serilog.Extensions.Logging" Version="9.0.0" />
@@ -52,7 +54,9 @@
     <PackageReference Include="Microsoft.Identity.Client" Version="4.66.2" />
     <PackageReference Include="Microsoft.Identity.Client.Broker" Version="4.66.2" />
     <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.66.2" />
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0" />
+    <!-- #459: 9.0.0 pulled in SignalR.Common 9.0.0, flagged by GHSA-334f-vvp4-7g6p
+         (NU1903). 10.0.13 is the patched release on the backend's 10.0 line. -->
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.13" />
     <!-- Velopack runtime (#209): the agent ships unpackaged via Velopack, whose
          install/update/uninstall lifecycle hooks are dispatched by
          VelopackApp.Build().Run() at the very top of Program.Main. `vpk pack`
