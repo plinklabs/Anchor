@@ -46,6 +46,10 @@ name: Agent Release
 # fell back to the plinklabs/Anchor default, so a fork's agents took upstream's
 # next release, and with it upstream's backend and Entra config.
 #
+# Intune (#457): every release also carries Install-AnchorAgent.ps1, the install
+# command of the agent's Intune Win32 app. It installs the agent silently when it
+# isn't installed and starts it right away (agent/scripts/release-assets/).
+#
 # Signing: none. The agent ships unsigned, so first install shows one SmartScreen
 # "More info -> Run anyway" prompt (#209 scope decision). Code-signing is a later
 # upgrade.
@@ -134,6 +138,22 @@ jobs:
           --releaseName ${{ github.ref_name }}
           --outputDir agent/artifacts/velopack
           --publish
+
+      # The Intune install script (#457) goes on the same release, next to the
+      # Setup.exe it runs: IT packages the two together as the agent's Intune
+      # Win32 app. pack-release.ps1 copied it into the Velopack output folder,
+      # but vpk only uploads its own assets, so it goes up here, once vpk has
+      # created the release. --clobber lets a re-run of this step replace it.
+      - name: Attach the Intune install script to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: >-
+          gh release upload $env:RELEASE_TAG
+          agent/artifacts/velopack/Install-AnchorAgent.ps1
+          --repo ${{ github.repository }}
+          --clobber
 
       - name: Upload Velopack artifacts (diagnostics)
         if: ${{ !cancelled() }}

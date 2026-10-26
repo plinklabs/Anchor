@@ -185,6 +185,14 @@ launches the agent automatically once installed.
   from a fork release built before #360 still check `plinklabs/Anchor`; only a
   reinstall (uninstall, then run a newer fork `Setup.exe`) moves them onto the
   fork's feed.
+- Every release also carries `Install-AnchorAgent.ps1` (#457), the install
+  command of the agent's Intune Win32 app, packaged with `Setup.exe` in the
+  `.intunewin`. It runs `Setup.exe --silent` only when the agent isn't installed
+  yet (a silent reinstall stops a running agent and doesn't start it again), and
+  then starts the agent right away, which a silent Setup doesn't.
+  `pack-release.ps1` puts it next to `Setup.exe`, and the workflow attaches it to
+  the release once `vpk` has created it. Its parameters, exit codes and log
+  location are in its help: `Get-Help .\Install-AnchorAgent.ps1 -Full`.
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
 - `pack-release.ps1` fails the build when the publish folder has no
@@ -343,7 +351,8 @@ instructions. One-time setup: [`extension/README.md`](../extension/README.md#pub
 | `EDGE_ADDONS_KEY_ROTATED` | variable | Date (`YYYY-MM-DD`) the API credentials were last created, so expiry can be warned about before it bites (#336). | Expiry can't be tracked; the weekly check files an issue saying so. |
 
 > Both client release workflows use the auto-provided `GITHUB_TOKEN`
-> (`agent-release.yml` to upload the Velopack release assets) — no setup needed.
+> (`agent-release.yml` to upload the Velopack release assets and the Intune
+> install script) — no setup needed.
 
 #### Rotating the Edge Add-ons API key (every 72 days)
 
@@ -447,7 +456,13 @@ release**.
    ```
 3. `agent-release.yml` builds, packs with Velopack (cross-checking the tag against
    the committed version), and publishes `Setup.exe` + the delta-update feed to the
-   GitHub Release for the tag. Installed agents auto-update from that feed.
+   GitHub Release for the tag, then attaches the Intune install script
+   `Install-AnchorAgent.ps1` (#457). Installed agents auto-update from that feed.
+
+If only the last step fails, the release is already out without the script.
+Attach it by hand (`gh release upload agent-v<version>
+agent/scripts/release-assets/Install-AnchorAgent.ps1`): a re-run of the job fails
+at the `vpk` upload, which refuses a tag that already has a release.
 
 A version/tag mismatch fails the pack step — fix `<VersionPrefix>` or the tag and
 re-push.

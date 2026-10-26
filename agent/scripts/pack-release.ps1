@@ -36,13 +36,19 @@
          (#247). Setup.exe runs the freshly-installed agent automatically — that
          is Velopack's default post-install behaviour, so no extra flag is
          needed for the "launch after install" acceptance criterion.
+      7. Copy the Intune install script (release-assets/Install-AnchorAgent.ps1,
+         #457) into ./artifacts/velopack next to Setup.exe. IT packages the two
+         together as the agent's Intune Win32 app; agent-release.yml uploads
+         the script to the same GitHub Release.
 
     Release artifacts (#247): the output is a Setup.exe, the RELEASES feed, and
     the full/delta nupkg. The nupkg + RELEASES are deliberately KEPT — they are
     the Velopack auto-update feed the installed agent's UpdateManager downloads
     (#224); dropping them would break delta auto-update. Only the standalone
     portable .zip is suppressed (`--noPortable`), since the agent is installed,
-    not run portably, and it only adds noise to the release page.
+    not run portably, and it only adds noise to the release page. Install-AnchorAgent.ps1
+    joins them in the output folder (step 7); vpk doesn't upload it, so the
+    workflow uploads it separately.
 
     Auto-update (#224): the installed agent checks the Releases of the GitHub
     repository in Update:GithubRepoUrl, which step 4 bakes in from
@@ -177,6 +183,10 @@ if (-not (Test-Path -LiteralPath $iconPath)) {
 if (-not (Test-Path -LiteralPath $conclusionPath)) {
     throw "Installer conclusion text not found for vpk pack --instConclusion: $conclusionPath"
 }
+$intuneScriptPath = Join-Path $scriptDir 'release-assets/Install-AnchorAgent.ps1'
+if (-not (Test-Path -LiteralPath $intuneScriptPath)) {
+    throw "Intune install script not found: $intuneScriptPath"
+}
 New-Item -ItemType Directory -Force -Path $velopackDir | Out-Null
 
 vpk pack `
@@ -191,5 +201,10 @@ vpk pack `
     --noPortable `
     --outputDir $velopackDir
 if ($LASTEXITCODE -ne 0) { throw "vpk pack failed ($LASTEXITCODE)." }
+
+# The Intune install script (#457) is an asset of every release, next to
+# Setup.exe, which it runs: IT packages the two together as the .intunewin.
+# vpk only uploads its own assets, so agent-release.yml uploads this copy.
+Copy-Item -LiteralPath $intuneScriptPath -Destination $velopackDir -Force
 
 Write-Host "== Velopack release written to $velopackDir =="
