@@ -53,7 +53,8 @@ public sealed class SessionHubActiveParticipantTests
 
         Assert.Equal(0, _factory.ParticipantQueries.Count);
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
-        Assert.True(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Agent));
+        Assert.True(tracker.TryGet(session.Id, student.Id, out var agent, WitnessSource.Agent));
+        Assert.False(agent.AwaitingFirstPing); // pinged, not just awaited since the join (#444)
         Assert.True(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
     }
 
@@ -162,7 +163,8 @@ public sealed class SessionHubActiveParticipantTests
 
         await connection.InvokeAsync("Heartbeat", session.Id);
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
-        Assert.True(tracker.TryGet(session.Id, student.Id, out _));
+        Assert.True(tracker.TryGet(session.Id, student.Id, out var agent));
+        Assert.False(agent.AwaitingFirstPing); // pinged, not just awaited since the rejoin (#444)
     }
 
     [Fact]

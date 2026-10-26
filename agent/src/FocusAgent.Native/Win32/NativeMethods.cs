@@ -95,6 +95,23 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool CloseHandle(nint hObject);
 
+    // Process exit (#461)
+    public const uint SYNCHRONIZE = 0x00100000;
+    public const uint STILL_ACTIVE = 259;
+    public const uint WAIT_OBJECT_0 = 0;
+    public const int ERROR_ACCESS_DENIED = 5;
+
+    [DllImport("kernel32.dll", EntryPoint = "OpenProcess", SetLastError = true)]
+    public static extern Microsoft.Win32.SafeHandles.SafeProcessHandle OpenProcessHandle(
+        uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetExitCodeProcess(Microsoft.Win32.SafeHandles.SafeProcessHandle hProcess, out uint lpExitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint WaitForSingleObject(Microsoft.Win32.SafeHandles.SafeProcessHandle hHandle, uint dwMilliseconds);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool QueryFullProcessImageNameW(nint hProcess, uint dwFlags, [Out] StringBuilder lpExeName, ref uint lpdwSize);

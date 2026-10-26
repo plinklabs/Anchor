@@ -50,6 +50,8 @@ export const STABLE_EXTENSION_ID = 'dnkimhodjfogjibnbbfdjdapgmmiojio';
 // --- Seeded dev identities (mirror DevDataSeeder) -------------------------
 export const TEACHER_OID = '11111111-1111-1111-1111-111111111111';
 export const STUDENT_OID = '22222222-2222-2222-2222-222222222222';
+/** The seeded student's name, as the teacher's roster lists them. */
+export const STUDENT_DISPLAY_NAME = 'Dev Student';
 export const CLASS_NAME = '3A';
 /** Bundle whose entries include *.sharepoint.com (see BUNDLE_ONLY_HOST). */
 export const MS365_BUNDLE_NAME = 'Microsoft 365';

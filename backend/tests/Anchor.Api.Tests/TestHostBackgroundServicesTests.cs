@@ -1,3 +1,4 @@
+using Anchor.Api.Diagnostics;
 using Anchor.Api.Events;
 using Anchor.Api.Realtime;
 using Anchor.Api.Sessions;
@@ -11,12 +12,13 @@ namespace Anchor.Api.Tests;
 /// <summary>
 /// The test hosts switch off Program.cs's background services (#353), so tests
 /// drive <see cref="HeartbeatMonitor.ScanOnceAsync"/>,
-/// <see cref="EventPruner.PruneOnceAsync"/> and
-/// <see cref="SessionAutoEnder.EndForgottenSessionsAsync"/> themselves instead
-/// of racing a loop on the real clock. Program.cs reads the Enable* flags
-/// before <c>Build()</c>, which a flag supplied through
-/// <c>ConfigureAppConfiguration</c> reaches too late: all three services ran in
-/// every test host while the flags said otherwise.
+/// <see cref="EventPruner.PruneOnceAsync"/>,
+/// <see cref="SessionAutoEnder.EndForgottenSessionsAsync"/> and
+/// <see cref="LogUploadPruner.PruneOnceAsync"/> (#446) themselves instead of
+/// racing a loop on the real clock. Program.cs reads the Enable* flags before
+/// <c>Build()</c>, which a flag supplied through
+/// <c>ConfigureAppConfiguration</c> reaches too late: all three services then
+/// ran in every test host while the flags said otherwise.
 /// </summary>
 public sealed class TestHostBackgroundServicesTests
     : IClassFixture<AnchorApiFactory>, IClassFixture<DevImpersonationRestTests.RealAuthDevFactory>
@@ -35,6 +37,7 @@ public sealed class TestHostBackgroundServicesTests
     [InlineData(typeof(HeartbeatMonitor))]
     [InlineData(typeof(EventPruner))]
     [InlineData(typeof(SessionAutoEnder))]
+    [InlineData(typeof(LogUploadPruner))]
     public void AnchorApiFactory_does_not_run_the_background_service(Type service)
     {
         Assert.DoesNotContain(HostedServiceTypes(_factory), t => t == service);
@@ -44,6 +47,7 @@ public sealed class TestHostBackgroundServicesTests
     [InlineData(typeof(HeartbeatMonitor))]
     [InlineData(typeof(EventPruner))]
     [InlineData(typeof(SessionAutoEnder))]
+    [InlineData(typeof(LogUploadPruner))]
     public void The_Development_test_host_does_not_run_the_background_service(Type service)
     {
         Assert.DoesNotContain(HostedServiceTypes(_devFactory), t => t == service);
@@ -58,6 +62,7 @@ public sealed class TestHostBackgroundServicesTests
     [InlineData("Heartbeat:EnableMonitor", typeof(HeartbeatMonitor))]
     [InlineData("EventRetention:EnablePruner", typeof(EventPruner))]
     [InlineData("SessionAutoEnd:EnableAutoEnder", typeof(SessionAutoEnder))]
+    [InlineData("LogUpload:EnablePruner", typeof(LogUploadPruner))]
     public async Task A_test_can_opt_back_in_to_a_background_service(string flag, Type service)
     {
         await using var optedIn = _factory.WithWebHostBuilder(b => b.UseSetting(flag, "true"));
@@ -65,7 +70,8 @@ public sealed class TestHostBackgroundServicesTests
         var running = HostedServiceTypes(optedIn);
 
         Assert.Contains(service, running);
-        Assert.Single(running, t => t == typeof(HeartbeatMonitor) || t == typeof(EventPruner) || t == typeof(SessionAutoEnder));
+        Assert.Single(running, t => t == typeof(HeartbeatMonitor) || t == typeof(EventPruner)
+                                    || t == typeof(SessionAutoEnder) || t == typeof(LogUploadPruner));
     }
 
     private static List<Type> HostedServiceTypes(WebApplicationFactory<Program> factory) =>

@@ -33,5 +33,15 @@ public enum EventKind
     /// or, later, by the agent acting as on-box witness. Reported via the hub's
     /// <c>ReportEvent</c> and pushed to the teacher's live roster.
     /// </summary>
-    TamperDetected
+    TamperDetected,
+
+    /// <summary>
+    /// A joined student's agent sent no heartbeat within the join grace, so
+    /// apps weren't being enforced on their device (#444): typically the Edge
+    /// extension joined without the agent. Recorded by the backend's heartbeat
+    /// monitor, not reported by a client. The payload is
+    /// <c>{"expectedSince":"…"}</c>, when the agent was first expected. An agent
+    /// that turns up later is recorded as <see cref="AgentReconnected"/>.
+    /// </summary>
+    AgentMissing
 }

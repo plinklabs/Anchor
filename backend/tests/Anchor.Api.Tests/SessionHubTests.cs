@@ -292,7 +292,9 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         await connection.InvokeAsync("Heartbeat", session.Id);
 
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
-        Assert.True(tracker.TryGet(session.Id, student.Id, out _));
+        // Pinged, not just awaited as the join left it (#444).
+        Assert.True(tracker.TryGet(session.Id, student.Id, out var agent));
+        Assert.False(agent.AwaitingFirstPing);
     }
 
     [Fact]
@@ -312,8 +314,10 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
         Assert.True(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
         // The whole point of the source dimension (#149): the extension's ping
-        // must not register as the agent's, or it would mask a dead agent.
-        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Agent));
+        // must not register as the agent's, or it would mask a dead agent. The
+        // join only started waiting for the agent (#444); nothing came from it.
+        Assert.True(tracker.TryGet(session.Id, student.Id, out var agent, WitnessSource.Agent));
+        Assert.True(agent.AwaitingFirstPing);
     }
 
     [Fact]

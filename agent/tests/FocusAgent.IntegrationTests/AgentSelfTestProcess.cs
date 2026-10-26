@@ -25,6 +25,8 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     public const string ShowTestMainWindowArg = "--show-test-mainwindow";
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";
     public const string ShowTestTrayMenuArg = "--show-test-traymenu";
+    /// <summary>With <see cref="ShowTestTrayMenuArg"/>: show the menu as it is during a session (#445).</summary>
+    public const string TrayMenuInSessionArg = "--traymenu-in-session";
     public const string ShowTestGuidedInstallArg = "--show-test-guided-install";
     public const string ShowTestExtensionConsentArg = "--show-test-extension-consent";
     public const string ShowTestCrashArg = "--show-test-crash";

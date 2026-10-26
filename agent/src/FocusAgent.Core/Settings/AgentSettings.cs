@@ -90,8 +90,20 @@ public sealed record UpdateSettings
     /// 6h — frequent enough that a new tag reaches students within a school day,
     /// rare enough to be invisible. Values &lt; 1 minute are clamped up so a
     /// mis-set config can't busy-loop the check.
+    /// The interval is counted in awake time (a .NET timer leaves out sleep and
+    /// hibernation), so the agent also checks on wake and unlock once the last
+    /// check is this old by the clock (#456).
     /// </summary>
     public TimeSpan CheckInterval { get; init; } = TimeSpan.FromHours(6);
+
+    /// <summary>
+    /// Whether the agent restarts itself into a downloaded update as soon as it has
+    /// no session going on (#456). On by default, so a release reaches a laptop the
+    /// day it ships instead of at its next sign-in, which for a laptop that is only
+    /// ever closed can be weeks away. Off, a downloaded update waits for the next
+    /// agent start (#449). Either way a session is never interrupted.
+    /// </summary>
+    public bool RestartWhenIdle { get; init; } = true;
 }
 
 /// <summary>
@@ -151,6 +163,26 @@ public sealed record WitnessSettings
     /// pauses while the extension is gone during a session.
     /// </summary>
     public string BrowserProcessName { get; init; } = "msedge";
+}
+
+/// <summary>
+/// Where the agent's logs live (#446). Empty, the defaults production uses: the
+/// agent's logs under <c>%LOCALAPPDATA%\Anchor\FocusAgent\logs</c> and Velopack's
+/// log under <c>%LOCALAPPDATA%\velopack</c>. The agent e2e sets them per launch
+/// through environment variables (<c>Diagnostics__LogDirectory</c> etc.), which the
+/// agent only reads under <c>--inject-token</c>, so a test agent writes and
+/// uploads its own temporary logs and never reads those of an agent installed on
+/// the same box.
+/// </summary>
+public sealed record DiagnosticsSettings
+{
+    public const string SectionName = "Diagnostics";
+
+    /// <summary>The folder the agent writes its daily logs to, and the crash log lives in.</summary>
+    public string LogDirectory { get; init; } = "";
+
+    /// <summary>Velopack's log for this app, which the log upload reads.</summary>
+    public string UpdaterLogPath { get; init; } = "";
 }
 
 public sealed record DevSettings

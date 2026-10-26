@@ -130,10 +130,27 @@ final _calls = <_Call>[
     (j) => _list(j, ClassSummary.fromJson),
   ),
   _Call(
+    'GET sessions/end-options',
+    'SessionsApi.endOptions',
+    (a) => a.sessions.endOptions('c1'),
+    (j) => SessionEndOptions.fromJson(_map(j)),
+  ),
+  _Call(
     'POST sessions',
     'SessionsApi.startSession',
-    (a) => a.sessions.startSession('c1', bundleIds: ['b1']),
+    (a) => a.sessions.startSession(
+      'c1',
+      bundleIds: ['b1'],
+      end: SessionEnd.at(DateTime.utc(2026, 10, 26, 10, 5)),
+    ),
     (j) => StartSessionResponse.fromJson(_map(j)),
+  ),
+  _Call(
+    'POST sessions',
+    'SessionsApi.startSession',
+    (a) => a.sessions.startSession('c1', end: const SessionEnd.thisPeriod()),
+    (j) => StartSessionResponse.fromJson(_map(j)),
+    'end of this period',
   ),
   _Call(
     'POST sessions/{id}/end',
@@ -315,6 +332,14 @@ final _calls = <_Call>[
     'POST admin/schools/activation',
     'SchoolsApi.setActive',
     (a) => a.schools.setActive('School', true),
+    (j) => School.fromJson(_map(j)),
+  ),
+  _Call(
+    'PUT admin/schools/lesson-periods',
+    'SchoolsApi.setLessonPeriods',
+    (a) => a.schools.setLessonPeriods('School', const [
+      LessonPeriod(start: '08:25', end: '09:15'),
+    ]),
     (j) => School.fromJson(_map(j)),
   ),
 ];

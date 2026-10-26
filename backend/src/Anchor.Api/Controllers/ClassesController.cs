@@ -269,7 +269,8 @@ public sealed class ClassesController : ControllerBase
     /// flag, the class's sessions go too, whoever started them, in the same
     /// transaction, and with them everything that cascades from a session
     /// (events, per-student activity counts, participants, unblock grants,
-    /// session bundles). Refused with 409 while one of them is still running.
+    /// session bundles, agent log uploads). Refused with 409 while one of them
+    /// is still running.
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

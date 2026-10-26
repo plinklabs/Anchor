@@ -31,6 +31,11 @@ const String demoJoinCode = 'PLINK-3B';
 
 /// Fixed clock anchors — never `DateTime.now()`, so output stays deterministic.
 final DateTime demoSessionStartedAt = DateTime(2026, 6, 16, 9, 5);
+
+/// The end of the demo session's lesson period, and of the one after it
+/// (#447): what Home offers, and when the live session is planned to end.
+final DateTime demoSessionEndsAt = DateTime(2026, 6, 16, 9, 55);
+final DateTime demoNextPeriodEndsAt = DateTime(2026, 6, 16, 10, 45);
 final DateTime demoPastSessionStartedAt = DateTime(2026, 6, 12, 9, 15);
 final DateTime demoPastSessionEndedAt = DateTime(2026, 6, 12, 10, 5);
 const String demoPastSessionId = 'demo-past-session-3b';
@@ -280,6 +285,7 @@ SessionDetail demoLiveSessionDetail() => SessionDetail(
   joinCode: demoJoinCode,
   startedAt: demoSessionStartedAt,
   endedAt: null,
+  endsAt: demoSessionEndsAt,
   summaries: const [],
   recentEvents: const [],
   participants: demoLiveRoster(),

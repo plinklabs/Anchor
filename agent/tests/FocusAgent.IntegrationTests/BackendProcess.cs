@@ -32,13 +32,42 @@ internal sealed class BackendProcess : IAsyncDisposable
 
     public async Task StartAsync(CancellationToken ct = default)
     {
+        DeleteDatabase();
+        await LaunchAsync(build: true, configuration: null, ct);
+    }
+
+    /// <summary>
+    /// Take the backend down and bring it back on a freshly seeded database with
+    /// the default configuration, as <see cref="StartAsync"/> left it. For a spec
+    /// that had to change the seed's state (#446: promote the seeded teacher to
+    /// admin to download a log upload) and must not leave that to the specs after
+    /// it. Skips the build, like <see cref="RestartAsync"/>.
+    /// </summary>
+    public async Task ResetAsync(CancellationToken ct = default)
+    {
+        await StopAsync();
+        DeleteDatabase();
+        await LaunchAsync(build: false, configuration: null, ct);
+    }
+
+    private static void DeleteDatabase()
+    {
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {
             var path = TestConfig.BackendDbPath + suffix;
-            if (File.Exists(path)) File.Delete(path);
+            // Right after a stop, the killed host may not have let go of the file yet.
+            for (var attempt = 1; File.Exists(path); attempt++)
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch (IOException) when (attempt < 50)
+                {
+                    Thread.Sleep(200);
+                }
+            }
         }
-
-        await LaunchAsync(build: true, configuration: null, ct);
     }
 
     /// <summary>
@@ -182,6 +211,12 @@ public sealed class BackendFixture : IAsyncLifetime
     /// </summary>
     public Task RestartAsync(IReadOnlyDictionary<string, string>? configuration = null) =>
         _backend.RestartAsync(configuration);
+
+    /// <summary>
+    /// Bring the shared backend back on a freshly seeded database with the default
+    /// configuration, for a spec that changed the seed's state.
+    /// </summary>
+    public Task ResetAsync() => _backend.ResetAsync();
 
     public async Task DisposeAsync() => await _backend.DisposeAsync();
 }

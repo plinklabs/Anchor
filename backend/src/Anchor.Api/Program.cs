@@ -1,5 +1,6 @@
 using Anchor.Api;
 using Anchor.Api.Auth;
+using Anchor.Api.Diagnostics;
 using Anchor.Api.Events;
 using Anchor.Api.Realtime;
 using Anchor.Api.Schools;
@@ -142,9 +143,22 @@ if (enableEventPruner)
     builder.Services.AddHostedService<EventPruner>();
 }
 
+// The agents' log uploads of the test phase (#446): off unless LogUpload:Enabled.
+// Uploads are pruned whether or not the switch is on.
+builder.Services.Configure<LogUploadOptions>(builder.Configuration.GetSection(LogUploadOptions.SectionName));
+var logUploadSection = builder.Configuration.GetSection(LogUploadOptions.SectionName);
+var enableLogUploadPruner = logUploadSection.GetValue<bool?>(nameof(LogUploadOptions.EnablePruner)) ?? true;
+if (enableLogUploadPruner)
+{
+    builder.Services.AddHostedService<LogUploadPruner>();
+}
+
 // Ending a session is shared by the teacher's End and the auto-end of forgotten
-// sessions (#345).
+// sessions (#345) and of sessions at their planned end (#447).
 builder.Services.AddScoped<SessionEnder>();
+builder.Services.AddSingleton<SessionEndSchedule>();
+builder.Services.AddScoped<SessionEndPlanner>();
+builder.Services.Configure<LessonPeriodOptions>(builder.Configuration.GetSection(LessonPeriodOptions.SectionName));
 builder.Services.Configure<SessionAutoEndOptions>(builder.Configuration.GetSection(SessionAutoEndOptions.SectionName));
 var autoEndSection = builder.Configuration.GetSection(SessionAutoEndOptions.SectionName);
 var enableAutoEnder = autoEndSection.GetValue<bool?>(nameof(SessionAutoEndOptions.EnableAutoEnder)) ?? true;

@@ -3,8 +3,10 @@ namespace Anchor.Domain.Schools;
 /// <summary>
 /// A persisted school (#301). "Schools" are otherwise not an entity — they're the
 /// distinct Entra <c>companyName</c> strings fetched live from Graph. This row
-/// gives a school somewhere to carry admin-managed state (currently just
-/// <see cref="IsActive"/>), keyed by that company string (<see cref="Name"/>).
+/// gives a school somewhere to carry admin-managed state (<see cref="IsActive"/>
+/// and its <see cref="LessonPeriods"/>), keyed by that company string
+/// (<see cref="Name"/>). Classes belong to a school through
+/// <c>Class.SchoolTag</c>, which holds the same string.
 ///
 /// The table is the source of truth for the teacher-facing school selector, so
 /// it can be served without an expensive Graph enumeration on every read. Rows
@@ -20,4 +22,11 @@ public sealed class School
 
     /// <summary>Whether teachers see this school in the Classes school selector.</summary>
     public required bool IsActive { get; set; }
+
+    /// <summary>
+    /// The school's timetable (#447): one list of lesson periods for every
+    /// school day. Empty until an admin enters it; a teacher of the school then
+    /// only gets to end a session at a time they pick.
+    /// </summary>
+    public ICollection<LessonPeriod> LessonPeriods { get; init; } = new List<LessonPeriod>();
 }

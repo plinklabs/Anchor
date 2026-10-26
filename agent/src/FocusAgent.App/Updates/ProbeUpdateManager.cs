@@ -63,6 +63,15 @@ internal sealed class ProbeUpdateManager : IAgentUpdateManager
         return ProbeVersion;
     }
 
+    // There is no install to apply to. The crash e2e never gets here (a crashing
+    // launch has no idle restart); should anything try, it fails like a missing
+    // Update.exe would and the agent stays up.
+    public void ApplyOnExitAndRestart(IReadOnlyList<string> restartArgs)
+    {
+        Record("apply-restart");
+        throw new NotSupportedException("The update probe has no install to apply to.");
+    }
+
     /// <summary>
     /// Block until the probe's first check has started, or <paramref name="timeout"/>
     /// elapses. The <c>--test-crash-at</c> hook calls this before it crashes, so the

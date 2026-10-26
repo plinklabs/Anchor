@@ -42,7 +42,21 @@ public interface ISchoolDirectory
     /// the directory is unavailable.
     /// </summary>
     Task<SchoolState> SetActiveAsync(string name, bool isActive, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Replace a school's lesson periods (#447) with <paramref name="periods"/>,
+    /// creating the school's row (active) if it doesn't exist yet. Returns the
+    /// resulting state. The caller validates the periods. Does not touch Graph.
+    /// </summary>
+    Task<SchoolState> SetLessonPeriodsAsync(
+        string name, IReadOnlyList<SchoolLessonPeriod> periods, CancellationToken cancellationToken);
 }
 
-/// <summary>A school name (Entra company) paired with its active state.</summary>
-public sealed record SchoolState(string Name, bool IsActive);
+/// <summary>
+/// A school name (Entra company) with its active state and its lesson periods
+/// (#447), in start order.
+/// </summary>
+public sealed record SchoolState(string Name, bool IsActive, IReadOnlyList<SchoolLessonPeriod> LessonPeriods);
+
+/// <summary>One lesson period, as school-local times of day (#447).</summary>
+public sealed record SchoolLessonPeriod(TimeOnly Start, TimeOnly End);

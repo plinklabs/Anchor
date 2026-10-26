@@ -38,6 +38,10 @@ import 'support/e2e_binding.dart';
 //     the raw exception (#383),
 //   - the join code says how the teacher takes part in the session themselves
 //     (#410),
+//   - a student whose agent never connected (only the extension joined) shows
+//     on the live roster, explained, until the agent turns up (#444),
+//   - the teacher picks when the session ends on Home, and the live view shows
+//     that planned end while still offering End session (#447),
 //   - on a short window the page scrolls to every panel and the feed, and the
 //     join code sits in the header row, dropping under the title on a narrow
 //     one (#422).
@@ -204,6 +208,13 @@ class _FakeSessions extends SessionsApi {
   // How often the page fetched the detail and the pending list (#365).
   int getSessionCalls = 0;
   int unblockRequestsCalls = 0;
+  // When a session of the class can end (#447): no lesson period unless a
+  // test gives some, so Home offers a time. How the session was asked to end,
+  // and the planned end the detail reports.
+  SessionEndOptions endOptionsValue = SessionEndOptions();
+  SessionEnd? startedEnd;
+  DateTime? plannedEnd;
+  int endSessionCalls = 0;
   // What the teacher's own actions throw, when a test sets it (#383).
   Object? endError;
   Object? approveError;
@@ -222,15 +233,22 @@ class _FakeSessions extends SessionsApi {
   Future<List<ActiveSession>> activeSessions() async => const [];
 
   @override
+  Future<SessionEndOptions> endOptions(String classId) async => endOptionsValue;
+
+  @override
   Future<StartSessionResponse> startSession(
     String classId, {
     List<String> bundleIds = const <String>[],
-  }) async => StartSessionResponse(
-    id: _sessionId,
-    classId: classId,
-    joinCode: 'ABC123',
-    startedAt: _startedAt,
-  );
+    SessionEnd? end,
+  }) async {
+    startedEnd = end;
+    return StartSessionResponse(
+      id: _sessionId,
+      classId: classId,
+      joinCode: 'ABC123',
+      startedAt: _startedAt,
+    );
+  }
 
   @override
   Future<SessionDetail> getSession(String sessionId) async {
@@ -242,6 +260,7 @@ class _FakeSessions extends SessionsApi {
       joinCode: 'ABC123',
       startedAt: _startedAt,
       endedAt: null,
+      endsAt: plannedEnd,
       summaries: const [],
       recentEvents: const [],
       participants: roster,
@@ -258,6 +277,7 @@ class _FakeSessions extends SessionsApi {
 
   @override
   Future<void> endSession(String sessionId) async {
+    endSessionCalls++;
     final error = endError;
     if (error != null) throw error;
   }
@@ -311,6 +331,27 @@ class _FakeBundles extends BundlesApi {
   ];
 }
 
+/// The colour of the status dot on the live feed's row whose payload contains
+/// [payloadText].
+Color? _feedDotColor(WidgetTester tester, String payloadText) {
+  final row = find
+      .ancestor(
+        of: find.textContaining(payloadText),
+        matching: find.byType(Row),
+      )
+      .first;
+  final dot = find.descendant(
+    of: row,
+    matching: find.byWidgetPredicate(
+      (w) =>
+          w is Container &&
+          w.decoration is BoxDecoration &&
+          (w.decoration! as BoxDecoration).shape == BoxShape.circle,
+    ),
+  );
+  return (tester.widget<Container>(dot).decoration! as BoxDecoration).color;
+}
+
 typedef _Harness = ({
   _StubHub hub,
   _FakeSessions sessions,
@@ -321,15 +362,21 @@ typedef _Harness = ({
 /// navigation to land on the live session view. Returns the fakes so the test
 /// can push events and inspect recorded calls. [joinError] is what the hub's
 /// JoinSession throws when the page opens; [roster] replaces the one-student
-/// class.
+/// class. [endOptions] is what Home offers for the session's end, and
+/// [plannedEnd] the end the detail then reports (#447); [beforeStart] makes the
+/// teacher's choices on Home before Start.
 Future<_Harness> _bootToLiveSession(
   WidgetTester tester, {
   Object? joinError,
   List<SessionParticipantInfo>? roster,
+  SessionEndOptions? endOptions,
+  DateTime? plannedEnd,
+  Future<void> Function()? beforeStart,
 }) async {
   final hub = _StubHub()..joinError = joinError;
-  final sessions = _FakeSessions();
+  final sessions = _FakeSessions()..plannedEnd = plannedEnd;
   if (roster != null) sessions.roster = roster;
+  if (endOptions != null) sessions.endOptionsValue = endOptions;
   final bundles = _FakeBundles();
   final tokens = AuthTokenStore()
     ..setSession(
@@ -360,6 +407,7 @@ Future<_Harness> _bootToLiveSession(
   // pushes /session/:id — the flow a widget test of SessionPage can't exercise.
   final startButton = find.textContaining('Start session');
   expect(startButton, findsOneWidget, reason: 'home screen should offer Start');
+  await beforeStart?.call();
   await tester.tap(startButton);
   await tester.pumpAndSettle();
 
@@ -394,6 +442,71 @@ void main() {
     expect(find.text('Students (0/1 in session)'), findsOneWidget);
   });
 
+  testWidgets(
+    'the teacher ends the session at the end of the next period, and the live '
+    'view shows when it ends (#447)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        endOptions: SessionEndOptions(
+          thisPeriodEndsAt: DateTime(2026, 6, 12, 10, 5),
+          nextPeriodEndsAt: DateTime(2026, 6, 12, 10, 55),
+        ),
+        plannedEnd: DateTime(2026, 6, 12, 10, 55),
+        beforeStart: () async {
+          // Home offers the end of this period first, then the next one.
+          expect(
+            find.text('At the end of this period (10:05)'),
+            findsOneWidget,
+          );
+          await tester.tap(find.byKey(const Key('end-picker')));
+          await tester.pumpAndSettle();
+          await tester.tap(
+            find.text('At the end of the next period (10:55)').last,
+          );
+          await tester.pumpAndSettle();
+          expect(
+            find.text('At the end of the next period (10:55)'),
+            findsOneWidget,
+          );
+        },
+      );
+
+      expect(h.sessions.startedEnd?.mode, 'NextPeriod');
+      expect(
+        find.text('Session 2026-06-12 09:15 · ends 10:55'),
+        findsOneWidget,
+      );
+
+      // The teacher can still end it earlier.
+      await tester.tap(find.widgetWithText(OutlinedButton, 'End session'));
+      await tester.pumpAndSettle();
+      expect(h.sessions.endSessionCalls, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'without a lesson period the teacher types when the session ends (#447)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        beforeStart: () async {
+          expect(find.text('At a time I pick'), findsOneWidget);
+          await tester.enterText(find.byKey(const Key('end-time')), '23:59');
+          await tester.pumpAndSettle();
+        },
+      );
+
+      final end = h.sessions.startedEnd!;
+      expect(end.mode, 'SpecificTime');
+      expect(end.at!.hour, 23);
+      expect(end.at!.minute, 59);
+      expect(end.at!.isAfter(DateTime.now()), isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('a tamper push flags the student on the live roster (#105)', (
     tester,
   ) async {
@@ -415,6 +528,81 @@ void main() {
     // Ada is still "in session" — tampering is orthogonal to live state.
     expect(find.text('In session'), findsOneWidget);
   });
+
+  testWidgets(
+    'a student whose agent never connects shows on the live roster until it '
+    'turns up (#444)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [
+          _participant('Ada', ParticipantLiveState.joined),
+          _participant('Bo', ParticipantLiveState.joined),
+        ],
+      );
+      expect(find.text('Students (2/2 in session)'), findsOneWidget);
+
+      // Only Bo's extension joined. Once the join grace passes without an
+      // agent heartbeat, the backend's monitor pushes the roster state change;
+      // the page re-fetches the roster, whose snapshot now says so.
+      h.sessions.roster = [
+        _participant('Ada', ParticipantLiveState.joined),
+        _participant('Bo', ParticipantLiveState.agentMissing),
+      ];
+      h.hub.emit('ParticipantStateChanged', {
+        'userId': 'Bo',
+        'displayName': 'Bo',
+        'state': 'AgentMissing',
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Agent not connected'), findsOneWidget);
+      expect(find.text('Students (1/2 in session)'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Bo')).dy,
+        lessThan(tester.getTopLeft(find.text('Ada')).dy),
+      );
+      final error = Theme.of(tester.element(find.text('Bo'))).colorScheme.error;
+      // The feed row for that push carries the stronger marker.
+      expect(_feedDotColor(tester, 'state=AgentMissing'), error);
+
+      // Hovering the state says what it means for the class.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(find.text('Agent not connected')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          "Only the browser extension joined. Apps aren't being blocked on "
+          'this laptop.',
+        ),
+        findsOneWidget,
+      );
+      await mouse.moveTo(Offset.zero);
+      await tester.pumpAndSettle();
+
+      // Bo's agent starts after all: it joins (a Joined push) and its first
+      // heartbeat clears the report (AgentReconnected).
+      h.hub.emit('ParticipantStateChanged', {
+        'userId': 'Bo',
+        'displayName': 'Bo',
+        'state': 'Joined',
+      });
+      h.sessions.roster = [
+        _participant('Ada', ParticipantLiveState.joined),
+        _participant('Bo', ParticipantLiveState.joined),
+      ];
+      h.hub.emit('AgentReconnected', {'userId': 'Bo'});
+      await tester.pumpAndSettle();
+
+      expect(find.text('Agent not connected'), findsNothing);
+      expect(find.text('Students (2/2 in session)'), findsOneWidget);
+      // An ordinary join is no cause for attention.
+      expect(_feedDotColor(tester, 'state=Joined'), isNot(error));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('an unblock-request push surfaces the pending panel (#132)', (
     tester,

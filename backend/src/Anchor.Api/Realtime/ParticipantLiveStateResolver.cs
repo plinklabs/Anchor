@@ -7,7 +7,8 @@ namespace Anchor.Api.Realtime;
 /// from its lifecycle timestamps plus in-memory heartbeat liveness (#100).
 /// Single home for the heartbeat-stale threshold so the GET roster snapshot and
 /// the <see cref="HeartbeatMonitor"/>'s live transitions stay in lockstep — both
-/// read <see cref="HeartbeatOptions.Timeout"/>.
+/// read <see cref="HeartbeatOptions.Timeout"/>, and, for an agent that hasn't
+/// pinged yet, <see cref="HeartbeatOptions.AgentJoinGrace"/> (#444).
 /// </summary>
 public sealed class ParticipantLiveStateResolver
 {
@@ -40,14 +41,26 @@ public sealed class ParticipantLiveStateResolver
 
         if (joinedAt is not null)
         {
-            // The tracker only holds an entry once the agent has pinged at least
-            // once, and the monitor never reports a never-pinged joiner as lost —
-            // so treat "joined, not (yet) tracked" as fresh to keep the snapshot
-            // consistent with the live HeartbeatLost signal.
-            if (_heartbeats.TryGet(sessionId, userId, out var entry) &&
-                (_clock.GetUtcNow() - entry.LastSeenAt) > _options.CurrentValue.Timeout)
+            // Mirrors what the monitor reports. Its agent entry appears when the
+            // participant joins, awaiting the agent's first ping: past the join
+            // grace with none, the agent is missing, as when only the extension
+            // joined (#444). Once the agent has pinged, silence past the timeout
+            // is a stale heartbeat. A joiner with no entry at all (right after a
+            // backend restart, until their agent or extension pings) is one the
+            // monitor can't report, so it reads as joined.
+            if (_heartbeats.TryGet(sessionId, userId, out var entry))
             {
-                return ParticipantLiveState.HeartbeatStale;
+                var options = _options.CurrentValue;
+                var age = _clock.GetUtcNow() - entry.LastSeenAt;
+                if (entry.AwaitingFirstPing)
+                {
+                    if (age > options.AgentJoinGrace)
+                        return ParticipantLiveState.AgentMissing;
+                }
+                else if (age > options.Timeout)
+                {
+                    return ParticipantLiveState.HeartbeatStale;
+                }
             }
 
             return ParticipantLiveState.Joined;

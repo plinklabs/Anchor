@@ -18,10 +18,32 @@ namespace Anchor.Api.Realtime;
 /// absence-net (#149): a <see cref="EventKind.TamperDetected"/> with kind
 /// <see cref="TamperKinds.ExtensionSilent"/>. The tamper flag is sticky, so a
 /// returning extension re-arms silently rather than emitting a reconnect.
+///
+/// <para>
+/// An agent that never pings at all is caught the same way (#444): the hub
+/// starts tracking it, as awaiting its first ping, when its student joins, and
+/// once <see cref="HeartbeatOptions.AgentJoinGrace"/> passes without one the
+/// monitor records an <see cref="EventKind.AgentMissing"/> and tells the
+/// teacher's roster the student is
+/// <see cref="ParticipantLiveState.AgentMissing"/>. That is how an extension
+/// that joined without its agent shows up. An agent that turns up late clears
+/// it with an <see cref="EventKind.AgentReconnected"/>, as one that comes back
+/// after a <see cref="EventKind.HeartbeatLost"/> does.
+/// </para>
+///
+/// <para>
+/// Only an active participant can go missing. Every way of stopping (leaving,
+/// declining, quitting the agent, the session ending) drops the participant's
+/// tracking, but a ping that passed the hub's active check just before the
+/// participant left can still land after that. So before reporting, the
+/// monitor checks the participant is still active, and drops the tracking of
+/// one who isn't instead (#448).
+/// </para>
 /// </summary>
 public sealed class HeartbeatMonitor : BackgroundService
 {
     private readonly HeartbeatTracker _tracker;
+    private readonly ActiveParticipantCache _activeParticipants;
     private readonly ISessionBroadcaster _broadcaster;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly TimeProvider _clock;
@@ -30,6 +52,7 @@ public sealed class HeartbeatMonitor : BackgroundService
 
     public HeartbeatMonitor(
         HeartbeatTracker tracker,
+        ActiveParticipantCache activeParticipants,
         ISessionBroadcaster broadcaster,
         IServiceScopeFactory scopeFactory,
         TimeProvider clock,
@@ -37,6 +60,7 @@ public sealed class HeartbeatMonitor : BackgroundService
         ILogger<HeartbeatMonitor> log)
     {
         _tracker = tracker;
+        _activeParticipants = activeParticipants;
         _broadcaster = broadcaster;
         _scopeFactory = scopeFactory;
         _clock = clock;
@@ -87,10 +111,26 @@ public sealed class HeartbeatMonitor : BackgroundService
         foreach (var p in snapshot)
         {
             var age = now - p.LastSeenAt;
-            var isStale = age > timeout;
+            // An agent that hasn't pinged yet gets the join grace: it may still
+            // be on its join toast, and its first ping comes an interval after
+            // it joins (#444).
+            var isStale = age > (p.AwaitingFirstPing ? opts.AgentJoinGrace : timeout);
 
             if (isStale && !p.Reported)
             {
+                if (!await _activeParticipants
+                        .IsActiveAsync(db.SessionParticipants.AsNoTracking(), p.SessionId, p.UserId, ct)
+                        .ConfigureAwait(false))
+                {
+                    // Left, or the session ended: a stopped participant's
+                    // silence is expected, not an outage to report.
+                    _tracker.Clear(p.SessionId, p.UserId);
+                    _log.LogDebug(
+                        "Dropped heartbeat tracking of inactive participant session={SessionId} user={UserId}",
+                        p.SessionId, p.UserId);
+                    continue;
+                }
+
                 await EmitStaleAsync(db, p, now, ct).ConfigureAwait(false);
                 _tracker.MarkReported(p.SessionId, p.UserId, p.Source);
             }
@@ -103,11 +143,13 @@ public sealed class HeartbeatMonitor : BackgroundService
     }
 
     private Task EmitStaleAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
-        => p.Source switch
+        => p switch
         {
             // The extension witness going silent is the absence-net (#149):
             // surface it as a tamper flag, not an agent HeartbeatLost.
-            WitnessSource.Extension => EmitExtensionSilentAsync(db, p, now, ct),
+            { Source: WitnessSource.Extension } => EmitExtensionSilentAsync(db, p, now, ct),
+            // An agent that never pinged was never there to be lost (#444).
+            { AwaitingFirstPing: true } => EmitAgentMissingAsync(db, p, now, ct),
             _ => EmitLostAsync(db, p, now, ct),
         };
 
@@ -144,6 +186,34 @@ public sealed class HeartbeatMonitor : BackgroundService
             ct).ConfigureAwait(false);
         _log.LogInformation(
             "TamperDetected(extension_silent) session={SessionId} user={UserId} lastSeen={LastSeenAt:o}",
+            p.SessionId, p.UserId, p.LastSeenAt);
+    }
+
+    private async Task EmitAgentMissingAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
+    {
+        var displayName = await db.Users.AsNoTracking()
+            .Where(u => u.Id == p.UserId)
+            .Select(u => u.DisplayName)
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false) ?? string.Empty;
+
+        db.Events.Add(new Event
+        {
+            SessionId = p.SessionId,
+            UserId = p.UserId,
+            Kind = EventKind.AgentMissing,
+            PayloadJson = JsonSerializer.Serialize(new { expectedSince = p.LastSeenAt }),
+            OccurredAt = now,
+        });
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        // A state of its own on the roster, so it travels the way the roster's
+        // other state changes do; the dashboard re-reads the roster on it.
+        await _broadcaster.ParticipantStateChangedAsync(
+            new ParticipantStateChangedPayload(
+                p.SessionId, p.UserId, displayName, nameof(ParticipantLiveState.AgentMissing), now),
+            ct).ConfigureAwait(false);
+        _log.LogInformation(
+            "AgentMissing session={SessionId} user={UserId} expectedSince={ExpectedSince:o}",
             p.SessionId, p.UserId, p.LastSeenAt);
     }
 

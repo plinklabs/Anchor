@@ -23,6 +23,7 @@ internal sealed class TrayIconHost : IDisposable
         Action onJoinByCode,
         Func<bool> canJoinByCode,
         Action onQuit,
+        Func<bool> canQuit,
         DispatcherQueue dispatcher,
         Action? onSetUpExtension = null,
         Func<bool>? canSetUpExtension = null)
@@ -35,7 +36,10 @@ internal sealed class TrayIconHost : IDisposable
         // on-ink actions, hairline rules, the one magenta spark on "Open Anchor".
         // Built by the shared TrayMenu factory so the real tray and the
         // --show-test-traymenu self-test render byte-for-byte the same menu.
-        var menu = TrayMenu.Build(onOpen, onJoinByCode, onQuit, onSetUpExtension);
+        // #445: the menu itself asks canQuit as it opens and leaves "Exit Anchor"
+        // out while a session is going on (and refuses a click from a menu opened
+        // just before one began), so the self-test shows that state the same way.
+        var menu = TrayMenu.Build(onOpen, onJoinByCode, onQuit, onSetUpExtension, canQuit);
         _menu = menu.Flyout;
         _statusItem = menu.StatusItem;
         _joinByCodeItem = menu.JoinItem;

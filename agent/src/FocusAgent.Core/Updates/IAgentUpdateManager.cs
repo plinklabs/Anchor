@@ -8,13 +8,16 @@ namespace FocusAgent.Core.Updates;
 ///
 /// <para>
 /// The methods cover the two phases the running agent does itself, check and
-/// download, plus a read-back of what the next start will apply. Applying is
-/// deliberately not on this seam (#449): Velopack's updater gives a running agent
-/// 60 s to exit and then kills it, so the agent never starts it. A downloaded
+/// download, plus a read-back of what the next start will apply. A downloaded
 /// package is applied by <c>VelopackApp</c>'s auto-apply when the agent next
-/// starts (Program.Main). The production implementation is a near-passthrough and
-/// the policy (when to check, how often, whether the agent is even updatable)
-/// stays in <see cref="AgentUpdateService"/>.
+/// starts (Program.Main), or, when the agent is idle, by handing it to Velopack's
+/// updater right before the agent exits on its own to restart into it (#456,
+/// <see cref="ApplyOnExitAndRestart"/>). Velopack's updater gives a running agent
+/// 60 s to exit and then kills it (#449), so that hand-over is only ever the last
+/// thing an exiting agent does. The production implementation is a
+/// near-passthrough and the policy (when to check, how often, whether the agent is
+/// even updatable, when it may restart) stays in <see cref="AgentUpdateService"/>
+/// and <see cref="IdleUpdateRestarter"/>.
 /// </para>
 /// </summary>
 public interface IAgentUpdateManager
@@ -56,6 +59,18 @@ public interface IAgentUpdateManager
     /// non-null answer means the next start applies that version.
     /// </summary>
     string? GetPendingRestartVersion();
+
+    /// <summary>
+    /// Start Velopack's updater on the downloaded package (#456): it waits for this
+    /// process to exit, applies the package, and starts the agent again with
+    /// <paramref name="restartArgs"/>, silently (no window, no prompt). If applying
+    /// fails it starts the old version again. The updater waits only 60 s for the
+    /// exit and then kills the process (#449), so call this only when the agent is
+    /// about to exit on its own, and exit promptly. Returns once the updater has been
+    /// started; throws when there is nothing to apply or the updater can't start, and
+    /// the agent then simply keeps running.
+    /// </summary>
+    void ApplyOnExitAndRestart(IReadOnlyList<string> restartArgs);
 }
 
 /// <summary>

@@ -1,9 +1,10 @@
 using FocusAgent.App.Extension;
 using FocusAgent.App.Startup;
 using FocusAgent.App.Tamper;
+using FocusAgent.Core.Startup;
+using FocusAgent.Native;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using Microsoft.Windows.AppLifecycle;
 using Velopack;
 
 namespace FocusAgent.App;
@@ -69,6 +70,14 @@ public static class Program
     /// Used by the visual e2e (TrayMenuVisualTests) and scripts/dev/verify-traymenu.ps1.
     /// </summary>
     public const string ShowTestTrayMenuArg = "--show-test-traymenu";
+
+    /// <summary>
+    /// Dev-only modifier for <see cref="ShowTestTrayMenuArg"/> (#445): show the menu
+    /// as it is while the agent has a session going on, with no "Exit Anchor" (and
+    /// "Join a session…" disabled). Read by the e2e (TrayMenuExitTests) and
+    /// scripts/dev/verify-traymenu.ps1 -InSession.
+    /// </summary>
+    public const string TrayMenuInSessionArg = "--traymenu-in-session";
 
     /// <summary>
     /// Dev-only flag (#211): show the real <see cref="Extension.GuidedInstallWindow"/>
@@ -379,6 +388,7 @@ public static class Program
     public static bool ShowTestMainWindow { get; private set; }
     public static bool ShowTestJoinByCode { get; private set; }
     public static bool ShowTestTrayMenu { get; private set; }
+    public static bool TrayMenuInSession { get; private set; }
     public static bool ShowTestGuidedInstall { get; private set; }
     public static bool ShowTestExtensionConsent { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
@@ -391,6 +401,20 @@ public static class Program
 
     /// <summary>The feed directory from <c>--test-update-feed</c>, or null to use GitHub Releases.</summary>
     public static string? TestUpdateFeed { get; private set; }
+
+    /// <summary>
+    /// The environment variable Velopack's updater sets on the agent it starts after
+    /// an apply (Velopack's HOOK_ENV_RESTART), whether the apply worked or not.
+    /// <c>VelopackApp.Run</c> reads and clears it, so Main reads it first.
+    /// </summary>
+    public const string VelopackRestartEnvVar = "VELOPACK_RESTART";
+
+    /// <summary>
+    /// Whether Velopack's updater started this launch after an apply (#456). With an
+    /// update still waiting, that apply failed, and the agent must not restart into
+    /// it again straight away (see AgentUpdateService.RestartedByUpdater).
+    /// </summary>
+    public static bool RestartedByUpdater { get; private set; }
 
     /// <summary>The startup stage from <c>--test-crash-at</c>, or null for a normal launch.</summary>
     public static string? TestCrashAt { get; private set; }
@@ -437,6 +461,11 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // #456: before VelopackApp.Run clears it. Velopack's own startup auto-apply
+        // skips a launch with this set; the agent's idle restart uses it to tell a
+        // failed apply from a fresh start.
+        RestartedByUpdater = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(VelopackRestartEnvVar));
+
         // Velopack lifecycle hook (#209): MUST run before any UI. On an
         // install/update/uninstall launch Velopack injects hidden hook args; this
         // call handles them (e.g. (re)creating the Start-menu/Run-key shortcuts on
@@ -451,8 +480,11 @@ public static class Program
             // package in the packages dir, hands it to the updater, restarts into
             // the new version and exits this process. The check itself only ever
             // downloads (the updater kills a running agent, #449), so this is where
-            // every update lands, and a fixed release lands even when this launch's
-            // own startup would crash again. It's Velopack's default; set explicitly
+            // an update lands unless an idle agent restarted into it first (#456),
+            // and a fixed release lands even when this launch's own startup would
+            // crash again. Run() skips it on a launch the updater itself started
+            // (VELOPACK_RESTART), so a failed apply doesn't repeat at once. It's
+            // Velopack's default; set explicitly
             // because it is the second half of both the update path and the crash-
             // recovery path and must stay on for every launch that becomes the agent.
             // The one launch that doesn't is a second one while the agent already
@@ -526,6 +558,7 @@ public static class Program
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
         ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
         ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));
+        TrayMenuInSession = args.Any(a => string.Equals(a, TrayMenuInSessionArg, StringComparison.OrdinalIgnoreCase));
         ShowTestGuidedInstall = args.Any(a => string.Equals(a, ShowTestGuidedInstallArg, StringComparison.OrdinalIgnoreCase));
         ShowTestExtensionConsent = args.Any(a => string.Equals(a, ShowTestExtensionConsentArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
@@ -554,8 +587,13 @@ public static class Program
         // launch needs to be its own process). Skip it in those modes only.
         if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !ShowTestExtensionConsent && !VerifyDsTheme && !ShowTestCrash && !VerifyI18n && TestCrashAt is null)
         {
-            var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
-            if (!keyInstance.IsCurrent)
+            // #461: step aside only for an agent that is running. One that was just
+            // killed still holds the key while Windows tears it down; the claim waits
+            // for it to be gone instead of leaving the student with no agent.
+            if (!SingleInstanceClaim.TryClaim(
+                    new AppInstanceKey(SingleInstanceKey),
+                    new KeyHolderProcesses(),
+                    SingleInstanceClaim.ExitingHolderBudget))
             {
                 return 0;
             }
