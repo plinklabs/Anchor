@@ -553,18 +553,20 @@ const id = createHash('sha256').update(publicKey).digest()
 
 ## Sideload (production install path)
 
-Once the extension ships, managed devices will receive it via a Group Policy /
-Intune **ExtensionInstallForcelist** entry. The registry shape (documented
-here for future reference — not implemented in this scaffold):
+Managed devices receive the extension through a Group Policy / Intune
+**ExtensionInstallForcelist** entry. For school laptops managed through Intune
+that is a configuration profile; [`docs/INTUNE.md`](../docs/INTUNE.md) has the
+setting (#458). The registry shape:
 
 ```
 HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist
-  1 = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio;<update-url>
+  1 = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio;https://edge.microsoft.com/extensionwebstorebase/v1/crx
 ```
 
 The ID is the pinned `dnkimhodjfogjibnbbfdjdapgmmiojio` (see **Stable extension
-ID** above). `<update-url>` points at an `updates.xml` manifest hosted on a local
-file share or HTTPS endpoint and referencing the packed `.crx`.
+ID** above), and the update URL is the Edge Add-ons store's: the same entry the
+agent writes itself (below). A self-hosted `.crx` would instead point the update
+URL at an `updates.xml` manifest on a local file share or HTTPS endpoint.
 
 For unpacked dev installs the simpler shape is:
 
@@ -577,9 +579,12 @@ paired with a developer-mode-loaded unpacked extension at a known path.
 
 ### Agent self-registration (BYOD, one UAC prompt) — #211, #405
 
-Anchor is unmanaged BYOD, so there's no MDM to push the `HKLM` policy above. The
-agent sets it up itself instead (see `FocusAgent.Core.Extension.EdgeExtensionPolicy`
-/ `ExtensionSelfRegistrar`), pointed at the canonical Edge Add-ons store:
+On school laptops managed through Intune, IT pushes the forcelist entry below
+with a configuration profile ([`docs/INTUNE.md`](../docs/INTUNE.md), #458), and
+the agent finds it and asks nothing. On a student's own, unmanaged laptop there's
+no MDM to push it, so the agent sets it up itself (see
+`FocusAgent.Core.Extension.EdgeExtensionPolicy` / `ExtensionSelfRegistrar`),
+pointed at the canonical Edge Add-ons store:
 
 ```
 HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist

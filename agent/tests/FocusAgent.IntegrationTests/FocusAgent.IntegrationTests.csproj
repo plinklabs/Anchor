@@ -53,6 +53,10 @@
          agent install it assembles as that install's Update.exe. Not referenced
          as an assembly; the spec reads it from its own bin folder. -->
     <ProjectReference Include="..\FocusAgent.FakeUpdater\FocusAgent.FakeUpdater.csproj" ReferenceOutputAssembly="false" />
+    <!-- #457: built alongside the suite so IntuneInstallScriptTests can put it in
+         the Intune package it assembles as Anchor.Agent-win-Setup.exe. Not
+         referenced as an assembly; the spec reads it from its own bin folder. -->
+    <ProjectReference Include="..\FocusAgent.FakeSetup\FocusAgent.FakeSetup.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,6 @@
 # Anchor
 
-A school-internal focus-session system for classroom device management on Windows BYOD laptops. A teacher starts a session for a class; for its duration each student's laptop softly enforces an allowlist of apps and websites, and off-list activity surfaces live on the teacher's dashboard.
+A school-internal focus-session system for classroom device management on students' Windows laptops, school-managed (the agent rolls out through Intune, see [docs/INTUNE.md](docs/INTUNE.md)) or their own. A teacher starts a session for a class; for its duration each student's laptop softly enforces an allowlist of apps and websites, and off-list activity surfaces live on the teacher's dashboard.
 
 Design rationale, technology decisions, data model, and phasing live in [focus-system-design.md](focus-system-design.md). This README is the practical "how do I run the pieces locally" doc.
 
