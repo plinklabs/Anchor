@@ -230,6 +230,10 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                     sessionId, user.Id, user.DisplayName,
                     nameof(ParticipantLiveState.Left), leftAt),
                 ct);
+
+            // The agent called this; the student's extension would otherwise
+            // go on filtering and pinging a session they left (#462).
+            await _broadcaster.ParticipationEndedAsync(sessionId, user.Id, ct);
         }
 
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(sessionId), ct);
@@ -277,6 +281,11 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         });
 
         await _db.SaveChangesAsync(ct);
+        // Declining takes the student out of the session even when their
+        // extension already joined it: it joins on SessionStarted without
+        // waiting for the student's answer in the agent, which set JoinedAt
+        // (#462). So their pings are turned away from now on.
+        _activeParticipants.Update(participant);
 
         // A student can decline a session their agent was already in: when a
         // restarted agent's silent rejoin fails, its catch-up offers that
@@ -290,6 +299,9 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                 session.Id, user.Id, user.DisplayName,
                 nameof(ParticipantLiveState.Declined), now),
             ct);
+
+        // The extension may be enforcing the session already, as above (#462).
+        await _broadcaster.ParticipationEndedAsync(session.Id, user.Id, ct);
     }
 
     public Task Heartbeat(Guid sessionId) => RecordHeartbeatAsync(sessionId, WitnessSource.Agent);
@@ -336,7 +348,10 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     /// (#354): <c>SessionEnded</c> reaches only the connections open when it is
     /// sent, so a session that ended while a client was offline — a network
     /// drop, a backend restart, a laptop asleep through the automatic end —
-    /// would otherwise stay in force on that client. Read from the database
+    /// would otherwise stay in force on that client. The same goes for a
+    /// student who left, declined or quit the agent while their extension was
+    /// offline: they are out of the session too, and miss the
+    /// <c>ParticipationEnded</c> that says so (#462). Read from the database
     /// rather than <see cref="ActiveParticipantCache"/>: it runs once per
     /// reconnect, not per ping, and decides whether the student leaves focus
     /// mode. A session past its planned end (#447) counts as ended, so the
@@ -504,6 +519,10 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                     request.SessionId, user.Id, user.DisplayName,
                     nameof(ParticipantLiveState.Left), occurredAt),
                 ct);
+
+            // The extension outlives the agent, and the student is out of the
+            // session now, as after a leave (#462).
+            await _broadcaster.ParticipationEndedAsync(request.SessionId, user.Id, ct);
         }
     }
 

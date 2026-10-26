@@ -2,10 +2,13 @@
 //   - build the hub URL (with the dev impersonation query string when set)
 //   - attach a real Entra access token via SignalR's accessTokenFactory (#289)
 //   - call JoinSession after auth succeeds
-//   - surface SessionStarted / SessionEnded as plain callbacks
+//   - surface SessionStarted / SessionEnded as plain callbacks, and
+//     ParticipationEnded: the student left, declined or quit the agent while
+//     the session runs on (#462)
 //   - say when the connection is (re)established, and ask whether the student
-//     is still in a session, so a SessionEnded missed while offline is caught (#354),
-//     and which session started, so a missed SessionStarted is caught too (#356)
+//     is still in a session, so a SessionEnded or ParticipationEnded missed while
+//     offline is caught (#354, #462), and which session started, so a missed
+//     SessionStarted is caught too (#356)
 //   - keep the connection coming back for as long as the worker runs (#374)
 //   - report a BlockedUrl event back to the backend
 //
@@ -58,6 +61,10 @@ const HUB_RETRY_POLICY: signalR.IRetryPolicy = {
 export interface HubCallbacks {
   onSessionStarted: (payload: SessionStartedPayload) => void | Promise<void>;
   onSessionEnded: (sessionId: string) => void | Promise<void>;
+  /** The backend no longer counts the student in this session, which runs on:
+   *  they left it, declined it or quit the agent (#462). For the extension that
+   *  is as good as the session ending. */
+  onParticipationEnded: (sessionId: string) => void | Promise<void>;
   onAllowlistAmended: (payload: AllowlistAmendedPayload) => void | Promise<void>;
   onSessionBundlesUpdated: (payload: SessionBundlesUpdatedPayload) => void | Promise<void>;
   /** After every successful connect: the first start, each automatic
@@ -133,6 +140,11 @@ export class HubClient {
     this.connection.on('SessionEnded', async (sessionId: string) => {
       log.info('SessionEnded received', { sessionId });
       await callbacks.onSessionEnded(sessionId);
+    });
+
+    this.connection.on('ParticipationEnded', async (sessionId: string) => {
+      log.info('ParticipationEnded received', { sessionId });
+      await callbacks.onParticipationEnded(sessionId);
     });
 
     this.connection.on('AllowlistAmended', async (payload: AllowlistAmendedPayload) => {
@@ -228,9 +240,9 @@ export class HubClient {
   }
 
   /**
-   * Whether the student is still in the session: it hasn't ended and they
-   * haven't left it (#354). Rejects when the backend can't be asked, e.g. the
-   * hub isn't connected.
+   * Whether the student is still in the session: it hasn't ended (#354), and
+   * they haven't left or declined it, nor quit the agent (#462). Rejects when
+   * the backend can't be asked, e.g. the hub isn't connected.
    */
   async isInSession(sessionId: string): Promise<boolean> {
     return this.connection.invoke<boolean>('IsInSession', sessionId);

@@ -5,7 +5,7 @@
 // acquisition, no UI: the wire contract is the backend, so we talk to it
 // directly and let SignalR carry the push to the extension.
 
-import { BACKEND_URL, CLASS_NAME, MS365_BUNDLE_NAME, TEACHER_OID } from './config.ts';
+import { BACKEND_URL, CLASS_NAME, MS365_BUNDLE_NAME, STUDENT_OID, TEACHER_OID } from './config.ts';
 
 export interface StartedSession {
   id: string;
@@ -95,6 +95,15 @@ export class BackendClient {
     oid: string = TEACHER_OID,
   ): Promise<void> {
     await this.send('PUT', `/sessions/${sessionId}/bundles`, oid, { bundleIds });
+  }
+
+  /**
+   * POST /sessions/join-by-code as a student: "Join with code" in the agent.
+   * Clears a leave or a decline, and sends SessionStarted to the student's
+   * user group again, which the extension joins and enforces (#462).
+   */
+  async joinByCode(code: string, oid: string = STUDENT_OID): Promise<void> {
+    await this.send('POST', '/sessions/join-by-code', oid, { code });
   }
 
   /**

@@ -51,7 +51,7 @@
     }
   },
   "notCovered": {
-    "events": ["SessionBundlesUpdated", "AllowlistAmended"],
+    "events": ["SessionBundlesUpdated", "AllowlistAmended", "ParticipationEnded"],
     "methods": ["DeclineSession", "Heartbeat", "ExtensionHeartbeat", "IsInSession", "GetStartedSession", "ReportEvent"]
   }
 }
