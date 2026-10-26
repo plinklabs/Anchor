@@ -4,6 +4,7 @@ public interface ISessionHubClient
 {
     Task SessionStarted(SessionStartedPayload payload);
     Task SessionEnded(Guid sessionId);
+    Task ParticipationEnded(Guid sessionId);
     Task SessionBundlesUpdated(SessionBundlesUpdatedPayload payload);
     Task ParticipantStateChanged(ParticipantStateChangedPayload payload);
     Task HeartbeatLost(HeartbeatLostPayload payload);

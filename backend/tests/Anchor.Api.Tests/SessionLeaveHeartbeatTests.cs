@@ -74,7 +74,8 @@ public sealed class SessionLeaveHeartbeatTests : IClassFixture<SessionLeaveHeart
         Assert.False(tracker.TryGet(sessionId, student.Id, out _, WitnessSource.Agent));
         Assert.False(tracker.TryGet(sessionId, student.Id, out _, WitnessSource.Extension));
 
-        // The extension isn't told and keeps pinging; the hub turns it away.
+        // A ping the extension sends before it hears it is out of the session
+        // (ParticipationEnded, #462) is turned away.
         var rejected = await Assert.ThrowsAsync<HubException>(() =>
             extension.InvokeAsync(nameof(SessionHub.ExtensionHeartbeat), sessionId));
         Assert.Contains("Not an active participant", rejected.Message);

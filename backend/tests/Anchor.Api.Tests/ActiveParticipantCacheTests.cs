@@ -63,6 +63,32 @@ public sealed class ActiveParticipantCacheTests
     }
 
     [Fact]
+    public async Task A_participant_who_declined_after_their_extension_joined_is_not_active()
+    {
+        // The extension joins on SessionStarted without waiting for the
+        // student's answer in the agent, so a decline lands on a joined row
+        // (#462). Join-by-code clears DeclinedAt again.
+        var lookup = new CountingLookup(answer: true);
+        var participant = new SessionParticipant
+        {
+            SessionId = _sessionId,
+            UserId = _userId,
+            JoinedAt = Start,
+        };
+        _cache.Update(participant);
+
+        participant.DeclinedAt = Start.AddSeconds(5);
+        _cache.Update(participant);
+        Assert.False(await _cache.IsActiveAsync(_sessionId, _userId, lookup.Run, CancellationToken.None));
+
+        participant.DeclinedAt = null;
+        _cache.Update(participant);
+        Assert.True(await _cache.IsActiveAsync(_sessionId, _userId, lookup.Run, CancellationToken.None));
+
+        Assert.Equal(0, lookup.Calls);
+    }
+
+    [Fact]
     public void A_participant_that_never_joined_is_not_active()
     {
         // Session start creates the roster rows with JoinedAt null; declining

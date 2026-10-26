@@ -1,5 +1,6 @@
 // Catching up on a session that ended while the extension was offline (#354),
-// and on one that started without the extension hearing it (#356).
+// or that the student left meanwhile (#462), and on one that started without
+// the extension hearing it (#356).
 //
 // The backend tells clients that a session ended with a SessionEnded broadcast,
 // and a broadcast reaches only the hub connections open when it is sent. The
@@ -9,7 +10,11 @@
 // it. It would then keep blocking against the ended session's allowlist until
 // the browser restarted. So each time the hub connects, the extension asks the
 // backend whether the student is still in the session it is enforcing, and
-// ends it if not.
+// ends it if not. The answer is also "no" once the student left or declined
+// the session, or quit the agent, while it runs on. The ParticipationEnded the
+// backend sends then reaches only the connections open at that moment, as
+// SessionEnded does, and a student who is out of the session is treated as one
+// whose session ended (#462).
 //
 // SessionStarted goes out the same way, so a session can also start without the
 // extension hearing it: while it is offline, or in the moment straight after it
@@ -26,18 +31,19 @@ const log = logger('session-confirm');
 export interface ConfirmActiveSessionDeps {
   /** The id of the session the extension is enforcing, or null. */
   getActiveSessionId: () => Promise<string | null>;
-  /** Asks the backend whether the student is still in the session; rejects
-   *  when the backend can't be asked. */
+  /** Asks the backend whether the student is still in the session: it hasn't
+   *  ended and they haven't left or declined it (#462); rejects when the
+   *  backend can't be asked. */
   isInSession: (sessionId: string) => Promise<boolean>;
   /** Ends the session locally, exactly as a SessionEnded broadcast would. */
   endSession: (sessionId: string) => Promise<void>;
 }
 
 /**
- * Ends the active session if the backend says the student is no longer in it.
- * Only that answer ends it: when the backend can't be asked (the connection
- * dropped again, a backend without the check), the session stays and the next
- * connect asks again.
+ * Ends the active session if the backend says the student is no longer in it,
+ * whether it ended or they left it. Only that answer ends it: when the backend
+ * can't be asked (the connection dropped again, a backend without the check),
+ * the session stays and the next connect asks again.
  */
 export async function confirmActiveSession(deps: ConfirmActiveSessionDeps): Promise<void> {
   const sessionId = await deps.getActiveSessionId();
@@ -52,7 +58,7 @@ export async function confirmActiveSession(deps: ConfirmActiveSessionDeps): Prom
   }
   if (stillIn) return;
 
-  log.info('active session ended while the extension was disconnected', { sessionId });
+  log.info('the student is no longer in the active session (it ended, or they left it) — ending it', { sessionId });
   await deps.endSession(sessionId);
 }
 

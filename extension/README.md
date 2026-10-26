@@ -3,7 +3,9 @@
 Edge (Chromium) Manifest V3 extension that runs alongside `FocusAgent` on each
 student laptop. During an active focus session it observes the active tab URL,
 redirects off-allowlist pages to a friendly block page, and reports the block
-back to the backend over SignalR.
+back to the backend over SignalR. It stops filtering when the session ends, and
+also when the student leaves or declines it in the agent while it runs on: their
+blocked tabs go back to their pages, and off-list sites load again (#462).
 
 Design rationale lives in [focus-system-design.md](../focus-system-design.md)
 §6 (extension scope) and §11 (Phase 3 build order).
@@ -287,6 +289,8 @@ backend — no mocked `chrome`, no stubbed SignalR hub. The harness (under
 3. Drives session lifecycle over **REST** with the dev-impersonation header
    (`POST /sessions`, `PUT /sessions/{id}/bundles`, `POST /sessions/{id}/end`) —
    the same wire contract the dashboard uses.
+4. Runs no agent. Where a spec needs the student's agent, `e2e/student-agent.ts`
+   makes its hub calls as the seeded student (join, leave, decline, quit).
 
 The specs assert real behaviour, and navigate only to loopback hosts (Edge's
 `--host-resolver-rules` maps the synthetic test hosts to a local static server,
@@ -298,6 +302,7 @@ so no spec touches the public internet):
 | `block-on-start` | a tab already off-list when a session starts is redirected (#91) |
 | `block-on-navigation` | off-list navigations are blocked; on-list ones are left untouched (#72) |
 | `amend-bundles` | dropping a bundle mid-session re-scans and blocks a now-off-list tab (#93) |
+| `leave-session` | leaving, declining or quitting the agent stops the filtering, also for an extension that was offline then; joining again by code brings it back (#462) |
 
 **Hermetic against an on-box agent (#332).** On a developer machine the installed
 Anchor agent registers the witness native-messaging host *permanently*

@@ -12,6 +12,7 @@ public interface ISessionBroadcaster
         Guid sessionId,
         IReadOnlyCollection<Guid> recipientUserIds,
         CancellationToken cancellationToken = default);
+    Task ParticipationEndedAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default);
     Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default);
     Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default);
     Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default);
@@ -67,6 +68,16 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         var groups = recipientUserIds.Select(SessionHub.UserGroupName).ToArray();
         return _hub.Clients.Groups(groups).SessionEnded(sessionId);
     }
+
+    public Task ParticipationEndedAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
+        // The student's user group, where their agent and extension listen
+        // (#462): the session runs on, but the backend no longer counts them in
+        // it, because they left, declined or quit the agent. The agent made
+        // that call itself, so it is the extension that acts on this: it stops
+        // filtering for the session and stops pinging it. Not SessionEnded: a
+        // teacher taking part in their own session (#410) has their dashboard
+        // in this group too, and SessionEnded would close its live page.
+        => _hub.Clients.Group(SessionHub.UserGroupName(userId)).ParticipationEnded(sessionId);
 
     public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
         // Per-student: each student's allowlist differs by their own unblock
