@@ -23,6 +23,7 @@ public sealed partial class JoinByCodeWindow : Window
         _client = client;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         Title = Loc.Get("Title_JoinByCode");
+        WindowIcon.Apply(this);
         HeadlineText.Text = Loc.Get("JoinHeadline");
         BodyText.Text = Loc.Get("JoinBody");
         CancelButton.Content = Loc.Get("JoinCancel");

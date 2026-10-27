@@ -16,6 +16,7 @@ public sealed partial class JoinConfirmationWindow : Window
         _confirmation = confirmation;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         Title = Loc.Get("Title_FocusSession");
+        WindowIcon.Apply(this);
 
         TitleText.Text = Loc.Get("ConfirmTitle");
         CancelButton.Content = Loc.Get("ConfirmCancel");

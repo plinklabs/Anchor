@@ -85,6 +85,7 @@ public sealed partial class MainWindow : Window
         var hwnd = WindowNative.GetWindowHandle(this);
         _appWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd));
         _appWindow.Closing += OnAppWindowClosing;
+        WindowIcon.Apply(this);
 
         Closed += OnClosed;
     }

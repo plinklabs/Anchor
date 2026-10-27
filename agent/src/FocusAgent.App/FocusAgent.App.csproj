@@ -6,6 +6,11 @@
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <RootNamespace>FocusAgent.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- #414: the Anchor mark as the exe's Win32 icon, which Explorer and Task
+         Manager show. The same .ico the tray loads and pack-release.ps1 hands to
+         vpk pack for the installer. A WinUI window doesn't pick it up for its own
+         title bar or taskbar button: each window sets it itself (WindowIcon). -->
+    <ApplicationIcon>Assets\TrayIcon.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <UseWinUI>true</UseWinUI>

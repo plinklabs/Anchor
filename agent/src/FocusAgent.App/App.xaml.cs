@@ -1001,8 +1001,9 @@ public partial class App : Application
         };
         // Title is "Anchor" (not a "(self-test)" debug label): this host window's
         // title bar is visible in the curated website screenshot of the tray menu
-        // (#251), so it must read like the shipped app.
+        // (#251), so it must read like the shipped app, Anchor icon included (#414).
         var host = new Window { Title = "Anchor" };
+        WindowIcon.Apply(host);
         host.Content = root;
         _trayMenuSelfTestWindow = host;
 
