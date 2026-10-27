@@ -18,12 +18,15 @@ namespace FocusAgent.IntegrationTests;
 /// run): both "hives" live in a throwaway HKCU subtree, the student's answer to
 /// the UAC prompt is simulated (on "yes" the simulated writer writes the throwaway
 /// machine key the way the elevated <c>reg.exe</c> would write HKLM), the state
-/// file is a temp file, and the grace period is 2 s. Everything else — the
-/// startup wiring, the registrar, the setup window and the guided-install window
-/// on screen, the registry access, the state file — is the shipped code. The
-/// setup window is answered through the status endpoint (the headless stand-in for
-/// a click, like <c>POST /leave</c>) or closed with <c>WM_CLOSE</c>, as a student
-/// closing it would.
+/// file is a temp file, the grace period is 2 s, and the witness pipe has a
+/// per-launch name (#442): on a box where Edge runs the force-installed Anchor
+/// extension, the real extension would otherwise check in on the default
+/// <c>anchor-witness</c> pipe and the guided install would never open. Everything
+/// else — the startup wiring, the registrar, the setup window and the
+/// guided-install window on screen, the registry access, the state file — is the
+/// shipped code. The setup window is answered through the status endpoint (the
+/// headless stand-in for a click, like <c>POST /leave</c>) or closed with
+/// <c>WM_CLOSE</c>, as a student closing it would.
 ///
 /// No backend is needed: the agent points at a dead port and just keeps retrying.
 /// The windows these runs open take focus, so the specs run in their own
@@ -215,6 +218,8 @@ public sealed class ExtensionPolicySetupTests
                     ["Extension__StatePath"] = StatePath,
                     ["Extension__SimulateElevation"] = _simulateElevation,
                     ["Extension__GracePeriodSeconds"] = "2",
+                    // No extension can check in on a pipe only this agent knows.
+                    ["Witness__PipeName"] = $"anchor-witness-e2e-{Guid.NewGuid():N}",
                 }));
 
         public void WriteState(ExtensionPolicyState state) =>
