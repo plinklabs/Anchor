@@ -20,7 +20,6 @@ using FocusAgent.Core.Tamper;
 using FocusAgent.Core.Updates;
 using FocusAgent.App.Updates;
 using FocusAgent.Native;
-using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -165,7 +164,7 @@ public partial class App : Application
             {
                 logger.LogInformation(
                     "FocusAgent {Version} starting (unpackaged WinUI 3), process {ProcessId} started at {ProcessStartedAt:o}",
-                    StatusEndpoint.AgentVersion, self.Id, new DateTimeOffset(self.StartTime));
+                    AgentVersion.Current, self.Id, new DateTimeOffset(self.StartTime));
             }
 
             // #224 + #407: start the Velopack auto-update cadence FIRST — a check
@@ -907,9 +906,7 @@ public partial class App : Application
 
         var detail = CrashDiagnostics.BuildDetail(
             synthetic,
-            typeof(App).Assembly
-                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-                ?.InformationalVersion?.Split('+', 2)[0],
+            AgentVersion.Current,
             Path.Combine(Program.LogDirectory, "startup-error.log"));
 
         _crashSelfTestWindow = new CrashReportWindow(
@@ -1410,7 +1407,7 @@ public partial class App : Application
                 string.IsNullOrWhiteSpace(diagnostics.UpdaterLogPath)
                     ? AgentLogPaths.VelopackLogPath(Program.VelopackAppId)
                     : diagnostics.UpdaterLogPath),
-            StatusEndpoint.AgentVersion,
+            AgentVersion.Current,
             TimeProvider.System,
             sp.GetRequiredService<ILogger<LogUploadService>>()));
 

@@ -1,5 +1,6 @@
 using FocusAgent.App.Connectivity;
 using FocusAgent.App.Localization;
+using FocusAgent.Core.Diagnostics;
 using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
@@ -78,6 +79,8 @@ public sealed partial class MainWindow : Window
         SessionLabelText.Text = Loc.Get("MainSessionLabel");
         LeaveButton.Content = Loc.Get("MainLeaveButton");
         CloseButton.Content = Loc.Get("MainCloseButton");
+        // #423: the same version /status, the tray menu and the crash dialog show.
+        VersionText.Text = Loc.Format("Main_Version", AgentVersion.Current);
 
         // #102: closing the window only hides it to the tray — the agent keeps
         // running and the heartbeat continues. Intercept the title-bar X here

@@ -45,18 +45,32 @@
 
             <!-- eyebrow: the product mark + live connection ping. The ping is
                  static when idle/down, pulses while connected (set in code). -->
-            <StackPanel Orientation="Horizontal"
-                        Spacing="10"
-                        VerticalAlignment="Center">
-                <pds:Ping x:Name="ConnectionPing"
-                          Diameter="14"
-                          Mode="Static"
-                          OnInk="True"
-                          VerticalAlignment="Center" />
-                <TextBlock Style="{StaticResource PlinkEyebrowTextStyle}"
-                           Foreground="{StaticResource PlinkOnInkBrush}"
-                           Text="ANCHOR" />
-            </StackPanel>
+            <Grid>
+                <StackPanel Orientation="Horizontal"
+                            Spacing="10"
+                            VerticalAlignment="Center">
+                    <pds:Ping x:Name="ConnectionPing"
+                              Diameter="14"
+                              Mode="Static"
+                              OnInk="True"
+                              VerticalAlignment="Center" />
+                    <TextBlock Style="{StaticResource PlinkEyebrowTextStyle}"
+                               Foreground="{StaticResource PlinkOnInkBrush}"
+                               Text="ANCHOR" />
+                </StackPanel>
+
+                <!-- #423: the agent's version, the first thing to ask when
+                     troubleshooting a laptop. Small, muted and out of the way on
+                     the eyebrow's far end, so it never competes with the status;
+                     selectable, so it can be copied into a message. Text is set
+                     (localized) in code. -->
+                <TextBlock x:Name="VersionText"
+                           Style="{StaticResource PlinkLabelTextStyle}"
+                           Foreground="{StaticResource PlinkOnInkMutedBrush}"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center"
+                           IsTextSelectionEnabled="True" />
+            </Grid>
 
             <!-- headline: the connection status, in Fraunces display. Text is set
                  (localized) in code on every render — ApplyConnectionSnapshot. -->
