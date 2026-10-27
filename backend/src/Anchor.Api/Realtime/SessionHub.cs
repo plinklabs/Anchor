@@ -148,6 +148,13 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         }
         else if (participant is not null && !isOwningTeacher)
         {
+            // A student who declined stays out of the session until they join
+            // it again by code, which clears the decline (#471). The extension
+            // joins without asking them, so its join can't undo their answer,
+            // nor tell the teacher's roster they joined.
+            if (participant.DeclinedAt is not null)
+                throw new HubException("Session declined. Join it again by code to take part.");
+
             participant.JoinedAt ??= now;
             participant.LeftAt = null;
             joined = true;
