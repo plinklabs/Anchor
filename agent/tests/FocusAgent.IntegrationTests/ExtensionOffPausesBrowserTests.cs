@@ -196,6 +196,17 @@ public sealed class ExtensionOffReMinimizeTests
 /// and agent, so
 /// <see cref="WhileThePausedBrowserIsSlowToGoDown_TheOverlayStillGetsTheKeyboard"/>
 /// holds both for that moment, as a busy browser and a busy agent would.
+///
+/// #477: once out of the topmost band, the overlay is put back at the top of the
+/// others when another app's window came above it. From the agent, which does not
+/// have the foreground, <c>HWND_TOP</c> leaves it below the windows of the app that
+/// has it, so the agent took it through the band to get there, and a browser that
+/// went down meanwhile handed the keyboard past it: on this box to an allowed File
+/// Explorer window, and only when that one happened to be above the overlay.
+/// <see cref="WithAnotherAppsWindowAboveTheOverlay_ThePausedBrowserGoingDownStillHandsItTheKeyboard"/>
+/// puts such a window there every time: one of its own that shares the browser's
+/// input, brought above the overlay while the agent is held right after it took the
+/// overlay out of the band.
 /// </summary>
 [Trait("Category", "Visual")]
 [Collection(AgentE2ECollection.Name)]
@@ -265,9 +276,9 @@ public sealed class ExtensionOffKeyboardTests
                     // Back in the topmost band while the browser has yet to go down,
                     // the overlay is passed over when it does. The agent is held there
                     // too, as a busy UI thread would be, until the browser went down.
-                    // A millisecond on, so the moment a window takes to go through
-                    // the band to the top of the others is no cause.
-                    backOnTop = BackOnTop(overlay, hwnd) && SpinFor(TimeSpan.FromMilliseconds(1)) && BackOnTop(overlay, hwnd);
+                    // Even for a moment: no hand-over takes the overlay back through
+                    // the band on its way to the top of the others (#477).
+                    backOnTop = BackOnTop(overlay, hwnd);
                     if (backOnTop)
                         agentHeld = SuspendedProcess.Suspend(run.Agent.Pid);
                 }
@@ -290,6 +301,121 @@ public sealed class ExtensionOffKeyboardTests
             "The overlay went back in the topmost band while the paused browser had yet to carry out the minimize " +
             "that hands it the keyboard: a browser that goes down then hands the keyboard past it (#475). " +
             $"Foreground: {sampler.Describe()}");
+    }
+
+    [Fact]
+    public async Task WithAnotherAppsWindowAboveTheOverlay_ThePausedBrowserGoingDownStillHandsItTheKeyboard()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var run = await BrowserPauseRun.StartAsync(_backend.Url, api);
+        var browser = run.BrowserWindow;
+        using var sampler = new ForegroundSampler(run.Agent.Pid);
+        sampler.Name(browser, "browser");
+        await PauseWhileTheStudentIsInTheBrowserAsync(run, sampler);
+        var overlay = WindowCapture.FindFullScreenWindow(run.Agent.Pid);
+
+        // Another app's window on screen, shown without the keyboard, which raises
+        // nothing the agent judges. It shares the browser's input, so while the
+        // browser has the foreground it counts as one of the browser's windows for
+        // where Windows puts the windows of an app without the foreground, as the
+        // agent is: HWND_TOP from the agent leaves the overlay below it (#477).
+        using var other = await OffListWindow.OpenAsync(
+            "Anchor e2e other app", TimeSpan.FromSeconds(10), activate: false);
+        sampler.Name(other.Handle, "other app");
+        Assert.True(other.ShareInputWith(browser), "The other app's window could not share the stand-in browser's input.");
+
+        // The agent restores the browser the student activated and takes the overlay
+        // out of the topmost band. It is held right then, as a busy agent would be.
+        Assert.True(WindowCapture.IsTopmost(overlay), "The paused-browser overlay was not in the topmost band to start with.");
+        var backInTheBand = false;
+        var placedAgain = false;
+        IDisposable? agentHeld = null;
+        Task<bool>? activating = null;
+        try
+        {
+            using (var outOfTheBand = new SuspendWhen(
+                       () => !WindowCapture.IsTopmost(overlay), () => SuspendedProcess.Suspend(run.Agent.Pid)))
+            {
+                // On a thread of its own: activating the browser takes the keyboard from
+                // the overlay, which waits on the agent's UI thread, and the agent is
+                // held from the moment it takes the overlay out of the band.
+                sampler.Mark(ActivatingThePausedBrowser);
+                activating = Task.Factory.StartNew(
+                    () => ActivateWithRetries(browser), CancellationToken.None,
+                    TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                Assert.True(
+                    outOfTheBand.Wait(TimeSpan.FromSeconds(3)),
+                    "The agent did not take the overlay out of the topmost band to take the keyboard over from the " +
+                    $"paused browser. Foreground: {sampler.Describe()}");
+                agentHeld = outOfTheBand.Stop();
+            }
+
+            // The browser's app finishes the restore the agent asked for, and the other
+            // app's window comes above the overlay, as one of its windows does.
+            Assert.True(
+                await WaitUntilAsync(
+                    () => sampler.SawSince(ActivatingThePausedBrowser, browser, "restored") && !WindowCapture.IsIconic(browser),
+                    TimeSpan.FromSeconds(3)),
+                $"The browser's app did not finish the restore the agent asked for. Foreground: {sampler.Describe()}");
+            await Task.Delay(100);
+            Assert.False(
+                WindowCapture.IsIconic(browser) || sampler.SawSince(ActivatingThePausedBrowser, browser, "minimized"),
+                "The paused browser went down before the other app's window came above the overlay: the spec did not " +
+                $"hold the agent in time to set the scene. Foreground: {sampler.Describe()}");
+            Assert.True(
+                other.BringToTopWithoutActivating() && WindowCapture.IsAbove(other.Handle, overlay),
+                $"The other app's window did not come above the overlay. Foreground: {sampler.Describe()}");
+
+            // The browser's app is busy, and gets to the minimize the agent asks a
+            // moment later. The agent goes on: it asks for that minimize, and puts the
+            // overlay above every app window once more. Should it go through the topmost
+            // band to get there, the overlay is held there, as a busy UI thread would
+            // hold it, until the browser went down.
+            using (SuspendedProcess.Suspend(WindowCapture.ProcessIdOf(browser)))
+            {
+                using var inTheBand = new SuspendWhen(
+                    () => WindowCapture.IsTopmost(overlay) && !WindowCapture.IsIconic(browser),
+                    () => SuspendedThread.Of(overlay));
+                agentHeld?.Dispose();
+                agentHeld = null;
+                placedAgain = await WaitUntilAsync(
+                    () => inTheBand.HasHeld || WindowCapture.IsAbove(overlay, other.Handle), TimeSpan.FromSeconds(1));
+                agentHeld = inTheBand.Stop();
+                backInTheBand = agentHeld is not null;
+            }
+            Assert.True(
+                await WaitUntilAsync(() => WindowCapture.IsIconic(browser), TimeSpan.FromSeconds(3)),
+                "The paused browser did not go down once its app got to it." +
+                (backInTheBand
+                    ? " The agent took the overlay through the topmost band to get it above the other app's window, " +
+                      "and held there, it asked the browser to go down no sooner (#477)."
+                    : "") +
+                $" Foreground: {sampler.Describe()}");
+            await Task.Delay(100);
+        }
+        finally
+        {
+            agentHeld?.Dispose();
+        }
+        Assert.True(
+            activating is not null && await activating.WaitAsync(TimeSpan.FromSeconds(5)),
+            "Windows refused to give the paused browser the foreground.");
+        _ownInput = WindowCapture.LastInputTick();
+
+        var note = backInTheBand
+            ? " The agent took the overlay through the topmost band to get it above the other app's window (#477)."
+            : placedAgain ? "" : " The agent did not put the overlay above the other app's window before the browser went down.";
+        Assert.False(
+            sampler.SawSince(ActivatingThePausedBrowser, other.Handle, "foreground"),
+            "When the paused browser went down, the keyboard went to the other app's window, which was above the " +
+            $"overlay: what the student types goes there (#477).{note}{Interference()} Foreground: {sampler.Describe()}");
+        await AssertTheOverlayHasTheKeyboardAsync(
+            run, sampler, "a paused browser went down with another app's window above the overlay", note);
+        Assert.False(
+            backInTheBand,
+            "The agent took the overlay through the topmost band to get it above the other app's window while the " +
+            "paused browser had yet to carry out the minimize that hands it the keyboard: a browser that goes down " +
+            $"then hands the keyboard past it (#477). Foreground: {sampler.Describe()}");
     }
 
     /// <summary>
@@ -326,15 +452,72 @@ public sealed class ExtensionOffKeyboardTests
         Assert.True(activated, "Windows refused to give the paused browser the foreground.");
     }
 
+    /// <summary>
+    /// <see cref="WindowCapture.ActivateOnce"/>, tried again a moment later should
+    /// Windows refuse it, as <see cref="ActivateThePausedBrowserAsync"/> does.
+    /// </summary>
+    private static bool ActivateWithRetries(IntPtr hwnd)
+    {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            if (WindowCapture.ActivateOnce(hwnd)) return true;
+            Thread.Sleep(200);
+        }
+        return false;
+    }
+
     private static bool BackOnTop(IntPtr overlay, IntPtr browser) =>
         WindowCapture.IsTopmost(overlay) && !WindowCapture.IsIconic(browser);
 
-    private static bool SpinFor(TimeSpan time)
+    /// <summary>
+    /// Holds the agent (<paramref name="hold"/>: its process, or its UI thread) the
+    /// moment <paramref name="condition"/> holds, checked without pause on a thread of
+    /// its own: a window can be somewhere for less than a millisecond. A spec holds
+    /// the agent with it at a step of a hand-over, as a busy agent would be held
+    /// (#477).
+    /// </summary>
+    private sealed class SuspendWhen : IDisposable
     {
-        var clock = Stopwatch.StartNew();
-        while (clock.Elapsed < time)
-            Thread.SpinWait(20);
-        return true;
+        private readonly Thread _thread;
+        private readonly ManualResetEventSlim _done = new();
+        private volatile bool _stop;
+        private IDisposable? _held;
+
+        public SuspendWhen(Func<bool> condition, Func<IDisposable> hold)
+        {
+            _thread = new Thread(() =>
+            {
+                while (!_stop)
+                {
+                    if (!condition()) continue;
+                    _held = hold();
+                    break;
+                }
+                _done.Set();
+            })
+            { IsBackground = true, Priority = ThreadPriority.Highest, Name = "suspend-when" };
+            _thread.Start();
+        }
+
+        /// <summary>Wait for the condition; whether the process is held.</summary>
+        public bool Wait(TimeSpan timeout) => _done.Wait(timeout) && Volatile.Read(ref _held) is not null;
+
+        /// <summary>Whether the process is held by now.</summary>
+        public bool HasHeld => _done.IsSet && Volatile.Read(ref _held) is not null;
+
+        /// <summary>Stop checking, and hand the hold over to the caller, if any.</summary>
+        public IDisposable? Stop()
+        {
+            _stop = true;
+            _thread.Join(TimeSpan.FromSeconds(5));
+            return Interlocked.Exchange(ref _held, null);
+        }
+
+        public void Dispose()
+        {
+            Stop()?.Dispose();
+            _done.Dispose();
+        }
     }
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)

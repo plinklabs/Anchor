@@ -24,7 +24,8 @@ namespace FocusAgent.Native;
 /// allowed window to fall back to, or for a paused browser (#450), the focus
 /// overlay is put above every app window, out of the topmost band, before the
 /// window minimizes itself, so the overlay is the window Windows hands the
-/// foreground to (#441, #475). A hand-over never
+/// foreground to (#441, #475), and it never goes back through the band to get
+/// there (#477). A hand-over never
 /// asks a window to minimize while an earlier minimize is on its way to it, nor
 /// once its caller no longer wants the window down (#474). It asks once that
 /// minimize is done, should the window be on screen still (#476).
@@ -548,6 +549,13 @@ public sealed class FocusEnforcer : IFocusEnforcer
     }
 
     /// <summary>
+    /// How many times <see cref="PutAboveEveryAppWindow"/> puts the successor right
+    /// above another app's window, should one still be above it: the Z-order can
+    /// change between finding where to put it and the move.
+    /// </summary>
+    private const int PlacementAttempts = 3;
+
+    /// <summary>
     /// Puts <paramref name="successorWindowHandle"/> at the top of the windows that
     /// are not topmost: above every app window, <paramref name="goingDown"/>
     /// included. When the window with the foreground minimizes itself, Windows
@@ -558,6 +566,19 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// restore was still going, the overlay ended up below an allowed app, which
     /// got the keyboard. So a later hand-over of the same window, once the restore
     /// is done, puts the successor at the top again.
+    /// <para>
+    /// It never goes back through the topmost band (#477). A window that goes down
+    /// while the successor is in the band passes it over, and after a restore the
+    /// hand-over runs off the overlay's UI thread, where each move waits for that
+    /// thread: the overlay could stay in the band for as long as the thread was
+    /// busy. Nor is it put there with <c>HWND_TOP</c>: from an app without the
+    /// foreground, as the agent is, Windows puts a window below the windows of the
+    /// app that has the foreground, and an app's window that shares its input
+    /// stays above the successor. Leaving the band, the successor goes to the top
+    /// of the others all the same. Out of it already, it is put right above the
+    /// first app window above it, in one move after a given window
+    /// (<see cref="WindowToGoRightBelow"/>), which Windows does not restrict.
+    /// </para>
     /// </summary>
     private void PutAboveEveryAppWindow(nint successorWindowHandle, nint goingDown)
     {
@@ -566,21 +587,45 @@ public sealed class FocusEnforcer : IFocusEnforcer
         {
             if (IsTopmost(successorWindowHandle))
             {
-                // Leaving the topmost band, a window goes to the top of the others.
-                if (!NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags))
+                // Leaving the topmost band, a window goes to the top of the others,
+                // above the windows of the app with the foreground as well.
+                if (!NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags) ||
+                    IsTopmost(successorWindowHandle))
+                {
                     _log.LogWarning("SetWindowPos could not put 0x{Successor:X} above every app window", successorWindowHandle);
-                return;
+                    return;
+                }
             }
-            // Out of the band already: a hand-over still under way took it out. Not
-            // back through the band, where a window going down meanwhile passes it
-            // over, unless HWND_TOP leaves another app's window above it, as it can.
-            NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_TOP, 0, 0, 0, 0, flags);
-            if (IsFirstAppWindowBut(successorWindowHandle, AppWindowOf(goingDown)))
-                return;
-            _log.LogDebug("0x{Successor:X} is still below another app's window; taking it through the topmost band", successorWindowHandle);
-            if (!NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0, flags) ||
-                !NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags))
-                _log.LogWarning("SetWindowPos could not put 0x{Successor:X} above every app window", successorWindowHandle);
+            // Out of the band already, a hand-over still under way took it out, and
+            // another app's window can have come above it since.
+            var appWindow = AppWindowOf(goingDown);
+            for (var attempt = 1; ; attempt++)
+            {
+                var blocker = AppWindowAbove(successorWindowHandle, appWindow);
+                if (blocker == IntPtr.Zero)
+                    return;
+                if (attempt > PlacementAttempts)
+                {
+                    _log.LogWarning(
+                        "0x{Successor:X} is still below 0x{Blocker:X} [{ClassName}], another app's window",
+                        successorWindowHandle, blocker, ClassNameOf(blocker));
+                    return;
+                }
+                var insertAfter = WindowToGoRightBelow(blocker, successorWindowHandle);
+                _log.LogDebug(
+                    "0x{Successor:X} is below 0x{Blocker:X} [{ClassName}], another app's window; putting it right below 0x{InsertAfter:X}",
+                    successorWindowHandle, blocker, ClassNameOf(blocker), insertAfter);
+                if (!NativeMethods.SetWindowPos(
+                        successorWindowHandle,
+                        insertAfter == IntPtr.Zero ? NativeMethods.HWND_TOP : insertAfter,
+                        0, 0, 0, 0, flags))
+                    _log.LogDebug("SetWindowPos could not put 0x{Successor:X} below 0x{InsertAfter:X}", successorWindowHandle, insertAfter);
+                // Put above a topmost window, or after a window of a band of the shell's
+                // above the band of app windows, Windows makes the successor topmost too.
+                // Out again, it is at the top of the others.
+                if (IsTopmost(successorWindowHandle))
+                    NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+            }
         }
         catch (Exception ex)
         {
@@ -592,27 +637,69 @@ public sealed class FocusEnforcer : IFocusEnforcer
         (NativeMethods.GetWindowLongW(windowHandle, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOPMOST) != 0;
 
     /// <summary>
-    /// Whether <paramref name="windowHandle"/> is the first window from the top of
-    /// the Z-order that Windows may hand the foreground to (on screen, not topmost,
-    /// not a tool window), but for the windows of the app window
-    /// <paramref name="appWindow"/>: the one that goes down, with its dialogs.
+    /// The last window of the topmost band at the top of the Z-order, right above the
+    /// first window that is not topmost: right below it is the top of the others.
+    /// <see cref="IntPtr.Zero"/> when the first window is not topmost. Not the lowest
+    /// topmost window: topmost windows also sit further down, hidden ones and the
+    /// shell's, and right after one of those a window lands below windows that are
+    /// not topmost, or, above another topmost one, in the band.
     /// </summary>
-    private static bool IsFirstAppWindowBut(nint windowHandle, nint appWindow)
+    private static nint BottomOfTheTopmostBand(nint anyTopLevelWindow)
+    {
+        var bottom = IntPtr.Zero;
+        for (var window = NativeMethods.GetWindow(anyTopLevelWindow, NativeMethods.GW_HWNDFIRST);
+             window != IntPtr.Zero && IsTopmost(window);
+             window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
+        {
+            bottom = window;
+        }
+        return bottom;
+    }
+
+    /// <summary>
+    /// The first window from the top of the Z-order that Windows may hand the
+    /// foreground to (on screen, not topmost, not a tool window), but for the windows
+    /// of the app window <paramref name="appWindow"/>, the one that goes down, with its
+    /// dialogs, when it is above <paramref name="windowHandle"/>; otherwise
+    /// <see cref="IntPtr.Zero"/>.
+    /// </summary>
+    private static nint AppWindowAbove(nint windowHandle, nint appWindow)
     {
         for (var window = NativeMethods.GetWindow(windowHandle, NativeMethods.GW_HWNDFIRST);
              window != IntPtr.Zero;
              window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
         {
             if (window == windowHandle)
-                return true;
+                return IntPtr.Zero;
             if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
                 continue;
             var exStyle = NativeMethods.GetWindowLongW(window, NativeMethods.GWL_EXSTYLE);
             if ((exStyle & (NativeMethods.WS_EX_TOPMOST | NativeMethods.WS_EX_TOOLWINDOW)) == 0 &&
                 AppWindowOf(window) != appWindow)
-                return false;
+                return window;
         }
-        return false;
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// The window to put <paramref name="successorWindowHandle"/> right after, so
+    /// that it lands right above <paramref name="blocker"/>, the first app window from
+    /// the top: the window right above that one, when it is not topmost, as the
+    /// hidden windows of an app's input are; otherwise the bottom of the topmost band
+    /// (<see cref="BottomOfTheTopmostBand"/>). Put right after a window that is not
+    /// topmost, above one that is not either, a window stays out of the band. Put
+    /// right after the bottom of the band, Windows makes it topmost when that window
+    /// is one of the shell's in a band above the one of app windows, as it is while
+    /// the shell has its taskbar out of the band for a window that covers the
+    /// screen, the overlay.
+    /// </summary>
+    private static nint WindowToGoRightBelow(nint blocker, nint successorWindowHandle)
+    {
+        var above = NativeMethods.GetWindow(blocker, NativeMethods.GW_HWNDPREV);
+        if (above != IntPtr.Zero && !IsTopmost(above) &&
+            NativeMethods.GetWindow(above, NativeMethods.GW_OWNER) != successorWindowHandle)
+            return above;
+        return BottomOfTheTopmostBand(successorWindowHandle);
     }
 
     /// <summary>

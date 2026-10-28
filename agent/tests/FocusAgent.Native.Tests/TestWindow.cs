@@ -7,13 +7,18 @@ namespace FocusAgent.Native.Tests;
 /// A top-level window on a thread of its own with a message pump, standing in for
 /// another app's window. <see cref="Freeze"/> stops the pump until <see cref="Thaw"/>,
 /// as an app that hangs, and <see cref="RestoreWhenMinimized"/> brings the window
-/// back in the middle of its next minimize (#476). Shown without activating, so a
-/// test never takes the foreground from whoever works at the desktop.
+/// back in the middle of its next minimize (#476). It counts the times it lands in
+/// the topmost band (<see cref="TimesInTheTopmostBand"/>, #477), however briefly.
+/// Shown without activating, so a test never takes the foreground from whoever
+/// works at the desktop.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class TestWindow : IDisposable
 {
     private const uint WM_SIZE = 0x0005;
+    private const uint WM_WINDOWPOSCHANGED = 0x0047;
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_TOPMOST = 0x00000008;
     private const uint WM_CLOSE = 0x0010;
     private const uint WM_QUIT = 0x0012;
     private const uint WM_APP_FREEZE = 0x8001;
@@ -36,6 +41,7 @@ internal sealed class TestWindow : IDisposable
     private readonly WndProc _proc;
     private nint _staticProc;
     private int _restoreWhenMinimized;
+    private int _timesInTheTopmostBand;
     private uint _threadId;
 
     private TestWindow(string title)
@@ -59,6 +65,13 @@ internal sealed class TestWindow : IDisposable
     /// screen where Windows keeps a minimized window.
     /// </summary>
     public bool IsBackOnScreen => !IsIconic(Handle) && GetWindowRect(Handle, out var rect) && rect.Left > MinimizedPosition;
+
+    /// <summary>
+    /// How many times a move of the window has left it in the topmost band. The
+    /// window learns of every move it makes (<c>WM_WINDOWPOSCHANGED</c>), so a move
+    /// into the band and straight out again counts too.
+    /// </summary>
+    public int TimesInTheTopmostBand => Volatile.Read(ref _timesInTheTopmostBand);
 
     public static TestWindow Open(string title)
     {
@@ -146,6 +159,8 @@ internal sealed class TestWindow : IDisposable
 
     private nint WindowProc(nint hwnd, uint msg, nint wParam, nint lParam)
     {
+        if (msg == WM_WINDOWPOSCHANGED && (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0)
+            Interlocked.Increment(ref _timesInTheTopmostBand);
         // WM_SIZE comes in the middle of the minimize, once the window is marked
         // minimized and before Windows says it started to minimize.
         if (msg == WM_SIZE && wParam == SIZE_MINIMIZED && Interlocked.Exchange(ref _restoreWhenMinimized, 0) == 1)
@@ -225,4 +240,7 @@ internal sealed class TestWindow : IDisposable
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(nint hWnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLongW(nint hWnd, int index);
 }

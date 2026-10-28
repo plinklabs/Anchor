@@ -146,6 +146,7 @@ internal static class NativeMethods
     public const uint GW_OWNER = 4;
     public const uint GW_HWNDFIRST = 0;
     public const uint GW_HWNDNEXT = 2;
+    public const uint GW_HWNDPREV = 3;
 
     [DllImport("user32.dll")]
     public static extern nint GetAncestor(nint hWnd, uint gaFlags);

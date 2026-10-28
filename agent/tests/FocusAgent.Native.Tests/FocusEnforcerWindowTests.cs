@@ -288,6 +288,43 @@ public class FocusEnforcerWindowTests
     }
 
     [Fact]
+    public async Task Out_of_the_topmost_band_the_overlay_goes_above_another_apps_window_without_going_back_through_it()
+    {
+        // #477: a hand-over while another one is under way finds the overlay out of
+        // the topmost band, and another app's window can have come above it since.
+        // The overlay goes above it in one move, never back through the band, where
+        // a window that goes down meanwhile passes it over. From the agent, which
+        // does not have the foreground, HWND_TOP leaves the overlay below the windows
+        // of the app that has it, so the agent went through the band to get above
+        // them; a window of this test cannot be one of those, so the e2e
+        // ExtensionOffKeyboardTests puts one there. Here the other app's window is
+        // an ordinary one, which the overlay must get above all the same.
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        using var other = TestWindow.Open("Anchor test other app");
+        var enforcer = new FocusEnforcer(log);
+        // Held up for a moment, so it is still on screen when the test looks.
+        offList.Freeze();
+        Assert.True(IsAbove(other.Handle, overlay.Handle), "The other app's window did not come up above the overlay.");
+
+        var handOver = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+
+        Assert.True(
+            overlay.TimesInTheTopmostBand == 0,
+            "The hand-over took the overlay through the topmost band, where a window that goes down passes it over.");
+        Assert.True(
+            IsFirstAppWindowBut(overlay.Handle, offList.Handle),
+            "The overlay is still below another app's window, which Windows hands the foreground to when the " +
+            "window goes down.");
+        offList.Thaw();
+        await handOver;
+        Assert.True(
+            await WaitUntilAsync(() => NativeMethods.IsIconic(offList.Handle), TimeSpan.FromSeconds(2)),
+            "The blocked window was not minimized.");
+    }
+
+    [Fact]
     public async Task Handing_over_from_an_app_that_is_not_responding_never_holds_up_the_agent()
     {
         var log = new ListLogger<FocusEnforcer>();
@@ -503,6 +540,40 @@ public class FocusEnforcerWindowTests
 
     private static bool IsTopmost(nint hwnd) =>
         (NativeMethods.GetWindowLongW(hwnd, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOPMOST) != 0;
+
+    /// <summary>Whether <paramref name="upper"/> is above <paramref name="lower"/> in the Z-order.</summary>
+    private static bool IsAbove(nint upper, nint lower)
+    {
+        for (var window = NativeMethods.GetWindow(upper, NativeMethods.GW_HWNDFIRST);
+             window != IntPtr.Zero;
+             window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
+        {
+            if (window == upper) return true;
+            if (window == lower) return false;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="hwnd"/> is the first window from the top that Windows
+    /// may hand the foreground of <paramref name="goingDown"/> to: on screen, not
+    /// topmost and not a tool window (#475).
+    /// </summary>
+    private static bool IsFirstAppWindowBut(nint hwnd, nint goingDown)
+    {
+        for (var window = NativeMethods.GetWindow(hwnd, NativeMethods.GW_HWNDFIRST);
+             window != IntPtr.Zero;
+             window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
+        {
+            if (window == hwnd) return true;
+            if (window == goingDown || !NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
+                continue;
+            if ((NativeMethods.GetWindowLongW(window, NativeMethods.GWL_EXSTYLE) &
+                 (NativeMethods.WS_EX_TOPMOST | NativeMethods.WS_EX_TOOLWINDOW)) == 0)
+                return false;
+        }
+        return false;
+    }
 
     /// <summary>Puts <paramref name="hwnd"/> in the topmost band, as the overlay is shown.</summary>
     private static void MakeTopmost(nint hwnd) =>

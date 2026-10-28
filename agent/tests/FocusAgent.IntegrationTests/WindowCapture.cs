@@ -186,6 +186,21 @@ internal static class WindowCapture
     public static bool IsTopmost(IntPtr hwnd) => (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
 
     /// <summary>
+    /// True while <paramref name="upper"/> is above <paramref name="lower"/> in the
+    /// Z-order. Windows hands the foreground of a window that goes down to the first
+    /// window from the top that is on screen and not topmost (#475, #477).
+    /// </summary>
+    public static bool IsAbove(IntPtr upper, IntPtr lower)
+    {
+        for (var window = GetWindow(upper, GW_HWNDFIRST); window != IntPtr.Zero; window = GetWindow(window, GW_HWNDNEXT))
+        {
+            if (window == upper) return true;
+            if (window == lower) return false;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Restore <paramref name="hwnd"/> from minimized — the headless stand-in for a
     /// student clicking the taskbar entry of a just-minimized off-list window. This
     /// is the exact transition #92 fixed: it raises EVENT_SYSTEM_MINIMIZEEND (not
@@ -644,6 +659,8 @@ internal static class WindowCapture
     private const int SW_SHOWNOACTIVATE = 4;
     private const int SW_SHOWMINNOACTIVE = 7;
     private const uint GW_OWNER = 4;
+    private const uint GW_HWNDFIRST = 0;
+    private const uint GW_HWNDNEXT = 2;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new(-4);
 
