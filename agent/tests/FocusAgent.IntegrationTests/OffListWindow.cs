@@ -11,8 +11,11 @@ namespace FocusAgent.IntegrationTests;
 /// apps a Windows build ships. It runs on a dedicated thread with a message pump,
 /// so the agent can minimize it and the spec can restore it, like any app. It
 /// can stop handling messages for a while (<see cref="Freeze"/>,
-/// <see cref="HangWhenMinimized"/>), as an app that is not responding (#440).
-/// And it counts the keystrokes it receives (#441), so a spec can tell whether
+/// <see cref="HangWhenMinimized"/>), as an app that is not responding (#440), or
+/// be brought back while it goes down (<see cref="RestoreWhenMinimized"/>, #476).
+/// It can share another app's input and come to the top as that app's own windows
+/// do (<see cref="ShareInputWith"/>, #477). And it counts the keystrokes it
+/// receives (#441), so a spec can tell whether
 /// what the student types reaches the blocked app, which is the only window a
 /// spec may type into besides the agent's own.
 /// </summary>
@@ -29,13 +32,16 @@ internal sealed class OffListWindow : IDisposable
 
     private readonly string _title;
     private readonly bool _minimized;
+    private readonly bool _activate;
     private readonly Thread _thread;
     private readonly TaskCompletionSource<IntPtr> _created = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ManualResetEventSlim _frozen = new();
     private readonly ManualResetEventSlim _thaw = new();
     private TimeSpan _hangFor;
     private int _hangWhenMinimized;
+    private int _restoreWhenMinimized;
     private int _keystrokes;
+    private uint _threadId;
 
     /// <summary>
     /// Key presses the window has received: <c>WM_KEYDOWN</c>, and
@@ -44,10 +50,11 @@ internal sealed class OffListWindow : IDisposable
     /// </summary>
     public int KeystrokesReceived => Volatile.Read(ref _keystrokes);
 
-    private OffListWindow(string title, bool minimized)
+    private OffListWindow(string title, bool minimized, bool activate)
     {
         _title = title;
         _minimized = minimized;
+        _activate = activate;
         _thread = new Thread(Run) { IsBackground = true, Name = "off-list-window" };
     }
 
@@ -68,11 +75,14 @@ internal sealed class OffListWindow : IDisposable
     /// Show a new window titled <paramref name="title"/> and wait for it. A
     /// <paramref name="minimized"/> window starts out on the taskbar without taking
     /// the foreground, as an app the student has not opened yet: it raises no event
-    /// the agent judges until it is restored.
+    /// the agent judges until it is restored. One shown without
+    /// <paramref name="activate"/> is on screen without taking the foreground, and
+    /// raises no such event either.
     /// </summary>
-    public static async Task<OffListWindow> OpenAsync(string title, TimeSpan timeout, bool minimized = false)
+    public static async Task<OffListWindow> OpenAsync(
+        string title, TimeSpan timeout, bool minimized = false, bool activate = true)
     {
-        var window = new OffListWindow(title, minimized);
+        var window = new OffListWindow(title, minimized, activate);
         window._thread.Start();
         try
         {
@@ -111,6 +121,42 @@ internal sealed class OffListWindow : IDisposable
         Volatile.Write(ref _hangWhenMinimized, 1);
     }
 
+    /// <summary>
+    /// The next time the window is minimized, bring it back in the middle of that,
+    /// as a click on its taskbar button that lands while the app is still going
+    /// down, then stop handling messages, still in the middle of the minimize, for
+    /// <paramref name="duration"/> or until <see cref="Thaw"/>. Windows says the
+    /// window started to minimize only once its app is done with the minimize
+    /// (#476).
+    /// </summary>
+    public void RestoreWhenMinimized(TimeSpan duration)
+    {
+        PrepareHang(duration);
+        Volatile.Write(ref _restoreWhenMinimized, 1);
+    }
+
+    /// <summary>
+    /// Share the input of the app that shows <paramref name="window"/>
+    /// (<c>AttachThreadInput</c>), as the windows of apps that work together do.
+    /// While that app has the foreground, this window counts as one of its windows
+    /// for where Windows puts windows of apps without the foreground: below them
+    /// (#477). Returns whether Windows let it.
+    /// </summary>
+    public bool ShareInputWith(IntPtr window)
+    {
+        var thread = GetWindowThreadProcessId(window, out _);
+        return thread != 0 && AttachThreadInput(_threadId, thread, true);
+    }
+
+    /// <summary>
+    /// Bring the window to the top of the windows that are not topmost without
+    /// activating it, as an app does with its own window. Windows lets it only while
+    /// its app has the foreground, or shares the input of the app that has it
+    /// (<see cref="ShareInputWith"/>).
+    /// </summary>
+    public bool BringToTopWithoutActivating() =>
+        SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, SwpNoSize | SwpNoMove | SwpNoActivate);
+
     /// <summary>Wait until the window's thread has stopped handling messages.</summary>
     public bool WaitUntilFrozen(TimeSpan timeout) => _frozen.Wait(timeout);
 
@@ -144,6 +190,7 @@ internal sealed class OffListWindow : IDisposable
     {
         try
         {
+            _threadId = GetCurrentThreadId();
             var instance = GetModuleHandleW(null);
             lock (RegisterGate)
             {
@@ -170,7 +217,7 @@ internal sealed class OffListWindow : IDisposable
             if (hwnd == IntPtr.Zero)
                 throw new InvalidOperationException($"CreateWindowEx failed ({Marshal.GetLastWin32Error()}).");
             Open[hwnd] = this;
-            ShowWindow(hwnd, _minimized ? SwShowMinNoActive : SwShowNormal);
+            ShowWindow(hwnd, _minimized ? SwShowMinNoActive : _activate ? SwShowNormal : SwShowNoActivate);
             _created.TrySetResult(hwnd);
 
             while (GetMessageW(out var msg, IntPtr.Zero, 0, 0) > 0)
@@ -197,9 +244,18 @@ internal sealed class OffListWindow : IDisposable
             hanging.Hang();
             return IntPtr.Zero;
         }
-        if (msg == WmSize && wParam == SizeMinimized && Open.TryGetValue(hwnd, out var minimized) &&
-            Interlocked.Exchange(ref minimized._hangWhenMinimized, 0) == 1)
-            minimized.Hang();
+        if (msg == WmSize && wParam == SizeMinimized && Open.TryGetValue(hwnd, out var minimized))
+        {
+            if (Interlocked.Exchange(ref minimized._restoreWhenMinimized, 0) == 1)
+            {
+                ShowWindow(hwnd, SwRestore);
+                minimized.Hang();
+            }
+            else if (Interlocked.Exchange(ref minimized._hangWhenMinimized, 0) == 1)
+            {
+                minimized.Hang();
+            }
+        }
         if (msg == WmDestroy)
         {
             Open.TryRemove(hwnd, out _);
@@ -228,7 +284,11 @@ internal sealed class OffListWindow : IDisposable
     private static readonly IntPtr SizeMinimized = new(1);
     private const uint WsOverlappedWindow = 0x00CF0000;
     private const int SwShowNormal = 1;
+    private const int SwShowNoActivate = 4;
     private const int SwShowMinNoActive = 7;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoActivate = 0x0010;
     private const int SwRestore = 9;
     // Where Windows parks a minimized top-level window.
     private const int MinimizedPosition = -32000;
@@ -328,4 +388,18 @@ internal sealed class OffListWindow : IDisposable
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out Rect lpRect);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 }

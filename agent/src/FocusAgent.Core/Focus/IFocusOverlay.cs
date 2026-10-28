@@ -29,8 +29,18 @@ public interface IFocusOverlay
     /// paused with nothing to fall back to (#452), which the overlay takes down and
     /// takes the foreground over from, like <see cref="Show"/> does with the blocked
     /// window; 0 when there is none. Idempotent like <see cref="Show"/>.
+    /// <paramref name="stillPaused"/> says whether the browser is still paused. The
+    /// overlay gets to a show a moment after it is asked for, and hands the window
+    /// over a moment later still: once it returns false (the extension reconnected,
+    /// or the repair window opened, #474) the overlay neither comes up for this call
+    /// nor takes the window down. Null when the window goes down regardless: an app
+    /// blocked while the browser is paused (#452).
     /// </summary>
-    void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle);
+    void ShowBrowserPaused(
+        IReadOnlyList<AllowedAppRule> allowedRules,
+        BrowserPausedPrompt prompt,
+        nint pausedWindowHandle,
+        Func<bool>? stillPaused = null);
 
     /// <summary>
     /// Hide the overlay (kept alive for fast re-show). Safe to call when

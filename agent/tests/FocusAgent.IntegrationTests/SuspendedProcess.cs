@@ -68,3 +68,59 @@ internal sealed class SuspendedProcess : IDisposable
     private static extern IntPtr SendMessageTimeoutW(
         IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
 }
+
+/// <summary>
+/// Holds the thread that shows a window, and no other thread of its process, until
+/// <see cref="Dispose"/>: a UI thread that is busy, while the app's other threads go
+/// on (#477).
+/// </summary>
+[SupportedOSPlatform("windows")]
+internal sealed class SuspendedThread : IDisposable
+{
+    private IntPtr _handle;
+
+    private SuspendedThread(IntPtr handle) => _handle = handle;
+
+    /// <summary>Suspend the thread that shows <paramref name="hwnd"/>.</summary>
+    public static SuspendedThread Of(IntPtr hwnd)
+    {
+        var threadId = GetWindowThreadProcessId(hwnd, out _);
+        var handle = threadId == 0 ? IntPtr.Zero : OpenThread(ThreadSuspendResume, false, threadId);
+        if (handle == IntPtr.Zero)
+            throw new InvalidOperationException($"OpenThread for 0x{hwnd:X} failed ({Marshal.GetLastWin32Error()}).");
+        if (SuspendThread(handle) == uint.MaxValue)
+        {
+            var error = Marshal.GetLastWin32Error();
+            CloseHandle(handle);
+            throw new InvalidOperationException($"SuspendThread for 0x{hwnd:X} failed ({error}).");
+        }
+        return new SuspendedThread(handle);
+    }
+
+    /// <summary>Let the thread run again.</summary>
+    public void Dispose()
+    {
+        var handle = Interlocked.Exchange(ref _handle, IntPtr.Zero);
+        if (handle == IntPtr.Zero) return;
+        ResumeThread(handle);
+        CloseHandle(handle);
+    }
+
+    private const uint ThreadSuspendResume = 0x0002;
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenThread(uint dwDesiredAccess, bool bInheritHandle, uint dwThreadId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint SuspendThread(IntPtr hThread);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint ResumeThread(IntPtr hThread);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr hObject);
+}

@@ -208,6 +208,18 @@ internal sealed class CrashReportWindow : Window
             presenter.IsMinimizable = false;
         }
 
+        // The Anchor mark in the title bar and on the taskbar (#414). Set inline, not
+        // through the shared WindowIcon, and a missing or unreadable .ico only leaves
+        // Windows' default icon: it must never stop this dialog from showing.
+        try
+        {
+            appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "TrayIcon.ico"));
+        }
+        catch
+        {
+            // Show the dialog with the default icon.
+        }
+
         var dpi = GetDpiForWindow(hwnd);
         if (dpi == 0) dpi = 96;
         var scale = dpi / 96.0;

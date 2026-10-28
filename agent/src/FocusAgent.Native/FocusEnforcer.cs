@@ -22,8 +22,13 @@ namespace FocusAgent.Native;
 /// not responding (#451), or an allowed app the student picks on the overlay
 /// (#453): it comes back the moment its app responds. With no
 /// allowed window to fall back to, or for a paused browser (#450), the focus
-/// overlay is put directly below the window before it minimizes itself, so the
-/// overlay is the window Windows hands the foreground to (#441).
+/// overlay is put above every app window, out of the topmost band, before the
+/// window minimizes itself, so the overlay is the window Windows hands the
+/// foreground to (#441, #475), and it never goes back through the band to get
+/// there (#477). A hand-over never
+/// asks a window to minimize while an earlier minimize is on its way to it, nor
+/// once its caller no longer wants the window down (#474). It asks once that
+/// minimize is done, should the window be on screen still (#476).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class FocusEnforcer : IFocusEnforcer
@@ -63,6 +68,14 @@ public sealed class FocusEnforcer : IFocusEnforcer
 
     private static readonly TimeSpan HandOverPollInterval = TimeSpan.FromMilliseconds(15);
 
+    /// <summary>
+    /// How long a minimize a hand-over asked of a window counts as on its way when
+    /// the window does not go down (#474): an app that is not responding. A
+    /// hand-over after that asks again, and so does one that did not ask meanwhile
+    /// because of it, should the window be on screen (#476).
+    /// </summary>
+    internal static readonly TimeSpan MinimizeOnItsWayLimit = TimeSpan.FromSeconds(2);
+
     private readonly ILogger<FocusEnforcer> _log;
     private readonly object _gate = new();
     private readonly ConcurrentDictionary<nint, long> _pendingMinimizes = new();
@@ -71,10 +84,21 @@ public sealed class FocusEnforcer : IFocusEnforcer
     private nint _lastAllowed;
     private nint _lastRestoredToHandOver;
     private long _lastRestoredToHandOverAt;
+    // The windows a hand-over asked to minimize that have not started to go down
+    // yet, with when it asked (Environment.TickCount64, #474). Guarded by _gate.
+    private readonly Dictionary<nint, long> _minimizeOnItsWay = new();
+    // The minimizes hand-overs did not ask of those windows, because one was on its
+    // way already: asked once that one is done, should the window be on screen
+    // still (#476). Guarded by _gate.
+    private readonly Dictionary<nint, PostponedMinimize> _postponedMinimizes = new();
+    // Bumped by Reset: a minimize postponed in a session that ended is not asked.
+    private long _resets;
+    private readonly MinimizeStartWatcher _minimizeStarts;
 
     public FocusEnforcer(ILogger<FocusEnforcer>? log = null)
     {
         _log = log ?? NullLogger<FocusEnforcer>.Instance;
+        _minimizeStarts = new MinimizeStartWatcher(OnMinimizeStart, _log);
     }
 
     /// <summary>
@@ -157,9 +181,10 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// </summary>
     public void Minimize(nint windowHandle) => Minimize(windowHandle, onOwnThread: false);
 
-    private void Minimize(nint windowHandle, bool onOwnThread)
+    /// <summary>Returns whether a window was asked to go down.</summary>
+    private bool Minimize(nint windowHandle, bool onOwnThread)
     {
-        if (windowHandle == IntPtr.Zero) return;
+        if (windowHandle == IntPtr.Zero) return false;
 
         var root = AppWindowOf(windowHandle);
         var owner = root == windowHandle ? IntPtr.Zero : root;
@@ -167,10 +192,12 @@ public sealed class FocusEnforcer : IFocusEnforcer
             hasVisibleOwner: owner != IntPtr.Zero && NativeMethods.IsWindowVisible(owner),
             ownerMinimized: owner != IntPtr.Zero && NativeMethods.IsIconic(owner),
             windowShown: NativeMethods.IsWindowVisible(windowHandle) && !NativeMethods.IsIconic(windowHandle));
+        var asked = false;
         if (minimizeOwner)
-            MinimizeWindow(owner, onOwnThread);
+            asked |= MinimizeWindow(owner, onOwnThread);
         if (minimizeWindow)
-            MinimizeWindow(windowHandle, onOwnThread);
+            asked |= MinimizeWindow(windowHandle, onOwnThread);
+        return asked;
     }
 
     /// <summary>
@@ -209,27 +236,30 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// Minimizes one window: from the agent (<see cref="MinimizeFromAgent"/>), or by
     /// posting the request to the window's thread (<paramref name="onOwnThread"/>,
     /// #438). The posted request never holds up the agent, and the window's thread
-    /// carries it out with the foreground rights it has.
+    /// carries it out with the foreground rights it has. Returns whether it was
+    /// asked.
     /// </summary>
-    private void MinimizeWindow(nint windowHandle, bool onOwnThread)
+    private bool MinimizeWindow(nint windowHandle, bool onOwnThread)
     {
         try
         {
             if (!onOwnThread)
             {
                 MinimizeFromAgent(windowHandle);
-                return;
+                return true;
             }
             if (!NativeMethods.ShowWindowAsync(windowHandle, NativeMethods.SW_MINIMIZE))
             {
                 _log.LogWarning("ShowWindowAsync(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
-                return;
+                return false;
             }
             _ = WarnIfNotMinimizedAsync(windowHandle);
+            return true;
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Minimizing threw for 0x{Hwnd:X}", windowHandle);
+            return false;
         }
     }
 
@@ -441,9 +471,13 @@ public sealed class FocusEnforcer : IFocusEnforcer
         return minimized ? FallbackPlan.Restore : FallbackPlan.OnScreen;
     }
 
-    public async Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle)
+    public async Task<bool> HandOverAsync(
+        nint offendingWindowHandle,
+        nint successorWindowHandle,
+        Func<bool>? stillToGoDown = null)
     {
         if (offendingWindowHandle == IntPtr.Zero) return false;
+        if (!StillToGoDown(offendingWindowHandle, stillToGoDown)) return false;
         if (successorWindowHandle == IntPtr.Zero || !NativeMethods.IsWindow(successorWindowHandle))
         {
             // Nothing to hand over to: the window goes down all the same.
@@ -458,7 +492,10 @@ public sealed class FocusEnforcer : IFocusEnforcer
             // raises MINIMIZEEND once more). Only make sure the window goes down. The
             // successor stays where it is: put below a minimized window, at the bottom
             // of the Z-order, it would lose the foreground to the window on top.
-            Minimize(offendingWindowHandle, onOwnThread: true);
+            if (AsksToMinimizeWithTheKeyboardHandedOver(minimized: NativeMethods.IsIconic(offendingWindowHandle)))
+                AskToMinimize(offendingWindowHandle, successorWindowHandle, stillToGoDown);
+            else
+                _log.LogDebug("Not asking 0x{Hwnd:X} to minimize: it is down, and the successor has the keyboard", offendingWindowHandle);
             return true;
         }
 
@@ -471,30 +508,27 @@ public sealed class FocusEnforcer : IFocusEnforcer
         if (plan == HandOverPlan.RestoreFirst)
         {
             // Restored by its own thread, it is on screen with the foreground once
-            // more, so minimizing it next hands the foreground on. The successor goes
-            // below it only once it is back on top.
+            // more, so minimizing it next hands the foreground on. The successor is put
+            // in place only once it is back on screen.
             _log.LogDebug("Restoring minimized 0x{Hwnd:X}, which has the foreground, to hand it over", offendingWindowHandle);
+            // A minimize still on its way to it lands before this restore, so it does
+            // not take the window down for this hand-over (#474), which asks for one
+            // itself, after the restore (#476).
+            lock (_gate)
+            {
+                _minimizeOnItsWay.Remove(offendingWindowHandle);
+                _postponedMinimizes.Remove(offendingWindowHandle);
+            }
             try { NativeMethods.ShowWindowAsync(offendingWindowHandle, NativeMethods.SW_RESTORE); }
             catch (Exception ex) { _log.LogError(ex, "ShowWindowAsync(SW_RESTORE) threw for 0x{Hwnd:X}", offendingWindowHandle); }
             await WaitUntilAsync(() => !NativeMethods.IsIconic(offendingWindowHandle), OwnThreadMinimizeTimeout)
                 .ConfigureAwait(false);
+            if (!StillToGoDown(offendingWindowHandle, stillToGoDown)) return false;
         }
         if (plan != HandOverPlan.AlreadyDown)
         {
-            // Windows activates the window below the one that goes down. Put after a
-            // window that is not topmost, the successor leaves the topmost band until
-            // the caller puts it back.
-            try
-            {
-                if (!NativeMethods.SetWindowPos(successorWindowHandle, offendingWindowHandle, 0, 0, 0, 0,
-                        NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE))
-                    _log.LogWarning("SetWindowPos could not put 0x{Successor:X} below 0x{Hwnd:X}", successorWindowHandle, offendingWindowHandle);
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "SetWindowPos threw putting 0x{Successor:X} below 0x{Hwnd:X}", successorWindowHandle, offendingWindowHandle);
-            }
-            Minimize(offendingWindowHandle, onOwnThread: true);
+            PutAboveEveryAppWindow(successorWindowHandle, offendingWindowHandle);
+            AskToMinimize(offendingWindowHandle, successorWindowHandle, stillToGoDown);
         }
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -513,6 +547,376 @@ public sealed class FocusEnforcer : IFocusEnforcer
             foreground, ClassNameOf(foreground));
         return false;
     }
+
+    /// <summary>
+    /// How many times <see cref="PutAboveEveryAppWindow"/> puts the successor right
+    /// above another app's window, should one still be above it: the Z-order can
+    /// change between finding where to put it and the move.
+    /// </summary>
+    private const int PlacementAttempts = 3;
+
+    /// <summary>
+    /// Puts <paramref name="successorWindowHandle"/> at the top of the windows that
+    /// are not topmost: above every app window, <paramref name="goingDown"/>
+    /// included. When the window with the foreground minimizes itself, Windows
+    /// activates the first other window from the top of the Z-order that is on
+    /// screen and not topmost, so the successor must be that window (#475). Right
+    /// below the window that goes down, as before, it was below any app window
+    /// above that one. A browser restored to be handed over was: placed while the
+    /// restore was still going, the overlay ended up below an allowed app, which
+    /// got the keyboard. So a later hand-over of the same window, once the restore
+    /// is done, puts the successor at the top again.
+    /// <para>
+    /// It never goes back through the topmost band (#477). A window that goes down
+    /// while the successor is in the band passes it over, and after a restore the
+    /// hand-over runs off the overlay's UI thread, where each move waits for that
+    /// thread: the overlay could stay in the band for as long as the thread was
+    /// busy. Nor is it put there with <c>HWND_TOP</c>: from an app without the
+    /// foreground, as the agent is, Windows puts a window below the windows of the
+    /// app that has the foreground, and an app's window that shares its input
+    /// stays above the successor. Leaving the band, the successor goes to the top
+    /// of the others all the same. Out of it already, it is put right above the
+    /// first app window above it, in one move after a given window
+    /// (<see cref="WindowToGoRightBelow"/>), which Windows does not restrict.
+    /// </para>
+    /// </summary>
+    private void PutAboveEveryAppWindow(nint successorWindowHandle, nint goingDown)
+    {
+        const uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE;
+        try
+        {
+            if (IsTopmost(successorWindowHandle))
+            {
+                // Leaving the topmost band, a window goes to the top of the others,
+                // above the windows of the app with the foreground as well.
+                if (!NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags) ||
+                    IsTopmost(successorWindowHandle))
+                {
+                    _log.LogWarning("SetWindowPos could not put 0x{Successor:X} above every app window", successorWindowHandle);
+                    return;
+                }
+            }
+            // Out of the band already, a hand-over still under way took it out, and
+            // another app's window can have come above it since.
+            var appWindow = AppWindowOf(goingDown);
+            for (var attempt = 1; ; attempt++)
+            {
+                var blocker = AppWindowAbove(successorWindowHandle, appWindow);
+                if (blocker == IntPtr.Zero)
+                    return;
+                if (attempt > PlacementAttempts)
+                {
+                    _log.LogWarning(
+                        "0x{Successor:X} is still below 0x{Blocker:X} [{ClassName}], another app's window",
+                        successorWindowHandle, blocker, ClassNameOf(blocker));
+                    return;
+                }
+                var insertAfter = WindowToGoRightBelow(blocker, successorWindowHandle);
+                _log.LogDebug(
+                    "0x{Successor:X} is below 0x{Blocker:X} [{ClassName}], another app's window; putting it right below 0x{InsertAfter:X}",
+                    successorWindowHandle, blocker, ClassNameOf(blocker), insertAfter);
+                if (!NativeMethods.SetWindowPos(
+                        successorWindowHandle,
+                        insertAfter == IntPtr.Zero ? NativeMethods.HWND_TOP : insertAfter,
+                        0, 0, 0, 0, flags))
+                    _log.LogDebug("SetWindowPos could not put 0x{Successor:X} below 0x{InsertAfter:X}", successorWindowHandle, insertAfter);
+                // Put above a topmost window, or after a window of a band of the shell's
+                // above the band of app windows, Windows makes the successor topmost too.
+                // Out again, it is at the top of the others.
+                if (IsTopmost(successorWindowHandle))
+                    NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SetWindowPos threw putting 0x{Successor:X} above every app window", successorWindowHandle);
+        }
+    }
+
+    private static bool IsTopmost(nint windowHandle) =>
+        (NativeMethods.GetWindowLongW(windowHandle, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOPMOST) != 0;
+
+    /// <summary>
+    /// The last window of the topmost band at the top of the Z-order, right above the
+    /// first window that is not topmost: right below it is the top of the others.
+    /// <see cref="IntPtr.Zero"/> when the first window is not topmost. Not the lowest
+    /// topmost window: topmost windows also sit further down, hidden ones and the
+    /// shell's, and right after one of those a window lands below windows that are
+    /// not topmost, or, above another topmost one, in the band.
+    /// </summary>
+    private static nint BottomOfTheTopmostBand(nint anyTopLevelWindow)
+    {
+        var bottom = IntPtr.Zero;
+        for (var window = NativeMethods.GetWindow(anyTopLevelWindow, NativeMethods.GW_HWNDFIRST);
+             window != IntPtr.Zero && IsTopmost(window);
+             window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
+        {
+            bottom = window;
+        }
+        return bottom;
+    }
+
+    /// <summary>
+    /// The first window from the top of the Z-order that Windows may hand the
+    /// foreground to (on screen, not topmost, not a tool window), but for the windows
+    /// of the app window <paramref name="appWindow"/>, the one that goes down, with its
+    /// dialogs, when it is above <paramref name="windowHandle"/>; otherwise
+    /// <see cref="IntPtr.Zero"/>.
+    /// </summary>
+    private static nint AppWindowAbove(nint windowHandle, nint appWindow)
+    {
+        for (var window = NativeMethods.GetWindow(windowHandle, NativeMethods.GW_HWNDFIRST);
+             window != IntPtr.Zero;
+             window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
+        {
+            if (window == windowHandle)
+                return IntPtr.Zero;
+            if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
+                continue;
+            var exStyle = NativeMethods.GetWindowLongW(window, NativeMethods.GWL_EXSTYLE);
+            if ((exStyle & (NativeMethods.WS_EX_TOPMOST | NativeMethods.WS_EX_TOOLWINDOW)) == 0 &&
+                AppWindowOf(window) != appWindow)
+                return window;
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// The window to put <paramref name="successorWindowHandle"/> right after, so
+    /// that it lands right above <paramref name="blocker"/>, the first app window from
+    /// the top: the window right above that one, when it is not topmost, as the
+    /// hidden windows of an app's input are; otherwise the bottom of the topmost band
+    /// (<see cref="BottomOfTheTopmostBand"/>). Put right after a window that is not
+    /// topmost, above one that is not either, a window stays out of the band. Put
+    /// right after the bottom of the band, Windows makes it topmost when that window
+    /// is one of the shell's in a band above the one of app windows, as it is while
+    /// the shell has its taskbar out of the band for a window that covers the
+    /// screen, the overlay.
+    /// </summary>
+    private static nint WindowToGoRightBelow(nint blocker, nint successorWindowHandle)
+    {
+        var above = NativeMethods.GetWindow(blocker, NativeMethods.GW_HWNDPREV);
+        if (above != IntPtr.Zero && !IsTopmost(above) &&
+            NativeMethods.GetWindow(above, NativeMethods.GW_OWNER) != successorWindowHandle)
+            return above;
+        return BottomOfTheTopmostBand(successorWindowHandle);
+    }
+
+    /// <summary>
+    /// Whether <see cref="HandOverAsync"/> still takes <paramref name="windowHandle"/>
+    /// down: not once its caller's <paramref name="stillToGoDown"/> says no (#474).
+    /// </summary>
+    private bool StillToGoDown(nint windowHandle, Func<bool>? stillToGoDown)
+    {
+        if (stillToGoDown is null) return true;
+        bool still;
+        try { still = stillToGoDown(); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Asking whether 0x{Hwnd:X} still has to go down threw; taking it down", windowHandle);
+            return true;
+        }
+        if (!still)
+            _log.LogDebug("Not handing 0x{Hwnd:X} over: it no longer has to go down", windowHandle);
+        return still;
+    }
+
+    /// <summary>
+    /// Asks <paramref name="windowHandle"/> to minimize itself for a hand-over to
+    /// <paramref name="successorWindowHandle"/>, unless a minimize a hand-over asked
+    /// of it earlier is still on its way (#474). Its app carries the request out when
+    /// it gets to it, after what it is asked meanwhile: a restore the student sends
+    /// while the minimize waits, which the minimize then undoes. The two events of one
+    /// restore (MINIMIZEEND and FOREGROUND) each ask for a hand-over, and the overlay
+    /// gets to them a moment apart: each asked for a minimize, so an app slow to get
+    /// to them, as the e2e's Notepad is, had one left to carry out after the restore
+    /// the student made once the pause lifted.
+    /// <para>
+    /// Not asking is never the end of it (#476). Windows marks the window minimized
+    /// as its app starts on the minimize, and says it started to minimize only once
+    /// the app is done. A restore the student sends in between, as they click its
+    /// taskbar button once more, keeps the window on screen; the hand-over for that
+    /// restore found the minimize still on its way, and nothing asked once it was
+    /// done. So the minimize this one would have asked is asked then, by
+    /// <see cref="AskPostponedMinimize"/>, should the window be on screen still and
+    /// <paramref name="stillToGoDown"/> not say no.
+    /// </para>
+    /// </summary>
+    private void AskToMinimize(nint windowHandle, nint successorWindowHandle, Func<bool>? stillToGoDown)
+    {
+        var tracked = _minimizeStarts.EnsureStarted();
+        var now = Environment.TickCount64;
+        long? onItsWaySince = null;
+        lock (_gate)
+        {
+            if (tracked && _minimizeOnItsWay.TryGetValue(windowHandle, out var at) && MinimizeStillOnItsWay(at, now))
+            {
+                _postponedMinimizes[windowHandle] = new PostponedMinimize(successorWindowHandle, stillToGoDown, _resets);
+                onItsWaySince = at;
+            }
+            // Before it is asked, so a window that goes down at once is not left
+            // counted as on its way. A minimize postponed for it is asked now.
+            else if (tracked)
+            {
+                _minimizeOnItsWay[windowHandle] = now;
+                _postponedMinimizes.Remove(windowHandle);
+            }
+        }
+        if (onItsWaySince is { } askedAt)
+        {
+            _log.LogDebug(
+                "Not asking 0x{Hwnd:X} to minimize again: the minimize a hand-over asked of it is still on its way. " +
+                "It is asked once that one is done, should the window be on screen still",
+                windowHandle);
+            _ = AskPostponedMinimizeOnceOverdueAsync(windowHandle, askedAt);
+            return;
+        }
+        if (!Minimize(windowHandle, onOwnThread: true) && tracked)
+        {
+            // Nothing was asked to go down (a dialog already out of sight with the
+            // window that owns it): nothing is on its way.
+            lock (_gate)
+            {
+                if (_minimizeOnItsWay.TryGetValue(windowHandle, out var at) && at == now)
+                    _minimizeOnItsWay.Remove(windowHandle);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A minimize a hand-over did not ask of a window because one was on its way
+    /// already (#476): who it hands over to, and whether its caller still wants the
+    /// window down. <see cref="Reset"/>s since (<paramref name="Resets"/>) drop it.
+    /// </summary>
+    private sealed record PostponedMinimize(nint Successor, Func<bool>? StillToGoDown, long Resets);
+
+    /// <summary>
+    /// Asks the minimize a hand-over postponed (#476), now that the one on its way to
+    /// <paramref name="windowHandle"/> is done or overdue: unless the window is down,
+    /// its session ended (<see cref="Reset"/>) or the hand-over's caller no longer
+    /// wants it down. As a hand-over does, it first puts the successor above every
+    /// app window, so the window hands the foreground to it (#441, #475).
+    /// <paramref name="overdue"/>: the one on its way did not start within
+    /// <see cref="MinimizeOnItsWayLimit"/>, rather than started and was undone.
+    /// </summary>
+    private void AskPostponedMinimize(nint windowHandle, PostponedMinimize postponed, bool overdue)
+    {
+        try
+        {
+            lock (_gate)
+            {
+                if (postponed.Resets != _resets) return;
+            }
+            var appWindow = AppWindowOf(windowHandle);
+            if (!NativeMethods.IsWindow(windowHandle) || !AsksPostponedMinimize(
+                    shown: NativeMethods.IsWindowVisible(windowHandle),
+                    minimized: NativeMethods.IsIconic(windowHandle),
+                    appWindowMinimized: appWindow != windowHandle && NativeMethods.IsIconic(appWindow)))
+                return;
+            if (!StillToGoDown(windowHandle, postponed.StillToGoDown)) return;
+            if (overdue)
+                _log.LogInformation(
+                    "0x{Hwnd:X} is on screen and the minimize asked of it has been on its way for {LimitMs} ms. " +
+                    "Asking it to go down once more",
+                    windowHandle, MinimizeOnItsWayLimit.TotalMilliseconds);
+            else
+                _log.LogInformation(
+                    "0x{Hwnd:X} is on screen once the minimize asked of it is done: it was brought back in the middle " +
+                    "of it. Asking it to go down once more",
+                    windowHandle);
+            if (NativeMethods.IsWindow(postponed.Successor))
+                PutAboveEveryAppWindow(postponed.Successor, windowHandle);
+            AskToMinimize(windowHandle, postponed.Successor, postponed.StillToGoDown);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Asking 0x{Hwnd:X} to go down once more threw", windowHandle);
+        }
+    }
+
+    /// <summary>
+    /// Whether a minimize postponed for a window (#476) is asked once the one on its
+    /// way is done or overdue, factored out as a pure decision so it is
+    /// unit-testable without a live desktop: only while the window is on screen. Not
+    /// when it is minimized or hidden, nor when it is a dialog whose app window is
+    /// minimized (<paramref name="appWindowMinimized"/>), with which it went down
+    /// (#428): asked of the dialog then, the minimize would take the dialog down on
+    /// its own and strand it as a title bar.
+    /// </summary>
+    internal static bool AsksPostponedMinimize(bool shown, bool minimized, bool appWindowMinimized) =>
+        shown && !minimized && !appWindowMinimized;
+
+    /// <summary>
+    /// Asks the minimize postponed for <paramref name="windowHandle"/> (#476) once the
+    /// one asked of it at <paramref name="askedAt"/> no longer counts as on its way
+    /// (<see cref="MinimizeOnItsWayLimit"/>), should it not have started by then.
+    /// </summary>
+    private async Task AskPostponedMinimizeOnceOverdueAsync(nint windowHandle, long askedAt)
+    {
+        var left = askedAt + (long)MinimizeOnItsWayLimit.TotalMilliseconds - Environment.TickCount64;
+        if (left > 0)
+            await Task.Delay(TimeSpan.FromMilliseconds(left)).ConfigureAwait(false);
+        PostponedMinimize? postponed;
+        lock (_gate)
+        {
+            if (!_minimizeOnItsWay.TryGetValue(windowHandle, out var at) || at != askedAt)
+                return;
+            _minimizeOnItsWay.Remove(windowHandle);
+            if (!_postponedMinimizes.Remove(windowHandle, out postponed))
+                return;
+        }
+        AskPostponedMinimize(windowHandle, postponed, overdue: true);
+    }
+
+    /// <summary>
+    /// Whether the minimize a hand-over asked of a window at <paramref name="askedAt"/>
+    /// (null when none is waiting) still counts as on its way at <paramref name="now"/>
+    /// (both <see cref="Environment.TickCount64"/>), factored out as a pure decision so
+    /// it is unit-testable without a live desktop: until the window starts to go
+    /// down, or for no longer than <see cref="MinimizeOnItsWayLimit"/> when its app
+    /// is not responding.
+    /// </summary>
+    internal static bool MinimizeStillOnItsWay(long? askedAt, long now) =>
+        askedAt is { } at && now - at < (long)MinimizeOnItsWayLimit.TotalMilliseconds;
+
+    /// <summary>
+    /// A window started to go down: the minimize a hand-over asked of it, or of a
+    /// dialog it owns (#428), is no longer on its way. Windows says so only once the
+    /// window's app is done with the minimize, so a minimize a hand-over postponed
+    /// meanwhile is asked now, should the window be back on screen (#476). Not on
+    /// the hook's thread, which must get back to its messages.
+    /// </summary>
+    private void OnMinimizeStart(nint windowHandle)
+    {
+        List<(nint Window, PostponedMinimize Postponed)>? due = null;
+        lock (_gate)
+        {
+            if (_minimizeOnItsWay.Count == 0) return;
+            foreach (var asked in _minimizeOnItsWay.Keys.ToArray())
+            {
+                if (asked != windowHandle && AppWindowOf(asked) != windowHandle)
+                    continue;
+                _minimizeOnItsWay.Remove(asked);
+                if (_postponedMinimizes.Remove(asked, out var postponed))
+                    (due ??= []).Add((asked, postponed));
+            }
+        }
+        if (due is null) return;
+        foreach (var (window, postponed) in due)
+            _ = Task.Run(() => AskPostponedMinimize(window, postponed, overdue: false));
+    }
+
+    /// <summary>
+    /// Whether a hand-over whose successor has the keyboard already asks the window
+    /// to minimize, factored out as a pure decision so it is unit-testable without a
+    /// live desktop: only while the window is on screen. Minimized already, it has
+    /// nothing to take down now, and the request would wait in its app's queue until
+    /// the app got to it, after a restore the student sends meanwhile: the window
+    /// went down once more. The MINIMIZEEND of a restore that a hand-over made
+    /// reaches the agent only after that hand-over asked the window to minimize, so
+    /// it asked for a second minimize of a window already down (#474).
+    /// </summary>
+    internal static bool AsksToMinimizeWithTheKeyboardHandedOver(bool minimized) => !minimized;
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
@@ -600,6 +1004,9 @@ public sealed class FocusEnforcer : IFocusEnforcer
         {
             _lastAllowed = IntPtr.Zero;
             _lastRestoredToHandOver = IntPtr.Zero;
+            _minimizeOnItsWay.Clear();
+            _postponedMinimizes.Clear();
+            _resets++;
         }
     }
 }

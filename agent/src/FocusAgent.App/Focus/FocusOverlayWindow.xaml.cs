@@ -21,6 +21,7 @@ public sealed partial class FocusOverlayWindow : Window
         _launcher = launcher;
         _onLaunched = onLaunched;
         Title = Loc.Get("Title_FocusSession");
+        WindowIcon.Apply(this);
         HeadlineText.Text = Loc.Get("OverlayHeadline");
         MessageText.Text = Loc.Get("OverlayMessage");
     }

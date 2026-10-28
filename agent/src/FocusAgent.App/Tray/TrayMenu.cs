@@ -1,4 +1,5 @@
 using FocusAgent.App.Localization;
+using FocusAgent.Core.Diagnostics;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -75,6 +76,20 @@ internal static class TrayMenu
             Foreground = Brush("PlinkOnInkMutedBrush"),
         };
         flyout.Items.Add(statusItem);
+
+        // #423: the agent's version under the status, so it can be read off the
+        // tray without opening the window. The quieter sentence-case mono label
+        // voice (not the uppercase eyebrow), disabled like the status: a line to
+        // read, never an action. The same version the main window and /status show.
+        flyout.Items.Add(new MenuFlyoutItem
+        {
+            Text = Loc.Format("Tray_Version", AgentVersion.Current),
+            IsEnabled = false,
+            FontFamily = Mono,
+            FontSize = 11,
+            CharacterSpacing = 40,
+            Foreground = Brush("PlinkOnInkMutedBrush"),
+        });
 
         flyout.Items.Add(Separator());
 

@@ -45,19 +45,39 @@ public interface IFocusEnforcer
     /// Takes a blocked window down so that <paramref name="successorWindowHandle"/>,
     /// the focus overlay, gets the foreground and with it the keyboard (#441). The
     /// agent may not give its own window the foreground, so the successor is put
-    /// directly below the blocked window, and the blocked window minimizes itself:
-    /// Windows then activates the window below it. A blocked window that is already
+    /// above every app window, out of the topmost band, and the blocked window
+    /// minimizes itself: Windows then activates the first window from the top that
+    /// is on screen and not topmost (#475). A blocked window that is already
     /// minimized but still has the foreground is restored first, because a window
     /// that is minimized already hands nothing on when it is minimized again; one
     /// that is minimized without the foreground is left as it is. When the
     /// successor has the foreground already (the same window blocked twice), the
     /// window only goes down. The successor loses its topmost place for the
-    /// hand-over; the caller puts it back once the task completes. Never held up
+    /// hand-over; the caller puts it back once the task completes, and must not
+    /// before: back in the topmost band, it is passed over when the window goes
+    /// down (#475). Never held up
     /// by the blocked app. The task completes with true once the successor has the
     /// foreground, or with false when it did not get it within a short time (an
     /// app that is not responding).
+    /// <para>
+    /// The window carries its minimize out whenever its app gets to it, after what
+    /// it is asked meanwhile, such as the student's restore: a second minimize still
+    /// on its way then takes the window down again. So it is not asked to minimize
+    /// while a minimize a hand-over asked of it is still on its way, nor when it is
+    /// down already and the successor has the keyboard (#474). It is asked once that
+    /// minimize is done, should it be on screen then (#476): Windows says a window
+    /// started to minimize only once its app is done with the minimize, after a
+    /// restore the student sent in the middle of it, which keeps the window up.
+    /// <paramref name="stillToGoDown"/>, checked right before the window is restored
+    /// or minimized, calls the hand-over off when it returns false, leaving the
+    /// window as it is: a paused browser whose pause was lifted meanwhile (#474).
+    /// The task then completes with false.
+    /// </para>
     /// </summary>
-    Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle);
+    Task<bool> HandOverAsync(
+        nint offendingWindowHandle,
+        nint successorWindowHandle,
+        Func<bool>? stillToGoDown = null);
 
     /// <summary>
     /// The foreground window, the one the student's keystrokes go to, when it is

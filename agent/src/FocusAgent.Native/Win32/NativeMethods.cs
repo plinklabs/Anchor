@@ -9,6 +9,7 @@ internal static class NativeMethods
     public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
     public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    public const uint EVENT_SYSTEM_MINIMIZESTART = 0x0016;
     public const uint EVENT_SYSTEM_MINIMIZEEND = 0x0017;
 
     // ShowWindow
@@ -19,11 +20,13 @@ internal static class NativeMethods
     // GetWindowLong index + extended window styles
     public const int GWL_EXSTYLE = -20;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
+    public const int WS_EX_TOPMOST = 0x00000008;
 
     // QueryFullProcessImageName flags
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
     // SetWindowPos hWndInsertAfter values + flags
+    public static readonly nint HWND_TOP = new(0);
     public static readonly nint HWND_TOPMOST = new(-1);
     public static readonly nint HWND_NOTOPMOST = new(-2);
     public const uint SWP_NOMOVE = 0x0002;
@@ -141,7 +144,9 @@ internal static class NativeMethods
     public static extern nint GetWindow(nint hWnd, uint uCmd);
 
     public const uint GW_OWNER = 4;
+    public const uint GW_HWNDFIRST = 0;
     public const uint GW_HWNDNEXT = 2;
+    public const uint GW_HWNDPREV = 3;
 
     [DllImport("user32.dll")]
     public static extern nint GetAncestor(nint hWnd, uint gaFlags);
@@ -151,4 +156,20 @@ internal static class NativeMethods
     /// its root (the window itself when it has no owner).
     /// </summary>
     public const uint GA_ROOTOWNER = 3;
+
+    // A message loop of its own, for an out-of-context WinEvent hook (#474).
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public nint hwnd;
+        public uint message;
+        public nint wParam;
+        public nint lParam;
+        public uint time;
+        public int x;
+        public int y;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern int GetMessageW(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
 }

@@ -259,11 +259,13 @@ public class FocusEnforcerWindowTests
     }
 
     [Fact]
-    public async Task Handing_a_window_over_puts_the_overlay_right_below_it_and_takes_it_down()
+    public async Task Handing_a_window_over_takes_the_overlay_out_of_the_topmost_band_and_the_window_down()
     {
         var log = new ListLogger<FocusEnforcer>();
         using var overlay = TestWindow.Open("Anchor test overlay");
         using var offList = TestWindow.Open("Anchor test off-list app");
+        // The overlay comes up topmost.
+        MakeTopmost(overlay.Handle);
         var enforcer = new FocusEnforcer(log);
         // Held up for a moment, so it is still on screen when the test looks: a
         // minimized window drops to the bottom of the Z-order.
@@ -271,8 +273,11 @@ public class FocusEnforcerWindowTests
 
         var handOver = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
 
-        // Windows hands the foreground to the window below the one that goes down.
-        Assert.Equal(overlay.Handle, NextVisibleWindowBelow(offList.Handle));
+        // Windows hands the foreground of a window that goes down to the first window
+        // from the top that is not topmost (#475). Where the overlay lands among the
+        // others is up to Windows, which a test process in the background does not
+        // always get its way with; the e2e ExtensionOffKeyboardTests sees the result.
+        Assert.False(IsTopmost(overlay.Handle), "The overlay was left in the topmost band, where Windows passes it over.");
         offList.Thaw();
         await handOver;
         Assert.True(
@@ -280,6 +285,43 @@ public class FocusEnforcerWindowTests
             "The blocked window was not minimized.");
         Assert.False(NativeMethods.IsIconic(overlay.Handle), "The overlay was minimized.");
         Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
+    }
+
+    [Fact]
+    public async Task Out_of_the_topmost_band_the_overlay_goes_above_another_apps_window_without_going_back_through_it()
+    {
+        // #477: a hand-over while another one is under way finds the overlay out of
+        // the topmost band, and another app's window can have come above it since.
+        // The overlay goes above it in one move, never back through the band, where
+        // a window that goes down meanwhile passes it over. From the agent, which
+        // does not have the foreground, HWND_TOP leaves the overlay below the windows
+        // of the app that has it, so the agent went through the band to get above
+        // them; a window of this test cannot be one of those, so the e2e
+        // ExtensionOffKeyboardTests puts one there. Here the other app's window is
+        // an ordinary one, which the overlay must get above all the same.
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        using var other = TestWindow.Open("Anchor test other app");
+        var enforcer = new FocusEnforcer(log);
+        // Held up for a moment, so it is still on screen when the test looks.
+        offList.Freeze();
+        Assert.True(IsAbove(other.Handle, overlay.Handle), "The other app's window did not come up above the overlay.");
+
+        var handOver = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+
+        Assert.True(
+            overlay.TimesInTheTopmostBand == 0,
+            "The hand-over took the overlay through the topmost band, where a window that goes down passes it over.");
+        Assert.True(
+            IsFirstAppWindowBut(overlay.Handle, offList.Handle),
+            "The overlay is still below another app's window, which Windows hands the foreground to when the " +
+            "window goes down.");
+        offList.Thaw();
+        await handOver;
+        Assert.True(
+            await WaitUntilAsync(() => NativeMethods.IsIconic(offList.Handle), TimeSpan.FromSeconds(2)),
+            "The blocked window was not minimized.");
     }
 
     [Fact]
@@ -314,17 +356,229 @@ public class FocusEnforcerWindowTests
             "The blocked window did not go down once its app responded again.");
     }
 
-    /// <summary>The first visible window below <paramref name="hwnd"/> in the Z-order.</summary>
-    private static nint NextVisibleWindowBelow(nint hwnd)
+    [Fact]
+    public async Task A_hand_over_its_caller_no_longer_wants_leaves_the_window_as_it_is()
     {
-        var next = hwnd;
-        while ((next = NativeMethods.GetWindow(next, NativeMethods.GW_HWNDNEXT)) != IntPtr.Zero)
-        {
-            if (NativeMethods.IsWindowVisible(next))
-                return next;
-        }
-        return IntPtr.Zero;
+        // #474: the overlay gets to a hand-over a moment after it is asked for. A
+        // paused browser whose extension reconnected meanwhile is the student's again.
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var browser = TestWindow.Open("Anchor test browser no longer paused");
+        var enforcer = new FocusEnforcer();
+
+        var tookOver = await enforcer.HandOverAsync(browser.Handle, overlay.Handle, stillToGoDown: () => false);
+
+        Assert.False(tookOver, "The overlay took the foreground over from a window that no longer had to go down.");
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout);
+        Assert.True(browser.IsBackOnScreen, "A hand-over its caller no longer wanted took the window down.");
     }
+
+    [Fact]
+    public async Task A_second_hand_over_while_the_first_minimize_is_on_its_way_asks_for_no_second_minimize()
+    {
+        // #474: the two events of one restore (MINIMIZEEND and FOREGROUND) each ask
+        // the overlay for a hand-over, a moment apart. An app slow to get to the
+        // minimizes carried the second out after a restore the student sent
+        // meanwhile: the browser they brought back once its extension reconnected
+        // went down again.
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var browser = TestWindow.Open("Anchor test slow paused browser");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        browser.Freeze();
+
+        var first = enforcer.HandOverAsync(browser.Handle, overlay.Handle);
+        var second = enforcer.HandOverAsync(browser.Handle, overlay.Handle);
+
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        // The overlay is out of the topmost band all the same, for when the first one
+        // lands.
+        Assert.False(IsTopmost(overlay.Handle), "The overlay was left in the topmost band, where Windows passes it over.");
+        browser.Thaw();
+        await Task.WhenAll(first, second);
+        Assert.True(
+            await WaitUntilAsync(() => browser.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window did not go down once its app responded again.");
+    }
+
+    [Fact]
+    public async Task A_hand_over_after_the_window_went_down_and_came_back_takes_it_down_again()
+    {
+        // Once the window went down, the minimize asked of it is no longer on its
+        // way: the next hand-over asks again (#474).
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var browser = TestWindow.Open("Anchor test paused browser");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        await enforcer.HandOverAsync(browser.Handle, overlay.Handle);
+        Assert.True(
+            await WaitUntilAsync(() => browser.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window was not taken down by the first hand-over.");
+
+        NativeMethods.ShowWindow(browser.Handle, NativeMethods.SW_SHOWNOACTIVATE);
+        Assert.True(
+            await WaitUntilAsync(() => browser.IsBackOnScreen, TimeSpan.FromSeconds(2)),
+            "The window could not be brought back.");
+        // As the overlay is again once a hand-over is done.
+        MakeTopmost(overlay.Handle);
+        await enforcer.HandOverAsync(browser.Handle, overlay.Handle);
+
+        Assert.True(
+            await WaitUntilAsync(() => browser.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "A hand-over after the window came back did not take it down.");
+        Assert.DoesNotContain(log.Messages, m => m.Contains("to minimize again"));
+    }
+
+    [Fact]
+    public async Task A_window_brought_back_while_it_goes_down_is_asked_to_go_down_once_more()
+    {
+        // #476: Windows marks a window minimized as its app starts on the minimize,
+        // and says it started to minimize only once the app is done. The hand-over for
+        // a restore that lands in between found the first minimize still on its way and
+        // did not ask; once that one was done, the window was on screen and nothing
+        // asked again.
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var offList = TestWindow.Open("Anchor test off-list app brought back as it goes down");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        offList.RestoreWhenMinimized();
+
+        var first = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.True(offList.WaitUntilHeldWhileMinimizing(TimeSpan.FromSeconds(2)), "The window was not asked to minimize.");
+        Assert.True(offList.IsBackOnScreen, "The window was not brought back in the middle of its minimize.");
+        // The hand-over for that restore.
+        var second = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        offList.Thaw();
+        await Task.WhenAll(first, second);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window brought back while it went down stayed on screen once the minimize on its way was done.");
+    }
+
+    [Fact]
+    public async Task A_minimize_postponed_for_a_window_that_no_longer_has_to_go_down_is_never_asked()
+    {
+        // #474: the paused browser the student brings back once its extension
+        // reconnected is theirs again. A minimize postponed during the pause (#476) is
+        // not asked once the pause lifted.
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var browser = TestWindow.Open("Anchor test paused browser brought back as it goes down");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        var paused = true;
+        browser.RestoreWhenMinimized();
+
+        var first = enforcer.HandOverAsync(browser.Handle, overlay.Handle, () => Volatile.Read(ref paused));
+        Assert.True(browser.WaitUntilHeldWhileMinimizing(TimeSpan.FromSeconds(2)), "The window was not asked to minimize.");
+        var second = enforcer.HandOverAsync(browser.Handle, overlay.Handle, () => Volatile.Read(ref paused));
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        Volatile.Write(ref paused, false);
+        browser.Thaw();
+        await Task.WhenAll(first, second);
+
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout);
+        Assert.True(browser.IsBackOnScreen, "A minimize postponed during the pause took the browser down after it lifted.");
+        Assert.DoesNotContain(log.Messages, m => m.Contains("once more"));
+    }
+
+    [Fact]
+    public async Task A_minimize_postponed_before_the_session_ended_is_never_asked()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var offList = TestWindow.Open("Anchor test off-list app brought back as it goes down");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        offList.RestoreWhenMinimized();
+
+        var first = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.True(offList.WaitUntilHeldWhileMinimizing(TimeSpan.FromSeconds(2)), "The window was not asked to minimize.");
+        var second = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        // The session ends: the window is the student's again.
+        enforcer.Reset();
+        offList.Thaw();
+        await Task.WhenAll(first, second);
+
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout);
+        Assert.True(offList.IsBackOnScreen, "A minimize postponed before the session ended took the window down after it.");
+        Assert.DoesNotContain(log.Messages, m => m.Contains("once more"));
+    }
+
+    [Fact]
+    public async Task A_postponed_minimize_is_asked_once_the_one_on_its_way_is_overdue()
+    {
+        // The minimize on its way counts as such for no longer than a moment, for an
+        // app that is not responding (#474); a minimize postponed meanwhile is asked
+        // then, should the window be on screen still (#476).
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var offList = TestWindow.Open("Anchor test hung off-list app");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        offList.Freeze();
+
+        var first = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        var second = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        Assert.True(
+            await WaitUntilAsync(
+                () => log.Messages.Any(m => m.Contains("once more")),
+                FocusEnforcer.MinimizeOnItsWayLimit + TimeSpan.FromSeconds(1)),
+            "The postponed minimize was not asked once the one on its way was overdue.");
+        offList.Thaw();
+        await Task.WhenAll(first, second);
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window did not go down once its app responded again.");
+    }
+
+    private static bool IsTopmost(nint hwnd) =>
+        (NativeMethods.GetWindowLongW(hwnd, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOPMOST) != 0;
+
+    /// <summary>Whether <paramref name="upper"/> is above <paramref name="lower"/> in the Z-order.</summary>
+    private static bool IsAbove(nint upper, nint lower)
+    {
+        for (var window = NativeMethods.GetWindow(upper, NativeMethods.GW_HWNDFIRST);
+             window != IntPtr.Zero;
+             window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
+        {
+            if (window == upper) return true;
+            if (window == lower) return false;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="hwnd"/> is the first window from the top that Windows
+    /// may hand the foreground of <paramref name="goingDown"/> to: on screen, not
+    /// topmost and not a tool window (#475).
+    /// </summary>
+    private static bool IsFirstAppWindowBut(nint hwnd, nint goingDown)
+    {
+        for (var window = NativeMethods.GetWindow(hwnd, NativeMethods.GW_HWNDFIRST);
+             window != IntPtr.Zero;
+             window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
+        {
+            if (window == hwnd) return true;
+            if (window == goingDown || !NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
+                continue;
+            if ((NativeMethods.GetWindowLongW(window, NativeMethods.GWL_EXSTYLE) &
+                 (NativeMethods.WS_EX_TOPMOST | NativeMethods.WS_EX_TOOLWINDOW)) == 0)
+                return false;
+        }
+        return false;
+    }
+
+    /// <summary>Puts <paramref name="hwnd"/> in the topmost band, as the overlay is shown.</summary>
+    private static void MakeTopmost(nint hwnd) =>
+        NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {

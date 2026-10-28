@@ -23,6 +23,7 @@ public sealed partial class ExtensionPolicyConsentWindow : Window
     {
         InitializeComponent();
         Title = Loc.Get("Title_ExtensionConsent");
+        WindowIcon.Apply(this);
         HeadlineText.Text = Loc.Get("ConsentHeadline");
         BodyText.Text = Loc.Get("ConsentBody");
         NoteText.Text = Loc.Get("ConsentManagedNote");

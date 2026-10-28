@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 using FocusAgent.Core.Diagnostics;
 using FocusAgent.Core.Logging;
@@ -17,8 +16,9 @@ namespace FocusAgent.App.Diagnostics;
 /// It is deliberately self-contained: it must not touch the DI host, config, or
 /// logging, because those are exactly what may have failed. It reuses only
 /// <see cref="Program.LogDirectory"/> (a pure path helper over the launch's flags
-/// and <see cref="AgentLogPaths.LogDirectoryEnvVar"/>, #463) and reads the version
-/// straight off the assembly. Two surfaces:
+/// and <see cref="AgentLogPaths.LogDirectoryEnvVar"/>, #463) and the version through
+/// <see cref="AgentVersion"/>, a never-throwing read of the assembly's stamp (#423).
+/// Two surfaces:
 /// <list type="bullet">
 ///   <item>a rich, selectable <see cref="CrashReportWindow"/> for the cases where
 ///   we own the UI thread and the message pump is alive (startup + UI-thread
@@ -141,7 +141,7 @@ internal static class CrashReporter
 
         try
         {
-            var detail = CrashDiagnostics.BuildDetail(ex, AgentVersion(), LogFilePath());
+            var detail = CrashDiagnostics.BuildDetail(ex, AgentVersion.Current, LogFilePath());
             var fullStack = CrashDiagnostics.BuildFullStack(ex);
 
             var window = new CrashReportWindow(headline, detail, fullStack);
@@ -194,7 +194,7 @@ internal static class CrashReporter
     {
         try
         {
-            var detail = CrashDiagnostics.BuildDetail(ex, AgentVersion(), LogFilePath());
+            var detail = CrashDiagnostics.BuildDetail(ex, AgentVersion.Current, LogFilePath());
             var body = $"{headline}.{Environment.NewLine}{Environment.NewLine}{detail}";
             _ = MessageBoxW(IntPtr.Zero, body, "Anchor", MB_OK | MB_ICONERROR);
         }
@@ -213,23 +213,6 @@ internal static class CrashReporter
         catch
         {
             return "startup-error.log";
-        }
-    }
-
-    private static string? AgentVersion()
-    {
-        try
-        {
-            var asm = typeof(CrashReporter).Assembly;
-            var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-            // InformationalVersion is "<VersionPrefix>" optionally plus a "+<sha>"
-            // SourceLink suffix; show just the SemVer.
-            if (!string.IsNullOrWhiteSpace(info)) return info.Split('+', 2)[0];
-            return asm.GetName().Version?.ToString();
-        }
-        catch
-        {
-            return null;
         }
     }
 

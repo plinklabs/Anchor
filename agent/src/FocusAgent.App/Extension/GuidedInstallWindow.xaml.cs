@@ -27,6 +27,7 @@ public sealed partial class GuidedInstallWindow : Window
         InitializeComponent();
         _launcher = launcher;
         Title = Loc.Get("Title_InstallExtension");
+        WindowIcon.Apply(this);
         HeadlineText.Text = Loc.Get("GuidedHeadline");
         BodyText.Text = Loc.Get("GuidedBody");
         StepsText.Text = Loc.Get("GuidedSteps");
