@@ -1052,6 +1052,72 @@ abstract class AppLocalizations {
   /// **'Taking part yourself? Use \'Join by code\' in the agent.'**
   String get sessionTakePartHint;
 
+  /// Title of the dialog that sets up live-session alerts, and the tooltip of the bell that opens it, in the app bar and in the live session header (#454).
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get alertsTitle;
+
+  /// No description provided for @alertsIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'During a live session, the dashboard tells you when something needs you, also while it\'s in a background tab: it plays a short sound, and the tab\'s title counts what you haven\'t seen yet.'**
+  String get alertsIntro;
+
+  /// No description provided for @alertsSound.
+  ///
+  /// In en, this message translates to:
+  /// **'Play a sound'**
+  String get alertsSound;
+
+  /// Label above the switches for each kind of alert; each switch label continues the sentence.
+  ///
+  /// In en, this message translates to:
+  /// **'Alert me when'**
+  String get alertsCategoriesLabel;
+
+  /// No description provided for @alertsAccessRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'A student asks for access to a site'**
+  String get alertsAccessRequest;
+
+  /// No description provided for @alertsStudentLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'A student leaves or declines the session'**
+  String get alertsStudentLeft;
+
+  /// No description provided for @alertsAgentLost.
+  ///
+  /// In en, this message translates to:
+  /// **'A student\'s agent stops reporting'**
+  String get alertsAgentLost;
+
+  /// No description provided for @alertsTamper.
+  ///
+  /// In en, this message translates to:
+  /// **'Tampering is detected'**
+  String get alertsTamper;
+
+  /// No description provided for @alertsKeptInBrowser.
+  ///
+  /// In en, this message translates to:
+  /// **'These settings are kept in this browser.'**
+  String get alertsKeptInBrowser;
+
+  /// Button in the Notifications dialog that plays the alert sound once.
+  ///
+  /// In en, this message translates to:
+  /// **'Test sound'**
+  String get alertsTest;
+
+  /// Calm line on the live session page while the browser doesn't let the page play sound yet: after a reload, until the teacher clicks the page (#454).
+  ///
+  /// In en, this message translates to:
+  /// **'Click anywhere to turn on sound.'**
+  String get alertsSoundBlocked;
+
   /// No description provided for @bundlesLoadListError.
   ///
   /// In en, this message translates to:

@@ -586,6 +586,42 @@ class AppLocalizationsNl extends AppLocalizations {
       'Zelf meedoen? Gebruik \'Deelnemen met code\' in de agent.';
 
   @override
+  String get alertsTitle => 'Meldingen';
+
+  @override
+  String get alertsIntro =>
+      'Tijdens een live sessie laat het dashboard je weten wanneer er iets voor je is, ook als het in een tabblad op de achtergrond staat: het speelt een kort geluid, en de titel van het tabblad telt wat je nog niet gezien hebt.';
+
+  @override
+  String get alertsSound => 'Geluid afspelen';
+
+  @override
+  String get alertsCategoriesLabel => 'Waarschuw me als';
+
+  @override
+  String get alertsAccessRequest => 'Een leerling toegang vraagt tot een site';
+
+  @override
+  String get alertsStudentLeft => 'Een leerling de sessie verlaat of weigert';
+
+  @override
+  String get alertsAgentLost =>
+      'De agent van een leerling niet meer rapporteert';
+
+  @override
+  String get alertsTamper => 'Er manipulatie gedetecteerd wordt';
+
+  @override
+  String get alertsKeptInBrowser =>
+      'Deze instellingen worden in deze browser bewaard.';
+
+  @override
+  String get alertsTest => 'Geluid testen';
+
+  @override
+  String get alertsSoundBlocked => 'Klik ergens om het geluid aan te zetten.';
+
+  @override
   String get bundlesLoadListError =>
       'Kon de bundels niet laden. Probeer het opnieuw.';
 

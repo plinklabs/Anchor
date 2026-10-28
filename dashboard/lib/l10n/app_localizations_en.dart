@@ -577,6 +577,40 @@ class AppLocalizationsEn extends AppLocalizations {
       'Taking part yourself? Use \'Join by code\' in the agent.';
 
   @override
+  String get alertsTitle => 'Notifications';
+
+  @override
+  String get alertsIntro =>
+      'During a live session, the dashboard tells you when something needs you, also while it\'s in a background tab: it plays a short sound, and the tab\'s title counts what you haven\'t seen yet.';
+
+  @override
+  String get alertsSound => 'Play a sound';
+
+  @override
+  String get alertsCategoriesLabel => 'Alert me when';
+
+  @override
+  String get alertsAccessRequest => 'A student asks for access to a site';
+
+  @override
+  String get alertsStudentLeft => 'A student leaves or declines the session';
+
+  @override
+  String get alertsAgentLost => 'A student\'s agent stops reporting';
+
+  @override
+  String get alertsTamper => 'Tampering is detected';
+
+  @override
+  String get alertsKeptInBrowser => 'These settings are kept in this browser.';
+
+  @override
+  String get alertsTest => 'Test sound';
+
+  @override
+  String get alertsSoundBlocked => 'Click anywhere to turn on sound.';
+
+  @override
   String get bundlesLoadListError =>
       'Could not load bundles. Please try again.';
 

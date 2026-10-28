@@ -238,6 +238,30 @@
     "description": "Under the join code on the live session page. The teacher isn't held to their own session; to take part, they join with this code from the agent's join dialog, titled 'Join by code' (#410)."
   },
 
+  "alertsTitle": "Notifications",
+  "@alertsTitle": {
+    "description": "Title of the dialog that sets up live-session alerts, and the tooltip of the bell that opens it, in the app bar and in the live session header (#454)."
+  },
+  "alertsIntro": "During a live session, the dashboard tells you when something needs you, also while it's in a background tab: it plays a short sound, and the tab's title counts what you haven't seen yet.",
+  "alertsSound": "Play a sound",
+  "alertsCategoriesLabel": "Alert me when",
+  "@alertsCategoriesLabel": {
+    "description": "Label above the switches for each kind of alert; each switch label continues the sentence."
+  },
+  "alertsAccessRequest": "A student asks for access to a site",
+  "alertsStudentLeft": "A student leaves or declines the session",
+  "alertsAgentLost": "A student's agent stops reporting",
+  "alertsTamper": "Tampering is detected",
+  "alertsKeptInBrowser": "These settings are kept in this browser.",
+  "alertsTest": "Test sound",
+  "@alertsTest": {
+    "description": "Button in the Notifications dialog that plays the alert sound once."
+  },
+  "alertsSoundBlocked": "Click anywhere to turn on sound.",
+  "@alertsSoundBlocked": {
+    "description": "Calm line on the live session page while the browser doesn't let the page play sound yet: after a reload, until the teacher clicks the page (#454)."
+  },
+
   "bundlesLoadListError": "Could not load bundles. Please try again.",
   "bundlesLoadOneError": "Could not load this bundle. Please try again.",
   "bundlesNameRequired": "Name is required.",
