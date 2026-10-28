@@ -51,6 +51,31 @@ void main() {
     expect(settings.anyOn, isFalse);
   });
 
+  test('pop-ups and the names in them are off until the teacher turns them '
+      'on, and survive a reload (#455)', () {
+    final store = MemoryAlertSettingsStore();
+    final settings = LiveAlertSettings(store: store);
+    expect(settings.popups, isFalse);
+    expect(settings.popupNames, isFalse);
+    var notified = 0;
+    settings.addListener(() => notified++);
+
+    settings.popups = true;
+    settings.popupNames = true;
+    // Unchanged: nothing to write or tell.
+    settings.popups = true;
+    expect(notified, 2);
+
+    final reloaded = LiveAlertSettings(store: store);
+    expect(reloaded.popups, isTrue);
+    expect(reloaded.popupNames, isTrue);
+    expect(reloaded.sound, isTrue, reason: 'the rest as it was');
+    expect(jsonDecode(store.value!), {'popups': true, 'popupNames': true});
+
+    reloaded.popups = false;
+    expect(LiveAlertSettings(store: store).popups, isFalse);
+  });
+
   test('keys it does not know are kept (a later setting, #455)', () {
     final store = MemoryAlertSettingsStore(
       jsonEncode({'sound': true, 'popups': true}),

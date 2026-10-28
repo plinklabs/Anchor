@@ -1,17 +1,139 @@
 import 'dart:async';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 
 import 'package:flutter/foundation.dart';
 import 'package:web/web.dart' as web;
 
+import 'alert_popups.dart';
 import 'alert_sound.dart';
 import 'live_alert_settings.dart';
 
-/// Web implementations of the live-alert seams (#454). Only ever built on the
-/// web build (see the conditional import in `alert_platform.dart`).
+/// Web implementations of the live-alert seams (#454, #455). Only ever built
+/// on the web build (see the conditional import in `alert_platform.dart`).
 AlertSound createAlertSound() => WebAlertSound();
 
 AlertSettingsStore createAlertSettingsStore() => _LocalStorageStore();
+
+AlertPopups createAlertPopups() => WebAlertPopups();
+
+/// The system pop-ups over the browser's Notification API (#455).
+///
+/// Reading the permission never asks for it: only [request] does, which the
+/// Notifications dialog calls from the teacher's click on the Pop-ups switch.
+class WebAlertPopups implements AlertPopups {
+  WebAlertPopups() : _permission = ValueNotifier(read());
+
+  final ValueNotifier<PopupPermission> _permission;
+
+  /// The pop-ups on screen, by tag, so a click or [close] can reach them.
+  final Map<String, web.Notification> _shown = {};
+
+  /// What the browser holds for the dashboard now.
+  static PopupPermission read() {
+    try {
+      if (!globalContext.has('Notification')) {
+        return PopupPermission.unsupported;
+      }
+      return switch (web.Notification.permission) {
+        'granted' => PopupPermission.allowed,
+        'denied' => PopupPermission.blocked,
+        _ => PopupPermission.notAsked,
+      };
+    } catch (_) {
+      return PopupPermission.unsupported;
+    }
+  }
+
+  @override
+  ValueListenable<PopupPermission> get permission => _permission;
+
+  @override
+  void refresh() => _permission.value = read();
+
+  @override
+  Future<PopupPermission> request() async {
+    if (read() == PopupPermission.unsupported) return _permission.value;
+    try {
+      await web.Notification.requestPermission().toDart;
+    } catch (_) {
+      // An old browser that only takes a callback: read what it holds.
+    }
+    refresh();
+    return _permission.value;
+  }
+
+  /// The dashboard's icon, from the page's base: the live page's own URL
+  /// is a level down (`/session/<id>`).
+  static String get _icon {
+    try {
+      return Uri.parse(
+        web.document.baseURI,
+      ).resolve('icons/Icon-192.png').toString();
+    } catch (_) {
+      return '/icons/Icon-192.png';
+    }
+  }
+
+  @override
+  void show(AlertPopup popup) {
+    // Read again: the teacher may have changed it in the site settings.
+    refresh();
+    if (_permission.value != PopupPermission.allowed) return;
+    final String tag = popup.tag;
+    try {
+      // `silent`: the page plays its own sound (#454). `renotify`: a pop-up
+      // that replaces one with the same tag still pops up, rather than
+      // updating the old one quietly in the notification centre.
+      final notification = web.Notification(
+        popup.title,
+        web.NotificationOptions(
+          body: popup.body,
+          tag: tag,
+          icon: _icon,
+          silent: true,
+          renotify: true,
+        ),
+      );
+      // The browser replaced the one with this tag. Don't close that one: it
+      // shares the tag, and closing it could close this one.
+      _shown[tag] = notification;
+      notification.onclick = ((web.Event _) => popup.onClick?.call()).toJS;
+      notification.onclose = ((web.Event _) {
+        if (identical(_shown[tag], notification)) _shown.remove(tag);
+      }).toJS;
+    } catch (_) {
+      // The browser won't make one here: no pop-up.
+    }
+  }
+
+  @override
+  void close(String tag) {
+    final web.Notification? notification = _shown.remove(tag);
+    try {
+      notification?.close();
+    } catch (_) {
+      // Already gone.
+    }
+  }
+
+  @override
+  void bringPageToFront() {
+    try {
+      web.window.focus();
+    } catch (_) {
+      // Nothing to bring forward.
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final String tag in [..._shown.keys]) {
+      close(tag);
+    }
+    _permission.dispose();
+  }
+}
 
 class _LocalStorageStore implements AlertSettingsStore {
   @override

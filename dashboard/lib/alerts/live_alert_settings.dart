@@ -31,10 +31,12 @@ class MemoryAlertSettingsStore implements AlertSettingsStore {
 
 /// What the teacher chose in the Notifications dialog (#454): whether alerts
 /// make a sound, and which [LiveAlertCategory]s alert at all. Everything is on
-/// until they switch it off, and their choices survive a reload.
+/// until they switch it off, and their choices survive a reload. Pop-ups
+/// (#455) are the exception: off until the teacher turns them on, since that
+/// is when the browser asks them.
 ///
-/// Stored as one JSON object, so a later setting (the pop-ups of #455) is one
-/// more key. Keys this version doesn't know are kept as they are.
+/// Stored as one JSON object, so a later setting is one more key. Keys this
+/// version doesn't know are kept as they are.
 class LiveAlertSettings extends ChangeNotifier {
   LiveAlertSettings({AlertSettingsStore? store})
     : _store = store ?? createAlertSettingsStore() {
@@ -46,15 +48,29 @@ class LiveAlertSettings extends ChangeNotifier {
 
   static const String _soundKey = 'sound';
   static const String _categoriesKey = 'categories';
+  static const String _popupsKey = 'popups';
+  static const String _popupNamesKey = 'popupNames';
 
   final AlertSettingsStore _store;
   Map<String, Object?> _values = {};
 
   /// Whether an alert plays a sound.
   bool get sound => _values[_soundKey] != false;
-  set sound(bool on) {
-    if (on == sound) return;
-    _values[_soundKey] = on;
+  set sound(bool on) => _set(_soundKey, on, sound);
+
+  /// Whether an alert shows a system pop-up, when the browser allows them
+  /// (#455). Off until the teacher turns it on.
+  bool get popups => _values[_popupsKey] == true;
+  set popups(bool on) => _set(_popupsKey, on, popups);
+
+  /// Whether a pop-up names the student and the site (#455). Off, it only
+  /// says what happened: the screen may be projected.
+  bool get popupNames => _values[_popupNamesKey] == true;
+  set popupNames(bool on) => _set(_popupNamesKey, on, popupNames);
+
+  void _set(String key, bool on, bool current) {
+    if (on == current) return;
+    _values[key] = on;
     _save();
   }
 

@@ -242,7 +242,7 @@
   "@alertsTitle": {
     "description": "Title of the dialog that sets up live-session alerts, and the tooltip of the bell that opens it, in the app bar and in the live session header (#454)."
   },
-  "alertsIntro": "During a live session, the dashboard tells you when something needs you, also while it's in a background tab: it plays a short sound, and the tab's title counts what you haven't seen yet.",
+  "alertsIntro": "During a live session, the dashboard tells you when something needs you, also while it's in a background tab: it plays a short sound, the tab's title counts what you haven't seen yet, and pop-ups, if you turn them on, show it on top of other apps.",
   "alertsSound": "Play a sound",
   "alertsCategoriesLabel": "Alert me when",
   "@alertsCategoriesLabel": {
@@ -253,13 +253,84 @@
   "alertsAgentLost": "A student's agent stops reporting",
   "alertsTamper": "Tampering is detected",
   "alertsKeptInBrowser": "These settings are kept in this browser.",
-  "alertsTest": "Test sound",
+  "alertsTest": "Test",
   "@alertsTest": {
-    "description": "Button in the Notifications dialog that plays the alert sound once."
+    "description": "Button in the Notifications dialog that plays the alert sound once and, while pop-ups are on, shows a sample pop-up (#455)."
   },
   "alertsSoundBlocked": "Click anywhere to turn on sound.",
   "@alertsSoundBlocked": {
     "description": "Calm line on the live session page while the browser doesn't let the page play sound yet: after a reload, until the teacher clicks the page (#454)."
+  },
+  "alertsPopups": "Show pop-ups",
+  "@alertsPopups": {
+    "description": "Switch in the Notifications dialog for system pop-ups (browser notifications) on live-session alerts (#455). Turning it on is when the browser asks for permission."
+  },
+  "alertsPopupsNotAsked": "Your browser asks for permission when you turn them on.",
+  "@alertsPopupsNotAsked": {
+    "description": "Under the pop-ups switch while the browser hasn't asked the teacher for notification permission yet."
+  },
+  "alertsPopupsAllowed": "Allowed in this browser.",
+  "@alertsPopupsAllowed": {
+    "description": "Under the pop-ups switch while the browser's notification permission is granted."
+  },
+  "alertsPopupsBlocked": "Blocked in this browser.",
+  "@alertsPopupsBlocked": {
+    "description": "Under the pop-ups switch while the browser's notification permission is denied: only the teacher can allow it again, in the browser's site settings."
+  },
+  "alertsPopupsUnsupported": "This browser can't show pop-ups.",
+  "alertsPopupsHowToAllow": "To allow pop-ups in Edge or Chrome:",
+  "@alertsPopupsHowToAllow": {
+    "description": "Above the steps to allow notifications again once they are blocked."
+  },
+  "alertsPopupsStepIcon": "1. Click the icon left of the address bar.",
+  "alertsPopupsStepAllow": "2. Set Notifications to Allow.",
+  "@alertsPopupsStepAllow": {
+    "description": "'Notifications' and 'Allow' are the browser's own labels in its site settings."
+  },
+  "alertsPopupsStepReload": "3. Reload the page.",
+  "alertsPopupsWindows": "Still no pop-ups? Check that notifications for your browser are on in Windows: Settings → System → Notifications.",
+  "@alertsPopupsWindows": {
+    "description": "Hint under the pop-ups switch: Windows can turn a browser's notifications off on its own. 'Settings → System → Notifications' is the path in the Windows Settings app."
+  },
+  "alertsPopupNames": "Show student names and sites in pop-ups",
+  "alertsPopupNamesHint": "Off, a pop-up only says what happened, in case your screen is projected.",
+  "alertsPopupAccessRequest": "{count, plural, =1{New access request} other{New access requests ({count})}}",
+  "@alertsPopupAccessRequest": {
+    "description": "Title of the pop-up for access requests; count is how many came in since the teacher last looked at the live page.",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "alertsPopupStudentLeft": "{count, plural, =1{A student left the session} other{Students left the session ({count})}}",
+  "@alertsPopupStudentLeft": {
+    "description": "Title of the pop-up for students leaving or declining the session.",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "alertsPopupAgentLost": "{count, plural, =1{A student's agent stopped reporting} other{Agents stopped reporting ({count})}}",
+  "@alertsPopupAgentLost": {
+    "description": "Title of the pop-up for students' agents that stopped reporting.",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "alertsPopupTamper": "{count, plural, =1{Tampering detected} other{Tampering detected ({count})}}",
+  "@alertsPopupTamper": {
+    "description": "Title of the pop-up for tamper attempts.",
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "alertsPopupAsks": "{name} asks for access to {host}",
+  "@alertsPopupAsks": {
+    "description": "Pop-up text with names on: the student and the site of the latest access request.",
+    "placeholders": { "name": { "type": "String" }, "host": { "type": "String" } }
+  },
+  "alertsPopupLeft": "{name} left the session",
+  "@alertsPopupLeft": { "placeholders": { "name": { "type": "String" } } },
+  "alertsPopupDeclined": "{name} declined the session",
+  "@alertsPopupDeclined": { "placeholders": { "name": { "type": "String" } } },
+  "alertsPopupAgentLostOf": "{name}'s agent stopped reporting",
+  "@alertsPopupAgentLostOf": { "placeholders": { "name": { "type": "String" } } },
+  "alertsPopupTamperOf": "Tampering detected on {name}'s computer",
+  "@alertsPopupTamperOf": { "placeholders": { "name": { "type": "String" } } },
+  "alertsPopupTestTitle": "Test pop-up",
+  "alertsPopupTestBody": "Alerts from a live session show up like this.",
+  "@alertsPopupTestBody": {
+    "description": "Text of the sample pop-up the Test button shows."
   },
 
   "bundlesLoadListError": "Could not load bundles. Please try again.",

@@ -57,12 +57,16 @@ class _SessionPageState extends State<SessionPage> {
   StreamSubscription<SessionHubLinkState>? _linkSub;
   late final AppLifecycleListener _lifecycle;
   // Live-session alerts (#454): [_alerts] decides which events alert, the
-  // cues play the sound and count them in the tab title.
+  // cues play the sound, count them in the tab title and show a system
+  // pop-up (#455).
   late final LiveAlertServices _alertServices;
   late final bool _ownsAlertServices;
   late final LiveAlerts _alerts;
   late final AlertSoundCue _soundCue;
   AlertTabTitle? _tabTitle;
+  AlertPopupCue? _popupCue;
+  // The pending requests panel, which an access-request pop-up leads to.
+  final GlobalKey _pendingRequestsKey = GlobalKey();
   final List<SessionEvent> _events = [];
   bool _connecting = true;
   bool _ending = false;
@@ -123,6 +127,43 @@ class _SessionPageState extends State<SessionPage> {
       alerts: _alerts,
       color: Theme.of(context).primaryColor,
     );
+    final AppLocalizations l10n = AppLocalizations.of(context);
+    _popupCue ??= AlertPopupCue(
+      alerts: _alerts,
+      popups: _alertServices.popups,
+      l10n: l10n,
+      scope: widget.sessionId,
+      nameOf: _participantName,
+      onOpen: _openFromPopup,
+    );
+    _popupCue!.l10n = l10n;
+  }
+
+  /// A student on the roster, by name, for a pop-up about an agent that
+  /// stopped reporting: that event carries only the student's id (#455).
+  String? _participantName(String userId) {
+    for (final p in _detail?.participants ?? const <SessionParticipantInfo>[]) {
+      if (p.userId == userId) return p.displayName;
+    }
+    return null;
+  }
+
+  /// The teacher clicked a pop-up, which brought the page to the front
+  /// (#455). For an access request, scroll the pending requests into view.
+  /// The page drew nothing while hidden, so that waits for its next frame,
+  /// which has them.
+  void _openFromPopup(LiveAlertCategory category) {
+    if (category != LiveAlertCategory.accessRequest) return;
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        final BuildContext? panel = _pendingRequestsKey.currentContext;
+        if (!mounted || panel == null) return;
+        Scrollable.ensureVisible(
+          panel,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+        );
+      })
+      ..scheduleFrame();
   }
 
   Future<void> _bootstrap() async {
@@ -505,8 +546,12 @@ class _SessionPageState extends State<SessionPage> {
     _lifecycle.dispose();
     _soundCue.dispose();
     _tabTitle?.dispose();
+    _popupCue?.dispose();
     _alerts.dispose();
-    if (_ownsAlertServices) _alertServices.sound.dispose();
+    if (_ownsAlertServices) {
+      _alertServices.sound.dispose();
+      _alertServices.popups.dispose();
+    }
     _eventsSub?.cancel();
     _reconnectedSub?.cancel();
     _linkSub?.cancel();
@@ -572,6 +617,7 @@ class _SessionPageState extends State<SessionPage> {
     final List<Widget> panels = <Widget>[
       if (!_ended && _pendingRequests.isNotEmpty)
         _PendingRequestsPanel(
+          key: _pendingRequestsKey,
           requests: _pendingRequests,
           approving: _approving,
           error: _unblockError,
@@ -1369,6 +1415,7 @@ class _RosterRow extends StatelessWidget {
 
 class _PendingRequestsPanel extends StatelessWidget {
   const _PendingRequestsPanel({
+    super.key,
     required this.requests,
     required this.approving,
     required this.error,

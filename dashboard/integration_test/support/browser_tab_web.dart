@@ -1,4 +1,5 @@
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:math' as math;
 
 import 'package:anchor_dashboard/alerts/alert_platform_web.dart';
@@ -24,3 +25,6 @@ Future<({double peak, double tail})?> renderAlertChime() async {
     tail: loudest(samples.skip(samples.length - (rate * 0.3).round())),
   );
 }
+
+String? notificationPermission() =>
+    globalContext.has('Notification') ? web.Notification.permission : null;

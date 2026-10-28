@@ -22,3 +22,8 @@ String tabTitle() => platform.tabTitle();
 /// where there's no Web Audio (a VM copy).
 Future<({double peak, double tail})?> renderAlertChime() =>
     platform.renderAlertChime();
+
+/// The browser's notification permission for the page (#455), read straight
+/// from its Notification API: `default`, `granted` or `denied`. Null where
+/// there's none (a VM copy, or a browser without pop-ups).
+String? notificationPermission() => platform.notificationPermission();

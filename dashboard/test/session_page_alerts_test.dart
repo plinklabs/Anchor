@@ -16,6 +16,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/fake_alert_popups.dart';
+
 // #454: the live page plays a sound and counts alerts in the tab title when a
 // session needs the teacher, while its tab is in the background too. These
 // pump the page alone; integration_test/live_session_alerts_test.dart drives
@@ -68,7 +70,17 @@ class _FakeSessions extends SessionsApi {
     endedAt: null,
     summaries: const [],
     recentEvents: const [],
-    participants: const [],
+    // A roster names a student whose agent stops reporting (#455).
+    participants: [
+      SessionParticipantInfo(
+        userId: 'u-ada',
+        displayName: 'Ada',
+        joinedAt: null,
+        declinedAt: null,
+        leftAt: null,
+        state: ParticipantLiveState.joined,
+      ),
+    ],
     bundles: const [],
     grants: const [],
   );
@@ -119,7 +131,12 @@ class _FakeSound implements AlertSound {
   void dispose() {}
 }
 
-typedef _Page = ({_StubHub hub, _FakeSound sound, LiveAlertSettings settings});
+typedef _Page = ({
+  _StubHub hub,
+  _FakeSound sound,
+  LiveAlertSettings settings,
+  FakeAlertPopups popups,
+});
 
 /// Every tab title the app asked for, by way of SystemChrome.
 final List<String> _titles = [];
@@ -134,6 +151,7 @@ Future<_Page> _pumpLiveSession(
   WidgetTester tester, {
   bool userActivated = true,
   DateTime Function()? clock,
+  FakeAlertPopups? popups,
 }) async {
   tester.view.physicalSize = const Size(1400, 1000);
   tester.view.devicePixelRatio = 1.0;
@@ -159,6 +177,7 @@ Future<_Page> _pumpLiveSession(
   final hub = _StubHub();
   final sound = _FakeSound(userActivated: userActivated);
   final settings = LiveAlertSettings(store: MemoryAlertSettingsStore());
+  final browserPopups = popups ?? FakeAlertPopups();
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(splashFactory: NoSplash.splashFactory),
@@ -176,12 +195,13 @@ Future<_Page> _pumpLiveSession(
           settings: settings,
           sound: sound,
           clock: clock ?? DateTime.now,
+          popups: browserPopups,
         ),
       ),
     ),
   );
   await tester.pumpAndSettle();
-  return (hub: hub, sound: sound, settings: settings);
+  return (hub: hub, sound: sound, settings: settings, popups: browserPopups);
 }
 
 /// The teacher switches to another tab: the browser reports the page hidden.
@@ -360,7 +380,7 @@ void main() {
     }
 
     // Test plays the sound.
-    await tester.tap(find.text('Test sound'));
+    await tester.tap(find.text('Test'));
     await tester.pumpAndSettle();
     expect(page.sound.plays, 1);
 
@@ -384,5 +404,87 @@ void main() {
     await tester.idle();
     expect(page.sound.plays, 1, reason: 'only the Test');
     expect(_tabTitle, '(1) Anchor', reason: 'the tamper report counts');
+  });
+
+  // #455: the system pop-up, on top of the sound and the count.
+
+  testWidgets('the page never asks for pop-up permission on its own, and '
+      'shows none while pop-ups are off', (tester) async {
+    final page = await _pumpLiveSession(tester);
+    _hidePage(tester);
+    page.hub.emit('UnblockRequested', _request('ada', 'docs.example'));
+    await tester.idle();
+    _showPage(tester);
+    await tester.pumpAndSettle();
+
+    expect(page.sound.plays, 1);
+    expect(page.popups.asked, 0);
+    expect(page.popups.shown, isEmpty);
+  });
+
+  testWidgets('with pop-ups on and allowed, a request in a background tab '
+      'pops up at once, without a name; coming back takes it away', (
+    tester,
+  ) async {
+    var now = DateTime(2026, 6, 12, 9, 30);
+    final page = await _pumpLiveSession(
+      tester,
+      clock: () => now,
+      popups: FakeAlertPopups(browser: 'granted'),
+    );
+    page.settings.popups = true;
+
+    // In view: the teacher sees it on the page.
+    page.hub.emit('UnblockRequested', _request('ada', 'docs.example'));
+    await tester.pumpAndSettle();
+    expect(page.popups.shown, isEmpty);
+
+    now = now.add(const Duration(seconds: 11));
+    _hidePage(tester);
+    page.hub.emit('UnblockRequested', _request('bo', 'docs.example'));
+    await tester.idle();
+    final popup = page.popups.shown.single;
+    expect(popup.title, 'New access request');
+    expect(popup.body, isEmpty);
+    expect(popup.tag, 'anchor:$_sessionId:accessRequest');
+
+    _showPage(tester);
+    await tester.pumpAndSettle();
+    expect(page.popups.onScreen, isEmpty);
+  });
+
+  testWidgets('with names on, a lost agent is named from the roster', (
+    tester,
+  ) async {
+    final page = await _pumpLiveSession(
+      tester,
+      popups: FakeAlertPopups(browser: 'granted'),
+    );
+    page.settings
+      ..popups = true
+      ..popupNames = true;
+    _hidePage(tester);
+
+    page.hub.emit('HeartbeatLost', {
+      'sessionId': _sessionId,
+      'userId': 'u-ada',
+    });
+    await tester.idle();
+    expect(page.popups.shown.single.body, "Ada's agent stopped reporting");
+  });
+
+  testWidgets('leaving the live page takes its pop-ups away', (tester) async {
+    final page = await _pumpLiveSession(
+      tester,
+      popups: FakeAlertPopups(browser: 'granted'),
+    );
+    page.settings.popups = true;
+    _hidePage(tester);
+    page.hub.emit('UnblockRequested', _request('ada', 'docs.example'));
+    await tester.idle();
+    expect(page.popups.onScreen, hasLength(1));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(page.popups.onScreen, isEmpty);
   });
 }

@@ -23,3 +23,5 @@ void followTabTitle(WidgetTester tester) {
 String tabTitle() => _title;
 
 Future<({double peak, double tail})?> renderAlertChime() async => null;
+
+String? notificationPermission() => null;

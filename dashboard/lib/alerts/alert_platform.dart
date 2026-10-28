@@ -1,6 +1,7 @@
 import 'alert_platform_stub.dart'
     if (dart.library.js_interop) 'alert_platform_web.dart'
     as platform;
+import 'alert_popups.dart';
 import 'alert_sound.dart';
 import 'live_alert_settings.dart';
 
@@ -13,3 +14,7 @@ AlertSound createAlertSound() => platform.createAlertSound();
 /// build, memory elsewhere.
 AlertSettingsStore createAlertSettingsStore() =>
     platform.createAlertSettingsStore();
+
+/// The browser's system pop-ups (#455): its Notification API on the web
+/// build; elsewhere there are none.
+AlertPopups createAlertPopups() => platform.createAlertPopups();

@@ -1061,7 +1061,7 @@ abstract class AppLocalizations {
   /// No description provided for @alertsIntro.
   ///
   /// In en, this message translates to:
-  /// **'During a live session, the dashboard tells you when something needs you, also while it\'s in a background tab: it plays a short sound, and the tab\'s title counts what you haven\'t seen yet.'**
+  /// **'During a live session, the dashboard tells you when something needs you, also while it\'s in a background tab: it plays a short sound, the tab\'s title counts what you haven\'t seen yet, and pop-ups, if you turn them on, show it on top of other apps.'**
   String get alertsIntro;
 
   /// No description provided for @alertsSound.
@@ -1106,10 +1106,10 @@ abstract class AppLocalizations {
   /// **'These settings are kept in this browser.'**
   String get alertsKeptInBrowser;
 
-  /// Button in the Notifications dialog that plays the alert sound once.
+  /// Button in the Notifications dialog that plays the alert sound once and, while pop-ups are on, shows a sample pop-up (#455).
   ///
   /// In en, this message translates to:
-  /// **'Test sound'**
+  /// **'Test'**
   String get alertsTest;
 
   /// Calm line on the live session page while the browser doesn't let the page play sound yet: after a reload, until the teacher clicks the page (#454).
@@ -1117,6 +1117,144 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Click anywhere to turn on sound.'**
   String get alertsSoundBlocked;
+
+  /// Switch in the Notifications dialog for system pop-ups (browser notifications) on live-session alerts (#455). Turning it on is when the browser asks for permission.
+  ///
+  /// In en, this message translates to:
+  /// **'Show pop-ups'**
+  String get alertsPopups;
+
+  /// Under the pop-ups switch while the browser hasn't asked the teacher for notification permission yet.
+  ///
+  /// In en, this message translates to:
+  /// **'Your browser asks for permission when you turn them on.'**
+  String get alertsPopupsNotAsked;
+
+  /// Under the pop-ups switch while the browser's notification permission is granted.
+  ///
+  /// In en, this message translates to:
+  /// **'Allowed in this browser.'**
+  String get alertsPopupsAllowed;
+
+  /// Under the pop-ups switch while the browser's notification permission is denied: only the teacher can allow it again, in the browser's site settings.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked in this browser.'**
+  String get alertsPopupsBlocked;
+
+  /// No description provided for @alertsPopupsUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This browser can\'t show pop-ups.'**
+  String get alertsPopupsUnsupported;
+
+  /// Above the steps to allow notifications again once they are blocked.
+  ///
+  /// In en, this message translates to:
+  /// **'To allow pop-ups in Edge or Chrome:'**
+  String get alertsPopupsHowToAllow;
+
+  /// No description provided for @alertsPopupsStepIcon.
+  ///
+  /// In en, this message translates to:
+  /// **'1. Click the icon left of the address bar.'**
+  String get alertsPopupsStepIcon;
+
+  /// 'Notifications' and 'Allow' are the browser's own labels in its site settings.
+  ///
+  /// In en, this message translates to:
+  /// **'2. Set Notifications to Allow.'**
+  String get alertsPopupsStepAllow;
+
+  /// No description provided for @alertsPopupsStepReload.
+  ///
+  /// In en, this message translates to:
+  /// **'3. Reload the page.'**
+  String get alertsPopupsStepReload;
+
+  /// Hint under the pop-ups switch: Windows can turn a browser's notifications off on its own. 'Settings → System → Notifications' is the path in the Windows Settings app.
+  ///
+  /// In en, this message translates to:
+  /// **'Still no pop-ups? Check that notifications for your browser are on in Windows: Settings → System → Notifications.'**
+  String get alertsPopupsWindows;
+
+  /// No description provided for @alertsPopupNames.
+  ///
+  /// In en, this message translates to:
+  /// **'Show student names and sites in pop-ups'**
+  String get alertsPopupNames;
+
+  /// No description provided for @alertsPopupNamesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Off, a pop-up only says what happened, in case your screen is projected.'**
+  String get alertsPopupNamesHint;
+
+  /// Title of the pop-up for access requests; count is how many came in since the teacher last looked at the live page.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{New access request} other{New access requests ({count})}}'**
+  String alertsPopupAccessRequest(int count);
+
+  /// Title of the pop-up for students leaving or declining the session.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{A student left the session} other{Students left the session ({count})}}'**
+  String alertsPopupStudentLeft(int count);
+
+  /// Title of the pop-up for students' agents that stopped reporting.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{A student\'s agent stopped reporting} other{Agents stopped reporting ({count})}}'**
+  String alertsPopupAgentLost(int count);
+
+  /// Title of the pop-up for tamper attempts.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Tampering detected} other{Tampering detected ({count})}}'**
+  String alertsPopupTamper(int count);
+
+  /// Pop-up text with names on: the student and the site of the latest access request.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} asks for access to {host}'**
+  String alertsPopupAsks(String name, String host);
+
+  /// No description provided for @alertsPopupLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} left the session'**
+  String alertsPopupLeft(String name);
+
+  /// No description provided for @alertsPopupDeclined.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} declined the session'**
+  String alertsPopupDeclined(String name);
+
+  /// No description provided for @alertsPopupAgentLostOf.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s agent stopped reporting'**
+  String alertsPopupAgentLostOf(String name);
+
+  /// No description provided for @alertsPopupTamperOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Tampering detected on {name}\'s computer'**
+  String alertsPopupTamperOf(String name);
+
+  /// No description provided for @alertsPopupTestTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Test pop-up'**
+  String get alertsPopupTestTitle;
+
+  /// Text of the sample pop-up the Test button shows.
+  ///
+  /// In en, this message translates to:
+  /// **'Alerts from a live session show up like this.'**
+  String get alertsPopupTestBody;
 
   /// No description provided for @bundlesLoadListError.
   ///
