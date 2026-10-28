@@ -26,7 +26,8 @@ namespace FocusAgent.Native;
 /// window minimizes itself, so the overlay is the window Windows hands the
 /// foreground to (#441, #475). A hand-over never
 /// asks a window to minimize while an earlier minimize is on its way to it, nor
-/// once its caller no longer wants the window down (#474).
+/// once its caller no longer wants the window down (#474). It asks once that
+/// minimize is done, should the window be on screen still (#476).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class FocusEnforcer : IFocusEnforcer
@@ -69,7 +70,8 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// <summary>
     /// How long a minimize a hand-over asked of a window counts as on its way when
     /// the window does not go down (#474): an app that is not responding. A
-    /// hand-over after that asks again.
+    /// hand-over after that asks again, and so does one that did not ask meanwhile
+    /// because of it, should the window be on screen (#476).
     /// </summary>
     internal static readonly TimeSpan MinimizeOnItsWayLimit = TimeSpan.FromSeconds(2);
 
@@ -84,6 +86,12 @@ public sealed class FocusEnforcer : IFocusEnforcer
     // The windows a hand-over asked to minimize that have not started to go down
     // yet, with when it asked (Environment.TickCount64, #474). Guarded by _gate.
     private readonly Dictionary<nint, long> _minimizeOnItsWay = new();
+    // The minimizes hand-overs did not ask of those windows, because one was on its
+    // way already: asked once that one is done, should the window be on screen
+    // still (#476). Guarded by _gate.
+    private readonly Dictionary<nint, PostponedMinimize> _postponedMinimizes = new();
+    // Bumped by Reset: a minimize postponed in a session that ended is not asked.
+    private long _resets;
     private readonly MinimizeStartWatcher _minimizeStarts;
 
     public FocusEnforcer(ILogger<FocusEnforcer>? log = null)
@@ -484,7 +492,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
             // successor stays where it is: put below a minimized window, at the bottom
             // of the Z-order, it would lose the foreground to the window on top.
             if (AsksToMinimizeWithTheKeyboardHandedOver(minimized: NativeMethods.IsIconic(offendingWindowHandle)))
-                AskToMinimize(offendingWindowHandle);
+                AskToMinimize(offendingWindowHandle, successorWindowHandle, stillToGoDown);
             else
                 _log.LogDebug("Not asking 0x{Hwnd:X} to minimize: it is down, and the successor has the keyboard", offendingWindowHandle);
             return true;
@@ -503,9 +511,13 @@ public sealed class FocusEnforcer : IFocusEnforcer
             // in place only once it is back on screen.
             _log.LogDebug("Restoring minimized 0x{Hwnd:X}, which has the foreground, to hand it over", offendingWindowHandle);
             // A minimize still on its way to it lands before this restore, so it does
-            // not take the window down for this hand-over (#474).
+            // not take the window down for this hand-over (#474), which asks for one
+            // itself, after the restore (#476).
             lock (_gate)
+            {
                 _minimizeOnItsWay.Remove(offendingWindowHandle);
+                _postponedMinimizes.Remove(offendingWindowHandle);
+            }
             try { NativeMethods.ShowWindowAsync(offendingWindowHandle, NativeMethods.SW_RESTORE); }
             catch (Exception ex) { _log.LogError(ex, "ShowWindowAsync(SW_RESTORE) threw for 0x{Hwnd:X}", offendingWindowHandle); }
             await WaitUntilAsync(() => !NativeMethods.IsIconic(offendingWindowHandle), OwnThreadMinimizeTimeout)
@@ -515,7 +527,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
         if (plan != HandOverPlan.AlreadyDown)
         {
             PutAboveEveryAppWindow(successorWindowHandle, offendingWindowHandle);
-            AskToMinimize(offendingWindowHandle);
+            AskToMinimize(offendingWindowHandle, successorWindowHandle, stillToGoDown);
         }
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -623,32 +635,54 @@ public sealed class FocusEnforcer : IFocusEnforcer
     }
 
     /// <summary>
-    /// Asks <paramref name="windowHandle"/> to minimize itself for a hand-over, unless
-    /// a minimize a hand-over asked of it earlier is still on its way (#474). Its app
-    /// carries the request out when it gets to it, after what it is asked meanwhile:
-    /// a restore the student sends while the minimize waits, which the minimize then
-    /// undoes. The two events of one restore (MINIMIZEEND and FOREGROUND) each ask
-    /// for a hand-over, and the overlay gets to them a moment apart: each asked for a
-    /// minimize, so an app slow to get to them, as the e2e's Notepad is, had one left
-    /// to carry out after the restore the student made once the pause lifted.
+    /// Asks <paramref name="windowHandle"/> to minimize itself for a hand-over to
+    /// <paramref name="successorWindowHandle"/>, unless a minimize a hand-over asked
+    /// of it earlier is still on its way (#474). Its app carries the request out when
+    /// it gets to it, after what it is asked meanwhile: a restore the student sends
+    /// while the minimize waits, which the minimize then undoes. The two events of one
+    /// restore (MINIMIZEEND and FOREGROUND) each ask for a hand-over, and the overlay
+    /// gets to them a moment apart: each asked for a minimize, so an app slow to get
+    /// to them, as the e2e's Notepad is, had one left to carry out after the restore
+    /// the student made once the pause lifted.
+    /// <para>
+    /// Not asking is never the end of it (#476). Windows marks the window minimized
+    /// as its app starts on the minimize, and says it started to minimize only once
+    /// the app is done. A restore the student sends in between, as they click its
+    /// taskbar button once more, keeps the window on screen; the hand-over for that
+    /// restore found the minimize still on its way, and nothing asked once it was
+    /// done. So the minimize this one would have asked is asked then, by
+    /// <see cref="AskPostponedMinimize"/>, should the window be on screen still and
+    /// <paramref name="stillToGoDown"/> not say no.
+    /// </para>
     /// </summary>
-    private void AskToMinimize(nint windowHandle)
+    private void AskToMinimize(nint windowHandle, nint successorWindowHandle, Func<bool>? stillToGoDown)
     {
         var tracked = _minimizeStarts.EnsureStarted();
         var now = Environment.TickCount64;
+        long? onItsWaySince = null;
         lock (_gate)
         {
-            if (tracked && MinimizeStillOnItsWay(_minimizeOnItsWay.TryGetValue(windowHandle, out var at) ? at : null, now))
+            if (tracked && _minimizeOnItsWay.TryGetValue(windowHandle, out var at) && MinimizeStillOnItsWay(at, now))
             {
-                _log.LogDebug(
-                    "Not asking 0x{Hwnd:X} to minimize again: the minimize a hand-over asked of it is still on its way",
-                    windowHandle);
-                return;
+                _postponedMinimizes[windowHandle] = new PostponedMinimize(successorWindowHandle, stillToGoDown, _resets);
+                onItsWaySince = at;
             }
             // Before it is asked, so a window that goes down at once is not left
-            // counted as on its way.
-            if (tracked)
+            // counted as on its way. A minimize postponed for it is asked now.
+            else if (tracked)
+            {
                 _minimizeOnItsWay[windowHandle] = now;
+                _postponedMinimizes.Remove(windowHandle);
+            }
+        }
+        if (onItsWaySince is { } askedAt)
+        {
+            _log.LogDebug(
+                "Not asking 0x{Hwnd:X} to minimize again: the minimize a hand-over asked of it is still on its way. " +
+                "It is asked once that one is done, should the window be on screen still",
+                windowHandle);
+            _ = AskPostponedMinimizeOnceOverdueAsync(windowHandle, askedAt);
+            return;
         }
         if (!Minimize(windowHandle, onOwnThread: true) && tracked)
         {
@@ -660,6 +694,91 @@ public sealed class FocusEnforcer : IFocusEnforcer
                     _minimizeOnItsWay.Remove(windowHandle);
             }
         }
+    }
+
+    /// <summary>
+    /// A minimize a hand-over did not ask of a window because one was on its way
+    /// already (#476): who it hands over to, and whether its caller still wants the
+    /// window down. <see cref="Reset"/>s since (<paramref name="Resets"/>) drop it.
+    /// </summary>
+    private sealed record PostponedMinimize(nint Successor, Func<bool>? StillToGoDown, long Resets);
+
+    /// <summary>
+    /// Asks the minimize a hand-over postponed (#476), now that the one on its way to
+    /// <paramref name="windowHandle"/> is done or overdue: unless the window is down,
+    /// its session ended (<see cref="Reset"/>) or the hand-over's caller no longer
+    /// wants it down. As a hand-over does, it first puts the successor above every
+    /// app window, so the window hands the foreground to it (#441, #475).
+    /// <paramref name="overdue"/>: the one on its way did not start within
+    /// <see cref="MinimizeOnItsWayLimit"/>, rather than started and was undone.
+    /// </summary>
+    private void AskPostponedMinimize(nint windowHandle, PostponedMinimize postponed, bool overdue)
+    {
+        try
+        {
+            lock (_gate)
+            {
+                if (postponed.Resets != _resets) return;
+            }
+            var appWindow = AppWindowOf(windowHandle);
+            if (!NativeMethods.IsWindow(windowHandle) || !AsksPostponedMinimize(
+                    shown: NativeMethods.IsWindowVisible(windowHandle),
+                    minimized: NativeMethods.IsIconic(windowHandle),
+                    appWindowMinimized: appWindow != windowHandle && NativeMethods.IsIconic(appWindow)))
+                return;
+            if (!StillToGoDown(windowHandle, postponed.StillToGoDown)) return;
+            if (overdue)
+                _log.LogInformation(
+                    "0x{Hwnd:X} is on screen and the minimize asked of it has been on its way for {LimitMs} ms. " +
+                    "Asking it to go down once more",
+                    windowHandle, MinimizeOnItsWayLimit.TotalMilliseconds);
+            else
+                _log.LogInformation(
+                    "0x{Hwnd:X} is on screen once the minimize asked of it is done: it was brought back in the middle " +
+                    "of it. Asking it to go down once more",
+                    windowHandle);
+            if (NativeMethods.IsWindow(postponed.Successor))
+                PutAboveEveryAppWindow(postponed.Successor, windowHandle);
+            AskToMinimize(windowHandle, postponed.Successor, postponed.StillToGoDown);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Asking 0x{Hwnd:X} to go down once more threw", windowHandle);
+        }
+    }
+
+    /// <summary>
+    /// Whether a minimize postponed for a window (#476) is asked once the one on its
+    /// way is done or overdue, factored out as a pure decision so it is
+    /// unit-testable without a live desktop: only while the window is on screen. Not
+    /// when it is minimized or hidden, nor when it is a dialog whose app window is
+    /// minimized (<paramref name="appWindowMinimized"/>), with which it went down
+    /// (#428): asked of the dialog then, the minimize would take the dialog down on
+    /// its own and strand it as a title bar.
+    /// </summary>
+    internal static bool AsksPostponedMinimize(bool shown, bool minimized, bool appWindowMinimized) =>
+        shown && !minimized && !appWindowMinimized;
+
+    /// <summary>
+    /// Asks the minimize postponed for <paramref name="windowHandle"/> (#476) once the
+    /// one asked of it at <paramref name="askedAt"/> no longer counts as on its way
+    /// (<see cref="MinimizeOnItsWayLimit"/>), should it not have started by then.
+    /// </summary>
+    private async Task AskPostponedMinimizeOnceOverdueAsync(nint windowHandle, long askedAt)
+    {
+        var left = askedAt + (long)MinimizeOnItsWayLimit.TotalMilliseconds - Environment.TickCount64;
+        if (left > 0)
+            await Task.Delay(TimeSpan.FromMilliseconds(left)).ConfigureAwait(false);
+        PostponedMinimize? postponed;
+        lock (_gate)
+        {
+            if (!_minimizeOnItsWay.TryGetValue(windowHandle, out var at) || at != askedAt)
+                return;
+            _minimizeOnItsWay.Remove(windowHandle);
+            if (!_postponedMinimizes.Remove(windowHandle, out postponed))
+                return;
+        }
+        AskPostponedMinimize(windowHandle, postponed, overdue: true);
     }
 
     /// <summary>
@@ -675,19 +794,29 @@ public sealed class FocusEnforcer : IFocusEnforcer
 
     /// <summary>
     /// A window started to go down: the minimize a hand-over asked of it, or of a
-    /// dialog it owns (#428), is no longer on its way.
+    /// dialog it owns (#428), is no longer on its way. Windows says so only once the
+    /// window's app is done with the minimize, so a minimize a hand-over postponed
+    /// meanwhile is asked now, should the window be back on screen (#476). Not on
+    /// the hook's thread, which must get back to its messages.
     /// </summary>
     private void OnMinimizeStart(nint windowHandle)
     {
+        List<(nint Window, PostponedMinimize Postponed)>? due = null;
         lock (_gate)
         {
             if (_minimizeOnItsWay.Count == 0) return;
             foreach (var asked in _minimizeOnItsWay.Keys.ToArray())
             {
-                if (asked == windowHandle || AppWindowOf(asked) == windowHandle)
-                    _minimizeOnItsWay.Remove(asked);
+                if (asked != windowHandle && AppWindowOf(asked) != windowHandle)
+                    continue;
+                _minimizeOnItsWay.Remove(asked);
+                if (_postponedMinimizes.Remove(asked, out var postponed))
+                    (due ??= []).Add((asked, postponed));
             }
         }
+        if (due is null) return;
+        foreach (var (window, postponed) in due)
+            _ = Task.Run(() => AskPostponedMinimize(window, postponed, overdue: false));
     }
 
     /// <summary>
@@ -789,6 +918,8 @@ public sealed class FocusEnforcer : IFocusEnforcer
             _lastAllowed = IntPtr.Zero;
             _lastRestoredToHandOver = IntPtr.Zero;
             _minimizeOnItsWay.Clear();
+            _postponedMinimizes.Clear();
+            _resets++;
         }
     }
 }

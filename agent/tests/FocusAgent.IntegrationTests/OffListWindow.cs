@@ -11,7 +11,8 @@ namespace FocusAgent.IntegrationTests;
 /// apps a Windows build ships. It runs on a dedicated thread with a message pump,
 /// so the agent can minimize it and the spec can restore it, like any app. It
 /// can stop handling messages for a while (<see cref="Freeze"/>,
-/// <see cref="HangWhenMinimized"/>), as an app that is not responding (#440).
+/// <see cref="HangWhenMinimized"/>), as an app that is not responding (#440), or
+/// be brought back while it goes down (<see cref="RestoreWhenMinimized"/>, #476).
 /// And it counts the keystrokes it receives (#441), so a spec can tell whether
 /// what the student types reaches the blocked app, which is the only window a
 /// spec may type into besides the agent's own.
@@ -35,6 +36,7 @@ internal sealed class OffListWindow : IDisposable
     private readonly ManualResetEventSlim _thaw = new();
     private TimeSpan _hangFor;
     private int _hangWhenMinimized;
+    private int _restoreWhenMinimized;
     private int _keystrokes;
 
     /// <summary>
@@ -109,6 +111,20 @@ internal sealed class OffListWindow : IDisposable
     {
         PrepareHang(duration);
         Volatile.Write(ref _hangWhenMinimized, 1);
+    }
+
+    /// <summary>
+    /// The next time the window is minimized, bring it back in the middle of that,
+    /// as a click on its taskbar button that lands while the app is still going
+    /// down, then stop handling messages, still in the middle of the minimize, for
+    /// <paramref name="duration"/> or until <see cref="Thaw"/>. Windows says the
+    /// window started to minimize only once its app is done with the minimize
+    /// (#476).
+    /// </summary>
+    public void RestoreWhenMinimized(TimeSpan duration)
+    {
+        PrepareHang(duration);
+        Volatile.Write(ref _restoreWhenMinimized, 1);
     }
 
     /// <summary>Wait until the window's thread has stopped handling messages.</summary>
@@ -197,9 +213,18 @@ internal sealed class OffListWindow : IDisposable
             hanging.Hang();
             return IntPtr.Zero;
         }
-        if (msg == WmSize && wParam == SizeMinimized && Open.TryGetValue(hwnd, out var minimized) &&
-            Interlocked.Exchange(ref minimized._hangWhenMinimized, 0) == 1)
-            minimized.Hang();
+        if (msg == WmSize && wParam == SizeMinimized && Open.TryGetValue(hwnd, out var minimized))
+        {
+            if (Interlocked.Exchange(ref minimized._restoreWhenMinimized, 0) == 1)
+            {
+                ShowWindow(hwnd, SwRestore);
+                minimized.Hang();
+            }
+            else if (Interlocked.Exchange(ref minimized._hangWhenMinimized, 0) == 1)
+            {
+                minimized.Hang();
+            }
+        }
         if (msg == WmDestroy)
         {
             Open.TryRemove(hwnd, out _);

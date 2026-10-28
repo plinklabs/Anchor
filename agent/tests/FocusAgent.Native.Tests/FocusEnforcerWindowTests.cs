@@ -393,6 +393,114 @@ public class FocusEnforcerWindowTests
         Assert.DoesNotContain(log.Messages, m => m.Contains("to minimize again"));
     }
 
+    [Fact]
+    public async Task A_window_brought_back_while_it_goes_down_is_asked_to_go_down_once_more()
+    {
+        // #476: Windows marks a window minimized as its app starts on the minimize,
+        // and says it started to minimize only once the app is done. The hand-over for
+        // a restore that lands in between found the first minimize still on its way and
+        // did not ask; once that one was done, the window was on screen and nothing
+        // asked again.
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var offList = TestWindow.Open("Anchor test off-list app brought back as it goes down");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        offList.RestoreWhenMinimized();
+
+        var first = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.True(offList.WaitUntilHeldWhileMinimizing(TimeSpan.FromSeconds(2)), "The window was not asked to minimize.");
+        Assert.True(offList.IsBackOnScreen, "The window was not brought back in the middle of its minimize.");
+        // The hand-over for that restore.
+        var second = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        offList.Thaw();
+        await Task.WhenAll(first, second);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window brought back while it went down stayed on screen once the minimize on its way was done.");
+    }
+
+    [Fact]
+    public async Task A_minimize_postponed_for_a_window_that_no_longer_has_to_go_down_is_never_asked()
+    {
+        // #474: the paused browser the student brings back once its extension
+        // reconnected is theirs again. A minimize postponed during the pause (#476) is
+        // not asked once the pause lifted.
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var browser = TestWindow.Open("Anchor test paused browser brought back as it goes down");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        var paused = true;
+        browser.RestoreWhenMinimized();
+
+        var first = enforcer.HandOverAsync(browser.Handle, overlay.Handle, () => Volatile.Read(ref paused));
+        Assert.True(browser.WaitUntilHeldWhileMinimizing(TimeSpan.FromSeconds(2)), "The window was not asked to minimize.");
+        var second = enforcer.HandOverAsync(browser.Handle, overlay.Handle, () => Volatile.Read(ref paused));
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        Volatile.Write(ref paused, false);
+        browser.Thaw();
+        await Task.WhenAll(first, second);
+
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout);
+        Assert.True(browser.IsBackOnScreen, "A minimize postponed during the pause took the browser down after it lifted.");
+        Assert.DoesNotContain(log.Messages, m => m.Contains("once more"));
+    }
+
+    [Fact]
+    public async Task A_minimize_postponed_before_the_session_ended_is_never_asked()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var offList = TestWindow.Open("Anchor test off-list app brought back as it goes down");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        offList.RestoreWhenMinimized();
+
+        var first = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.True(offList.WaitUntilHeldWhileMinimizing(TimeSpan.FromSeconds(2)), "The window was not asked to minimize.");
+        var second = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        // The session ends: the window is the student's again.
+        enforcer.Reset();
+        offList.Thaw();
+        await Task.WhenAll(first, second);
+
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout);
+        Assert.True(offList.IsBackOnScreen, "A minimize postponed before the session ended took the window down after it.");
+        Assert.DoesNotContain(log.Messages, m => m.Contains("once more"));
+    }
+
+    [Fact]
+    public async Task A_postponed_minimize_is_asked_once_the_one_on_its_way_is_overdue()
+    {
+        // The minimize on its way counts as such for no longer than a moment, for an
+        // app that is not responding (#474); a minimize postponed meanwhile is asked
+        // then, should the window be on screen still (#476).
+        var log = new ListLogger<FocusEnforcer>();
+        using var overlay = TestWindow.Open("Anchor test overlay");
+        using var offList = TestWindow.Open("Anchor test hung off-list app");
+        MakeTopmost(overlay.Handle);
+        var enforcer = new FocusEnforcer(log);
+        offList.Freeze();
+
+        var first = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        var second = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
+        Assert.Single(log.Messages, m => m.Contains("to minimize again"));
+        Assert.True(
+            await WaitUntilAsync(
+                () => log.Messages.Any(m => m.Contains("once more")),
+                FocusEnforcer.MinimizeOnItsWayLimit + TimeSpan.FromSeconds(1)),
+            "The postponed minimize was not asked once the one on its way was overdue.");
+        offList.Thaw();
+        await Task.WhenAll(first, second);
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window did not go down once its app responded again.");
+    }
+
     private static bool IsTopmost(nint hwnd) =>
         (NativeMethods.GetWindowLongW(hwnd, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOPMOST) != 0;
 

@@ -210,4 +210,20 @@ public class FocusEnforcerTests
         // back on screen.
         Assert.True(FocusEnforcer.AsksToMinimizeWithTheKeyboardHandedOver(minimized: false));
     }
+
+    [Fact]
+    public void A_postponed_minimize_is_asked_of_a_window_back_on_screen()
+    {
+        // #476: brought back in the middle of the minimize on its way.
+        Assert.True(FocusEnforcer.AsksPostponedMinimize(shown: true, minimized: false, appWindowMinimized: false));
+    }
+
+    [Theory]
+    [InlineData(true, true, false)]   // the minimize on its way took it down
+    [InlineData(false, false, false)] // hidden
+    [InlineData(true, false, true)]   // a dialog, down with its app window (#428)
+    public void A_postponed_minimize_is_not_asked_of_a_window_that_is_down(bool shown, bool minimized, bool appWindowMinimized)
+    {
+        Assert.False(FocusEnforcer.AsksPostponedMinimize(shown, minimized, appWindowMinimized));
+    }
 }

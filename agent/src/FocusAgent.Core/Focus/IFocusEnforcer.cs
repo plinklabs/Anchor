@@ -64,7 +64,10 @@ public interface IFocusEnforcer
     /// it is asked meanwhile, such as the student's restore: a second minimize still
     /// on its way then takes the window down again. So it is not asked to minimize
     /// while a minimize a hand-over asked of it is still on its way, nor when it is
-    /// down already and the successor has the keyboard (#474).
+    /// down already and the successor has the keyboard (#474). It is asked once that
+    /// minimize is done, should it be on screen then (#476): Windows says a window
+    /// started to minimize only once its app is done with the minimize, after a
+    /// restore the student sent in the middle of it, which keeps the window up.
     /// <paramref name="stillToGoDown"/>, checked right before the window is restored
     /// or minimized, calls the hand-over off when it returns false, leaving the
     /// window as it is: a paused browser whose pause was lifted meanwhile (#474).
