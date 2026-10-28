@@ -8,7 +8,11 @@ namespace FocusAgent.IntegrationTests;
 /// where the foreground went after a block or a pause, and when (#441, #450).
 /// Listens on the same foreground event the agent does, so a window that has it
 /// only briefly shows too. The same goes for windows minimized and restored,
-/// which a spec can ask about (<see cref="SawSince"/>, #452).
+/// which a spec can ask about (<see cref="SawSince"/>, #452). The agent's windows
+/// go by their handle, to tell its overlay from its other windows. Showing the
+/// overlay raises a foreground event of its own without giving it the foreground,
+/// so an event for a window that did not have the foreground when the sampler
+/// got to it says so (#475).
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class ForegroundSampler : IDisposable
@@ -51,11 +55,11 @@ internal sealed class ForegroundSampler : IDisposable
         string? name;
         lock (_changes) _names.TryGetValue(hwnd, out name);
         var who = name is not null ? $"{name}{(WindowCapture.IsIconic(hwnd) ? " (minimized)" : "")}"
-            : WindowCapture.ProcessIdOf(hwnd) == _agentPid ? $"agent [{WindowCapture.GetClassName(hwnd)}]"
+            : WindowCapture.ProcessIdOf(hwnd) == _agentPid ? $"agent 0x{hwnd:X} [{WindowCapture.GetClassName(hwnd)}]"
             : $"{WindowCapture.GetProcessName(hwnd)} [{WindowCapture.GetClassName(hwnd)}]";
         lock (_changes)
         {
-            _changes.Add($"{eventName} {who} @{_clock.ElapsedMilliseconds}ms");
+            _changes.Add($"{eventName} {who} @{_clock.ElapsedMilliseconds}ms{(eventName == "foreground" && WindowCapture.ForegroundWindow() != hwnd ? " (not the foreground by then)" : "")}");
             _events.Add((hwnd, eventName));
         }
     }

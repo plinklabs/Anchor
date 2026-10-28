@@ -20,11 +20,13 @@ internal static class NativeMethods
     // GetWindowLong index + extended window styles
     public const int GWL_EXSTYLE = -20;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
+    public const int WS_EX_TOPMOST = 0x00000008;
 
     // QueryFullProcessImageName flags
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
     // SetWindowPos hWndInsertAfter values + flags
+    public static readonly nint HWND_TOP = new(0);
     public static readonly nint HWND_TOPMOST = new(-1);
     public static readonly nint HWND_NOTOPMOST = new(-2);
     public const uint SWP_NOMOVE = 0x0002;
@@ -142,6 +144,7 @@ internal static class NativeMethods
     public static extern nint GetWindow(nint hWnd, uint uCmd);
 
     public const uint GW_OWNER = 4;
+    public const uint GW_HWNDFIRST = 0;
     public const uint GW_HWNDNEXT = 2;
 
     [DllImport("user32.dll")]

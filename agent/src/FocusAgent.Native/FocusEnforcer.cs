@@ -22,8 +22,9 @@ namespace FocusAgent.Native;
 /// not responding (#451), or an allowed app the student picks on the overlay
 /// (#453): it comes back the moment its app responds. With no
 /// allowed window to fall back to, or for a paused browser (#450), the focus
-/// overlay is put directly below the window before it minimizes itself, so the
-/// overlay is the window Windows hands the foreground to (#441). A hand-over never
+/// overlay is put above every app window, out of the topmost band, before the
+/// window minimizes itself, so the overlay is the window Windows hands the
+/// foreground to (#441, #475). A hand-over never
 /// asks a window to minimize while an earlier minimize is on its way to it, nor
 /// once its caller no longer wants the window down (#474).
 /// </summary>
@@ -498,8 +499,8 @@ public sealed class FocusEnforcer : IFocusEnforcer
         if (plan == HandOverPlan.RestoreFirst)
         {
             // Restored by its own thread, it is on screen with the foreground once
-            // more, so minimizing it next hands the foreground on. The successor goes
-            // below it only once it is back on top.
+            // more, so minimizing it next hands the foreground on. The successor is put
+            // in place only once it is back on screen.
             _log.LogDebug("Restoring minimized 0x{Hwnd:X}, which has the foreground, to hand it over", offendingWindowHandle);
             // A minimize still on its way to it lands before this restore, so it does
             // not take the window down for this hand-over (#474).
@@ -513,19 +514,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
         }
         if (plan != HandOverPlan.AlreadyDown)
         {
-            // Windows activates the window below the one that goes down. Put after a
-            // window that is not topmost, the successor leaves the topmost band until
-            // the caller puts it back.
-            try
-            {
-                if (!NativeMethods.SetWindowPos(successorWindowHandle, offendingWindowHandle, 0, 0, 0, 0,
-                        NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE))
-                    _log.LogWarning("SetWindowPos could not put 0x{Successor:X} below 0x{Hwnd:X}", successorWindowHandle, offendingWindowHandle);
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "SetWindowPos threw putting 0x{Successor:X} below 0x{Hwnd:X}", successorWindowHandle, offendingWindowHandle);
-            }
+            PutAboveEveryAppWindow(successorWindowHandle, offendingWindowHandle);
             AskToMinimize(offendingWindowHandle);
         }
 
@@ -543,6 +532,74 @@ public sealed class FocusEnforcer : IFocusEnforcer
             "0x{Successor:X} did not get the foreground from 0x{Hwnd:X} within {TimeoutMs} ms; the foreground is 0x{Foreground:X} [{ClassName}]",
             successorWindowHandle, offendingWindowHandle, OwnThreadMinimizeTimeout.TotalMilliseconds,
             foreground, ClassNameOf(foreground));
+        return false;
+    }
+
+    /// <summary>
+    /// Puts <paramref name="successorWindowHandle"/> at the top of the windows that
+    /// are not topmost: above every app window, <paramref name="goingDown"/>
+    /// included. When the window with the foreground minimizes itself, Windows
+    /// activates the first other window from the top of the Z-order that is on
+    /// screen and not topmost, so the successor must be that window (#475). Right
+    /// below the window that goes down, as before, it was below any app window
+    /// above that one. A browser restored to be handed over was: placed while the
+    /// restore was still going, the overlay ended up below an allowed app, which
+    /// got the keyboard. So a later hand-over of the same window, once the restore
+    /// is done, puts the successor at the top again.
+    /// </summary>
+    private void PutAboveEveryAppWindow(nint successorWindowHandle, nint goingDown)
+    {
+        const uint flags = NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE;
+        try
+        {
+            if (IsTopmost(successorWindowHandle))
+            {
+                // Leaving the topmost band, a window goes to the top of the others.
+                if (!NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags))
+                    _log.LogWarning("SetWindowPos could not put 0x{Successor:X} above every app window", successorWindowHandle);
+                return;
+            }
+            // Out of the band already: a hand-over still under way took it out. Not
+            // back through the band, where a window going down meanwhile passes it
+            // over, unless HWND_TOP leaves another app's window above it, as it can.
+            NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_TOP, 0, 0, 0, 0, flags);
+            if (IsFirstAppWindowBut(successorWindowHandle, AppWindowOf(goingDown)))
+                return;
+            _log.LogDebug("0x{Successor:X} is still below another app's window; taking it through the topmost band", successorWindowHandle);
+            if (!NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0, flags) ||
+                !NativeMethods.SetWindowPos(successorWindowHandle, NativeMethods.HWND_NOTOPMOST, 0, 0, 0, 0, flags))
+                _log.LogWarning("SetWindowPos could not put 0x{Successor:X} above every app window", successorWindowHandle);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "SetWindowPos threw putting 0x{Successor:X} above every app window", successorWindowHandle);
+        }
+    }
+
+    private static bool IsTopmost(nint windowHandle) =>
+        (NativeMethods.GetWindowLongW(windowHandle, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOPMOST) != 0;
+
+    /// <summary>
+    /// Whether <paramref name="windowHandle"/> is the first window from the top of
+    /// the Z-order that Windows may hand the foreground to (on screen, not topmost,
+    /// not a tool window), but for the windows of the app window
+    /// <paramref name="appWindow"/>: the one that goes down, with its dialogs.
+    /// </summary>
+    private static bool IsFirstAppWindowBut(nint windowHandle, nint appWindow)
+    {
+        for (var window = NativeMethods.GetWindow(windowHandle, NativeMethods.GW_HWNDFIRST);
+             window != IntPtr.Zero;
+             window = NativeMethods.GetWindow(window, NativeMethods.GW_HWNDNEXT))
+        {
+            if (window == windowHandle)
+                return true;
+            if (!NativeMethods.IsWindowVisible(window) || NativeMethods.IsIconic(window))
+                continue;
+            var exStyle = NativeMethods.GetWindowLongW(window, NativeMethods.GWL_EXSTYLE);
+            if ((exStyle & (NativeMethods.WS_EX_TOPMOST | NativeMethods.WS_EX_TOOLWINDOW)) == 0 &&
+                AppWindowOf(window) != appWindow)
+                return false;
+        }
         return false;
     }
 

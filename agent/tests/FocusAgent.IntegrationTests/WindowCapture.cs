@@ -179,6 +179,13 @@ internal static class WindowCapture
     public static bool IsIconic(IntPtr hwnd) => IsIconicNative(hwnd);
 
     /// <summary>
+    /// True while <paramref name="hwnd"/> is in the topmost band of the Z-order:
+    /// the agent's overlay is, except while it takes the keyboard over from a
+    /// window that goes down (#475).
+    /// </summary>
+    public static bool IsTopmost(IntPtr hwnd) => (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+
+    /// <summary>
     /// Restore <paramref name="hwnd"/> from minimized — the headless stand-in for a
     /// student clicking the taskbar entry of a just-minimized off-list window. This
     /// is the exact transition #92 fixed: it raises EVENT_SYSTEM_MINIMIZEEND (not
@@ -704,6 +711,12 @@ internal static class WindowCapture
     [DllImport("user32.dll", EntryPoint = "IsIconic")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsIconicNative(IntPtr hWnd);
+
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_TOPMOST = 0x00000008;
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLongW(IntPtr hWnd, int nIndex);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

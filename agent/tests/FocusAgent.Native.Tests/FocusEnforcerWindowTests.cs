@@ -259,11 +259,13 @@ public class FocusEnforcerWindowTests
     }
 
     [Fact]
-    public async Task Handing_a_window_over_puts_the_overlay_right_below_it_and_takes_it_down()
+    public async Task Handing_a_window_over_takes_the_overlay_out_of_the_topmost_band_and_the_window_down()
     {
         var log = new ListLogger<FocusEnforcer>();
         using var overlay = TestWindow.Open("Anchor test overlay");
         using var offList = TestWindow.Open("Anchor test off-list app");
+        // The overlay comes up topmost.
+        MakeTopmost(overlay.Handle);
         var enforcer = new FocusEnforcer(log);
         // Held up for a moment, so it is still on screen when the test looks: a
         // minimized window drops to the bottom of the Z-order.
@@ -271,8 +273,11 @@ public class FocusEnforcerWindowTests
 
         var handOver = enforcer.HandOverAsync(offList.Handle, overlay.Handle);
 
-        // Windows hands the foreground to the window below the one that goes down.
-        Assert.Equal(overlay.Handle, NextVisibleWindowBelow(offList.Handle));
+        // Windows hands the foreground of a window that goes down to the first window
+        // from the top that is not topmost (#475). Where the overlay lands among the
+        // others is up to Windows, which a test process in the background does not
+        // always get its way with; the e2e ExtensionOffKeyboardTests sees the result.
+        Assert.False(IsTopmost(overlay.Handle), "The overlay was left in the topmost band, where Windows passes it over.");
         offList.Thaw();
         await handOver;
         Assert.True(
@@ -341,6 +346,7 @@ public class FocusEnforcerWindowTests
         var log = new ListLogger<FocusEnforcer>();
         using var overlay = TestWindow.Open("Anchor test overlay");
         using var browser = TestWindow.Open("Anchor test slow paused browser");
+        MakeTopmost(overlay.Handle);
         var enforcer = new FocusEnforcer(log);
         browser.Freeze();
 
@@ -348,8 +354,9 @@ public class FocusEnforcerWindowTests
         var second = enforcer.HandOverAsync(browser.Handle, overlay.Handle);
 
         Assert.Single(log.Messages, m => m.Contains("to minimize again"));
-        // The overlay is right below it all the same, for when the first one lands.
-        Assert.Equal(overlay.Handle, NextVisibleWindowBelow(browser.Handle));
+        // The overlay is out of the topmost band all the same, for when the first one
+        // lands.
+        Assert.False(IsTopmost(overlay.Handle), "The overlay was left in the topmost band, where Windows passes it over.");
         browser.Thaw();
         await Task.WhenAll(first, second);
         Assert.True(
@@ -365,6 +372,7 @@ public class FocusEnforcerWindowTests
         var log = new ListLogger<FocusEnforcer>();
         using var overlay = TestWindow.Open("Anchor test overlay");
         using var browser = TestWindow.Open("Anchor test paused browser");
+        MakeTopmost(overlay.Handle);
         var enforcer = new FocusEnforcer(log);
         await enforcer.HandOverAsync(browser.Handle, overlay.Handle);
         Assert.True(
@@ -375,6 +383,8 @@ public class FocusEnforcerWindowTests
         Assert.True(
             await WaitUntilAsync(() => browser.IsBackOnScreen, TimeSpan.FromSeconds(2)),
             "The window could not be brought back.");
+        // As the overlay is again once a hand-over is done.
+        MakeTopmost(overlay.Handle);
         await enforcer.HandOverAsync(browser.Handle, overlay.Handle);
 
         Assert.True(
@@ -383,17 +393,13 @@ public class FocusEnforcerWindowTests
         Assert.DoesNotContain(log.Messages, m => m.Contains("to minimize again"));
     }
 
-    /// <summary>The first visible window below <paramref name="hwnd"/> in the Z-order.</summary>
-    private static nint NextVisibleWindowBelow(nint hwnd)
-    {
-        var next = hwnd;
-        while ((next = NativeMethods.GetWindow(next, NativeMethods.GW_HWNDNEXT)) != IntPtr.Zero)
-        {
-            if (NativeMethods.IsWindowVisible(next))
-                return next;
-        }
-        return IntPtr.Zero;
-    }
+    private static bool IsTopmost(nint hwnd) =>
+        (NativeMethods.GetWindowLongW(hwnd, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOPMOST) != 0;
+
+    /// <summary>Puts <paramref name="hwnd"/> in the topmost band, as the overlay is shown.</summary>
+    private static void MakeTopmost(nint hwnd) =>
+        NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {

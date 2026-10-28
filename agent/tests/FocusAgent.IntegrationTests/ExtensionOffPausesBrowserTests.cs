@@ -183,12 +183,32 @@ public sealed class ExtensionOffReMinimizeTests
 /// the flaky part, so this runs in the non-blocking Visual lane, like
 /// <see cref="ExtensionOffReMinimizeTests"/>. A person using the desktop while it
 /// runs moves the foreground too; a failure message says when that happened.
+///
+/// #475: the agent takes a paused browser activated while minimized down by having
+/// it restore and then minimize itself, and the browser carries the minimize out
+/// whenever its app gets to it. The restore raises MINIMIZEEND, a second show of
+/// the overlay while that minimize is still on its way. That show put the overlay
+/// back in the topmost band until its own hand-over took it out again, and Windows
+/// gives the foreground of a window that goes down to the first window from the
+/// top that is not topmost: a browser that went down meanwhile handed the keyboard
+/// past the overlay, to an allowed app of the developer's, and the agent hid the
+/// overlay for it. That took the right moment at the speed of this box's Notepad
+/// and agent, so
+/// <see cref="WhileThePausedBrowserIsSlowToGoDown_TheOverlayStillGetsTheKeyboard"/>
+/// holds both for that moment, as a busy browser and a busy agent would.
 /// </summary>
 [Trait("Category", "Visual")]
 [Collection(AgentE2ECollection.Name)]
 [SupportedOSPlatform("windows")]
 public sealed class ExtensionOffKeyboardTests
 {
+    private const string ActivatingThePausedBrowser = "activating the paused browser";
+
+    // How long the spec holds the browser's app once the agent restored it: about
+    // as long as the agent takes to show the overlay again for that restore, and
+    // well within the moment the agent waits for the keyboard to come to it.
+    private static readonly TimeSpan HoldTheBrowser = TimeSpan.FromMilliseconds(200);
+
     private readonly BackendFixture _backend;
     public ExtensionOffKeyboardTests(BackendFixture backend) => _backend = backend;
 
@@ -200,33 +220,132 @@ public sealed class ExtensionOffKeyboardTests
     {
         var api = new BackendClient(_backend.Url);
         await using var run = await BrowserPauseRun.StartAsync(_backend.Url, api);
+        using var sampler = new ForegroundSampler(run.Agent.Pid);
+        sampler.Name(run.BrowserWindow, "browser");
+
+        await PauseWhileTheStudentIsInTheBrowserAsync(run, sampler);
+
+        // Then they click the paused browser's taskbar button, which first
+        // activates it while it is still minimized.
+        await ActivateThePausedBrowserAsync(run, sampler);
+        await AssertTheOverlayHasTheKeyboardAsync(run, sampler, ActivatingThePausedBrowser);
+    }
+
+    [Fact]
+    public async Task WhileThePausedBrowserIsSlowToGoDown_TheOverlayStillGetsTheKeyboard()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var run = await BrowserPauseRun.StartAsync(_backend.Url, api);
         var hwnd = run.BrowserWindow;
         using var sampler = new ForegroundSampler(run.Agent.Pid);
         sampler.Name(hwnd, "browser");
+        await PauseWhileTheStudentIsInTheBrowserAsync(run, sampler);
+        var overlay = WindowCapture.FindFullScreenWindow(run.Agent.Pid);
 
-        // The student is in the browser when they switch its extension off.
+        // The agent restores the browser the student activated, takes the overlay
+        // out of the topmost band and asks the browser to minimize itself. The
+        // browser's app is busy and gets to that a moment later: the spec holds it
+        // from the end of the restore, its MINIMIZEEND, which shows the overlay again.
+        await ActivateThePausedBrowserAsync(run, sampler);
+        Assert.True(
+            await WaitUntilAsync(
+                () => sampler.SawSince(ActivatingThePausedBrowser, hwnd, "restored") && !WindowCapture.IsTopmost(overlay),
+                TimeSpan.FromSeconds(3)),
+            "The agent did not restore the paused browser and take the overlay out of the topmost band to take the " +
+            $"keyboard over from it. Foreground: {sampler.Describe()}");
+        var backOnTop = false;
+        SuspendedProcess? agentHeld = null;
+        try
+        {
+            using (SuspendedProcess.Suspend(WindowCapture.ProcessIdOf(hwnd)))
+            {
+                var held = Stopwatch.StartNew();
+                while (held.Elapsed < HoldTheBrowser && !backOnTop)
+                {
+                    // Back in the topmost band while the browser has yet to go down,
+                    // the overlay is passed over when it does. The agent is held there
+                    // too, as a busy UI thread would be, until the browser went down.
+                    // A millisecond on, so the moment a window takes to go through
+                    // the band to the top of the others is no cause.
+                    backOnTop = BackOnTop(overlay, hwnd) && SpinFor(TimeSpan.FromMilliseconds(1)) && BackOnTop(overlay, hwnd);
+                    if (backOnTop)
+                        agentHeld = SuspendedProcess.Suspend(run.Agent.Pid);
+                }
+            }
+            Assert.True(
+                await WaitUntilAsync(() => WindowCapture.IsIconic(hwnd), TimeSpan.FromSeconds(3)),
+                $"The paused browser did not go down once its app got to it. Foreground: {sampler.Describe()}");
+            await Task.Delay(100);
+        }
+        finally
+        {
+            agentHeld?.Dispose();
+        }
+
+        await AssertTheOverlayHasTheKeyboardAsync(
+            run, sampler, "a paused browser slow to go down went down",
+            backOnTop ? " The overlay was back in the topmost band before the browser went down (#475)." : "");
+        Assert.False(
+            backOnTop,
+            "The overlay went back in the topmost band while the paused browser had yet to carry out the minimize " +
+            "that hands it the keyboard: a browser that goes down then hands the keyboard past it (#475). " +
+            $"Foreground: {sampler.Describe()}");
+    }
+
+    /// <summary>
+    /// The student is in the browser when they switch its extension off: the pause
+    /// takes it down, and the overlay has the keyboard.
+    /// </summary>
+    private async Task PauseWhileTheStudentIsInTheBrowserAsync(BrowserPauseRun run, ForegroundSampler sampler)
+    {
         sampler.Mark("switching the extension off");
         Assert.True(
-            WindowCapture.BringToForeground(hwnd),
+            WindowCapture.BringToForeground(run.BrowserWindow),
             $"The stand-in browser could not be brought to the foreground (foreground: {DescribeForeground()}).");
         _ownInput = WindowCapture.LastInputTick();
         await run.Extension.DisconnectAsync();
         await run.WaitForGuardAsync(
             g => g.State == "Paused", BrowserPauseRun.Grace + TimeSpan.FromSeconds(5), "the browser to be paused");
         await AssertTheOverlayHasTheKeyboardAsync(run, sampler, "the pause");
+    }
 
-        // Then they click the paused browser's taskbar button, which first
-        // activates it while it is still minimized.
-        sampler.Mark("activating the paused browser");
+    /// <summary>
+    /// Activates the paused browser while it is minimized, the first thing a click
+    /// on its taskbar button does.
+    /// </summary>
+    private async Task ActivateThePausedBrowserAsync(BrowserPauseRun run, ForegroundSampler sampler)
+    {
+        sampler.Mark(ActivatingThePausedBrowser);
         var activated = false;
         for (var attempt = 0; attempt < 3 && !activated; attempt++)
         {
-            activated = WindowCapture.ActivateOnce(hwnd);
+            activated = WindowCapture.ActivateOnce(run.BrowserWindow);
             if (!activated) await Task.Delay(200);
         }
         _ownInput = WindowCapture.LastInputTick();
         Assert.True(activated, "Windows refused to give the paused browser the foreground.");
-        await AssertTheOverlayHasTheKeyboardAsync(run, sampler, "activating the paused browser");
+    }
+
+    private static bool BackOnTop(IntPtr overlay, IntPtr browser) =>
+        WindowCapture.IsTopmost(overlay) && !WindowCapture.IsIconic(browser);
+
+    private static bool SpinFor(TimeSpan time)
+    {
+        var clock = Stopwatch.StartNew();
+        while (clock.Elapsed < time)
+            Thread.SpinWait(20);
+        return true;
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return true;
+            await Task.Delay(5);
+        }
+        return condition();
     }
 
     /// <summary>
@@ -234,7 +353,8 @@ public sealed class ExtensionOffKeyboardTests
     /// screen with the foreground, and keep it: a window that only had it for a
     /// moment would not get what the student types next.
     /// </summary>
-    private async Task AssertTheOverlayHasTheKeyboardAsync(BrowserPauseRun run, ForegroundSampler sampler, string step)
+    private async Task AssertTheOverlayHasTheKeyboardAsync(
+        BrowserPauseRun run, ForegroundSampler sampler, string step, string note = "")
     {
         var pid = run.Agent.Pid;
         var hwnd = run.BrowserWindow;
@@ -253,7 +373,7 @@ public sealed class ExtensionOffKeyboardTests
             $"The browser was not minimized after {step}.{Interference()} Foreground: {sampler.Describe()}");
         Assert.True(
             overlay != IntPtr.Zero,
-            $"The paused-browser overlay was not on screen after {step}.{Interference()} The agent's windows:\n" +
+            $"The paused-browser overlay was not on screen after {step}.{note}{Interference()} The agent's windows:\n" +
             $"{WindowCapture.DescribeWindows(pid)}Foreground: {sampler.Describe()}");
         var hold = DateTime.UtcNow + TimeSpan.FromSeconds(1);
         do
@@ -262,7 +382,7 @@ public sealed class ExtensionOffKeyboardTests
                 WindowCapture.ForegroundWindow() == overlay,
                 $"After {step} the keyboard went to {DescribeForeground()} instead of the paused-browser overlay; " +
                 $"the browser is {(WindowCapture.IsIconic(hwnd) ? "minimized" : "on screen")}. " +
-                $"What the student types goes to that window (#450).{Interference()} Foreground: {sampler.Describe()}");
+                $"What the student types goes to that window (#450).{note}{Interference()} Foreground: {sampler.Describe()}");
             await Task.Delay(100);
         }
         while (DateTime.UtcNow < hold);

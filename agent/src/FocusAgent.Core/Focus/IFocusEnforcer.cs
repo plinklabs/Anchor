@@ -45,14 +45,17 @@ public interface IFocusEnforcer
     /// Takes a blocked window down so that <paramref name="successorWindowHandle"/>,
     /// the focus overlay, gets the foreground and with it the keyboard (#441). The
     /// agent may not give its own window the foreground, so the successor is put
-    /// directly below the blocked window, and the blocked window minimizes itself:
-    /// Windows then activates the window below it. A blocked window that is already
+    /// above every app window, out of the topmost band, and the blocked window
+    /// minimizes itself: Windows then activates the first window from the top that
+    /// is on screen and not topmost (#475). A blocked window that is already
     /// minimized but still has the foreground is restored first, because a window
     /// that is minimized already hands nothing on when it is minimized again; one
     /// that is minimized without the foreground is left as it is. When the
     /// successor has the foreground already (the same window blocked twice), the
     /// window only goes down. The successor loses its topmost place for the
-    /// hand-over; the caller puts it back once the task completes. Never held up
+    /// hand-over; the caller puts it back once the task completes, and must not
+    /// before: back in the topmost band, it is passed over when the window goes
+    /// down (#475). Never held up
     /// by the blocked app. The task completes with true once the successor has the
     /// foreground, or with false when it did not get it within a short time (an
     /// app that is not responding).

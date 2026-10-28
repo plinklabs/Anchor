@@ -20,7 +20,8 @@ namespace FocusAgent.App.Focus;
 /// the foreground over from it through the enforcer, so the student's keystrokes
 /// come to the overlay. A show runs on the UI thread a moment after it is asked
 /// for, behind the shows asked for before it: one for a paused browser whose
-/// pause was lifted meanwhile is called off (#474).
+/// pause was lifted meanwhile is called off (#474), and one that comes while a
+/// hand-over is under way leaves the overlay where that hand-over put it (#475).
 /// </summary>
 [SupportedOSPlatform("windows10.0.17763.0")]
 public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
@@ -37,6 +38,10 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     private int _generation;
     // What the overlay shows while it is up, null while it is not (see Showing).
     private string? _showing;
+    // The hand-overs under way (UI thread only), and the window they are for: a
+    // closed window's hand-overs say nothing about the next one's.
+    private FocusOverlayWindow? _handingOver;
+    private int _handOversUnderWay;
 
     /// <summary>
     /// What the overlay shows while it is up: <c>Blocked</c> for a blocked app
@@ -168,21 +173,39 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
 
             update(window);
             Volatile.Write(ref _showing, content);
-            ApplyTopmostAndPosition(window);
-            if (windowHandle != IntPtr.Zero && _enforcer is not null)
+            var handsOver = windowHandle != IntPtr.Zero && _enforcer is not null;
+            var hwnd = WindowNative.GetWindowHandle(window);
+            // A hand-over under way took the overlay out of the topmost band, so
+            // that Windows hands it the foreground when the window goes down, which
+            // the window does whenever its app gets to it. Put back on top by this
+            // show, the overlay was passed over by a window that went down
+            // meanwhile, and an allowed app below got the keyboard (#475). While it
+            // is up, it is full screen already: leave it where it is.
+            if (!handsOver || !HandOverUnderWay(window) || !NativeMethods.IsWindowVisible(hwnd))
+                ApplyTopmostAndPosition(window);
+            if (handsOver)
             {
                 // The agent may not take the foreground, so the overlay is put
-                // below the window, which minimizes itself and so hands the
-                // foreground to it (#441). It must be on screen for that.
-                var hwnd = WindowNative.GetWindowHandle(window);
+                // above every app window, out of the topmost band, and the window
+                // minimizes itself and so hands the foreground to it (#441, #475).
+                // It must be on screen for that.
                 AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd)).Show(activateWindow: false);
-                var tookOver = await _enforcer.HandOverAsync(windowHandle, hwnd, stillWanted);
-                if (!_dispatcher.HasThreadAccess)
+                bool tookOver;
+                StartHandOver(window);
+                try
                 {
-                    _dispatcher.TryEnqueue(() => FinishShow(window, generation, tookOver, shown, takenFrom, stillWanted));
-                    return;
+                    tookOver = await _enforcer!.HandOverAsync(windowHandle, hwnd, stillWanted);
                 }
-                FinishShow(window, generation, tookOver, shown, takenFrom, stillWanted);
+                catch
+                {
+                    OnUiThread(() => EndHandOver(window));
+                    throw;
+                }
+                OnUiThread(() =>
+                {
+                    EndHandOver(window);
+                    FinishShow(window, generation, tookOver, shown, takenFrom, stillWanted);
+                });
                 return;
             }
             window.Activate();
@@ -194,6 +217,33 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
             Volatile.Write(ref _showing, null);
             TakeDownWithoutOverlay(windowHandle, stillWanted);
         }
+    }
+
+    private void OnUiThread(Action action)
+    {
+        if (_dispatcher.HasThreadAccess)
+            action();
+        else
+            _dispatcher.TryEnqueue(() => action());
+    }
+
+    private bool HandOverUnderWay(FocusOverlayWindow window) =>
+        _handOversUnderWay > 0 && ReferenceEquals(_handingOver, window);
+
+    private void StartHandOver(FocusOverlayWindow window)
+    {
+        if (!ReferenceEquals(_handingOver, window))
+        {
+            _handingOver = window;
+            _handOversUnderWay = 0;
+        }
+        _handOversUnderWay++;
+    }
+
+    private void EndHandOver(FocusOverlayWindow window)
+    {
+        if (ReferenceEquals(_handingOver, window) && _handOversUnderWay > 0)
+            _handOversUnderWay--;
     }
 
     /// <summary>
