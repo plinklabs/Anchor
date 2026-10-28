@@ -18,7 +18,9 @@ namespace FocusAgent.App.Focus;
 /// window down so the OS doesn't leave a phantom topmost handle. Shown for a
 /// blocked app (#441) or a paused browser (#450), it takes that window down and
 /// the foreground over from it through the enforcer, so the student's keystrokes
-/// come to the overlay.
+/// come to the overlay. A show runs on the UI thread a moment after it is asked
+/// for, behind the shows asked for before it: one for a paused browser whose
+/// pause was lifted meanwhile is called off (#474).
 /// </summary>
 [SupportedOSPlatform("windows10.0.17763.0")]
 public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
@@ -62,16 +64,22 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
             "Blocked",
             blockedWindowHandle,
             $"with {allowedRules.Count} allowed-app entries",
-            "the blocked app");
+            "the blocked app",
+            stillWanted: null);
 
-    public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle) =>
+    public void ShowBrowserPaused(
+        IReadOnlyList<AllowedAppRule> allowedRules,
+        BrowserPausedPrompt prompt,
+        nint pausedWindowHandle,
+        Func<bool>? stillPaused = null) =>
         Show(
             window => window.UpdateBrowserPausedContent(allowedRules, prompt),
             "BrowserPaused",
             pausedWindowHandle,
             $"for a paused {prompt.Browser.Value} with {allowedRules.Count} other allowed-app entries",
             // The paused browser's window (#450), or an app blocked meanwhile (#452).
-            $"0x{pausedWindowHandle:X}");
+            $"0x{pausedWindowHandle:X}",
+            stillPaused);
 
     /// <summary>
     /// Shows the overlay with the content <paramref name="update"/> puts in it
@@ -79,12 +87,16 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     /// <paramref name="windowHandle"/> (the blocked app, #441, the paused browser,
     /// #450, or an app blocked while the browser is paused, #452) down and the
     /// foreground over from it. The window still goes down when the overlay cannot
-    /// come up.
+    /// come up. Once <paramref name="stillWanted"/> returns false, the show is
+    /// called off and the window left as it is (#474).
     /// </summary>
-    private void Show(Action<FocusOverlayWindow> update, string content, nint windowHandle, string shown, string takenFrom)
+    private void Show(
+        Action<FocusOverlayWindow> update, string content, nint windowHandle, string shown, string takenFrom,
+        Func<bool>? stillWanted)
     {
-        if (_disposed || !_dispatcher.TryEnqueue(() => _ = ShowOnUiThreadAsync(update, content, windowHandle, shown, takenFrom)))
-            TakeDownWithoutOverlay(windowHandle);
+        if (_disposed || !_dispatcher.TryEnqueue(
+                () => _ = ShowOnUiThreadAsync(update, content, windowHandle, shown, takenFrom, stillWanted)))
+            TakeDownWithoutOverlay(windowHandle, stillWanted);
     }
 
     public void Hide()
@@ -134,8 +146,17 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     }
 
     private async Task ShowOnUiThreadAsync(
-        Action<FocusOverlayWindow> update, string content, nint windowHandle, string shown, string takenFrom)
+        Action<FocusOverlayWindow> update, string content, nint windowHandle, string shown, string takenFrom,
+        Func<bool>? stillWanted)
     {
+        if (!StillWanted(stillWanted))
+        {
+            // Asked for while the browser was paused, which it no longer is: the
+            // overlay would cover the browser the student just got back, and its
+            // hand-over minimize it (#474).
+            _log.LogInformation("Not showing the focus overlay {Shown}: the browser is no longer paused", shown);
+            return;
+        }
         var generation = ++_generation;
         try
         {
@@ -155,13 +176,13 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
                 // foreground to it (#441). It must be on screen for that.
                 var hwnd = WindowNative.GetWindowHandle(window);
                 AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(hwnd)).Show(activateWindow: false);
-                var tookOver = await _enforcer.HandOverAsync(windowHandle, hwnd);
+                var tookOver = await _enforcer.HandOverAsync(windowHandle, hwnd, stillWanted);
                 if (!_dispatcher.HasThreadAccess)
                 {
-                    _dispatcher.TryEnqueue(() => FinishShow(window, generation, tookOver, shown, takenFrom));
+                    _dispatcher.TryEnqueue(() => FinishShow(window, generation, tookOver, shown, takenFrom, stillWanted));
                     return;
                 }
-                FinishShow(window, generation, tookOver, shown, takenFrom);
+                FinishShow(window, generation, tookOver, shown, takenFrom, stillWanted);
                 return;
             }
             window.Activate();
@@ -171,7 +192,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         {
             _log.LogError(ex, "Focus overlay Show failed");
             Volatile.Write(ref _showing, null);
-            TakeDownWithoutOverlay(windowHandle);
+            TakeDownWithoutOverlay(windowHandle, stillWanted);
         }
     }
 
@@ -179,7 +200,8 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     /// After the hand-over: back on top of everything, unless a newer show, a hide
     /// or a close came meanwhile.
     /// </summary>
-    private void FinishShow(FocusOverlayWindow window, int generation, bool tookOver, string shown, string takenFrom)
+    private void FinishShow(
+        FocusOverlayWindow window, int generation, bool tookOver, string shown, string takenFrom, Func<bool>? stillWanted)
     {
         if (generation != _generation)
             return;
@@ -190,6 +212,10 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
             if (tookOver)
                 _log.LogInformation(
                     "Focus overlay shown {Shown}; it took the keyboard over from {TakenFrom}", shown, takenFrom);
+            else if (!StillWanted(stillWanted))
+                _log.LogInformation(
+                    "Focus overlay shown {Shown}; {TakenFrom} was left as it is: the browser is no longer paused",
+                    shown, takenFrom);
             else
                 _log.LogWarning(
                     "Focus overlay shown {Shown}, but it did not get the keyboard from {TakenFrom}", shown, takenFrom);
@@ -200,12 +226,26 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         }
     }
 
-    /// <summary>The blocked or paused window still goes down when the overlay cannot come up.</summary>
-    private void TakeDownWithoutOverlay(nint windowHandle)
+    /// <summary>
+    /// The blocked or paused window still goes down when the overlay cannot come
+    /// up, unless <paramref name="stillWanted"/> says it no longer has to (#474).
+    /// </summary>
+    private void TakeDownWithoutOverlay(nint windowHandle, Func<bool>? stillWanted)
     {
-        if (windowHandle == IntPtr.Zero || _enforcer is null) return;
+        if (windowHandle == IntPtr.Zero || _enforcer is null || !StillWanted(stillWanted)) return;
         try { _enforcer.Minimize(windowHandle); }
         catch (Exception ex) { _log.LogWarning(ex, "Minimizing the window without the overlay failed"); }
+    }
+
+    private bool StillWanted(Func<bool>? stillWanted)
+    {
+        if (stillWanted is null) return true;
+        try { return stillWanted(); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Asking whether the focus overlay is still wanted threw; showing it");
+            return true;
+        }
     }
 
     private void HideOnUiThread()

@@ -701,6 +701,60 @@ public class FocusSessionControllerTests
         Assert.False(withoutGuard.TurnExtensionBackOn());
     }
 
+    // --- #474: the overlay gets to a paused Edge window a moment later ----------
+
+    [Fact]
+    public async Task A_paused_edge_window_goes_down_only_while_the_pause_lasts_even_once_its_extension_reconnects()
+    {
+        // The overlay gets to each show, and to the hand-over that takes the window
+        // down, a moment after it is asked for, behind the shows asked for before
+        // it. Asked for while Edge was paused, a hand-over carried out after the
+        // extension reconnected minimized the Edge window the student had just
+        // brought back.
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
+        fixtures.Clock.Advance(ExtensionGrace);
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+
+        Assert.Equal(new[] { (nint)0x20, (nint)0x20 }, fixtures.Overlay.PausedShown.Select(s => s.PausedWindow).ToArray());
+        var stillPaused = fixtures.Overlay.PausedShown.Select(s => s.StillPaused).ToArray();
+        Assert.All(stillPaused, still => Assert.True(still?.Invoke(), "A paused Edge window was not to go down while Edge is paused."));
+
+        fixtures.Transport.RaiseConnected();
+
+        Assert.All(stillPaused, still => Assert.False(still!(), "A paused Edge window was still to go down after the extension reconnected."));
+    }
+
+    [Fact]
+    public async Task A_paused_edge_window_is_left_up_once_the_student_opens_the_repair_window()
+    {
+        // The overlay's "turn it back on" brings Edge forward: a hand-over still on
+        // its way would take it down again.
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
+        fixtures.Clock.Advance(ExtensionGrace);
+        var shown = Assert.Single(fixtures.Overlay.PausedShown);
+
+        Assert.True(shown.Prompt.TurnBackOn());
+
+        Assert.False(shown.StillPaused!(), "A paused Edge window was still to go down once the repair window opened.");
+    }
+
+    [Fact]
+    public async Task An_app_blocked_while_edge_is_paused_goes_down_even_once_the_pause_lifts()
+    {
+        // Off the list whatever the extension does: the overlay takes it down
+        // regardless (#452).
+        var (_, fixtures, _) = await JoinThenSwitchExtensionOffAsync();
+        fixtures.Clock.Advance(ExtensionGrace);
+
+        fixtures.Watcher.Raise(ForegroundFor("spotify", hwnd: 0x40));
+
+        var shown = fixtures.Overlay.PausedShown[^1];
+        Assert.Equal((nint)0x40, shown.PausedWindow);
+        Assert.Null(shown.StillPaused);
+    }
+
     // --- #452: a paused Edge window is no fallback after a block ---------------
 
     [Fact]
@@ -1158,7 +1212,8 @@ public class FocusSessionControllerTests
             Blocked.Add(offendingWindowHandle);
             return BlockRestoresFallback;
         }
-        public Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle) =>
+        public Task<bool> HandOverAsync(
+            nint offendingWindowHandle, nint successorWindowHandle, Func<bool>? stillToGoDown = null) =>
             Task.FromResult(true);
         /// <summary>
         /// The foreground window per app window (#450): the window itself, or a
@@ -1185,7 +1240,7 @@ public class FocusSessionControllerTests
         /// as an overlay that cannot come up.
         /// </summary>
         public Exception? ShowThrows { get; set; }
-        public List<(IReadOnlyList<AllowedAppRule> Rules, BrowserPausedPrompt Prompt, nint PausedWindow)> PausedShown { get; } = new();
+        public List<(IReadOnlyList<AllowedAppRule> Rules, BrowserPausedPrompt Prompt, nint PausedWindow, Func<bool>? StillPaused)> PausedShown { get; } = new();
         public int HideCount { get; private set; }
         public int CloseCount { get; private set; }
         public void Show(IReadOnlyList<AllowedAppRule> allowedRules, string? blockedAppName, nint blockedWindowHandle)
@@ -1193,10 +1248,12 @@ public class FocusSessionControllerTests
             if (ShowThrows is { } ex) throw ex;
             Shown.Add((allowedRules, blockedAppName, blockedWindowHandle));
         }
-        public void ShowBrowserPaused(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle)
+        public void ShowBrowserPaused(
+            IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt, nint pausedWindowHandle,
+            Func<bool>? stillPaused = null)
         {
             if (ShowThrows is { } ex) throw ex;
-            PausedShown.Add((allowedRules, prompt, pausedWindowHandle));
+            PausedShown.Add((allowedRules, prompt, pausedWindowHandle, stillPaused));
         }
         public void Hide() => HideCount++;
         public void Close() => CloseCount++;

@@ -56,8 +56,22 @@ public interface IFocusEnforcer
     /// by the blocked app. The task completes with true once the successor has the
     /// foreground, or with false when it did not get it within a short time (an
     /// app that is not responding).
+    /// <para>
+    /// The window carries its minimize out whenever its app gets to it, after what
+    /// it is asked meanwhile, such as the student's restore: a second minimize still
+    /// on its way then takes the window down again. So it is not asked to minimize
+    /// while a minimize a hand-over asked of it is still on its way, nor when it is
+    /// down already and the successor has the keyboard (#474).
+    /// <paramref name="stillToGoDown"/>, checked right before the window is restored
+    /// or minimized, calls the hand-over off when it returns false, leaving the
+    /// window as it is: a paused browser whose pause was lifted meanwhile (#474).
+    /// The task then completes with false.
+    /// </para>
     /// </summary>
-    Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle);
+    Task<bool> HandOverAsync(
+        nint offendingWindowHandle,
+        nint successorWindowHandle,
+        Func<bool>? stillToGoDown = null);
 
     /// <summary>
     /// The foreground window, the one the student's keystrokes go to, when it is

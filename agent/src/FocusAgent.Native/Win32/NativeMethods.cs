@@ -9,6 +9,7 @@ internal static class NativeMethods
     public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
     public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
     public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    public const uint EVENT_SYSTEM_MINIMIZESTART = 0x0016;
     public const uint EVENT_SYSTEM_MINIMIZEEND = 0x0017;
 
     // ShowWindow
@@ -151,4 +152,20 @@ internal static class NativeMethods
     /// its root (the window itself when it has no owner).
     /// </summary>
     public const uint GA_ROOTOWNER = 3;
+
+    // A message loop of its own, for an out-of-context WinEvent hook (#474).
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public nint hwnd;
+        public uint message;
+        public nint wParam;
+        public nint lParam;
+        public uint time;
+        public int x;
+        public int y;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern int GetMessageW(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
 }

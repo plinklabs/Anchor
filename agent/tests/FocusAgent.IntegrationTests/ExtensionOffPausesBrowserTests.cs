@@ -106,6 +106,13 @@ public sealed class ExtensionOffPausesBrowserTests
 /// the extension reconnects. Relies on the real foreground hook's MINIMIZEEND
 /// events, so it runs in the non-blocking Visual lane like
 /// <see cref="ReMinimizeOnRestoreTests"/>.
+///
+/// Its control step, a restore after the reconnect that sticks, also catches a
+/// minimize from the pause that lands after it lifted (#474): a hand-over the
+/// overlay got to only after the reconnect, or a second minimize asked of the
+/// window for one restore, which Notepad carried out after the spec's restore.
+/// The failure messages list the browser's minimizes and restores to tell them
+/// apart.
 /// </summary>
 [Trait("Category", "Visual")]
 [Collection(AgentE2ECollection.Name)]
@@ -123,6 +130,8 @@ public sealed class ExtensionOffReMinimizeTests
         var api = new BackendClient(_backend.Url);
         await using var run = await BrowserPauseRun.StartAsync(_backend.Url, api);
         var hwnd = run.BrowserWindow;
+        using var sampler = new ForegroundSampler(run.Agent.Pid);
+        sampler.Name(hwnd, "browser");
 
         await run.Extension.DisconnectAsync();
         await run.WaitForGuardAsync(
@@ -141,14 +150,18 @@ public sealed class ExtensionOffReMinimizeTests
 
         // Control: once the extension is back, a restore sticks — so the
         // re-minimizes above were the pause, not a restore that never happened.
+        sampler.Mark("reconnecting the extension");
         await run.Extension.ConnectAsync();
         await run.WaitForGuardAsync(g => g.State == "Present", TimeSpan.FromSeconds(5), "the pause to lift");
+        sampler.Mark("restoring the browser after the reconnect");
         WindowCapture.RestoreWindow(hwnd);
         Assert.True(
             await BrowserPauseRun.WaitForIconicAsync(hwnd, expected: false, TimeSpan.FromSeconds(5)),
-            "After the extension reconnected, restoring the browser did not un-minimize it.");
+            $"After the extension reconnected, restoring the browser did not un-minimize it. Foreground: {sampler.Describe()}");
         await Task.Delay(TimeSpan.FromSeconds(1));
-        Assert.False(WindowCapture.IsIconic(hwnd), "The browser was minimized again after the extension reconnected.");
+        Assert.False(
+            WindowCapture.IsIconic(hwnd),
+            $"The browser was minimized again after the extension reconnected (#474). Foreground: {sampler.Describe()}");
     }
 }
 

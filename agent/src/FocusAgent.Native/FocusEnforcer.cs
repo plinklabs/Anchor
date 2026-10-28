@@ -23,7 +23,9 @@ namespace FocusAgent.Native;
 /// (#453): it comes back the moment its app responds. With no
 /// allowed window to fall back to, or for a paused browser (#450), the focus
 /// overlay is put directly below the window before it minimizes itself, so the
-/// overlay is the window Windows hands the foreground to (#441).
+/// overlay is the window Windows hands the foreground to (#441). A hand-over never
+/// asks a window to minimize while an earlier minimize is on its way to it, nor
+/// once its caller no longer wants the window down (#474).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class FocusEnforcer : IFocusEnforcer
@@ -63,6 +65,13 @@ public sealed class FocusEnforcer : IFocusEnforcer
 
     private static readonly TimeSpan HandOverPollInterval = TimeSpan.FromMilliseconds(15);
 
+    /// <summary>
+    /// How long a minimize a hand-over asked of a window counts as on its way when
+    /// the window does not go down (#474): an app that is not responding. A
+    /// hand-over after that asks again.
+    /// </summary>
+    internal static readonly TimeSpan MinimizeOnItsWayLimit = TimeSpan.FromSeconds(2);
+
     private readonly ILogger<FocusEnforcer> _log;
     private readonly object _gate = new();
     private readonly ConcurrentDictionary<nint, long> _pendingMinimizes = new();
@@ -71,10 +80,15 @@ public sealed class FocusEnforcer : IFocusEnforcer
     private nint _lastAllowed;
     private nint _lastRestoredToHandOver;
     private long _lastRestoredToHandOverAt;
+    // The windows a hand-over asked to minimize that have not started to go down
+    // yet, with when it asked (Environment.TickCount64, #474). Guarded by _gate.
+    private readonly Dictionary<nint, long> _minimizeOnItsWay = new();
+    private readonly MinimizeStartWatcher _minimizeStarts;
 
     public FocusEnforcer(ILogger<FocusEnforcer>? log = null)
     {
         _log = log ?? NullLogger<FocusEnforcer>.Instance;
+        _minimizeStarts = new MinimizeStartWatcher(OnMinimizeStart, _log);
     }
 
     /// <summary>
@@ -157,9 +171,10 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// </summary>
     public void Minimize(nint windowHandle) => Minimize(windowHandle, onOwnThread: false);
 
-    private void Minimize(nint windowHandle, bool onOwnThread)
+    /// <summary>Returns whether a window was asked to go down.</summary>
+    private bool Minimize(nint windowHandle, bool onOwnThread)
     {
-        if (windowHandle == IntPtr.Zero) return;
+        if (windowHandle == IntPtr.Zero) return false;
 
         var root = AppWindowOf(windowHandle);
         var owner = root == windowHandle ? IntPtr.Zero : root;
@@ -167,10 +182,12 @@ public sealed class FocusEnforcer : IFocusEnforcer
             hasVisibleOwner: owner != IntPtr.Zero && NativeMethods.IsWindowVisible(owner),
             ownerMinimized: owner != IntPtr.Zero && NativeMethods.IsIconic(owner),
             windowShown: NativeMethods.IsWindowVisible(windowHandle) && !NativeMethods.IsIconic(windowHandle));
+        var asked = false;
         if (minimizeOwner)
-            MinimizeWindow(owner, onOwnThread);
+            asked |= MinimizeWindow(owner, onOwnThread);
         if (minimizeWindow)
-            MinimizeWindow(windowHandle, onOwnThread);
+            asked |= MinimizeWindow(windowHandle, onOwnThread);
+        return asked;
     }
 
     /// <summary>
@@ -209,27 +226,30 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// Minimizes one window: from the agent (<see cref="MinimizeFromAgent"/>), or by
     /// posting the request to the window's thread (<paramref name="onOwnThread"/>,
     /// #438). The posted request never holds up the agent, and the window's thread
-    /// carries it out with the foreground rights it has.
+    /// carries it out with the foreground rights it has. Returns whether it was
+    /// asked.
     /// </summary>
-    private void MinimizeWindow(nint windowHandle, bool onOwnThread)
+    private bool MinimizeWindow(nint windowHandle, bool onOwnThread)
     {
         try
         {
             if (!onOwnThread)
             {
                 MinimizeFromAgent(windowHandle);
-                return;
+                return true;
             }
             if (!NativeMethods.ShowWindowAsync(windowHandle, NativeMethods.SW_MINIMIZE))
             {
                 _log.LogWarning("ShowWindowAsync(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
-                return;
+                return false;
             }
             _ = WarnIfNotMinimizedAsync(windowHandle);
+            return true;
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Minimizing threw for 0x{Hwnd:X}", windowHandle);
+            return false;
         }
     }
 
@@ -441,9 +461,13 @@ public sealed class FocusEnforcer : IFocusEnforcer
         return minimized ? FallbackPlan.Restore : FallbackPlan.OnScreen;
     }
 
-    public async Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle)
+    public async Task<bool> HandOverAsync(
+        nint offendingWindowHandle,
+        nint successorWindowHandle,
+        Func<bool>? stillToGoDown = null)
     {
         if (offendingWindowHandle == IntPtr.Zero) return false;
+        if (!StillToGoDown(offendingWindowHandle, stillToGoDown)) return false;
         if (successorWindowHandle == IntPtr.Zero || !NativeMethods.IsWindow(successorWindowHandle))
         {
             // Nothing to hand over to: the window goes down all the same.
@@ -458,7 +482,10 @@ public sealed class FocusEnforcer : IFocusEnforcer
             // raises MINIMIZEEND once more). Only make sure the window goes down. The
             // successor stays where it is: put below a minimized window, at the bottom
             // of the Z-order, it would lose the foreground to the window on top.
-            Minimize(offendingWindowHandle, onOwnThread: true);
+            if (AsksToMinimizeWithTheKeyboardHandedOver(minimized: NativeMethods.IsIconic(offendingWindowHandle)))
+                AskToMinimize(offendingWindowHandle);
+            else
+                _log.LogDebug("Not asking 0x{Hwnd:X} to minimize: it is down, and the successor has the keyboard", offendingWindowHandle);
             return true;
         }
 
@@ -474,10 +501,15 @@ public sealed class FocusEnforcer : IFocusEnforcer
             // more, so minimizing it next hands the foreground on. The successor goes
             // below it only once it is back on top.
             _log.LogDebug("Restoring minimized 0x{Hwnd:X}, which has the foreground, to hand it over", offendingWindowHandle);
+            // A minimize still on its way to it lands before this restore, so it does
+            // not take the window down for this hand-over (#474).
+            lock (_gate)
+                _minimizeOnItsWay.Remove(offendingWindowHandle);
             try { NativeMethods.ShowWindowAsync(offendingWindowHandle, NativeMethods.SW_RESTORE); }
             catch (Exception ex) { _log.LogError(ex, "ShowWindowAsync(SW_RESTORE) threw for 0x{Hwnd:X}", offendingWindowHandle); }
             await WaitUntilAsync(() => !NativeMethods.IsIconic(offendingWindowHandle), OwnThreadMinimizeTimeout)
                 .ConfigureAwait(false);
+            if (!StillToGoDown(offendingWindowHandle, stillToGoDown)) return false;
         }
         if (plan != HandOverPlan.AlreadyDown)
         {
@@ -494,7 +526,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
             {
                 _log.LogError(ex, "SetWindowPos threw putting 0x{Successor:X} below 0x{Hwnd:X}", successorWindowHandle, offendingWindowHandle);
             }
-            Minimize(offendingWindowHandle, onOwnThread: true);
+            AskToMinimize(offendingWindowHandle);
         }
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -513,6 +545,105 @@ public sealed class FocusEnforcer : IFocusEnforcer
             foreground, ClassNameOf(foreground));
         return false;
     }
+
+    /// <summary>
+    /// Whether <see cref="HandOverAsync"/> still takes <paramref name="windowHandle"/>
+    /// down: not once its caller's <paramref name="stillToGoDown"/> says no (#474).
+    /// </summary>
+    private bool StillToGoDown(nint windowHandle, Func<bool>? stillToGoDown)
+    {
+        if (stillToGoDown is null) return true;
+        bool still;
+        try { still = stillToGoDown(); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Asking whether 0x{Hwnd:X} still has to go down threw; taking it down", windowHandle);
+            return true;
+        }
+        if (!still)
+            _log.LogDebug("Not handing 0x{Hwnd:X} over: it no longer has to go down", windowHandle);
+        return still;
+    }
+
+    /// <summary>
+    /// Asks <paramref name="windowHandle"/> to minimize itself for a hand-over, unless
+    /// a minimize a hand-over asked of it earlier is still on its way (#474). Its app
+    /// carries the request out when it gets to it, after what it is asked meanwhile:
+    /// a restore the student sends while the minimize waits, which the minimize then
+    /// undoes. The two events of one restore (MINIMIZEEND and FOREGROUND) each ask
+    /// for a hand-over, and the overlay gets to them a moment apart: each asked for a
+    /// minimize, so an app slow to get to them, as the e2e's Notepad is, had one left
+    /// to carry out after the restore the student made once the pause lifted.
+    /// </summary>
+    private void AskToMinimize(nint windowHandle)
+    {
+        var tracked = _minimizeStarts.EnsureStarted();
+        var now = Environment.TickCount64;
+        lock (_gate)
+        {
+            if (tracked && MinimizeStillOnItsWay(_minimizeOnItsWay.TryGetValue(windowHandle, out var at) ? at : null, now))
+            {
+                _log.LogDebug(
+                    "Not asking 0x{Hwnd:X} to minimize again: the minimize a hand-over asked of it is still on its way",
+                    windowHandle);
+                return;
+            }
+            // Before it is asked, so a window that goes down at once is not left
+            // counted as on its way.
+            if (tracked)
+                _minimizeOnItsWay[windowHandle] = now;
+        }
+        if (!Minimize(windowHandle, onOwnThread: true) && tracked)
+        {
+            // Nothing was asked to go down (a dialog already out of sight with the
+            // window that owns it): nothing is on its way.
+            lock (_gate)
+            {
+                if (_minimizeOnItsWay.TryGetValue(windowHandle, out var at) && at == now)
+                    _minimizeOnItsWay.Remove(windowHandle);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the minimize a hand-over asked of a window at <paramref name="askedAt"/>
+    /// (null when none is waiting) still counts as on its way at <paramref name="now"/>
+    /// (both <see cref="Environment.TickCount64"/>), factored out as a pure decision so
+    /// it is unit-testable without a live desktop: until the window starts to go
+    /// down, or for no longer than <see cref="MinimizeOnItsWayLimit"/> when its app
+    /// is not responding.
+    /// </summary>
+    internal static bool MinimizeStillOnItsWay(long? askedAt, long now) =>
+        askedAt is { } at && now - at < (long)MinimizeOnItsWayLimit.TotalMilliseconds;
+
+    /// <summary>
+    /// A window started to go down: the minimize a hand-over asked of it, or of a
+    /// dialog it owns (#428), is no longer on its way.
+    /// </summary>
+    private void OnMinimizeStart(nint windowHandle)
+    {
+        lock (_gate)
+        {
+            if (_minimizeOnItsWay.Count == 0) return;
+            foreach (var asked in _minimizeOnItsWay.Keys.ToArray())
+            {
+                if (asked == windowHandle || AppWindowOf(asked) == windowHandle)
+                    _minimizeOnItsWay.Remove(asked);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a hand-over whose successor has the keyboard already asks the window
+    /// to minimize, factored out as a pure decision so it is unit-testable without a
+    /// live desktop: only while the window is on screen. Minimized already, it has
+    /// nothing to take down now, and the request would wait in its app's queue until
+    /// the app got to it, after a restore the student sends meanwhile: the window
+    /// went down once more. The MINIMIZEEND of a restore that a hand-over made
+    /// reaches the agent only after that hand-over asked the window to minimize, so
+    /// it asked for a second minimize of a window already down (#474).
+    /// </summary>
+    internal static bool AsksToMinimizeWithTheKeyboardHandedOver(bool minimized) => !minimized;
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
@@ -600,6 +731,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
         {
             _lastAllowed = IntPtr.Zero;
             _lastRestoredToHandOver = IntPtr.Zero;
+            _minimizeOnItsWay.Clear();
         }
     }
 }

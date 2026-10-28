@@ -170,4 +170,44 @@ public class FocusEnforcerTests
     {
         Assert.False(FocusEnforcer.IsWindowOrItsDialog(window: 0x10, windowsAppWindow: 0x10, appWindow: 0x20));
     }
+
+    [Theory]
+    [InlineData(0)]     // asked to a moment ago
+    [InlineData(1_999)] // its app is slow to get to it
+    public void A_minimize_asked_of_a_window_is_on_its_way_until_the_window_goes_down(long sinceMs)
+    {
+        // #474: a second one would be carried out after a restore the student sends
+        // meanwhile, and take the window down once more.
+        Assert.True(FocusEnforcer.MinimizeStillOnItsWay(askedAt: 10_000, now: 10_000 + sinceMs));
+    }
+
+    [Fact]
+    public void A_minimize_its_app_has_not_got_to_for_a_while_is_asked_for_again()
+    {
+        // The app is not responding: one more request waiting for it is no harm.
+        Assert.False(FocusEnforcer.MinimizeStillOnItsWay(
+            askedAt: 10_000, now: 10_000 + (long)FocusEnforcer.MinimizeOnItsWayLimit.TotalMilliseconds));
+    }
+
+    [Fact]
+    public void A_window_with_no_minimize_on_its_way_is_asked_to_minimize()
+    {
+        Assert.False(FocusEnforcer.MinimizeStillOnItsWay(askedAt: null, now: 10_000));
+    }
+
+    [Fact]
+    public void With_the_keyboard_handed_over_a_window_already_down_is_not_asked_to_minimize()
+    {
+        // #474: nothing to take down now; the request would wait in the app's queue
+        // and land after a restore the student sends meanwhile.
+        Assert.False(FocusEnforcer.AsksToMinimizeWithTheKeyboardHandedOver(minimized: true));
+    }
+
+    [Fact]
+    public void With_the_keyboard_handed_over_a_window_on_screen_is_still_taken_down()
+    {
+        // A second block of the same window, which the restore to hand it over put
+        // back on screen.
+        Assert.True(FocusEnforcer.AsksToMinimizeWithTheKeyboardHandedOver(minimized: false));
+    }
 }

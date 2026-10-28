@@ -130,7 +130,9 @@ public class AppIdentifierTests
         public bool RememberAllowed(nint windowHandle) => true;
         public void Minimize(nint windowHandle) { }
         public bool Block(nint offendingWindowHandle) => false;
-        public Task<bool> HandOverAsync(nint offendingWindowHandle, nint successorWindowHandle) => Task.FromResult(false);
+        public Task<bool> HandOverAsync(
+            nint offendingWindowHandle, nint successorWindowHandle, Func<bool>? stillToGoDown = null) =>
+            Task.FromResult(false);
         public nint ForegroundWindowOf(nint windowHandle) => IntPtr.Zero;
         public void Reset() { }
     }

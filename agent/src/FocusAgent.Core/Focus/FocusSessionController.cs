@@ -310,22 +310,30 @@ public sealed class FocusSessionController : IAsyncDisposable
             _log.LogWarning(
                 "Paused the browser in session {SessionId}: taking {Paused} window(s) down until its extension reconnects; the overlay takes the keyboard over from 0x{Foreground:X}",
                 sessionId, paused, handedOver);
-        ShowBrowserPausedOverlay(_guard, matcher, handedOver);
+        ShowBrowserPausedOverlay(_guard, matcher, handedOver, browserWindow: true);
     }
 
     /// <summary>
     /// Tells the student Edge is paused. <paramref name="pausedWindow"/>, an Edge
-    /// window that has the foreground (#450) or an app blocked while Edge is paused
-    /// (#452), goes to the overlay, which takes it down and the keyboard over from
-    /// it; it is minimized without the overlay when the overlay cannot come up.
+    /// window that has the foreground (#450, <paramref name="browserWindow"/>) or an
+    /// app blocked while Edge is paused (#452), goes to the overlay, which takes it
+    /// down and the keyboard over from it; it is minimized without the overlay when
+    /// the overlay cannot come up.
     /// </summary>
-    private void ShowBrowserPausedOverlay(ExtensionGuard guard, AllowlistMatcher matcher, nint pausedWindow)
+    private void ShowBrowserPausedOverlay(
+        ExtensionGuard guard, AllowlistMatcher matcher, nint pausedWindow, bool browserWindow)
     {
         // A paused Edge is no way back, so leave it out of the allowed-app rows;
         // the prompt's own action is how the student gets Edge again.
         var others = matcher.UserRules.Where(r => !guard.IsBrowserRule(r)).ToArray();
         var prompt = new BrowserPausedPrompt(guard.BrowserRule, guard.RepairWindow, TurnExtensionBackOn);
-        try { _overlay.ShowBrowserPaused(others, prompt, pausedWindow); }
+        // Edge goes down only while the pause lasts. The overlay gets to this show,
+        // and to taking the window down, a moment later, behind the shows asked for
+        // before it: by then the extension may be back, or the repair window open,
+        // and a minimize would take down the Edge the student just got back (#474).
+        // An app blocked while Edge is paused goes down regardless.
+        Func<bool>? stillPaused = browserWindow ? () => guard.IsBrowserPaused : null;
+        try { _overlay.ShowBrowserPaused(others, prompt, pausedWindow, stillPaused); }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Overlay.ShowBrowserPaused threw; minimizing the window without it");
@@ -425,7 +433,7 @@ public sealed class FocusSessionController : IAsyncDisposable
                 _log.LogWarning(
                     "Pausing {ProcessName} (pid={Pid}) in session {SessionId}: its extension is off",
                     app.ProcessName, change.ProcessId, id);
-                ShowBrowserPausedOverlay(pausing, matcher, change.WindowHandle);
+                ShowBrowserPausedOverlay(pausing, matcher, change.WindowHandle, browserWindow: true);
             }
             else
             {
@@ -454,7 +462,7 @@ public sealed class FocusSessionController : IAsyncDisposable
                         _log.LogInformation(
                             "No allowed-window fallback after blocking {ProcessName} while {Browser} is paused; surfacing the paused-browser overlay",
                             app.ProcessName, pauseGuard.BrowserRule.Value);
-                    ShowBrowserPausedOverlay(pauseGuard, matcher, change.WindowHandle);
+                    ShowBrowserPausedOverlay(pauseGuard, matcher, change.WindowHandle, browserWindow: false);
                 }
                 else if (!restored)
                 {
