@@ -586,6 +586,160 @@ class AppLocalizationsNl extends AppLocalizations {
       'Zelf meedoen? Gebruik \'Deelnemen met code\' in de agent.';
 
   @override
+  String get alertsTitle => 'Meldingen';
+
+  @override
+  String get alertsIntro =>
+      'Tijdens een live sessie laat het dashboard je weten wanneer er iets voor je is, ook als het in een tabblad op de achtergrond staat: het speelt een kort geluid, de titel van het tabblad telt wat je nog niet gezien hebt, en pop-ups, als je ze aanzet, tonen het boven andere apps.';
+
+  @override
+  String get alertsSound => 'Geluid afspelen';
+
+  @override
+  String get alertsCategoriesLabel => 'Waarschuw me als';
+
+  @override
+  String get alertsAccessRequest => 'Een leerling toegang vraagt tot een site';
+
+  @override
+  String get alertsStudentLeft => 'Een leerling de sessie verlaat of weigert';
+
+  @override
+  String get alertsAgentLost =>
+      'De agent van een leerling niet meer rapporteert';
+
+  @override
+  String get alertsTamper => 'Er manipulatie gedetecteerd wordt';
+
+  @override
+  String get alertsKeptInBrowser =>
+      'Deze instellingen worden in deze browser bewaard.';
+
+  @override
+  String get alertsTest => 'Testen';
+
+  @override
+  String get alertsSoundBlocked => 'Klik ergens om het geluid aan te zetten.';
+
+  @override
+  String get alertsPopups => 'Pop-ups tonen';
+
+  @override
+  String get alertsPopupsNotAsked =>
+      'Je browser vraagt om toestemming wanneer je ze aanzet.';
+
+  @override
+  String get alertsPopupsAllowed => 'Toegestaan in deze browser.';
+
+  @override
+  String get alertsPopupsBlocked => 'Geblokkeerd in deze browser.';
+
+  @override
+  String get alertsPopupsUnsupported => 'Deze browser kan geen pop-ups tonen.';
+
+  @override
+  String get alertsPopupsHowToAllow =>
+      'Zo sta je pop-ups toe in Edge of Chrome:';
+
+  @override
+  String get alertsPopupsStepIcon =>
+      '1. Klik op het pictogram links van de adresbalk.';
+
+  @override
+  String get alertsPopupsStepAllow => '2. Zet Meldingen op Toestaan.';
+
+  @override
+  String get alertsPopupsStepReload => '3. Laad de pagina opnieuw.';
+
+  @override
+  String get alertsPopupsWindows =>
+      'Nog steeds geen pop-ups? Kijk na of meldingen voor je browser aan staan in Windows: Instellingen → Systeem → Meldingen.';
+
+  @override
+  String get alertsPopupNames =>
+      'Namen van leerlingen en sites tonen in pop-ups';
+
+  @override
+  String get alertsPopupNamesHint =>
+      'Staat dit uit, dan zegt een pop-up alleen wat er gebeurde, voor als je scherm geprojecteerd wordt.';
+
+  @override
+  String alertsPopupAccessRequest(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Nieuwe toegangsvragen ($count)',
+      one: 'Nieuwe toegangsvraag',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupStudentLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Leerlingen verlieten de sessie ($count)',
+      one: 'Een leerling verliet de sessie',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupAgentLost(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Agents rapporteren niet meer ($count)',
+      one: 'De agent van een leerling rapporteert niet meer',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupTamper(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Manipulatie gedetecteerd ($count)',
+      one: 'Manipulatie gedetecteerd',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupAsks(String name, String host) {
+    return '$name vraagt toegang tot $host';
+  }
+
+  @override
+  String alertsPopupLeft(String name) {
+    return '$name verliet de sessie';
+  }
+
+  @override
+  String alertsPopupDeclined(String name) {
+    return '$name weigerde de sessie';
+  }
+
+  @override
+  String alertsPopupAgentLostOf(String name) {
+    return 'De agent van $name rapporteert niet meer';
+  }
+
+  @override
+  String alertsPopupTamperOf(String name) {
+    return 'Manipulatie gedetecteerd op de computer van $name';
+  }
+
+  @override
+  String get alertsPopupTestTitle => 'Test-pop-up';
+
+  @override
+  String get alertsPopupTestBody =>
+      'Meldingen uit een live sessie verschijnen zo.';
+
+  @override
   String get bundlesLoadListError =>
       'Kon de bundels niet laden. Probeer het opnieuw.';
 

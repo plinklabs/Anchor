@@ -577,6 +577,156 @@ class AppLocalizationsEn extends AppLocalizations {
       'Taking part yourself? Use \'Join by code\' in the agent.';
 
   @override
+  String get alertsTitle => 'Notifications';
+
+  @override
+  String get alertsIntro =>
+      'During a live session, the dashboard tells you when something needs you, also while it\'s in a background tab: it plays a short sound, the tab\'s title counts what you haven\'t seen yet, and pop-ups, if you turn them on, show it on top of other apps.';
+
+  @override
+  String get alertsSound => 'Play a sound';
+
+  @override
+  String get alertsCategoriesLabel => 'Alert me when';
+
+  @override
+  String get alertsAccessRequest => 'A student asks for access to a site';
+
+  @override
+  String get alertsStudentLeft => 'A student leaves or declines the session';
+
+  @override
+  String get alertsAgentLost => 'A student\'s agent stops reporting';
+
+  @override
+  String get alertsTamper => 'Tampering is detected';
+
+  @override
+  String get alertsKeptInBrowser => 'These settings are kept in this browser.';
+
+  @override
+  String get alertsTest => 'Test';
+
+  @override
+  String get alertsSoundBlocked => 'Click anywhere to turn on sound.';
+
+  @override
+  String get alertsPopups => 'Show pop-ups';
+
+  @override
+  String get alertsPopupsNotAsked =>
+      'Your browser asks for permission when you turn them on.';
+
+  @override
+  String get alertsPopupsAllowed => 'Allowed in this browser.';
+
+  @override
+  String get alertsPopupsBlocked => 'Blocked in this browser.';
+
+  @override
+  String get alertsPopupsUnsupported => 'This browser can\'t show pop-ups.';
+
+  @override
+  String get alertsPopupsHowToAllow => 'To allow pop-ups in Edge or Chrome:';
+
+  @override
+  String get alertsPopupsStepIcon =>
+      '1. Click the icon left of the address bar.';
+
+  @override
+  String get alertsPopupsStepAllow => '2. Set Notifications to Allow.';
+
+  @override
+  String get alertsPopupsStepReload => '3. Reload the page.';
+
+  @override
+  String get alertsPopupsWindows =>
+      'Still no pop-ups? Check that notifications for your browser are on in Windows: Settings → System → Notifications.';
+
+  @override
+  String get alertsPopupNames => 'Show student names and sites in pop-ups';
+
+  @override
+  String get alertsPopupNamesHint =>
+      'Off, a pop-up only says what happened, in case your screen is projected.';
+
+  @override
+  String alertsPopupAccessRequest(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'New access requests ($count)',
+      one: 'New access request',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupStudentLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Students left the session ($count)',
+      one: 'A student left the session',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupAgentLost(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Agents stopped reporting ($count)',
+      one: 'A student\'s agent stopped reporting',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupTamper(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Tampering detected ($count)',
+      one: 'Tampering detected',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupAsks(String name, String host) {
+    return '$name asks for access to $host';
+  }
+
+  @override
+  String alertsPopupLeft(String name) {
+    return '$name left the session';
+  }
+
+  @override
+  String alertsPopupDeclined(String name) {
+    return '$name declined the session';
+  }
+
+  @override
+  String alertsPopupAgentLostOf(String name) {
+    return '$name\'s agent stopped reporting';
+  }
+
+  @override
+  String alertsPopupTamperOf(String name) {
+    return 'Tampering detected on $name\'s computer';
+  }
+
+  @override
+  String get alertsPopupTestTitle => 'Test pop-up';
+
+  @override
+  String get alertsPopupTestBody =>
+      'Alerts from a live session show up like this.';
+
+  @override
   String get bundlesLoadListError =>
       'Could not load bundles. Please try again.';
 

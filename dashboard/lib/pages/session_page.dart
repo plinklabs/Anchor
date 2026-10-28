@@ -5,6 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../alerts/live_alert_cues.dart';
+import '../alerts/live_alert_services.dart';
+import '../alerts/live_alert_settings_dialog.dart';
+import '../alerts/live_alerts.dart';
 import '../api/auth_token_store.dart';
 import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
@@ -21,6 +25,7 @@ class SessionPage extends StatefulWidget {
     required this.bundles,
     required this.apiBaseUrl,
     this.hubClientFactory,
+    this.alertServices,
   });
 
   final String sessionId;
@@ -33,6 +38,10 @@ class SessionPage extends StatefulWidget {
   /// real [SessionHubClient] is used; an integration test injects a stubbed
   /// feed here to push roster / unblock events at the real app.
   final SessionHubClientFactory? hubClientFactory;
+
+  /// The teacher's alert settings and the sound (#454), shared with the app
+  /// bar's Notifications dialog. Null builds the page its own, the browser's.
+  final LiveAlertServices? alertServices;
 
   @override
   State<SessionPage> createState() => _SessionPageState();
@@ -47,6 +56,17 @@ class _SessionPageState extends State<SessionPage> {
   StreamSubscription<void>? _reconnectedSub;
   StreamSubscription<SessionHubLinkState>? _linkSub;
   late final AppLifecycleListener _lifecycle;
+  // Live-session alerts (#454): [_alerts] decides which events alert, the
+  // cues play the sound, count them in the tab title and show a system
+  // pop-up (#455).
+  late final LiveAlertServices _alertServices;
+  late final bool _ownsAlertServices;
+  late final LiveAlerts _alerts;
+  late final AlertSoundCue _soundCue;
+  AlertTabTitle? _tabTitle;
+  AlertPopupCue? _popupCue;
+  // The pending requests panel, which an access-request pop-up leads to.
+  final GlobalKey _pendingRequestsKey = GlobalKey();
   final List<SessionEvent> _events = [];
   bool _connecting = true;
   bool _ending = false;
@@ -75,10 +95,75 @@ class _SessionPageState extends State<SessionPage> {
       apiBaseUrl: widget.apiBaseUrl,
       tokenProvider: () async => widget.tokens.token,
     );
+    _ownsAlertServices = widget.alertServices == null;
+    _alertServices = widget.alertServices ?? LiveAlertServices.browser();
+    _alerts = LiveAlerts(
+      settings: _alertServices.settings,
+      clock: _alertServices.clock,
+    )..pageHidden = _isHidden(WidgetsBinding.instance.lifecycleState);
+    _soundCue = AlertSoundCue(alerts: _alerts, sound: _alertServices.sound);
+    // Opening the live page by clicking through the dashboard lets the
+    // browser play sound already; get it ready. After a reload it can't
+    // until the teacher clicks, and the page says so.
+    _alertServices.sound.unlock();
     // A closed connection doesn't retry on its own (#370); try again when
-    // the teacher comes back to the page.
-    _lifecycle = AppLifecycleListener(onResume: _restartHub);
+    // the teacher comes back to the page. The alerts count while the page is
+    // hidden (a background tab, or a window over it), and clear when it shows.
+    _lifecycle = AppLifecycleListener(
+      onResume: _restartHub,
+      onHide: () => _alerts.pageHidden = true,
+      onShow: () => _alerts.pageHidden = false,
+    );
     _bootstrap();
+  }
+
+  static bool _isHidden(AppLifecycleState? state) =>
+      state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _tabTitle ??= AlertTabTitle(
+      alerts: _alerts,
+      color: Theme.of(context).primaryColor,
+    );
+    final AppLocalizations l10n = AppLocalizations.of(context);
+    _popupCue ??= AlertPopupCue(
+      alerts: _alerts,
+      popups: _alertServices.popups,
+      l10n: l10n,
+      scope: widget.sessionId,
+      nameOf: _participantName,
+      onOpen: _openFromPopup,
+    );
+    _popupCue!.l10n = l10n;
+  }
+
+  /// A student on the roster, by name, for a pop-up about an agent that
+  /// stopped reporting: that event carries only the student's id (#455).
+  String? _participantName(String userId) {
+    for (final p in _detail?.participants ?? const <SessionParticipantInfo>[]) {
+      if (p.userId == userId) return p.displayName;
+    }
+    return null;
+  }
+
+  /// The teacher clicked a pop-up, which brought the page to the front
+  /// (#455). For an access request, scroll the pending requests into view.
+  /// The page drew nothing while hidden, so that waits for its next frame,
+  /// which has them.
+  void _openFromPopup(LiveAlertCategory category) {
+    if (category != LiveAlertCategory.accessRequest) return;
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        final BuildContext? panel = _pendingRequestsKey.currentContext;
+        if (!mounted || panel == null) return;
+        Scrollable.ensureVisible(
+          panel,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+        );
+      })
+      ..scheduleFrame();
   }
 
   Future<void> _bootstrap() async {
@@ -286,6 +371,9 @@ class _SessionPageState extends State<SessionPage> {
           _ended = true;
         }
       });
+      // Whether it alerts the teacher (#454). Here, as the event arrives:
+      // in a background tab nothing else runs until they come back.
+      if (!_ended) _alerts.handle(evt);
       // UnblockRequested = a student just clicked Request access. Re-fetch
       // the pending list rather than maintain a separate in-memory tracker:
       // the GET endpoint already de-dupes per (student, host) and filters
@@ -447,9 +535,23 @@ class _SessionPageState extends State<SessionPage> {
     }
   }
 
+  /// The teacher clicked the page: the browser lets it play sound from now
+  /// on (#454).
+  void _unlockSound() {
+    if (_alertServices.sound.blocked.value) _alertServices.sound.unlock();
+  }
+
   @override
   void dispose() {
     _lifecycle.dispose();
+    _soundCue.dispose();
+    _tabTitle?.dispose();
+    _popupCue?.dispose();
+    _alerts.dispose();
+    if (_ownsAlertServices) {
+      _alertServices.sound.dispose();
+      _alertServices.popups.dispose();
+    }
     _eventsSub?.cancel();
     _reconnectedSub?.cancel();
     _linkSub?.cancel();
@@ -515,6 +617,7 @@ class _SessionPageState extends State<SessionPage> {
     final List<Widget> panels = <Widget>[
       if (!_ended && _pendingRequests.isNotEmpty)
         _PendingRequestsPanel(
+          key: _pendingRequestsKey,
           requests: _pendingRequests,
           approving: _approving,
           error: _unblockError,
@@ -547,56 +650,67 @@ class _SessionPageState extends State<SessionPage> {
     // The page scrolls as a whole (#422). The panels stack to more than a short
     // window holds; in a plain column they squeezed the feed to nothing and
     // clipped the last panel, with nothing to scroll it back into view.
-    return Scaffold(
-      backgroundColor: PlinkColors.paper,
-      body: CustomScrollView(
-        slivers: <Widget>[
-          SliverToBoxAdapter(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                _SessionHeader(
-                  headline: headline,
-                  spec: _titleText(AppLocalizations.of(context)),
-                  ended: _ended,
-                  ending: _ending,
-                  joinCode: joinCode,
-                  onLeave: _confirmExit,
-                  onEnd: _endSession,
-                  onCopyCode: _copyJoinCode,
-                  headlineStyle: text.displaySmall,
-                ),
-                const _Hairline(),
-                if (_connecting)
-                  _StatusLine(AppLocalizations.of(context).sessionConnecting),
-                if (!_ended &&
-                    (_link == SessionHubLinkState.reconnecting ||
-                        _link == SessionHubLinkState.disconnected))
-                  _ConnectionLine(state: _link!, onReconnect: _restartHub),
-                if (_joinError != null) _ErrorBanner(_joinError!),
-                if (_error != null) _ErrorBanner(_error!),
-                for (final Widget panel in panels) ...<Widget>[
-                  panel,
+    //
+    // A click anywhere on it lets the browser play the alert sound (#454): a
+    // pointer down for a mouse, a pointer up for a touch screen.
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _unlockSound(),
+      onPointerUp: (_) => _unlockSound(),
+      child: Scaffold(
+        backgroundColor: PlinkColors.paper,
+        body: CustomScrollView(
+          slivers: <Widget>[
+            SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  _SessionHeader(
+                    headline: headline,
+                    spec: _titleText(AppLocalizations.of(context)),
+                    ended: _ended,
+                    ending: _ending,
+                    joinCode: joinCode,
+                    onLeave: _confirmExit,
+                    onEnd: _endSession,
+                    onCopyCode: _copyJoinCode,
+                    onOpenNotifications: () =>
+                        showLiveAlertSettings(context, _alertServices),
+                    headlineStyle: text.displaySmall,
+                  ),
                   const _Hairline(),
+                  if (_connecting)
+                    _StatusLine(AppLocalizations.of(context).sessionConnecting),
+                  if (!_ended) _SoundBlockedLine(services: _alertServices),
+                  if (!_ended &&
+                      (_link == SessionHubLinkState.reconnecting ||
+                          _link == SessionHubLinkState.disconnected))
+                    _ConnectionLine(state: _link!, onReconnect: _restartHub),
+                  if (_joinError != null) _ErrorBanner(_joinError!),
+                  if (_error != null) _ErrorBanner(_error!),
+                  for (final Widget panel in panels) ...<Widget>[
+                    panel,
+                    const _Hairline(),
+                  ],
+                  _PanelLabel(AppLocalizations.of(context).sessionActivity),
                 ],
-                _PanelLabel(AppLocalizations.of(context).sessionActivity),
-              ],
+              ),
             ),
-          ),
-          // The live feed — the instrument's read-out, filling the rest of the
-          // window, but never shorter than [_feedMinHeight]: on a short window
-          // the page scrolls down to it instead. Without a scroll body the
-          // sliver is the larger of the space left and its child's height,
-          // which the SizedBox states without asking the list (a list can't
-          // measure itself). The feed's list scrolls inside that height.
-          SliverFillRemaining(
-            hasScrollBody: false,
-            child: SizedBox(
-              height: _feedMinHeight,
-              child: _Feed(events: _events),
+            // The live feed — the instrument's read-out, filling the rest of the
+            // window, but never shorter than [_feedMinHeight]: on a short window
+            // the page scrolls down to it instead. Without a scroll body the
+            // sliver is the larger of the space left and its child's height,
+            // which the SizedBox states without asking the list (a list can't
+            // measure itself). The feed's list scrolls inside that height.
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: SizedBox(
+                height: _feedMinHeight,
+                child: _Feed(events: _events),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -686,6 +800,7 @@ class _SessionHeader extends StatelessWidget {
     required this.onLeave,
     required this.onEnd,
     required this.onCopyCode,
+    required this.onOpenNotifications,
     required this.headlineStyle,
   });
 
@@ -699,6 +814,9 @@ class _SessionHeader extends StatelessWidget {
   final VoidCallback onLeave;
   final VoidCallback onEnd;
   final void Function(String code) onCopyCode;
+
+  /// Opens the Notifications dialog (#454).
+  final VoidCallback onOpenNotifications;
   final TextStyle? headlineStyle;
 
   @override
@@ -803,6 +921,16 @@ class _SessionHeader extends StatelessWidget {
                     )
                   : Text(AppLocalizations.of(context).sessionEndSession),
             ),
+            // After End session, so the join code stays centred between the
+            // class and End session (#422).
+            const SizedBox(width: PlinkSpacing.s2),
+            IconButton(
+              key: const Key('session-notifications'),
+              icon: const Icon(Icons.notifications_none_outlined),
+              color: PlinkColors.ink,
+              tooltip: AppLocalizations.of(context).alertsTitle,
+              onPressed: onOpenNotifications,
+            ),
           ],
         ],
       ),
@@ -878,6 +1006,60 @@ class _ConnectionLine extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The browser doesn't let the page play the alert sound yet (#454): after a
+/// reload, until the teacher clicks it. A calm mono line, like the connection
+/// notice, rather than an alert that fails silently. Only while the teacher
+/// has sound on for something.
+class _SoundBlockedLine extends StatelessWidget {
+  const _SoundBlockedLine({required this.services});
+
+  final LiveAlertServices services;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge(<Listenable>[
+        services.settings,
+        services.sound.blocked,
+      ]),
+      builder: (context, _) {
+        if (!services.sound.blocked.value ||
+            !services.settings.sound ||
+            !services.settings.anyOn) {
+          return const SizedBox.shrink();
+        }
+        return Semantics(
+          liveRegion: true,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              _gutter,
+              PlinkSpacing.s2,
+              _gutter,
+              PlinkSpacing.s2,
+            ),
+            child: Row(
+              children: <Widget>[
+                const Icon(
+                  Icons.volume_off_outlined,
+                  size: 16,
+                  color: PlinkColors.ink60,
+                ),
+                const SizedBox(width: PlinkSpacing.s2),
+                Flexible(
+                  child: Text(
+                    AppLocalizations.of(context).alertsSoundBlocked,
+                    style: _monoLabel(PlinkColors.ink60),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1233,6 +1415,7 @@ class _RosterRow extends StatelessWidget {
 
 class _PendingRequestsPanel extends StatelessWidget {
   const _PendingRequestsPanel({
+    super.key,
     required this.requests,
     required this.approving,
     required this.error,
