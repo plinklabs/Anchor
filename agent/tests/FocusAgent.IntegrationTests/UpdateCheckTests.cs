@@ -54,13 +54,14 @@ public sealed class UpdateCheckTests
     }
 
     /// <summary>
-    /// Launch the real agent exe in <c>--check-update &lt;feedDir&gt;</c> mode,
-    /// pointed at the local feed and told it is currently at
-    /// <paramref name="currentVersion"/>, then read back the one-line result the
-    /// mode writes (the exe is a WinExe with no console attached, so the result
-    /// comes via the result file, like --verify-ds-theme).
+    /// Launch the real agent exe in <c>--check-update &lt;feedDir | repoUrl&gt;</c> mode,
+    /// pointed at the local feed (or a repository's production feed, #465) and told
+    /// it is currently at <paramref name="currentVersion"/>, then read back the
+    /// one-line result the mode writes (the exe is a WinExe with no console attached,
+    /// so the result comes via the result file, like --verify-ds-theme). With
+    /// <paramref name="download"/>, the mode also downloads an update it finds.
     /// </summary>
-    private static async Task<string> RunCheckUpdateAsync(string feedDir, string currentVersion)
+    internal static async Task<string> RunCheckUpdateAsync(string feedDir, string currentVersion, bool download = false)
     {
         if (!File.Exists(TestConfig.AgentExe))
             throw new FileNotFoundException(
@@ -76,6 +77,8 @@ public sealed class UpdateCheckTests
             psi.ArgumentList.Add(feedDir);
             psi.Environment["ANCHOR_UPDATE_CURRENT_VERSION"] = currentVersion;
             psi.Environment["ANCHOR_UPDATE_RESULT_PATH"] = resultPath;
+            if (download)
+                psi.Environment["ANCHOR_UPDATE_DOWNLOAD"] = "1";
 
             using var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start the agent process.");

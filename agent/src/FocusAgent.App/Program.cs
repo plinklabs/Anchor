@@ -313,8 +313,19 @@ public static class Program
     /// a fake feed, without GitHub, admin, or a real install. The flag is followed
     /// by the feed directory path:
     /// <c>--check-update C:\path\to\feed</c>.
+    /// Or by a repository URL (#465), which reads that repo's feed exactly as the
+    /// production agent does (<see cref="Updates.VelopackUpdateManager.ForGithubRepo"/>):
+    /// <c>--check-update http://127.0.0.1:5123/owner/repo</c>.
     /// </summary>
     public const string CheckUpdateArg = "--check-update";
+
+    /// <summary>
+    /// Dev-only env var (#465): when <c>1</c>, the <see cref="CheckUpdateArg"/> mode
+    /// also downloads an update it finds, into a throwaway packages folder, and
+    /// reports <c>downloaded: &lt;version&gt;</c> once the package is there. Proves the
+    /// package itself comes through the feed, not only the feed index.
+    /// </summary>
+    public const string CheckUpdateDownloadEnvVar = "ANCHOR_UPDATE_DOWNLOAD";
 
     /// <summary>
     /// Dev-only env var (#224): the pretend "currently installed" version the
@@ -754,19 +765,21 @@ public static class Program
     }
 
     /// <summary>
-    /// Handle the dev-only <c>--check-update &lt;feedDir&gt;</c> mode (#224): run the
-    /// real Velopack check against a locally-served feed (no GitHub, no real
-    /// install), print the outcome for the harness to read, and signal the caller to
-    /// exit. Prints one of:
-    ///   <c>update-available: &lt;version&gt;</c> when the feed has a newer release, or
+    /// Handle the dev-only <c>--check-update &lt;feedDir | repoUrl&gt;</c> mode (#224,
+    /// #465): run the real Velopack check against a locally-served feed directory or
+    /// a repository's production feed (no real install), print the outcome for the
+    /// harness to read, and signal the caller to exit. Prints one of:
+    ///   <c>update-available: &lt;version&gt;</c> when the feed has a newer release,
+    ///   <c>downloaded: &lt;version&gt;</c> when it has and <see cref="CheckUpdateDownloadEnvVar"/>
+    ///   asked for the download too, or
     ///   <c>up-to-date</c> when it doesn't.
     /// Returns false for a normal launch so <see cref="Main"/> proceeds.
     /// </summary>
     private static bool TryRunUpdateCheckMode(string[] args, out int exitCode)
     {
         exitCode = 0;
-        var feedDir = ArgValueAfter(args, CheckUpdateArg);
-        if (feedDir is null) return false;
+        var feed = ArgValueAfter(args, CheckUpdateArg);
+        if (feed is null) return false;
 
         var resultPath = Environment.GetEnvironmentVariable(CheckUpdateResultPathEnvVar);
 
@@ -778,9 +791,11 @@ public static class Program
 
         try
         {
-            if (!Directory.Exists(feedDir))
+            var isRepoUrl = Uri.TryCreate(feed, UriKind.Absolute, out var feedUri)
+                            && (feedUri.Scheme == Uri.UriSchemeHttp || feedUri.Scheme == Uri.UriSchemeHttps);
+            if (!isRepoUrl && !Directory.Exists(feed))
             {
-                WriteResult($"error: feed directory not found: {feedDir}");
+                WriteResult($"error: feed directory not found: {feed}");
                 exitCode = 1;
                 return true;
             }
@@ -789,19 +804,30 @@ public static class Program
                 Environment.GetEnvironmentVariable(CheckUpdateCurrentVersionEnvVar) is { Length: > 0 } v
                     ? v
                     : "0.0.1";
+            var log = Microsoft.Extensions.Logging.Abstractions.NullLogger<Updates.VelopackUpdateManager>.Instance;
 
-            var manager = Updates.VelopackUpdateManager.ForLocalFeed(
-                feedDir,
-                VelopackAppId,
-                currentVersion,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<Updates.VelopackUpdateManager>.Instance);
+            var manager = isRepoUrl
+                ? Updates.VelopackUpdateManager.ForGithubRepo(feed, VelopackAppId, currentVersion, log)
+                : Updates.VelopackUpdateManager.ForLocalFeed(feed, VelopackAppId, currentVersion, log);
 
-            // IsInstalled is forced true by the TestVelopackLocator in ForLocalFeed,
+            // IsInstalled is forced true by the TestVelopackLocator in both managers,
             // so the check actually runs (the production gate is in AgentUpdateService).
             var result = manager.CheckForUpdateAsync().GetAwaiter().GetResult();
-            WriteResult(result.IsUpdateAvailable
-                ? $"update-available: {result.TargetVersion}"
-                : "up-to-date");
+            if (!result.IsUpdateAvailable)
+            {
+                WriteResult("up-to-date");
+            }
+            else if (Environment.GetEnvironmentVariable(CheckUpdateDownloadEnvVar) == "1")
+            {
+                manager.DownloadUpdateAsync(result).GetAwaiter().GetResult();
+                WriteResult(manager.GetPendingRestartVersion() is { } downloaded
+                    ? $"downloaded: {downloaded}"
+                    : $"error: downloaded {result.TargetVersion}, but no package is waiting");
+            }
+            else
+            {
+                WriteResult($"update-available: {result.TargetVersion}");
+            }
         }
         catch (Exception ex)
         {

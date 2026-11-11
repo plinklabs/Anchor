@@ -45,6 +45,10 @@ name: Agent Release
 # updates from the Releases of the repo that built it. Before #360 the agent
 # fell back to the plinklabs/Anchor default, so a fork's agents took upstream's
 # next release, and with it upstream's backend and Entra config.
+# Installed agents read that feed from the release GitHub marks Latest
+# (<repo>/releases/latest/download/, #465), not through the GitHub API, so the
+# release this workflow publishes must become Latest: keep it a full release, not
+# a pre-release, and keep agent releases the only GitHub Releases of the repo.
 #
 # Intune (#457): every release also carries Install-AnchorAgent.ps1, the install
 # command of the agent's Intune Win32 app. It installs the agent silently when it

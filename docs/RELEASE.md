@@ -187,6 +187,16 @@ agent; the Intune install script below starts it.
   from a fork release built before #360 still check `plinklabs/Anchor`; only a
   reinstall (uninstall, then run a newer fork `Setup.exe`) moves them onto the
   fork's feed.
+- Installed agents read the feed of the release GitHub marks **Latest**, at
+  `<repo>/releases/latest/download/releases.win.json`, and download the package
+  from the same address — never through the GitHub API, whose 60 anonymous
+  requests an hour per IP address every laptop behind a school's address would
+  share (#465). So the newest published, non-pre-release release must always be
+  an agent release. It is today: agent releases are the only GitHub Releases the
+  repository publishes. Don't publish another kind of GitHub Release (or mark one
+  Latest by hand) without moving the agent onto a feed of its own first.
+  Agents released before #465 still list the releases through the API until they
+  update to a release that has it.
 - Every release also carries `Install-AnchorAgent.ps1` (#457), the install
   command of the agent's Intune Win32 app, packaged with `Setup.exe` in the
   `.intunewin`. It runs `Setup.exe --silent` only when the agent isn't installed

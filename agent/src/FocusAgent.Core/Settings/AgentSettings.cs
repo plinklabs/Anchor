@@ -69,7 +69,11 @@ public sealed record UpdateSettings
 
     /// <summary>
     /// The GitHub repository whose Releases carry the Velopack feed (the
-    /// <c>RELEASES</c> / delta+full nupkg the release pipeline uploads, #209).
+    /// <c>releases.win.json</c> / full nupkg the release pipeline uploads, #209).
+    /// The agent reads the feed from the newest release's download address
+    /// (<c>&lt;repo&gt;/releases/latest/download/</c>, see
+    /// <see cref="Updates.GithubReleaseFeed"/>), not through the GitHub API, so
+    /// laptops behind one school address don't share the API's hourly limit (#465).
     /// A release build always overrides this default: the pack step bakes the
     /// releasing repository into <c>appsettings.Production.json</c>
     /// (<c>#{UPDATE_REPO_URL}#</c>, set by agent-release.yml from
@@ -81,7 +85,10 @@ public sealed record UpdateSettings
 
     /// <summary>
     /// Whether to treat GitHub pre-releases as update candidates. Off by default:
-    /// students track the stable line only.
+    /// students track the stable line only. On, the agent lists the releases through
+    /// the GitHub API instead of the newest release's download address (which never
+    /// points at a pre-release), and so shares the API's limit of 60 anonymous
+    /// requests an hour per IP address (#465): a tester's setting, not a school's.
     /// </summary>
     public bool AllowPrerelease { get; init; } = false;
 

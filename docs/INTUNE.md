@@ -232,21 +232,21 @@ signing in to GitHub. Besides your backend's App Service (by default
 Entra sign-in (`login.microsoftonline.com`), the school network must let laptops
 reach, over HTTPS:
 
-- `api.github.com`, where the agent lists the releases;
-- `github.com`, which serves the release downloads;
+- `github.com`, which serves the newest release's files at
+  `https://github.com/<owner>/<repo>/releases/latest/download/<file>`;
 - `*.githubusercontent.com`, where GitHub redirects those downloads.
 
 Edge also needs the Edge Add-ons store (`edge.microsoft.com`, the update URL in
 the entry above), as for any store extension.
 
-GitHub allows 60 API requests an hour per public IP address for clients that
-don't sign in, and every laptop behind the school's address shares that budget.
-Each update check lists the releases through the API, so once more than 60 checks
-an hour leave the school network, the ones over the limit fail. A failed check
-does no harm: the agent logs "Auto-update check failed; staying on the current
-version." and tries again at its next check, which may be at home. How much this
-delays a release in practice is **[TO CONFIRM IN THE PILOT]**; #465 tracks
-measuring it and moving the check off the API if needed.
+The agent doesn't use the GitHub API (`api.github.com`) for its updates (#465).
+That API allows 60 requests an hour per public IP address for clients that don't
+sign in, and every laptop behind the school's address would share that budget, so
+a morning of laptops starting up would use it in minutes. Instead the agent reads
+the update feed (`releases.win.json`) and the package it names straight from the
+newest release's download address, which isn't held to that limit. "Newest" is the
+release GitHub marks **Latest**; agent releases are the only releases the
+repository publishes, so that is always the newest agent release.
 
 ## Updates: leave them to the agent
 
@@ -384,7 +384,9 @@ into facts.
 - [ ] **Uninstall.** The real `UninstallString` and `QuietUninstallString`, and
       an uninstall from Intune that runs silently in the student's profile: no
       window, the agent stopped, the Run value gone.
-- [ ] **Update feed.** A laptop on the school network reaches the feed, and the
-      agent log shows how often update checks fail there on GitHub's rate limit.
+- [ ] **Update feed.** A laptop on the school network reaches the feed
+      (`github.com` and `*.githubusercontent.com`), and the agent log shows its
+      update checks succeeding there, also in the morning when many laptops
+      start at once.
 - [ ] **Execution policy.** No PowerShell execution policy set by your tenant
       blocks the unsigned script.
