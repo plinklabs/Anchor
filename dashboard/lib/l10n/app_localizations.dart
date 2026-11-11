@@ -1076,6 +1076,42 @@ abstract class AppLocalizations {
   /// **'Something happened in the session.'**
   String get feedOther;
 
+  /// Stands in for the app in feedSwitchedApp and feedAppBlocked when an app switch names none (#498).
+  ///
+  /// In en, this message translates to:
+  /// **'an app'**
+  String get feedSomeApp;
+
+  /// Past session's event log (#498): the student brought an app to the front. {app} is the app's program name as Windows knows it (msedge, WINWORD).
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} switched to {app}.} other{A student switched to {app}.}}'**
+  String feedSwitchedApp(String who, String name, String app);
+
+  /// Past session's event log (#498): the agent kept an app that isn't allowed from the front.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} tried to open {app}, which isn\'t allowed.} other{A student tried to open {app}, which isn\'t allowed.}}'**
+  String feedAppBlocked(String who, String name, String app);
+
+  /// Past session's event log (#498): the extension blocked a website.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} tried to open {host}, which isn\'t allowed.} other{A student tried to open {host}, which isn\'t allowed.}}'**
+  String feedSiteBlocked(String who, String name, String host);
+
+  /// Past session's event log (#498): the teacher approved a student's access request for that student.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{Access to {host} was approved for {name}.} other{Access to {host} was approved for a student.}}'**
+  String feedApprovedFor(String who, String name, String host);
+
+  /// Past session's event log (#498): the teacher approved an access request for the whole class.
+  ///
+  /// In en, this message translates to:
+  /// **'Access to {host} was approved for the whole class.'**
+  String feedApprovedForClass(String host);
+
   /// No description provided for @sessionStateStale.
   ///
   /// In en, this message translates to:
@@ -2149,6 +2185,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No event detail retained for this session.'**
   String get pastNoEventDetail;
+
+  /// Past session's activity summary (#498): one phrase per kind of thing a student did, after their name, joined with commas. Counts tamper reports.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{tampering detected once} other{tampering detected {count} times}}'**
+  String pastSummaryTamper(int count);
+
+  /// No description provided for @pastSummaryAgentStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{agent stopped reporting once} other{agent stopped reporting {count} times}}'**
+  String pastSummaryAgentStopped(int count);
+
+  /// No description provided for @pastSummaryAgentMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{agent didn\'t report in} other{agent didn\'t report in {count} times}}'**
+  String pastSummaryAgentMissing(int count);
+
+  /// Counts leaving the session and closing the Anchor app, which the live feed also reads as leaving.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{left the session} other{left the session {count} times}}'**
+  String pastSummaryLeft(int count);
+
+  /// No description provided for @pastSummaryDeclined.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{declined the session} other{declined the session {count} times}}'**
+  String pastSummaryDeclined(int count);
+
+  /// No description provided for @pastSummaryAccessRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 access request} other{{count} access requests}}'**
+  String pastSummaryAccessRequests(int count);
+
+  /// No description provided for @pastSummaryApproved.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 website approved} other{{count} websites approved}}'**
+  String pastSummaryApproved(int count);
+
+  /// No description provided for @pastSummaryBlockedSites.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 blocked website} other{{count} blocked websites}}'**
+  String pastSummaryBlockedSites(int count);
+
+  /// No description provided for @pastSummaryAppSwitches.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 app switch} other{{count} app switches}}'**
+  String pastSummaryAppSwitches(int count);
+
+  /// No description provided for @pastSummaryAgentBack.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{connected again once} other{connected again {count} times}}'**
+  String pastSummaryAgentBack(int count);
+
+  /// Counts what the dashboard has no phrase for: never the raw event kind.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 other event} other{{count} other events}}'**
+  String pastSummaryOther(int count);
 }
 
 class _AppLocalizationsDelegate

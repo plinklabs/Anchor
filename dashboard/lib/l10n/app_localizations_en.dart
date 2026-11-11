@@ -689,6 +689,50 @@ class AppLocalizationsEn extends AppLocalizations {
   String get feedOther => 'Something happened in the session.';
 
   @override
+  String get feedSomeApp => 'an app';
+
+  @override
+  String feedSwitchedApp(String who, String name, String app) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name switched to $app.',
+      'other': 'A student switched to $app.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedAppBlocked(String who, String name, String app) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name tried to open $app, which isn\'t allowed.',
+      'other': 'A student tried to open $app, which isn\'t allowed.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedSiteBlocked(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name tried to open $host, which isn\'t allowed.',
+      'other': 'A student tried to open $host, which isn\'t allowed.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedApprovedFor(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': 'Access to $host was approved for $name.',
+      'other': 'Access to $host was approved for a student.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedApprovedForClass(String host) {
+    return 'Access to $host was approved for the whole class.';
+  }
+
+  @override
   String get sessionStateStale => 'Agent stopped reporting';
 
   @override
@@ -1390,4 +1434,125 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pastNoEventDetail => 'No event detail retained for this session.';
+
+  @override
+  String pastSummaryTamper(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'tampering detected $count times',
+      one: 'tampering detected once',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryAgentStopped(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'agent stopped reporting $count times',
+      one: 'agent stopped reporting once',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryAgentMissing(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'agent didn\'t report in $count times',
+      one: 'agent didn\'t report in',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'left the session $count times',
+      one: 'left the session',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryDeclined(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'declined the session $count times',
+      one: 'declined the session',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryAccessRequests(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count access requests',
+      one: '1 access request',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryApproved(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count websites approved',
+      one: '1 website approved',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryBlockedSites(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count blocked websites',
+      one: '1 blocked website',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryAppSwitches(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count app switches',
+      one: '1 app switch',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryAgentBack(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'connected again $count times',
+      one: 'connected again once',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryOther(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count other events',
+      one: '1 other event',
+    );
+    return '$_temp0';
+  }
 }

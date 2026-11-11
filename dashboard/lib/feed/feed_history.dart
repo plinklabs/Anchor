@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import '../alerts/live_alerts.dart';
 import '../api/sessions_api.dart';
+import '../l10n/app_localizations.dart';
 import '../realtime/session_hub_client.dart';
+import 'live_feed.dart';
 
 /// The stored kinds (the backend's `EventKind`) the live feed has a row for:
 /// those [feedEventOfStored] reads as a hub event. The live page asks the
@@ -98,6 +100,138 @@ SessionEvent? feedEventOfStored(
       return _stateChanged(sessionId, stored.userId, name, 'Left', at);
   }
   return null;
+}
+
+/// [stored], an event the backend stored, as one plain sentence the teacher
+/// reads (#498): the past session page's event log reads the session the way
+/// the live feed does (#491). A kind the hub broadcasts reads as the feed
+/// reads its broadcast ([feedEventOfStored], [feedSentence]); the kinds only
+/// the backend keeps, an app switch, a blocked website and an approval, get
+/// sentences of their own. [name] is the student's, from the roster.
+///
+/// Never the event's kind or its payload: an event the dashboard doesn't know
+/// gets a sentence too.
+String storedEventSentence(
+  AppLocalizations l10n,
+  SessionRecentEvent stored, {
+  required String sessionId,
+  String? name,
+}) {
+  final SessionEvent? event = feedEventOfStored(
+    stored,
+    sessionId: sessionId,
+    name: name,
+  );
+  if (event != null) return feedSentence(l10n, event, nameOf: (_) => name);
+
+  final String who = name == null || name.isEmpty ? 'unknown' : 'named';
+  final String n = name ?? '';
+  final Map<String, dynamic> payload = _decode(stored.payloadJson);
+  switch (stored.kind) {
+    case 'ForegroundChange':
+      final String app = _nonEmpty(payload['processName']) ?? l10n.feedSomeApp;
+      return payload['blocked'] == true
+          ? l10n.feedAppBlocked(who, n, app)
+          : l10n.feedSwitchedApp(who, n, app);
+    case 'BlockedUrl':
+      return l10n.feedSiteBlocked(
+        who,
+        n,
+        _hostOf(payload) ?? l10n.feedSomeSite,
+      );
+    case 'UnblockRequest':
+      // One that names no host, which the hub doesn't broadcast: the site of
+      // its page, if it names that.
+      return l10n.feedAsks(who, n, _hostOf(payload) ?? l10n.feedSomeSite);
+    case 'UnblockApproved':
+      final String host = _hostOf(payload) ?? l10n.feedSomeSite;
+      // An approval for the whole class is the teacher's, under their id.
+      return payload['scope'] == 'class'
+          ? l10n.feedApprovedForClass(host)
+          : l10n.feedApprovedFor(who, n, host);
+  }
+  return l10n.feedOther;
+}
+
+/// What a student did in a session, as the past session page's activity
+/// summary lists it after their name (#498): [summaries], the backend's count
+/// of each kind of event the student has, as plain phrases ("12 app
+/// switches", "3 blocked websites"), the most pressing first. Kinds the
+/// teacher reads the same count as one: closing the Anchor app is leaving the
+/// session, as the feed says, and kinds the dashboard doesn't know are "other
+/// events". Never an event's kind.
+List<String> storedSummaryPhrases(
+  AppLocalizations l10n,
+  Iterable<SessionEventSummary> summaries,
+) {
+  final Map<_SummaryTopic, int> counts = <_SummaryTopic, int>{};
+  for (final SessionEventSummary s in summaries) {
+    if (s.count <= 0) continue;
+    final _SummaryTopic topic = _summaryTopicOf(s.kind);
+    counts[topic] = (counts[topic] ?? 0) + s.count;
+  }
+  return <String>[
+    for (final _SummaryTopic topic in _SummaryTopic.values)
+      if (counts[topic] case final int count)
+        switch (topic) {
+          _SummaryTopic.tamper => l10n.pastSummaryTamper(count),
+          _SummaryTopic.agentStopped => l10n.pastSummaryAgentStopped(count),
+          _SummaryTopic.agentMissing => l10n.pastSummaryAgentMissing(count),
+          _SummaryTopic.left => l10n.pastSummaryLeft(count),
+          _SummaryTopic.declined => l10n.pastSummaryDeclined(count),
+          _SummaryTopic.accessRequests => l10n.pastSummaryAccessRequests(count),
+          _SummaryTopic.approved => l10n.pastSummaryApproved(count),
+          _SummaryTopic.blockedSites => l10n.pastSummaryBlockedSites(count),
+          _SummaryTopic.appSwitches => l10n.pastSummaryAppSwitches(count),
+          _SummaryTopic.agentBack => l10n.pastSummaryAgentBack(count),
+          _SummaryTopic.other => l10n.pastSummaryOther(count),
+        },
+  ];
+}
+
+/// What the activity summary counts, in the order it lists them: what needs
+/// the teacher's attention first, as the feed ranks it (#491).
+enum _SummaryTopic {
+  tamper,
+  agentStopped,
+  agentMissing,
+  left,
+  declined,
+  accessRequests,
+  approved,
+  blockedSites,
+  appSwitches,
+  agentBack,
+  other,
+}
+
+_SummaryTopic _summaryTopicOf(String kind) => switch (kind) {
+  'TamperDetected' => _SummaryTopic.tamper,
+  'HeartbeatLost' => _SummaryTopic.agentStopped,
+  'AgentMissing' => _SummaryTopic.agentMissing,
+  'ManualLeave' || 'AgentKilled' => _SummaryTopic.left,
+  'JoinDeclined' => _SummaryTopic.declined,
+  'UnblockRequest' => _SummaryTopic.accessRequests,
+  'UnblockApproved' => _SummaryTopic.approved,
+  'BlockedUrl' => _SummaryTopic.blockedSites,
+  'ForegroundChange' => _SummaryTopic.appSwitches,
+  'AgentReconnected' => _SummaryTopic.agentBack,
+  _ => _SummaryTopic.other,
+};
+
+/// The site a stored event names: its `host`, or the host of its `url`.
+String? _hostOf(Map<String, dynamic> payload) {
+  final String? host = _nonEmpty(payload['host']);
+  if (host != null) return host.toLowerCase();
+  final String? url = _nonEmpty(payload['url']);
+  final String? fromUrl = url == null ? null : Uri.tryParse(url)?.host;
+  return fromUrl == null || fromUrl.isEmpty ? null : fromUrl;
+}
+
+String? _nonEmpty(Object? value) {
+  if (value is! String) return null;
+  final String trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
 }
 
 /// What happened in the session before the live page opened, newest first, in

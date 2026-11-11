@@ -643,4 +643,274 @@ void main() {
       ]);
     });
   });
+
+  // #498: the past session page read its stored events as raw kinds with
+  // their payload, and its summary as "12 ForegroundChange, 3 BlockedUrl".
+  // It now reads them as the live feed does. The page is in
+  // past_session_page_paper_test.dart, the real app in
+  // integration_test/history_archive_test.dart.
+  group('a stored event as the past session page reads it (#498)', () {
+    String read(
+      String kind, {
+      String payloadJson = '{}',
+      String? name = 'Ada',
+      AppLocalizations? l10n,
+    }) => storedEventSentence(
+      l10n ?? en,
+      _stored(kind, _min(1), payloadJson: payloadJson),
+      sessionId: _sessionId,
+      name: name,
+    );
+
+    test('the kinds the hub broadcasts read as the live feed reads them', () {
+      for (final (String kind, String payload) in const [
+        ('UnblockRequest', '{"host":"chat.example.com"}'),
+        ('TamperDetected', '{"kind":"extension_disabled"}'),
+        ('HeartbeatLost', '{"lastSeenAt":"2026-11-11T08:25:30+00:00"}'),
+        ('AgentReconnected', '{}'),
+        ('AgentMissing', '{"expectedSince":"2026-11-11T08:25:00+00:00"}'),
+        ('JoinDeclined', '{}'),
+        ('ManualLeave', '{}'),
+        ('AgentKilled', '{}'),
+      ]) {
+        final SessionRecentEvent stored = _stored(
+          kind,
+          _min(1),
+          payloadJson: payload,
+        );
+        expect(
+          storedEventSentence(en, stored, sessionId: _sessionId, name: 'Ada'),
+          _sentence(stored),
+          reason: kind,
+        );
+      }
+      // A lost or returning agent carries only the student's id: the name
+      // comes from the roster, as the live page looks it up.
+      expect(
+        read('HeartbeatLost', payloadJson: '{}'),
+        "Ada's agent stopped reporting.",
+      );
+      expect(read('AgentReconnected'), 'Ada is connected again.');
+    });
+
+    test('an app switch names the app, and says when it was not allowed', () {
+      expect(
+        read(
+          'ForegroundChange',
+          payloadJson:
+              '{"processName":"WINWORD","publisher":"Microsoft Corporation",'
+              '"blocked":false}',
+        ),
+        'Ada switched to WINWORD.',
+      );
+      expect(
+        read(
+          'ForegroundChange',
+          payloadJson: '{"processName":"ms-teams","blocked":true}',
+        ),
+        "Ada tried to open ms-teams, which isn't allowed.",
+      );
+      expect(read('ForegroundChange'), 'Ada switched to an app.');
+    });
+
+    test('a blocked website names the site', () {
+      expect(
+        read(
+          'BlockedUrl',
+          payloadJson:
+              '{"url":"https://chat.example.com/c/1","host":"chat.example.com",'
+              '"tabId":7,"occurredAt":"2026-11-11T08:26:00+00:00"}',
+        ),
+        "Ada tried to open chat.example.com, which isn't allowed.",
+      );
+      expect(
+        read('BlockedUrl', payloadJson: '{"url":"https://Games.Example.com/"}'),
+        "Ada tried to open games.example.com, which isn't allowed.",
+      );
+      expect(
+        read('BlockedUrl', payloadJson: 'not json'),
+        "Ada tried to open a website, which isn't allowed.",
+      );
+    });
+
+    test('an approval says whom it was for', () {
+      expect(
+        read(
+          'UnblockApproved',
+          payloadJson: '{"host":"wikipedia.org","scope":"student"}',
+        ),
+        'Access to wikipedia.org was approved for Ada.',
+      );
+      expect(
+        read(
+          'UnblockApproved',
+          payloadJson: '{"host":"wikipedia.org","scope":"class"}',
+          // Under the teacher, who isn't on the roster.
+          name: null,
+        ),
+        'Access to wikipedia.org was approved for the whole class.',
+      );
+    });
+
+    test('an access request without a host names the site its page is on, '
+        'or a website', () {
+      expect(
+        read(
+          'UnblockRequest',
+          payloadJson: '{"url":"https://chat.example.com/x","host":"  "}',
+        ),
+        'Ada asks for access to chat.example.com.',
+      );
+      expect(
+        read('UnblockRequest', payloadJson: 'not json'),
+        'Ada asks for access to a website.',
+      );
+    });
+
+    test('a student off the roster is a student, and a kind the dashboard '
+        'does not know still reads as a sentence, never its kind', () {
+      expect(
+        read(
+          'BlockedUrl',
+          payloadJson: '{"host":"chat.example.com"}',
+          name: null,
+        ),
+        "A student tried to open chat.example.com, which isn't allowed.",
+      );
+      expect(
+        read(
+          'ForegroundChange',
+          payloadJson: '{"processName":"msedge"}',
+          name: '',
+        ),
+        'A student switched to msedge.',
+      );
+      expect(
+        read('SomethingNew', payloadJson: '{"host":"example.com"}'),
+        'Something happened in the session.',
+      );
+    });
+
+    test('in Dutch too', () {
+      expect(
+        read(
+          'ForegroundChange',
+          payloadJson: '{"processName":"WINWORD","blocked":false}',
+          l10n: nl,
+        ),
+        'Ada is overgeschakeld naar WINWORD.',
+      );
+      expect(
+        read(
+          'ForegroundChange',
+          payloadJson: '{"processName":"ms-teams","blocked":true}',
+          l10n: nl,
+        ),
+        'Ada probeerde ms-teams te openen, maar die app is niet toegelaten.',
+      );
+      expect(
+        read(
+          'BlockedUrl',
+          payloadJson: '{"host":"chat.example.com"}',
+          l10n: nl,
+        ),
+        'Ada probeerde chat.example.com te openen, maar die website is niet '
+        'toegelaten.',
+      );
+      expect(
+        read(
+          'UnblockApproved',
+          payloadJson: '{"host":"wikipedia.org","scope":"class"}',
+          l10n: nl,
+        ),
+        'Toegang tot wikipedia.org is goedgekeurd voor de hele klas.',
+      );
+      expect(
+        read('UnblockRequest', payloadJson: '{"host":"example.com"}', l10n: nl),
+        'Ada vraagt toegang tot example.com.',
+      );
+    });
+  });
+
+  group("a student's activity summary (#498)", () {
+    SessionEventSummary count(String kind, int n) => SessionEventSummary(
+      userId: _adaId,
+      kind: kind,
+      count: n,
+      firstAt: _min(1),
+      lastAt: _min(40),
+    );
+
+    test('reads in plain words, the most pressing first', () {
+      expect(
+        storedSummaryPhrases(en, [
+          count('ForegroundChange', 12),
+          count('BlockedUrl', 3),
+          count('UnblockRequest', 1),
+          count('TamperDetected', 2),
+          count('UnblockApproved', 1),
+        ]),
+        [
+          'tampering detected 2 times',
+          '1 access request',
+          '1 website approved',
+          '3 blocked websites',
+          '12 app switches',
+        ],
+      );
+      expect(
+        storedSummaryPhrases(en, [
+          count('AgentReconnected', 1),
+          count('HeartbeatLost', 1),
+          count('AgentMissing', 1),
+          count('JoinDeclined', 1),
+          count('ForegroundChange', 1),
+          count('BlockedUrl', 1),
+        ]),
+        [
+          'agent stopped reporting once',
+          "agent didn't report in",
+          'declined the session',
+          '1 blocked website',
+          '1 app switch',
+          'connected again once',
+        ],
+      );
+    });
+
+    test('closing the Anchor app is leaving, as the feed reads it, and what '
+        'the dashboard does not know is other events: never a kind', () {
+      final List<String> phrases = storedSummaryPhrases(en, [
+        count('ManualLeave', 1),
+        count('AgentKilled', 2),
+        count('SomethingNew', 4),
+        count('SomethingElse', 1),
+        count('BlockedUrl', 0),
+      ]);
+      expect(phrases, ['left the session 3 times', '5 other events']);
+      for (final String kind in const [
+        'ManualLeave',
+        'AgentKilled',
+        'SomethingNew',
+        'BlockedUrl',
+      ]) {
+        expect(phrases.join(', '), isNot(contains(kind)));
+      }
+    });
+
+    test('in Dutch too', () {
+      expect(
+        storedSummaryPhrases(nl, [
+          count('ForegroundChange', 12),
+          count('BlockedUrl', 3),
+          count('UnblockRequest', 2),
+        ]),
+        [
+          '2 toegangsvragen',
+          '3 geblokkeerde websites',
+          '12 keer van app gewisseld',
+        ],
+      );
+    });
+  });
 }
