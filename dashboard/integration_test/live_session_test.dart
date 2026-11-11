@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:anchor_dashboard/alerts/alert_platform.dart';
+import 'package:anchor_dashboard/alerts/live_alert_services.dart';
+import 'package:anchor_dashboard/alerts/live_alert_settings.dart';
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
@@ -28,7 +31,9 @@ import 'support/e2e_binding.dart';
 //   - a roster state transition (#100) updates the live roster,
 //   - an unblock-request push (#…) surfaces the pending panel,
 //   - a UI bundle toggle issues PUT /sessions/{id}/bundles (#93),
-//   - pushed events render in the live event feed,
+//   - pushed events render in the live activity feed as plain sentences,
+//     only what needs the teacher until they show all activity, which the
+//     browser remembers (#491),
 //   - the end of the teacher's other session doesn't end this one (#354),
 //   - after a hub reconnect the page joins its session again and catches up on
 //     what it missed while offline (#365),
@@ -331,14 +336,11 @@ class _FakeBundles extends BundlesApi {
   ];
 }
 
-/// The colour of the status dot on the live feed's row whose payload contains
-/// [payloadText].
-Color? _feedDotColor(WidgetTester tester, String payloadText) {
+/// The colour of the status dot on the activity feed's row that reads
+/// [sentence].
+Color? _feedDotColor(WidgetTester tester, String sentence) {
   final row = find
-      .ancestor(
-        of: find.textContaining(payloadText),
-        matching: find.byType(Row),
-      )
+      .ancestor(of: find.text(sentence), matching: find.byType(Row))
       .first;
   final dot = find.descendant(
     of: row,
@@ -365,6 +367,12 @@ typedef _Harness = ({
 /// class. [endOptions] is what Home offers for the session's end, and
 /// [plannedEnd] the end the detail then reports (#447); [beforeStart] makes the
 /// teacher's choices on Home before Start.
+///
+/// The app keeps the teacher's alert settings and the activity feed's switch
+/// in [settings]: the browser's localStorage, as in production, in a browser
+/// (memory in a VM copy). It outlives a test, so a boot starts from none
+/// unless the test passes the store it kept. A [reload] boots a new app, as
+/// after the browser reloads the page: nothing carries over but the store.
 Future<_Harness> _bootToLiveSession(
   WidgetTester tester, {
   Object? joinError,
@@ -372,7 +380,11 @@ Future<_Harness> _bootToLiveSession(
   SessionEndOptions? endOptions,
   DateTime? plannedEnd,
   Future<void> Function()? beforeStart,
+  AlertSettingsStore? settings,
+  bool reload = false,
 }) async {
+  if (reload) await tester.pumpWidget(const SizedBox.shrink());
+  final store = settings ?? (createAlertSettingsStore()..write('{}'));
   final hub = _StubHub()..joinError = joinError;
   final sessions = _FakeSessions()..plannedEnd = plannedEnd;
   if (roster != null) sessions.roster = roster;
@@ -399,6 +411,11 @@ Future<_Harness> _bootToLiveSession(
       classes: ClassesApi(_dummyClient()),
       apiBaseUrl: Uri.parse('http://localhost'),
       hubClientFactory: ({required apiBaseUrl, required tokenProvider}) => hub,
+      // The browser's own, as production builds them, on [store].
+      alertServices: LiveAlertServices(
+        settings: LiveAlertSettings(store: store),
+        sound: createAlertSound(),
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -563,8 +580,8 @@ void main() {
         lessThan(tester.getTopLeft(find.text('Ada')).dy),
       );
       final error = Theme.of(tester.element(find.text('Bo'))).colorScheme.error;
-      // The feed row for that push carries the stronger marker.
-      expect(_feedDotColor(tester, 'state=AgentMissing'), error);
+      // The feed says so, with the stronger marker (#491).
+      expect(_feedDotColor(tester, "Bo's agent hasn't reported in."), error);
 
       // Hovering the state says what it means for the class.
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
@@ -598,8 +615,13 @@ void main() {
 
       expect(find.text('Agent not connected'), findsNothing);
       expect(find.text('Students (2/2 in session)'), findsOneWidget);
-      // An ordinary join is no cause for attention.
-      expect(_feedDotColor(tester, 'state=Joined'), isNot(error));
+      // An ordinary join is no cause for attention: the feed shows it only
+      // with all activity, without the marker.
+      expect(find.text('Bo joined.'), findsNothing);
+      await tester.tap(find.byKey(const Key('feed-show-all')));
+      await tester.pumpAndSettle();
+      expect(_feedDotColor(tester, 'Bo joined.'), isNot(error));
+      expect(_feedDotColor(tester, 'Bo is connected again.'), isNot(error));
       expect(tester.takeException(), isNull);
     },
   );
@@ -701,25 +723,170 @@ void main() {
     },
   );
 
-  testWidgets('pushed events render in the live event feed (#132)', (
-    tester,
-  ) async {
-    final h = await _bootToLiveSession(tester);
+  testWidgets(
+    'the activity feed reads as sentences, shows what needs the teacher until '
+    'they show all activity, and remembers that after a reload (#491)',
+    (tester) async {
+      final settings = createAlertSettingsStore()..write('{}');
+      addTearDown(() => settings.write('{}'));
+      final roster = [
+        _participant('Ada', ParticipantLiveState.joined),
+        _participant('Bo', ParticipantLiveState.joined),
+      ];
+      final h = await _bootToLiveSession(
+        tester,
+        roster: roster,
+        settings: settings,
+      );
+      Map<String, dynamic> state(String who, String state) => {
+        'sessionId': _sessionId,
+        'userId': who,
+        'displayName': who,
+        'state': state,
+        'at': '2026-06-12T07:20:11.3797761+00:00',
+      };
 
-    // Empty feed shows the placeholder until the first event arrives.
-    expect(find.text('Waiting for events…'), findsOneWidget);
+      // Empty feed shows the placeholder until the first event arrives.
+      expect(find.text('Waiting for events…'), findsOneWidget);
+      expect(find.text('Show all activity'), findsOneWidget);
 
-    h.hub.emit('SessionStarted', {'sessionId': _sessionId});
-    await tester.pumpAndSettle();
+      // The session starting and a student joining don't need the teacher:
+      // the feed says so, rather than looking broken.
+      h.hub.emit('SessionStarted', {
+        'sessionId': _sessionId,
+        'classId': 'c1',
+        'startedAt': '2026-06-12T07:15:00.1234567+00:00',
+        'joinCode': 'ABC123',
+        'apps': [
+          {'matchKind': 'ProcessName', 'value': 'msedge'},
+        ],
+        'domains': [
+          {'matchType': 'Wildcard', 'value': 'wikipedia.org'},
+          {'matchType': 'Exact', 'value': 'smartschool.be'},
+        ],
+      });
+      h.hub.emit('ParticipantStateChanged', state('Ada', 'Joined'));
+      await tester.pumpAndSettle();
+      expect(find.text('Waiting for events…'), findsNothing);
+      expect(
+        find.text('Nothing that needs your attention yet'),
+        findsOneWidget,
+      );
+      expect(find.text('Ada joined.'), findsNothing);
 
-    expect(find.text('Waiting for events…'), findsNothing);
-    expect(find.text('SessionStarted'), findsOneWidget);
-  });
+      // What needs them: one plain sentence each, naming the student.
+      h.hub.emit('ParticipantStateChanged', state('Bo', 'Left'));
+      h.hub.emit('UnblockRequested', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'userDisplayName': 'Ada',
+        'host': 'chat.example.com',
+        'url': 'https://chat.example.com/',
+        'requestedAt': '2026-06-12T07:21:00+00:00',
+      });
+      h.hub.emit('TamperDetected', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'userDisplayName': 'Ada',
+        'kind': 'extension_silent',
+        'detectedAt': '2026-06-12T07:22:00+00:00',
+      });
+      // Only the student's id: the roster names them.
+      h.hub.emit('HeartbeatLost', {
+        'sessionId': _sessionId,
+        'userId': 'Bo',
+        'lastSeenAt': '2026-06-12T07:22:30+00:00',
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Nothing that needs your attention yet'), findsNothing);
+      expect(find.text('Bo left the session.'), findsOneWidget);
+      expect(
+        find.text('Ada asks for access to chat.example.com.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text("Ada's Anchor extension is off or not responding."),
+        findsOneWidget,
+      );
+      expect(find.text("Bo's agent stopped reporting."), findsOneWidget);
+      // Each with its local time, and no event kind, id or UTC timestamp.
+      expect(
+        find.textContaining(RegExp(r'^\d\d:\d\d:\d\d$')),
+        findsNWidgets(4),
+      );
+      for (final raw in [
+        'ParticipantStateChanged',
+        'UnblockRequested',
+        'TamperDetected',
+        'HeartbeatLost',
+        _sessionId,
+        '+00:00',
+        'state=',
+      ]) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+
+      // A student who keeps reconnecting: the joins between are hidden, and
+      // the run of leaving reads as one row, with its count.
+      h.hub
+        ..emit('ParticipantStateChanged', state('Bo', 'Joined'))
+        ..emit('ParticipantStateChanged', state('Bo', 'Left'))
+        ..emit('ParticipantStateChanged', state('Bo', 'Joined'))
+        ..emit('ParticipantStateChanged', state('Bo', 'Left'));
+      await tester.pumpAndSettle();
+      expect(find.text('Bo left the session.'), findsNWidgets(2));
+      expect(find.text('×2'), findsOneWidget);
+
+      // Shown all activity, the joins and the session's start are there too,
+      // the oldest at the end of the feed's list.
+      await tester.tap(find.byKey(const Key('feed-show-all')));
+      await tester.pumpAndSettle();
+      expect(find.text('Bo joined.'), findsNWidgets(2));
+      expect(find.text('×2'), findsNothing);
+      final started = find.text(
+        'Session started, code ABC123: 1 app and 2 websites allowed.',
+      );
+      await tester.scrollUntilVisible(
+        started,
+        120,
+        scrollable: find
+            .ancestor(
+              of: find.text('Bo joined.').first,
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(started, findsOneWidget);
+      expect(find.text('Ada joined.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      // The browser remembers the switch: after a reload, the feed still
+      // shows all activity.
+      final again = await _bootToLiveSession(
+        tester,
+        roster: roster,
+        settings: settings,
+        reload: true,
+      );
+      expect(
+        tester.widget<Switch>(find.byKey(const Key('feed-show-all'))).value,
+        isTrue,
+      );
+      again.hub.emit('ParticipantStateChanged', state('Ada', 'Joined'));
+      await tester.pumpAndSettle();
+      expect(find.text('Ada joined.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     "the end of the teacher's other session leaves this live view alone (#354)",
     (tester) async {
       final h = await _bootToLiveSession(tester);
+      // Showing all activity (#491), the feed would show it if it took it.
+      await tester.tap(find.byKey(const Key('feed-show-all')));
+      await tester.pumpAndSettle();
 
       // The backend sends SessionEnded to the teacher's user group for every
       // session they own, so this page's connection also hears another of the
@@ -729,7 +896,7 @@ void main() {
 
       expect(find.text('Session ended — event stream stopped.'), findsNothing);
       expect(find.text('LIVE'), findsOneWidget);
-      expect(find.text('SessionEnded'), findsNothing);
+      expect(find.text('Session ended.'), findsNothing);
       expect(find.text('Waiting for events…'), findsOneWidget);
 
       // Its own end still ends it.
@@ -741,7 +908,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('LIVE'), findsNothing);
-      expect(find.text('SessionEnded'), findsOneWidget);
+      expect(find.text('Session ended.'), findsOneWidget);
     },
   );
 
@@ -873,38 +1040,39 @@ void main() {
     },
   );
 
-  testWidgets('the live view renders as the paper instrument panel (AD4, #169)', (
-    tester,
-  ) async {
-    // A real-app run at a realistic window size: this is the test that would
-    // have caught a real-font overflow or a broken composition under the shell
-    // chrome that the isolated widget tests structurally miss.
-    tester.view.physicalSize = const Size(1400, 1000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'the live view renders as the paper instrument panel (AD4, #169)',
+    (tester) async {
+      // A real-app run at a realistic window size: this is the test that would
+      // have caught a real-font overflow or a broken composition under the shell
+      // chrome that the isolated widget tests structurally miss.
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    final h = await _bootToLiveSession(tester);
+      final h = await _bootToLiveSession(tester);
 
-    // Liveness reads as the ping motif + the magenta LIVE spark badge
-    // (uppercased by PlinkBadge) — calm, not a pulsing alarm.
-    expect(find.byType(Ping), findsWidgets);
-    expect(find.text('LIVE'), findsOneWidget);
+      // Liveness reads as the ping motif + the magenta LIVE spark badge
+      // (uppercased by PlinkBadge) — calm, not a pulsing alarm.
+      expect(find.byType(Ping), findsWidgets);
+      expect(find.text('LIVE'), findsOneWidget);
 
-    // The join code is a mono spec a class can read from across the room.
-    expect(find.text('Join code'), findsOneWidget);
-    expect(find.text('ABC123'), findsOneWidget);
+      // The join code is a mono spec a class can read from across the room.
+      expect(find.text('Join code'), findsOneWidget);
+      expect(find.text('ABC123'), findsOneWidget);
 
-    // A pushed event lands as a hairline feed row carrying its raw kind label —
-    // the instrument read-out (HeartbeatLost is one of the issue's examples).
-    h.hub.emit('HeartbeatLost', {'userId': 'Ada'});
-    await tester.pumpAndSettle();
-    expect(find.text('HeartbeatLost'), findsOneWidget);
+      // A pushed event lands as a hairline feed row, a sentence about the
+      // student — the instrument read-out (#491).
+      h.hub.emit('HeartbeatLost', {'userId': 'Ada'});
+      await tester.pumpAndSettle();
+      expect(find.text("Ada's agent stopped reporting."), findsOneWidget);
 
-    // The composition holds under the real shell + real Fraunces / Space Mono
-    // at this window size — no RenderFlex overflow or other exception.
-    expect(tester.takeException(), isNull);
-  });
+      // The composition holds under the real shell + real Fraunces / Space Mono
+      // at this window size — no RenderFlex overflow or other exception.
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'the join code says how the teacher takes part themselves (#410)',
@@ -1136,7 +1304,10 @@ void main() {
         await tester.pumpAndSettle();
         // Not skipping offstage: while the feed is still wholly below the
         // window the finder would otherwise not see its rows at all.
-        final event = find.text('HeartbeatLost', skipOffstage: false);
+        final event = find.text(
+          "Ada's agent stopped reporting.",
+          skipOffstage: false,
+        );
         expect(event, findsOneWidget);
         await wheelUntilInView(tester, event);
         expect(inView(tester, event), isTrue);

@@ -217,7 +217,10 @@ void main() {
       });
       await tester.pumpAndSettle();
       await _wheel(tester, 5000);
-      expect(_inView(tester, find.text('HeartbeatLost')), isTrue);
+      expect(
+        _inView(tester, find.text("Ada's agent stopped reporting.")),
+        isTrue,
+      );
       expect(
         _page(tester).bottom - tester.getRect(find.text('Activity')).bottom,
         greaterThanOrEqualTo(300),

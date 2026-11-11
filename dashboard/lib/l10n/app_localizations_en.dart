@@ -501,6 +501,194 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionWaitingEvents => 'Waiting for events…';
 
   @override
+  String get feedShowAll => 'Show all activity';
+
+  @override
+  String get feedNothingNeedsAttention =>
+      'Nothing that needs your attention yet';
+
+  @override
+  String get feedSessionStarted => 'Session started.';
+
+  @override
+  String feedSessionStartedCode(String code) {
+    return 'Session started, code $code.';
+  }
+
+  @override
+  String feedSessionStartedAllowed(String code, String apps, String sites) {
+    return 'Session started, code $code: $apps and $sites allowed.';
+  }
+
+  @override
+  String feedApps(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count apps',
+      one: '1 app',
+      zero: 'no apps',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String feedSites(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count websites',
+      one: '1 website',
+      zero: 'no websites',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get feedSessionEnded => 'Session ended.';
+
+  @override
+  String feedJoined(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name joined.',
+      'other': 'A student joined.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedLeft(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name left the session.',
+      'other': 'A student left the session.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedDeclined(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name declined the session.',
+      'other': 'A student declined the session.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedNotJoined(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name hasn\'t joined yet.',
+      'other': 'A student hasn\'t joined yet.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedAgentMissing(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name\'s agent hasn\'t reported in.',
+      'other': 'A student\'s agent hasn\'t reported in.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedAgentStopped(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name\'s agent stopped reporting.',
+      'other': 'A student\'s agent stopped reporting.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedAgentBack(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name is connected again.',
+      'other': 'A student is connected again.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedStateChanged(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name\'s status changed.',
+      'other': 'A student\'s status changed.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedAsks(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name asks for access to $host.',
+      'other': 'A student asks for access to $host.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get feedSomeSite => 'a website';
+
+  @override
+  String feedTamperExtensionDisabled(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name\'s Anchor extension was switched off or removed.',
+      'other': 'A student\'s Anchor extension was switched off or removed.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperExtensionSilent(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name\'s Anchor extension is off or not responding.',
+      'other': 'A student\'s Anchor extension is off or not responding.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperInPrivate(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name opened an InPrivate window.',
+      'other': 'A student opened an InPrivate window.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperSiteAccess(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name limited the Anchor extension\'s access to websites.',
+      'other': 'A student limited the Anchor extension\'s access to websites.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperAgentUnavailable(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name\'s Anchor app stopped running.',
+      'other': 'A student\'s Anchor app stopped running.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperOther(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': 'Tampering detected on $name\'s computer.',
+      'other': 'Tampering detected on a student\'s computer.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String get feedOther => 'Something happened in the session.';
+
+  @override
   String get sessionStateStale => 'Agent stopped reporting';
 
   @override

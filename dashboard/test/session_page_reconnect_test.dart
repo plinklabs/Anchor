@@ -256,12 +256,14 @@ void main() {
       h.hub.broadcastToSessionGroup('ParticipantStateChanged', {
         'sessionId': _sessionId,
         'userId': 'Ada',
+        'displayName': 'Ada',
+        'state': 'HeartbeatStale',
       });
       await tester.pumpAndSettle();
 
       expect(find.text('Agent stopped reporting'), findsOneWidget);
       expect(find.text('In session'), findsNothing);
-      expect(find.text('ParticipantStateChanged'), findsOneWidget);
+      expect(find.text("Ada's agent stopped reporting."), findsOneWidget);
     },
   );
 

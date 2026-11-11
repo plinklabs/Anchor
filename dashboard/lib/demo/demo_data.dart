@@ -193,15 +193,64 @@ List<UnblockRequestSummary> demoPendingRequests() => [
   ),
 ];
 
-/// The event feed for the live session view — a fixed, ordered set the demo
-/// hub replays on connect so the feed is populated rather than "Waiting for
-/// events…".
+/// The activity feed for the live session view — a fixed, ordered set, oldest
+/// first, the demo hub replays on connect so the feed is populated rather than
+/// "Waiting for events…". In the hub's own shapes
+/// (contracts/session-hub.json), so the feed reads them as its sentences
+/// (#491), in step with [demoLiveRoster] and [demoPendingRequests]. By
+/// default the feed shows what needs the teacher; the joins and the start
+/// show with all activity.
 List<({String kind, Map<String, dynamic> payload})> demoLiveEvents() => [
-  (kind: 'SessionStarted', payload: {'sessionId': demoSessionId}),
-  (kind: 'ParticipantJoined', payload: {'userId': 'u1'}),
-  (kind: 'ParticipantJoined', payload: {'userId': 'u2'}),
-  (kind: 'BlockedUrl', payload: {'userId': 'u2', 'host': 'youtube.com'}),
-  (kind: 'UnblockRequested', payload: {'host': 'docs.google.com'}),
+  (
+    kind: 'SessionStarted',
+    payload: {
+      'sessionId': demoSessionId,
+      'classId': demoClassId,
+      'joinCode': demoJoinCode,
+      'apps': const <Object>[],
+      'domains': const <Object>[],
+    },
+  ),
+  for (final (id, name) in const [
+    ('u1', 'Ada Lovelace'),
+    ('u2', 'Alan Turing'),
+    ('u3', 'Grace Hopper'),
+  ])
+    (
+      kind: 'ParticipantStateChanged',
+      payload: {
+        'sessionId': demoSessionId,
+        'userId': id,
+        'displayName': name,
+        'state': 'Joined',
+      },
+    ),
+  (
+    kind: 'ParticipantStateChanged',
+    payload: {
+      'sessionId': demoSessionId,
+      'userId': 'u4',
+      'displayName': 'Katherine Johnson',
+      'state': 'Declined',
+    },
+  ),
+  for (final (id, name) in const [
+    ('u1', 'Ada Lovelace'),
+    ('u2', 'Alan Turing'),
+  ])
+    (
+      kind: 'UnblockRequested',
+      payload: {
+        'sessionId': demoSessionId,
+        'userId': id,
+        'userDisplayName': name,
+        'host': 'docs.google.com',
+      },
+    ),
+  (
+    kind: 'HeartbeatLost',
+    payload: {'sessionId': demoSessionId, 'userId': 'u3'},
+  ),
 ];
 
 /// History list — one ended session for the archive surface.

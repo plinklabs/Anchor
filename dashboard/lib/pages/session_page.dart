@@ -7,11 +7,13 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../alerts/live_alert_cues.dart';
 import '../alerts/live_alert_services.dart';
+import '../alerts/live_alert_settings.dart';
 import '../alerts/live_alert_settings_dialog.dart';
 import '../alerts/live_alerts.dart';
 import '../api/auth_token_store.dart';
 import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
+import '../feed/live_feed.dart';
 import '../l10n/app_localizations.dart';
 import '../realtime/session_hub_client.dart';
 import '../widgets/api_error_text.dart';
@@ -692,21 +694,25 @@ class _SessionPageState extends State<SessionPage> {
                     panel,
                     const _Hairline(),
                   ],
-                  _PanelLabel(AppLocalizations.of(context).sessionActivity),
                 ],
               ),
             ),
-            // The live feed — the instrument's read-out, filling the rest of the
-            // window, but never shorter than [_feedMinHeight]: on a short window
-            // the page scrolls down to it instead. Without a scroll body the
-            // sliver is the larger of the space left and its child's height,
-            // which the SizedBox states without asking the list (a list can't
-            // measure itself). The feed's list scrolls inside that height.
+            // The activity feed — the instrument's read-out, filling the rest
+            // of the window, but never shorter than [_feedMinHeight]: on a
+            // short window the page scrolls down to it instead. Without a
+            // scroll body the sliver is the larger of the space left and its
+            // child's height, which the SizedBox states without asking the
+            // list (a list can't measure itself). The feed's list scrolls
+            // inside that height, under its header.
             SliverFillRemaining(
               hasScrollBody: false,
               child: SizedBox(
                 height: _feedMinHeight,
-                child: _Feed(events: _events),
+                child: _ActivityPanel(
+                  events: _events,
+                  settings: _alertServices.settings,
+                  nameOf: _participantName,
+                ),
               ),
             ),
           ],
@@ -720,9 +726,9 @@ class _SessionPageState extends State<SessionPage> {
 /// flush-left margin as the shell's eyebrow and app-bar (the editorial column).
 const double _gutter = PlinkSpacing.s6; // 32
 
-/// The least height the live feed gets (#422): room for a handful of event
-/// rows when the panels above it already fill a short window.
-const double _feedMinHeight = 320;
+/// The least height the activity feed gets (#422): its header and room for a
+/// handful of event rows when the panels above it already fill a short window.
+const double _feedMinHeight = 368;
 
 /// A full-width 1px instrument rule — the system separates with hairlines,
 /// never shadows.
@@ -734,27 +740,6 @@ class _Hairline extends StatelessWidget {
     return const SizedBox(
       height: PlinkBorders.width,
       child: ColoredBox(color: PlinkColors.hairline),
-    );
-  }
-}
-
-/// A sentence-case mono section label (Space Mono) — the quiet panel headers
-/// that read like specs on an instrument, never shouting.
-class _PanelLabel extends StatelessWidget {
-  const _PanelLabel(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        _gutter,
-        PlinkSpacing.s4,
-        _gutter,
-        PlinkSpacing.s2,
-      ),
-      child: Text(text, style: _monoLabel(PlinkColors.ink60)),
     );
   }
 }
@@ -1118,53 +1103,153 @@ class _EndedBanner extends StatelessWidget {
   }
 }
 
-/// The live event feed — the instrument's read-out. Each event is a hairline
-/// row: a mono tabular timestamp, a calm status dot, the raw event kind as a
-/// mono technical label, and a condensed payload. Scannable, not alarming.
-class _Feed extends StatelessWidget {
-  const _Feed({required this.events});
+/// The activity feed (#491) — the instrument's read-out: what happened in the
+/// session, newest first, each event one plain sentence about the student it
+/// concerns. By default it shows only what needs the teacher's attention; the
+/// switch on its header shows everything, and the browser remembers it.
+///
+/// It fills the box it is given — its header on top, the list scrolling in
+/// the rest — wherever the page puts it.
+class _ActivityPanel extends StatelessWidget {
+  const _ActivityPanel({
+    required this.events,
+    required this.settings,
+    required this.nameOf,
+  });
 
+  /// Newest first.
   final List<SessionEvent> events;
+
+  /// Where the switch is kept, with the alert settings.
+  final LiveAlertSettings settings;
+
+  /// A student on the roster, by name, for an event that carries only the
+  /// student's id.
+  final String? Function(String userId) nameOf;
 
   @override
   Widget build(BuildContext context) {
-    if (events.isEmpty) {
-      return Center(
-        child: Text(
-          AppLocalizations.of(context).sessionWaitingEvents,
-          style: _monoLabel(PlinkColors.muted),
-        ),
-      );
-    }
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(
-        _gutter,
-        PlinkSpacing.s1,
-        _gutter,
-        PlinkSpacing.s6,
-      ),
-      itemCount: events.length,
-      separatorBuilder: (_, _) => const _Hairline(),
-      itemBuilder: (context, i) => _EventRow(event: events[i]),
+    final AppLocalizations l10n = AppLocalizations.of(context);
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (context, _) {
+        final bool showAll = settings.showAllActivity;
+        final List<FeedEntry> entries = feedEntries(
+          l10n,
+          events,
+          showAll: showAll,
+          nameOf: nameOf,
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _FeedHeader(
+              showAll: showAll,
+              onShowAll: (on) => settings.showAllActivity = on,
+            ),
+            Expanded(
+              child: entries.isEmpty
+                  // Nothing yet, or nothing that needs the teacher: the feed
+                  // says which, so a quiet feed doesn't read as a broken one.
+                  ? _FeedNotice(
+                      events.isEmpty
+                          ? l10n.sessionWaitingEvents
+                          : l10n.feedNothingNeedsAttention,
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(
+                        _gutter,
+                        PlinkSpacing.s1,
+                        _gutter,
+                        PlinkSpacing.s6,
+                      ),
+                      itemCount: entries.length,
+                      separatorBuilder: (_, _) => const _Hairline(),
+                      itemBuilder: (context, i) => _FeedRow(entry: entries[i]),
+                    ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
 
-/// The event kinds that warrant a stronger (but small, never alarming) marker —
-/// the ones a teacher might act on.
-const Set<String> _attentionKinds = <String>{'HeartbeatLost', 'TamperDetected'};
+/// The feed's header line: its sentence-case mono label (Space Mono), the
+/// quiet panel header that reads like a spec on an instrument, and the
+/// "Show all activity" switch, compact on the label's line like the archived
+/// switch on the Bundles and Classes pages.
+class _FeedHeader extends StatelessWidget {
+  const _FeedHeader({required this.showAll, required this.onShowAll});
 
-/// Whether [event] gets the stronger marker: one of [_attentionKinds], or the
-/// roster state change saying a student's agent never connected (#444).
-bool _needsAttention(SessionEvent event) =>
-    _attentionKinds.contains(event.kind) ||
-    (event.kind == 'ParticipantStateChanged' &&
-        event.payload['state'] == 'AgentMissing');
+  final bool showAll;
+  final ValueChanged<bool> onShowAll;
 
-class _EventRow extends StatelessWidget {
-  const _EventRow({required this.event});
+  @override
+  Widget build(BuildContext context) {
+    final AppLocalizations l10n = AppLocalizations.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(_gutter, PlinkSpacing.s2, _gutter, 0),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              l10n.sessionActivity,
+              style: _monoLabel(PlinkColors.ink60),
+            ),
+          ),
+          MergeSemantics(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(l10n.feedShowAll, style: _monoLabel(PlinkColors.muted)),
+                const SizedBox(width: PlinkSpacing.s2),
+                Transform.scale(
+                  scale: 0.8,
+                  child: Switch(
+                    key: const Key('feed-show-all'),
+                    value: showAll,
+                    onChanged: onShowAll,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-  final SessionEvent event;
+/// What an empty feed says, centred in it.
+class _FeedNotice extends StatelessWidget {
+  const _FeedNotice(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _gutter),
+        child: Text(
+          text,
+          style: _monoLabel(PlinkColors.muted),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}
+
+/// One feed row on a hairline: the local time as a mono tabular spec, a calm
+/// status dot — in the error colour where a laptop isn't enforced or was
+/// tampered with — and the sentence. A run of the same sentence shows its
+/// count. Scannable, not alarming.
+class _FeedRow extends StatelessWidget {
+  const _FeedRow({required this.entry});
+
+  final FeedEntry entry;
 
   static String _time(DateTime at) {
     final DateTime t = at.toLocal();
@@ -1173,35 +1258,42 @@ class _EventRow extends StatelessWidget {
         '${t.second.toString().padLeft(2, '0')}';
   }
 
-  String _payloadSummary() {
-    if (event.payload.isEmpty) return '';
-    return event.payload.entries.map((e) => '${e.key}=${e.value}').join('  ');
-  }
+  /// The event as it came, for troubleshooting: on a lingering hover, out of
+  /// the teacher's way.
+  static String _raw(SessionEvent event) => <String>[
+    event.kind,
+    for (final MapEntry<String, dynamic> field in event.payload.entries)
+      '${field.key}: ${field.value}',
+  ].join('\n');
 
   @override
   Widget build(BuildContext context) {
-    final bool attention = _needsAttention(event);
-    final Color dot = attention
-        ? Theme.of(context).colorScheme.error
+    final ThemeData theme = Theme.of(context);
+    final Color dot = entry.priority == FeedPriority.warning
+        ? theme.colorScheme.error
         : PlinkColors.muted;
-    final String payload = _payloadSummary();
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          // Mono tabular timestamp — the columns line up like a log.
+          // Mono tabular timestamp — the columns line up. The paddings set it
+          // and the dot on the sentence's first line.
           SizedBox(
             width: 76,
-            child: Text(
-              _time(event.at),
-              style: _monoSpec(PlinkColors.ink60, 12),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _time(entry.event.at),
+                style: _monoSpec(PlinkColors.ink60, 12),
+              ),
             ),
           ),
-          // A small status dot — paired with the label, never colour alone.
+          // A small status dot — paired with the sentence, never colour
+          // alone.
           Padding(
-            padding: const EdgeInsets.only(top: 3),
+            padding: const EdgeInsets.only(top: 8),
             child: Container(
               width: 7,
               height: 7,
@@ -1210,22 +1302,27 @@ class _EventRow extends StatelessWidget {
           ),
           const SizedBox(width: PlinkSpacing.s3),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(event.kind, style: _monoLabel(PlinkColors.ink)),
-                if (payload.isNotEmpty) ...<Widget>[
-                  const SizedBox(height: 2),
-                  Text(
-                    payload,
-                    style: _monoSpec(PlinkColors.muted, PlinkType.labelSm),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ],
+            child: Tooltip(
+              message: _raw(entry.event),
+              waitDuration: const Duration(seconds: 1),
+              child: Text(
+                entry.sentence,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: PlinkColors.ink,
+                ),
+              ),
             ),
           ),
+          if (entry.count > 1) ...<Widget>[
+            const SizedBox(width: PlinkSpacing.s2),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '×${entry.count}',
+                style: _monoSpec(PlinkColors.muted, 12),
+              ),
+            ),
+          ],
         ],
       ),
     );

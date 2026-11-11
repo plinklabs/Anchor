@@ -926,6 +926,156 @@ abstract class AppLocalizations {
   /// **'Waiting for events…'**
   String get sessionWaitingEvents;
 
+  /// Switch above the live session's activity feed (#491). Off (the default), the feed shows only what needs the teacher's attention; on, everything, joins included.
+  ///
+  /// In en, this message translates to:
+  /// **'Show all activity'**
+  String get feedShowAll;
+
+  /// In the live activity feed when events came in but none needs the teacher's attention, so with 'Show all activity' off they are all hidden (#491).
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing that needs your attention yet'**
+  String get feedNothingNeedsAttention;
+
+  /// No description provided for @feedSessionStarted.
+  ///
+  /// In en, this message translates to:
+  /// **'Session started.'**
+  String get feedSessionStarted;
+
+  /// No description provided for @feedSessionStartedCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Session started, code {code}.'**
+  String feedSessionStartedCode(String code);
+
+  /// Live feed sentence for a session starting (#491). {apps} is feedApps, {sites} is feedSites.
+  ///
+  /// In en, this message translates to:
+  /// **'Session started, code {code}: {apps} and {sites} allowed.'**
+  String feedSessionStartedAllowed(String code, String apps, String sites);
+
+  /// No description provided for @feedApps.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{no apps} =1{1 app} other{{count} apps}}'**
+  String feedApps(int count);
+
+  /// No description provided for @feedSites.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{no websites} =1{1 website} other{{count} websites}}'**
+  String feedSites(int count);
+
+  /// No description provided for @feedSessionEnded.
+  ///
+  /// In en, this message translates to:
+  /// **'Session ended.'**
+  String get feedSessionEnded;
+
+  /// Live feed sentences about a student (#491): 'who' is 'named' when the student's name is known, anything else when it isn't.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} joined.} other{A student joined.}}'**
+  String feedJoined(String who, String name);
+
+  /// No description provided for @feedLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} left the session.} other{A student left the session.}}'**
+  String feedLeft(String who, String name);
+
+  /// No description provided for @feedDeclined.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} declined the session.} other{A student declined the session.}}'**
+  String feedDeclined(String who, String name);
+
+  /// No description provided for @feedNotJoined.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} hasn\'t joined yet.} other{A student hasn\'t joined yet.}}'**
+  String feedNotJoined(String who, String name);
+
+  /// The student joined, but their agent never sent a heartbeat, so apps aren't blocked on their laptop (#444).
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name}\'s agent hasn\'t reported in.} other{A student\'s agent hasn\'t reported in.}}'**
+  String feedAgentMissing(String who, String name);
+
+  /// No description provided for @feedAgentStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name}\'s agent stopped reporting.} other{A student\'s agent stopped reporting.}}'**
+  String feedAgentStopped(String who, String name);
+
+  /// No description provided for @feedAgentBack.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} is connected again.} other{A student is connected again.}}'**
+  String feedAgentBack(String who, String name);
+
+  /// A student's live state changed to one the dashboard has no sentence for.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name}\'s status changed.} other{A student\'s status changed.}}'**
+  String feedStateChanged(String who, String name);
+
+  /// No description provided for @feedAsks.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} asks for access to {host}.} other{A student asks for access to {host}.}}'**
+  String feedAsks(String who, String name, String host);
+
+  /// Stands in for the site in feedAsks when an access request names none.
+  ///
+  /// In en, this message translates to:
+  /// **'a website'**
+  String get feedSomeSite;
+
+  /// Tamper report extension_disabled: the agent saw the Edge extension go away.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name}\'s Anchor extension was switched off or removed.} other{A student\'s Anchor extension was switched off or removed.}}'**
+  String feedTamperExtensionDisabled(String who, String name);
+
+  /// Tamper report extension_silent: the extension stopped reporting (Edge closed, or the extension stopped).
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name}\'s Anchor extension is off or not responding.} other{A student\'s Anchor extension is off or not responding.}}'**
+  String feedTamperExtensionSilent(String who, String name);
+
+  /// No description provided for @feedTamperInPrivate.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} opened an InPrivate window.} other{A student opened an InPrivate window.}}'**
+  String feedTamperInPrivate(String who, String name);
+
+  /// Tamper report host_permission_revoked: the extension's site access was turned down from 'On all sites'.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} limited the Anchor extension\'s access to websites.} other{A student limited the Anchor extension\'s access to websites.}}'**
+  String feedTamperSiteAccess(String who, String name);
+
+  /// Tamper report agent_unavailable: the agent went away while the extension still runs.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name}\'s Anchor app stopped running.} other{A student\'s Anchor app stopped running.}}'**
+  String feedTamperAgentUnavailable(String who, String name);
+
+  /// A tamper report of a kind the dashboard has no sentence for.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{Tampering detected on {name}\'s computer.} other{Tampering detected on a student\'s computer.}}'**
+  String feedTamperOther(String who, String name);
+
+  /// Live feed sentence for an event the dashboard doesn't know (#491): never the raw event.
+  ///
+  /// In en, this message translates to:
+  /// **'Something happened in the session.'**
+  String get feedOther;
+
   /// No description provided for @sessionStateStale.
   ///
   /// In en, this message translates to:
