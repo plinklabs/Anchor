@@ -377,8 +377,8 @@ void main() {
           at: DateTime.now(),
         );
 
-    test('the live events come first, then the history, and an event the page '
-        'heard live and loaded too shows once', () {
+    test('the live events come above the history from before them, and an '
+        'event the page heard live and loaded too shows once', () {
       final List<SessionEvent> history = feedHistory(
         sessionId: _sessionId,
         stored: [
@@ -417,7 +417,8 @@ void main() {
       ]);
       expect(feedTimeline(heard, history), hasLength(4));
 
-      // The leave, heard live at the server's time: once too.
+      // The leave, heard live at the server's time: once too. The page heard
+      // it before it missed the requests (#499), so it goes below them.
       final List<SessionEvent> leftLive = [
         live('ParticipantStateChanged', {
           'userId': _boId,
@@ -427,10 +428,166 @@ void main() {
         }),
       ];
       expect(_sentences(feedTimeline(leftLive, history)), [
-        'Bo left the session.',
         'Ada asks for access to chat.example.com. ×2',
+        'Bo left the session.',
       ]);
       expect(feedTimeline(leftLive, history), hasLength(3));
+    });
+
+    test('what the page missed while it was offline goes in its place in '
+        'time, between what it heard before and after, each once (#499)', () {
+      // The page opened at 08:28, heard the request and Bo leaving, went
+      // offline at 08:33 and missed Ada's tamper and Cy declining, came
+      // back at 08:37, heard Ada's agent come back while it loaded the
+      // history again, and then that it stopped again.
+      final List<SessionEvent> history = feedHistory(
+        sessionId: _sessionId,
+        stored: [
+          _stored('AgentReconnected', _min(13)),
+          _stored(
+            'TamperDetected',
+            _min(11),
+            payloadJson: '{"kind":"inprivate_opened"}',
+          ),
+          _stored('JoinDeclined', _min(9), userId: 'c'),
+          _stored(
+            'UnblockRequest',
+            _min(5),
+            payloadJson: '{"host":"chat.example.com"}',
+          ),
+          _stored(
+            'UnblockRequest',
+            _min(2),
+            payloadJson: '{"host":"maps.example.com"}',
+          ),
+        ],
+        participants: [
+          _participant(_adaId, 'Ada'),
+          _participant(_boId, 'Bo', leftAt: _min(6, 500)),
+          _participant('c', 'Cy'),
+        ],
+      );
+      final List<SessionEvent> heard = [
+        live('HeartbeatLost', {'lastSeenAt': '2026-11-11T08:39:00+00:00'}),
+        live('AgentReconnected', {'reconnectedAt': '2026-11-11T08:38:00Z'}),
+        live('ParticipantStateChanged', {
+          'userId': _boId,
+          'displayName': 'Bo',
+          'state': 'Left',
+          'at': '2026-11-11T08:31:00.5000000+00:00',
+        }),
+        live('UnblockRequested', {
+          'userDisplayName': 'Ada',
+          'host': 'chat.example.com',
+          'requestedAt': '2026-11-11T08:30:00Z',
+        }),
+      ];
+
+      expect(_sentences(feedTimeline(heard, history)), [
+        "Ada's agent stopped reporting.",
+        'Ada is connected again.',
+        'Ada opened an InPrivate window.',
+        'Cy declined the session.',
+        'Bo left the session.',
+        'Ada asks for access to chat.example.com.',
+        'Ada asks for access to maps.example.com.',
+      ]);
+      expect(feedTimeline(heard, history), hasLength(7));
+    });
+
+    test('an agent that stopped reporting takes the time the server noticed, '
+        'not when it was last seen', () {
+      final List<SessionEvent> history = feedHistory(
+        sessionId: _sessionId,
+        stored: [
+          _stored(
+            'HeartbeatLost',
+            _min(6),
+            payloadJson: '{"lastSeenAt":"2026-11-11T08:30:00+00:00"}',
+          ),
+          _stored(
+            'TamperDetected',
+            _min(5, 500),
+            payloadJson: '{"kind":"inprivate_opened"}',
+          ),
+        ],
+      );
+      final List<SessionEvent> heard = [
+        live('HeartbeatLost', {'lastSeenAt': '2026-11-11T08:30:00Z'}),
+      ];
+      expect(_sentences(feedTimeline(heard, history)), [
+        "Ada's agent stopped reporting.",
+        'Ada opened an InPrivate window.',
+      ]);
+    });
+
+    test('the live events keep the order they came in, whatever time they '
+        'carry', () {
+      // Bo's laptop runs ten minutes behind: his request, heard after Ada's
+      // leave, says 08:20.
+      final List<SessionEvent> history = feedHistory(
+        sessionId: _sessionId,
+        stored: [
+          _stored(
+            'TamperDetected',
+            _min(7),
+            payloadJson: '{"kind":"inprivate_opened"}',
+          ),
+          _stored('JoinDeclined', _min(0), userId: 'c'),
+        ],
+      );
+      final List<SessionEvent> heard = [
+        live('AgentReconnected', {
+          'userId': _boId,
+          'reconnectedAt': '2026-11-11T08:35:00Z',
+        }),
+        live('UnblockRequested', {
+          'userId': _boId,
+          'userDisplayName': 'Bo',
+          'host': 'chat.example.com',
+          'requestedAt': '2026-11-11T08:20:00Z',
+        }),
+        live('ParticipantStateChanged', {
+          'displayName': 'Ada',
+          'state': 'Left',
+          'at': '2026-11-11T08:30:00Z',
+        }),
+      ];
+      expect(_sentences(feedTimeline(heard, history)), [
+        'Bo is connected again.',
+        'Ada opened an InPrivate window.',
+        'Bo asks for access to chat.example.com.',
+        'Ada left the session.',
+        'Cy declined the session.',
+      ]);
+    });
+
+    test('a live event that carries no time stays above the history next to '
+        'it', () {
+      final List<SessionEvent> history = feedHistory(
+        sessionId: _sessionId,
+        stored: [
+          _stored(
+            'TamperDetected',
+            _min(7),
+            payloadJson: '{"kind":"inprivate_opened"}',
+          ),
+        ],
+      );
+      final List<SessionEvent> heard = [
+        live('SessionEnded', const {}),
+        live('ParticipantStateChanged', {
+          'userId': _boId,
+          'displayName': 'Bo',
+          'state': 'Left',
+          'at': '2026-11-11T08:30:00Z',
+        }),
+      ];
+      expect(_sentences(feedTimeline(heard, history)), [
+        'Session ended.',
+        'Ada opened an InPrivate window.',
+        'Bo left the session.',
+      ]);
     });
 
     test('the same thing said at another time is another event', () {
@@ -448,6 +605,42 @@ void main() {
       final List<SessionEvent> heard = [live('SessionEnded', const {})];
       expect(feedTimeline(heard, const []), same(heard));
       expect(feedEventIdentity(heard.single), isNull);
+    });
+  });
+
+  group('loaded again after a reconnect (#499)', () {
+    SessionEvent asks(String host, DateTime at) => feedEventOfStored(
+      _stored('UnblockRequest', at, payloadJson: '{"host":"$host"}'),
+      sessionId: _sessionId,
+      name: 'Ada',
+    )!;
+
+    test('what the backend has now replaces what it had', () {
+      final List<SessionEvent> previous = [asks('a.example.com', _min(2))];
+      final List<SessionEvent> fresh = [
+        asks('b.example.com', _min(9)),
+        asks('a.example.com', _min(2)),
+      ];
+      expect(feedHistoryReloaded(previous, fresh), same(fresh));
+    });
+
+    test('cut at its limit, it keeps what it had from before the cut', () {
+      final List<SessionEvent> previous = [
+        asks('c.example.com', _min(6)),
+        asks('b.example.com', _min(4)),
+        asks('a.example.com', _min(2)),
+      ];
+      final List<SessionEvent> fresh = [
+        asks('d.example.com', _min(9)),
+        asks('c.example.com', _min(6)),
+        asks('b.example.com', _min(4)),
+      ];
+      expect(_sentences(feedHistoryReloaded(previous, fresh, cutAt: _min(4))), [
+        'Ada asks for access to d.example.com.',
+        'Ada asks for access to c.example.com.',
+        'Ada asks for access to b.example.com.',
+        'Ada asks for access to a.example.com.',
+      ]);
     });
   });
 }

@@ -181,23 +181,100 @@ List<SessionEvent> feedHistory({
   return <SessionEvent>[for (final int i in order) events[i]];
 }
 
-/// What the feed shows (#492): the events the page heard live since it opened,
-/// newest first, then the session's [history] from before that, less those it
-/// heard live too. The page loads the history once it has joined the session,
-/// so an event between the join and the load is in both, and shows once.
+/// What the feed shows (#492, #499), newest first: the events the page heard
+/// live, in the order it heard them, and in their place in time among them
+/// the session's [history], less what the page heard live too.
+///
+/// The page hears nothing from before it joined the session, nor while its
+/// hub connection is down. It loads the history once it has joined, and again
+/// after each reconnect, so an event between a join and the load is in both,
+/// and shows once. What it missed while offline is newer than what it heard
+/// before the drop, and older than what it hears after.
+///
+/// The history's times are the server's; a live event's is when the browser
+/// received it, by its own clock. So a live event takes the server's time of
+/// it: the history's, when the history has it too, or the time its payload
+/// carries. And since the page heard the live events in order, each happened
+/// no earlier than any it heard before it. A history event goes above the
+/// first live event that is older; the live events keep the order they came
+/// in. One whose payload carries no time (the session ending) stays above the
+/// history events next to it.
 List<SessionEvent> feedTimeline(
   List<SessionEvent> live,
   List<SessionEvent> history,
 ) {
   if (history.isEmpty) return live;
-  final Set<String> heard = <String>{
-    for (final SessionEvent e in live) ?feedEventIdentity(e),
+  final Map<String, DateTime> stored = <String, DateTime>{
+    for (final SessionEvent e in history)
+      if (feedEventIdentity(e) case final String id) id: e.at,
   };
-  return <SessionEvent>[
-    ...live,
+  final Set<String> heard = <String>{};
+  // Each live event's place on the server's clock, from the oldest up: no
+  // earlier than the one heard before it.
+  final List<DateTime?> placed = List<DateTime?>.filled(live.length, null);
+  DateTime? floor;
+  for (int i = live.length - 1; i >= 0; i--) {
+    final String? id = feedEventIdentity(live[i]);
+    if (id != null) heard.add(id);
+    final DateTime? at = (id == null ? null : stored[id]) ?? _sentAt(live[i]);
+    if (at == null) continue;
+    if (floor == null || at.isAfter(floor)) floor = at;
+    placed[i] = floor;
+  }
+
+  final List<SessionEvent> unheard = <SessionEvent>[
     for (final SessionEvent e in history)
       if (!heard.contains(feedEventIdentity(e))) e,
   ];
+  final List<SessionEvent> timeline = <SessionEvent>[];
+  int next = 0;
+  for (int i = 0; i < live.length; i++) {
+    final DateTime? at = placed[i];
+    while (at != null &&
+        next < unheard.length &&
+        unheard[next].at.isAfter(at)) {
+      timeline.add(unheard[next++]);
+    }
+    timeline.add(live[i]);
+  }
+  return timeline..addAll(unheard.skip(next));
+}
+
+/// The feed's history once the page has loaded it again (#499): [fresh], what
+/// the backend has now, newest first. If the backend cut that at its limit,
+/// [cutAt] is the time of the oldest stored event it returned, and what the
+/// [previous] load had from before then stays below it: the new load no longer
+/// reaches it, and a busy session's feed would otherwise lose its oldest rows
+/// on each reconnect.
+List<SessionEvent> feedHistoryReloaded(
+  List<SessionEvent> previous,
+  List<SessionEvent> fresh, {
+  DateTime? cutAt,
+}) {
+  if (cutAt == null) return fresh;
+  return <SessionEvent>[
+    ...fresh,
+    for (final SessionEvent e in previous)
+      if (e.at.isBefore(cutAt)) e,
+  ];
+}
+
+/// The server's time of [event] as its payload carries it (#499): the field
+/// the hub contract gives each kind. An agent that stopped reporting carries
+/// when it was last seen, a little before the server noticed. Null for the
+/// session ending, which carries none, and a kind the feed doesn't know.
+DateTime? _sentAt(SessionEvent event) {
+  final String? field = switch (event.kind) {
+    'ParticipantStateChanged' => 'at',
+    'UnblockRequested' => 'requestedAt',
+    'TamperDetected' => 'detectedAt',
+    'HeartbeatLost' => 'lastSeenAt',
+    'AgentReconnected' => 'reconnectedAt',
+    'SessionStarted' => 'startedAt',
+    _ => null,
+  };
+  final Object? wire = field == null ? null : event.payload[field];
+  return wire is String ? DateTime.tryParse(wire) : null;
 }
 
 /// What makes [event] the event it is, the same whether the hub broadcast it

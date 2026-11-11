@@ -72,9 +72,15 @@ class _SessionPageState extends State<SessionPage> {
   final GlobalKey _pendingRequestsKey = GlobalKey();
   // What the page heard live since it opened, newest first.
   final List<SessionEvent> _events = [];
-  // What happened in the session before that (#492), in the hub's shapes,
-  // newest first: empty until it loads, and if it can't.
+  // What happened in the session before that (#492), and while the page was
+  // offline (#499), in the hub's shapes, newest first: empty until it loads,
+  // and if it can't.
   List<SessionEvent> _history = const [];
+  // The history loads the page started, and the one the feed shows: a
+  // reconnect loads it again (#499), and an older load that answers late
+  // mustn't undo a newer one.
+  int _historyLoads = 0;
+  int _historyShown = 0;
   bool _connecting = true;
   bool _ending = false;
   bool _ended = false;
@@ -199,24 +205,33 @@ class _SessionPageState extends State<SessionPage> {
 
   /// Loads what happened in the session before the page opened (#492): the
   /// feed holds only what the page hears live, so it was empty each time the
-  /// teacher came back to the session, or reloaded it.
+  /// teacher came back to the session, or reloaded it. After a reconnect it
+  /// loads it again, for what the page missed while offline (#499); the feed
+  /// puts that in its place in time ([feedTimeline]).
   Future<void> _loadHistory() async {
     if (!mounted || _notYours || _ended) return;
+    final int load = ++_historyLoads;
     try {
       final stored = await widget.sessions.sessionEvents(
         widget.sessionId,
         kinds: feedStoredKinds,
         limit: feedHistoryLimit,
       );
-      if (!mounted) return;
-      setState(
-        () => _history = feedHistory(
-          sessionId: widget.sessionId,
-          stored: stored,
-          participants: _detail?.participants ?? const [],
-          complete: stored.length < feedHistoryLimit,
-        ),
-      );
+      if (!mounted || load < _historyShown) return;
+      final bool complete = stored.length < feedHistoryLimit;
+      setState(() {
+        _historyShown = load;
+        _history = feedHistoryReloaded(
+          _history,
+          feedHistory(
+            sessionId: widget.sessionId,
+            stored: stored,
+            participants: _detail?.participants ?? const [],
+            complete: complete,
+          ),
+          cutAt: complete ? null : stored.last.occurredAt,
+        );
+      });
     } catch (e) {
       if (_isNotYours(e)) _showNotYours();
       // Otherwise non-fatal: the feed shows what the page hears from now on.
@@ -459,10 +474,12 @@ class _SessionPageState extends State<SessionPage> {
   /// membership across a reconnect, and every roster signal (participant
   /// state, heartbeat, tamper, unblock request) goes to the session group, so
   /// join it again, then re-fetch the roster and the pending requests the page
-  /// missed while it was offline. Join first: a change after the join reaches
+  /// missed while it was offline, and the feed's history, which has what was
+  /// broadcast meanwhile (#499). Join first: a change after the join reaches
   /// this connection, one before it is in the re-fetch. The hub runs an
   /// invocation only after OnConnectedAsync, so the join can't race the
-  /// reconnect's own setup.
+  /// reconnect's own setup. The history after the roster, whose joins and
+  /// leaves it reads.
   Future<void> _rejoinAfterReconnect() async {
     if (_ended || _notYours) return;
     try {
@@ -473,7 +490,10 @@ class _SessionPageState extends State<SessionPage> {
       // The detail re-fetch below still runs and picks the end up.
     }
     if (!mounted) return;
-    await Future.wait([_loadDetail(), _loadPendingRequests()]);
+    await Future.wait([
+      _loadDetail().then((_) => _loadHistory()),
+      _loadPendingRequests(),
+    ]);
   }
 
   /// Starts a closed hub connection again (#370): when the teacher comes back

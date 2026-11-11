@@ -38,7 +38,8 @@ import 'support/e2e_binding.dart';
 //     continues live, each event once (#492),
 //   - the end of the teacher's other session doesn't end this one (#354),
 //   - after a hub reconnect the page joins its session again and catches up on
-//     what it missed while offline (#365),
+//     what it missed while offline (#365), its feed too, each event in its
+//     place in time (#499),
 //   - while the hub connection is down the page says live updates are paused,
 //     and a closed connection can be reconnected from the page (#370),
 //   - a failed join, approval, bundle change or End reads as a sentence, never
@@ -1172,6 +1173,175 @@ void main() {
 
       expect(find.text('In session'), findsOneWidget);
       expect(find.text('Students (1/1 in session)'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'after a hub reconnect the feed shows what happened while the page was '
+    'offline, in its place in time, each once, then continues live (#499)',
+    (tester) async {
+      const asks = 'Ada asks for access to chat.example.com.';
+      const left = 'Bo left the session.';
+      const inPrivate = 'Ada opened an InPrivate window.';
+      const switchedOff = "Bo's Anchor extension was switched off or removed.";
+      const stopped = "Ada's agent stopped reporting.";
+      // The server's times of them, as the hub sends them.
+      const askedAt = '2026-06-12T07:20:00.1234567+00:00';
+      const leftAt = '2026-06-12T07:22:00.4170000+00:00';
+      const inPrivateAt = '2026-06-12T07:24:00.2500000+00:00';
+      const switchedOffAt = '2026-06-12T07:26:00.5000000+00:00';
+      SessionParticipantInfo student(String name, {String? left}) =>
+          SessionParticipantInfo(
+            userId: name,
+            displayName: name,
+            joinedAt: null,
+            declinedAt: null,
+            leftAt: left == null ? null : DateTime.parse(left),
+            state: left == null
+                ? ParticipantLiveState.joined
+                : ParticipantLiveState.left,
+          );
+      SessionRecentEvent stored(
+        String id,
+        String userId,
+        String kind,
+        String at, [
+        String payloadJson = '{}',
+      ]) => SessionRecentEvent(
+        id: id,
+        userId: userId,
+        kind: kind,
+        payloadJson: payloadJson,
+        occurredAt: DateTime.parse(at),
+      );
+      String local(String wire) {
+        final t = DateTime.parse(wire).toLocal();
+        String two(int n) => n.toString().padLeft(2, '0');
+        return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+      }
+
+      double top(String text) => tester.getTopLeft(find.text(text)).dy;
+
+      // A realistic window, with room for the feed under the panels.
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [student('Ada'), student('Bo')],
+      );
+
+      // While the teacher watches, Ada asks for a site; the backend stores it.
+      h.hub.emit('UnblockRequested', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'userDisplayName': 'Ada',
+        'host': 'chat.example.com',
+        'url': 'https://chat.example.com/',
+        'requestedAt': askedAt,
+      });
+      h.sessions.stored = [
+        stored(
+          'e1',
+          'Ada',
+          'UnblockRequest',
+          askedAt,
+          '{"url":"https://chat.example.com/","host":"chat.example.com"}',
+        ),
+      ];
+      await tester.pumpAndSettle();
+      expect(find.text(asks), findsOneWidget);
+
+      // The backend restarts. While the page is offline Bo leaves (his agent
+      // reports it by its own clock, the server keeps when it heard) and Ada
+      // opens InPrivate; neither broadcast reaches the page.
+      h.hub.drop();
+      h.hub
+        ..emit('ParticipantStateChanged', {
+          'sessionId': _sessionId,
+          'userId': 'Bo',
+          'displayName': 'Bo',
+          'state': 'Left',
+          'at': leftAt,
+        })
+        ..emit('TamperDetected', {
+          'sessionId': _sessionId,
+          'userId': 'Ada',
+          'userDisplayName': 'Ada',
+          'kind': 'inprivate_opened',
+          'detectedAt': inPrivateAt,
+        });
+      h.sessions
+        ..roster = [student('Ada'), student('Bo', left: leftAt)]
+        ..stored = [
+          stored(
+            'e3',
+            'Ada',
+            'TamperDetected',
+            inPrivateAt,
+            '{"kind":"inprivate_opened"}',
+          ),
+          stored('e2', 'Bo', 'ManualLeave', '2026-06-12T07:22:00.1+00:00'),
+          ...h.sessions.stored,
+        ];
+      await tester.pumpAndSettle();
+      expect(find.text(left), findsNothing);
+      expect(find.text(inPrivate), findsNothing);
+
+      // The connection comes back. Between the page's join and its load,
+      // Bo's extension is switched off: the page hears it, and it is stored.
+      final loads = h.sessions.sessionEventsCalls;
+      h.sessions.whileLoadingEvents = () {
+        h.hub.emit('TamperDetected', {
+          'sessionId': _sessionId,
+          'userId': 'Bo',
+          'userDisplayName': 'Bo',
+          'kind': 'extension_disabled',
+          'detectedAt': switchedOffAt,
+        });
+        h.sessions.stored = [
+          stored(
+            'e4',
+            'Bo',
+            'TamperDetected',
+            switchedOffAt,
+            '{"kind":"extension_disabled"}',
+          ),
+          ...h.sessions.stored,
+        ];
+      };
+      h.hub.reconnect();
+      await tester.pumpAndSettle();
+      expect(h.hub.joinCalls, 2);
+      expect(h.sessions.sessionEventsCalls, loads + 1);
+
+      // The feed shows what happened while it was offline, between what it
+      // heard before and after, each once, at the server's time of it.
+      for (final sentence in [switchedOff, inPrivate, left, asks]) {
+        expect(find.text(sentence), findsOneWidget, reason: sentence);
+      }
+      expect(find.textContaining('×'), findsNothing);
+      expect(top(switchedOff), lessThan(top(inPrivate)));
+      expect(top(inPrivate), lessThan(top(left)));
+      expect(top(left), lessThan(top(asks)));
+      expect(find.text(local(inPrivateAt)), findsOneWidget);
+      expect(find.text(local(leftAt)), findsOneWidget);
+      for (final raw in ['ManualLeave', 'TamperDetected', '+00:00']) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+
+      // And it continues live, on top.
+      h.hub.emit('HeartbeatLost', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'lastSeenAt': '2026-06-12T07:27:00+00:00',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text(stopped), findsOneWidget);
+      expect(top(stopped), lessThan(top(switchedOff)));
       expect(tester.takeException(), isNull);
     },
   );
