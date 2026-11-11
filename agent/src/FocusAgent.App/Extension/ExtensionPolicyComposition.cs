@@ -6,13 +6,17 @@ using Microsoft.Win32;
 
 namespace FocusAgent.App.Extension;
 
-/// <summary>The registry, elevation and state parts the extension setup runs on (#405).</summary>
+/// <summary>
+/// The registry, elevation and state parts the extension setup runs on (#405), and
+/// the Edge profiles it looks for the installed extension in (#488).
+/// </summary>
 internal sealed record ExtensionPolicyParts(
     IExtensionPolicyStore Machine,
     IExtensionPolicyStore User,
     IElevatedPolicyWriter ElevatedWriter,
     IExtensionPolicyStateStore State,
-    TimeSpan GracePeriod);
+    TimeSpan GracePeriod,
+    EdgeProfileExtensionProbe Profiles);
 
 /// <summary>
 /// Picks the parts of the Edge extension setup for this launch (#405), and is the
@@ -29,6 +33,11 @@ internal static class ExtensionPolicyComposition
         ExtensionSettings settings, bool allowRealElevation, ILoggerFactory loggers)
     {
         var storeLog = loggers.CreateLogger<RegistryExtensionPolicyStore>();
+        var probeLog = loggers.CreateLogger<EdgeProfileExtensionProbe>();
+        var realProfiles = new EdgeProfileExtensionProbe(
+            EdgeProfileExtensionProbe.UserDataFolders(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)),
+            log: probeLog);
 
         if (allowRealElevation)
         {
@@ -37,7 +46,8 @@ internal static class ExtensionPolicyComposition
                 RegistryExtensionPolicyStore.ForUser(log: storeLog),
                 new ShellElevatedPolicyWriter(loggers.CreateLogger<ShellElevatedPolicyWriter>()),
                 new FileExtensionPolicyStateStore(),
-                ExtensionSelfRegistrar.DefaultGracePeriod);
+                ExtensionSelfRegistrar.DefaultGracePeriod,
+                realProfiles);
         }
 
         // A dev or test run: never a real UAC prompt.
@@ -64,6 +74,12 @@ internal static class ExtensionPolicyComposition
             ? TimeSpan.FromSeconds(seconds)
             : ExtensionSelfRegistrar.DefaultGracePeriod;
 
-        return new ExtensionPolicyParts(machine, user, writer, state, grace);
+        // Reading the real profiles is harmless, but the e2e points at a folder of
+        // its own, so whether this box's Edge has the extension can't decide a spec.
+        var profiles = string.IsNullOrWhiteSpace(settings.TestEdgeUserDataPath)
+            ? realProfiles
+            : new EdgeProfileExtensionProbe([settings.TestEdgeUserDataPath.Trim()], log: probeLog);
+
+        return new ExtensionPolicyParts(machine, user, writer, state, grace, profiles);
     }
 }

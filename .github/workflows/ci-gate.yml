@@ -73,7 +73,8 @@ jobs:
               - '.github/workflows/dashboard-deploy.yml'
             extension:
               - 'extension/**'
-              - 'backend/**'
+              - 'agent/src/FocusAgent.WitnessHost/**'
+              - 'agent/src/FocusAgent.Core/**'
               - '.github/workflows/extension-e2e.yml'
             extension_unit:
               - 'extension/**'

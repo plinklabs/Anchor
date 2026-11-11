@@ -11,13 +11,10 @@
 
 import { test, expect } from '../fixtures.ts';
 import { expectRedirectedToBlockPage } from '../asserts.ts';
-import { OFFLIST_HOST } from '../config.ts';
+import { OFFLIST_HOST, WITH_MS365 } from '../config.ts';
 
-test.beforeEach(async ({ ext, backend }) => {
-  await ext.configure();
-  const classId = await backend.findClassId();
-  const bundleId = await backend.findBundleId();
-  await backend.startSession(classId, [bundleId]);
+test.beforeEach(async ({ ext, agent }) => {
+  agent.startSession(WITH_MS365);
   await ext.waitForLog('active session cached');
 });
 

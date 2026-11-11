@@ -61,8 +61,9 @@ namespace FocusAgent.App.Connectivity;
 ///                  the click (409 when the overlay isn't up).
 ///
 /// And /status carries <c>extensionPolicy</c> (#405): where the Anchor
-/// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>)
-/// and whether the setup window is open; <c>extensionGuard</c> (#427):
+/// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>),
+/// whether the setup window is open, and how far the check for the extension
+/// got (#488: <c>WaitingForBrowser</c>, <c>Installed</c>, <c>GuidedInstall</c>, ...); <c>extensionGuard</c> (#427):
 /// whether the extension's witness is connected and the Edge pause's state; and
 /// <c>overlay</c> (#452): what the focus overlay shows while it is up
 /// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not; and

@@ -3,7 +3,6 @@
     "message": "Anchor focus-session enforcement — URL filter and friendly block page.",
     "description": "Extension description shown in the browser's extensions page and store listing."
   },
-
   "focusSession": {
     "message": "Focus session",
     "description": "Eyebrow label marking an active focus session (block page + popup)."
@@ -16,7 +15,6 @@
     "message": "Anchor focus enforcement",
     "description": "Footnote shown at the bottom of the block page and popup."
   },
-
   "blockPageTitle": {
     "message": "Blocked by Anchor",
     "description": "Browser tab title for the block page."
@@ -71,7 +69,6 @@
     "message": "Unknown error",
     "description": "Fallback reason embedded in blockReachTeacherFailed when the background reports none."
   },
-
   "popupActiveTitle": {
     "message": "You're in focus",
     "description": "Popup headline while a focus session is active."
@@ -103,13 +100,5 @@
   "popupEyebrowIdle": {
     "message": "Idle",
     "description": "Eyebrow label shown in the popup when no session is active."
-  },
-  "popupAuthFailedTitle": {
-    "message": "Anchor can't sign you in",
-    "description": "Popup/badge heading when the student's Entra sign-in failed outright."
-  },
-  "popupAuthFailedBody": {
-    "message": "Your school account couldn't be signed in, so Anchor isn't connected right now. Show this to your teacher or IT support:",
-    "description": "Popup body asking the student to relay the sign-in error text below it."
   }
 }

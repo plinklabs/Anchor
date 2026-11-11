@@ -87,13 +87,17 @@ describe('version sync (#204, #208)', () => {
   });
 });
 
-// Issue #289: production student auth acquires an Entra token via
-// chrome.identity.launchWebAuthFlow, which requires the "identity" permission. It
-// was dropped earlier (the Edge store rejects unused permissions) and re-added when
-// the auth path landed; lock it so a future trim can't silently break sign-in.
-describe('identity permission (#289)', () => {
-  it('declares the identity permission so launchWebAuthFlow works', () => {
-    expect(manifest.permissions).toContain('identity');
+// Issue #489: the extension no longer signs in (the agent is its only identity),
+// so it no longer asks for "identity", which only launchWebAuthFlow used (#289).
+// The Edge store rejects unused permissions; lock it out so it doesn't creep back.
+// The native-messaging link to the agent is what it needs instead.
+describe('permissions (#489)', () => {
+  it('does not declare the identity permission: nothing signs in in the browser', () => {
+    expect(manifest.permissions).not.toContain('identity');
+  });
+
+  it('declares nativeMessaging, the link the agent hands the session down', () => {
+    expect(manifest.permissions).toContain('nativeMessaging');
   });
 });
 

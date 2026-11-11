@@ -1,8 +1,10 @@
 using FocusAgent.App.Extension;
 using FocusAgent.App.Startup;
 using FocusAgent.App.Tamper;
+using FocusAgent.App.Updates;
 using FocusAgent.Core.Logging;
 using FocusAgent.Core.Startup;
+using FocusAgent.Core.Updates;
 using FocusAgent.Native;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -246,7 +248,8 @@ public static class Program
     /// Dev-only env var (#225): an HKCU-relative key path that overrides the
     /// production <c>Run</c> key for <see cref="RegisterStartupArg"/> /
     /// <see cref="UnregisterStartupArg"/>, so the integration test writes to a
-    /// throwaway subtree and never disturbs a dev's real auto-start entries.
+    /// throwaway subtree and never disturbs a dev's real auto-start entries. The
+    /// install/update hook honours it too (#487), for the e2e that runs that hook.
     /// </summary>
     public const string StartupRunKeyEnvVar = "ANCHOR_STARTUP_RUN_KEY";
 
@@ -428,6 +431,14 @@ public static class Program
     /// </summary>
     public static bool RestartedByUpdater { get; private set; }
 
+    /// <summary>
+    /// Whether the install or update hook's waiter started this launch (#487,
+    /// <see cref="UpdateRelaunch.RelaunchedArg"/>): an update or install was applied
+    /// without starting the agent again. Only logged; the launch is a normal one in
+    /// every other way.
+    /// </summary>
+    public static bool RelaunchedAfterUpdate { get; private set; }
+
     /// <summary>The startup stage from <c>--test-crash-at</c>, or null for a normal launch.</summary>
     public static string? TestCrashAt { get; private set; }
 
@@ -529,8 +540,19 @@ public static class Program
             // OnAfterUpdate after each update (a new versioned install dir), so the
             // agent (re-)points the Run value at the freshly-installed exe on both.
             // Idempotent — a re-run never leaks a duplicate or a stale path.
-            .OnAfterInstallFastCallback(_ => StartupRegistration.RegisterForInstall())
-            .OnAfterUpdateFastCallback(_ => StartupRegistration.RegisterForInstall())
+            // #487: then, when the updater or installer running the hook won't start
+            // the agent again (an update an agent before 0.4.0 started, a silent
+            // Setup.exe), hand its start to a waiter outside the install folder.
+            .OnAfterInstallFastCallback(_ =>
+            {
+                StartupRegistration.RegisterForInstall();
+                UpdateRelaunchHook.Run(VelopackHookKind.Install);
+            })
+            .OnAfterUpdateFastCallback(_ =>
+            {
+                StartupRegistration.RegisterForInstall();
+                UpdateRelaunchHook.Run(VelopackHookKind.Update);
+            })
             // #211 + #225: when the agent is uninstalled, un-pin the force-installed
             // extension and remove the Run entry it wrote — leaving the box as it
             // found it. Velopack fires this hook on the uninstall launch (before the
@@ -604,6 +626,7 @@ public static class Program
         TestCrashAt = ArgValueAfter(args, TestCrashAtArg);
         TestUpdateProbe = args.Any(a => string.Equals(a, TestUpdateProbeArg, StringComparison.OrdinalIgnoreCase));
         TestUpdateFeed = ArgValueAfter(args, TestUpdateFeedArg);
+        RelaunchedAfterUpdate = args.Any(a => string.Equals(a, UpdateRelaunch.RelaunchedArg, StringComparison.OrdinalIgnoreCase));
 
         // #323: pin the UI language before any XAML is parsed so x:Uid resources and
         // .NET formatting both resolve to it. --verify-i18n's language wins (that mode

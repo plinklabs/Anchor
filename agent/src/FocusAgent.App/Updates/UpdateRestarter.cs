@@ -19,7 +19,9 @@ namespace FocusAgent.App.Updates;
 /// <para>
 /// The restart arguments are the ones this launch got: none for the sign-in launch
 /// (the Run entry passes none), so the agent comes back in the tray with no window,
-/// toast or prompt, exactly like at sign-in.
+/// toast or prompt, exactly like at sign-in. A launch the update relaunch started
+/// (#487) restarts without <see cref="UpdateRelaunch.RelaunchedArg"/>: the updater
+/// restarts this one, which is not a relaunch.
 /// </para>
 /// </summary>
 internal sealed class UpdateRestarter : IAgentRestarter
@@ -42,7 +44,7 @@ internal sealed class UpdateRestarter : IAgentRestarter
 
     public bool TryRestartIntoUpdate(string version)
     {
-        var restartArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
+        var restartArgs = UpdateRelaunch.WithoutRelaunchedArg(Environment.GetCommandLineArgs().Skip(1));
         try
         {
             _manager.ApplyOnExitAndRestart(restartArgs);

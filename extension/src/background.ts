@@ -1,18 +1,9 @@
-import { HubClient } from './shared/hub-client';
-import { SessionHeartbeat } from './shared/heartbeat';
-import { catchUpOnConnect } from './shared/session-confirm';
 import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { selectTabsToRestore } from './shared/tab-restore';
-import { loadSettings, persistBackendUrl, persistAuthConfig, resolveAuthMode } from './shared/settings';
-import { EntraAuthenticator } from './shared/auth';
-import { claimInteractiveSignIn, clearAuthGate, recordAuthFailure } from './shared/auth-gate';
-import type { AuthFailure } from './shared/auth-gate';
-import { t } from './shared/i18n';
-import type { AuthConfig } from './shared/settings';
 import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
-import { WitnessClient, WITNESS_HOST_NAME } from './shared/witness';
+import { WitnessClient, WITNESS_HOST_NAME, type AgentMessage } from './shared/witness';
 import {
   clearActiveSession,
   getActiveSession,
@@ -22,9 +13,8 @@ import {
 } from './shared/session-state';
 import type {
   ActiveSessionState,
-  AllowlistAmendedPayload,
+  AllowedDomainDto,
   ExtensionRuntimeMessage,
-  SessionBundlesUpdatedPayload,
   SessionStartedPayload,
   TamperKind,
   UnblockRequestPayload,
@@ -36,19 +26,19 @@ const log = logger('background');
 // active session from chrome.storage.session on every navigation rather than
 // caching it in a top-level variable — top-level state is destroyed when the
 // worker hibernates, but storage.session survives until the browser restarts.
+//
+// The extension has no identity of its own (#489). It doesn't sign in and has
+// no backend connection: the on-box agent, signed in with the student's Windows
+// account, hands it the session it joined over the native-messaging witness link
+// and reports what the extension sends back with its own connection. So the
+// extension filters for exactly the session the student is in, as that student,
+// whatever account the browser is signed in with. Without the agent there is no
+// session to enforce, and during one the agent pauses Edge while the link is
+// down (#427).
 
 const BLOCK_PAGE_FILE = 'block-page.html';
 
-let hubClient: HubClient | null = null;
 let witness: WitnessClient | null = null;
-let heartbeat: SessionHeartbeat | null = null;
-let authenticator: EntraAuthenticator | null = null;
-// Bounds interactive sign-in to at most one window per service-worker lifetime
-// (#289): a dismissed prompt must not re-pop on every SignalR reconnect. Module
-// state, so it is lost on hibernation — which is exactly why it is only *half*
-// the guard; the half that survives a worker restart (plus the backoff after a
-// failure) lives in auth-gate.ts (#331).
-let interactiveSignInTried = false;
 
 chrome.runtime.onInstalled.addListener((details) => {
   log.info('extension installed', { reason: details.reason });
@@ -56,167 +46,79 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 chrome.runtime.onStartup.addListener(() => {
   log.info('runtime startup');
-  void ensureHub();
   ensureWitness();
 });
 
-// Service worker waking up after hibernation — re-establish the hub. Re-entry
-// is idempotent because ensureHub() guards on the existing instance.
+// Service worker waking up after hibernation — re-open the agent link. Re-entry
+// is idempotent because ensureWitness() guards on the existing instance.
 log.info('service worker started');
-void ensureHub();
 ensureWitness();
 
 // ---------------------------------------------------------------------------
-// Hub lifecycle
+// The agent link (#146 part 1, #489)
 // ---------------------------------------------------------------------------
 
-async function ensureHub(): Promise<void> {
-  if (hubClient) return;
-  const settings = await loadSettings();
-  const mode = resolveAuthMode(settings);
-
-  const callbacks = {
-    onSessionStarted: handleSessionStarted,
-    onSessionEnded: handleSessionEnded,
-    // The student left, declined or quit the agent while the session runs on
-    // (#462). They are out of it, so stop filtering exactly as when it ends:
-    // nothing keeps enforcing a session the backend no longer counts them in.
-    onParticipationEnded: handleSessionEnded,
-    onAllowlistAmended: handleAllowlistAmended,
-    onSessionBundlesUpdated: handleSessionBundlesUpdated,
-    onConnected: handleHubConnected,
-  };
-
-  if (mode === 'none') {
-    // Neither the dev impersonation shortcut nor a production auth config is set,
-    // so the extension can't authenticate yet — the agent hasn't handed down its
-    // auth_config (or this is a misconfigured dev box). Refuse rather than spin in
-    // a 401 loop; ensureHub re-runs when the agent pushes config (#289 / #204).
-    log.warn('no auth configured — refusing to connect to hub (awaiting agent auth_config, or set devImpersonateOid for dev)');
-    return;
-  }
-
-  if (mode === 'token') {
-    // Production: acquire a real Entra access token (#289). The factory rides
-    // Edge's existing Office 365 session silently; it permits one interactive
-    // sign-in per worker lifetime if SSO can't satisfy it, then stays silent.
-    authenticator ??= new EntraAuthenticator(settings.authConfig!);
-    hubClient = new HubClient(settings, callbacks, () => acquireHubToken());
-  } else {
-    // Dev: the impersonation OID rides the hub URL query string (no token).
-    hubClient = new HubClient(settings, callbacks);
-  }
-
-  try {
-    await hubClient.start();
-  } catch (err) {
-    // The client goes on trying on its own, on the reconnect backoff (#374).
-    log.error('hub start failed; retrying until it connects', err);
-  }
-  ensureHeartbeat();
-}
-
-// SignalR's accessTokenFactory: called on connect and on every reconnect, so it
-// doubles as the refresh hook — and as the one place a sign-in window can ever
-// be opened from.
-//
-// Two guards must both agree before it may open one:
-//   • the module flag keeps the per-reconnect refreshes inside a single worker
-//     lifetime silent (#289) — a dismissed prompt must not re-pop on reconnect;
-//   • the storage.session claim survives worker hibernation and adds a backoff,
-//     so an auth config that can never succeed (the AADSTS700051 case in #331)
-//     cannot re-pop a window on every revival.
-// A failure is recorded either way, so a dead hub connection names its cause on
-// the badge and in the popup rather than failing silently.
-async function acquireHubToken(): Promise<string> {
-  let allowInteractive = false;
-  if (!interactiveSignInTried) {
-    interactiveSignInTried = true;
-    allowInteractive = await claimInteractiveSignIn();
-  }
-  try {
-    const token = await authenticator!.getToken({ allowInteractive });
-    await clearAuthGate();
-    await paintAuthBadge(null);
-    return token;
-  } catch (err) {
-    const failure = await recordAuthFailure(err);
-    log.error(
-      `student sign-in failed — ${failure.code ?? 'no Entra error code'}: ${failure.message}`,
-      { allowInteractive },
-    );
-    await paintAuthBadge(failure);
-    throw err;
-  }
-}
-
-// The toolbar action is the extension's always-visible state surface, so a hard
-// auth failure marks it and says why on hover; the popup behind it carries the
-// full text. Badge state is browser-session scoped like the gate itself, so the
-// two clear together.
-async function paintAuthBadge(failure: AuthFailure | null): Promise<void> {
-  try {
-    await chrome.action.setBadgeText({ text: failure ? '!' : '' });
-    if (failure) {
-      await chrome.action.setBadgeBackgroundColor({ color: '#EC4899' });
-      await chrome.action.setTitle({
-        title: `${t('popupAuthFailedTitle')} — ${failure.code ?? failure.message}`,
-      });
-    } else {
-      // Back to the manifest's default_title — the brand name isn't localized.
-      await chrome.action.setTitle({ title: 'Anchor' });
-    }
-  } catch (err) {
-    // A missing action (unlikely — the manifest declares one) must never break
-    // token acquisition.
-    log.debug('could not paint the toolbar action', err);
-  }
-}
-
-// Extension witness heartbeat (#149). Always-on like the hub and the native
-// witness: the loop only pings while a session is active, and a connected hub
-// keeps the service worker alive so it ticks reliably. Started here (not on
-// SessionStarted) so a worker revived mid-session by a navigation event resumes
-// pinging without waiting for the next SessionStarted.
-function ensureHeartbeat(): void {
-  if (heartbeat) return;
-  heartbeat = new SessionHeartbeat({
-    sendHeartbeat: (sessionId) => hubClient?.sendExtensionHeartbeat(sessionId),
-    getActiveSessionId: async () => (await getActiveSession())?.sessionId ?? null,
+// Always on: the open native port keeps the service worker alive while the
+// agent is there, and the agent hands down the current session (or that there
+// is none) on every connect — so a worker revived mid-session, an Edge restart,
+// or the extension switched back on picks up exactly where the student is.
+function ensureWitness(): void {
+  if (witness) return;
+  witness = new WitnessClient({
+    connect: () => chrome.runtime.connectNative(WITNESS_HOST_NAME),
+    onAgentMessage: (message) => enqueueAgentMessage(message),
+    // The agent going away doesn't end the session: the extension keeps
+    // enforcing the one it has until the agent is back and says otherwise. The
+    // teacher sees the agent go through its own missing heartbeat.
+    onAgentUnavailable: () => log.warn('the Anchor app went away; keeping the session in force'),
   });
-  heartbeat.start();
+  witness.start();
 }
 
-// Every (re)connect is a new hub connection, which never receives a SessionEnded
-// the backend sent while the extension was offline — between service-worker
-// generations, or through a network drop. Ask instead, so an ended session
-// doesn't stay in force until the browser restarts (#354). Nor a
-// ParticipationEnded: a student who left or declined the session, or quit the
-// agent, meanwhile is no longer in it either, and IsInSession says so (#462).
-// The same goes for a SessionStarted, which also misses a connection in the
-// moment before the backend adds it to the student's user group: ask which
-// session the student is in, so a started one is enforced (#356). The hub
-// client runs this after every connect, however long the outage before it was
-// (#374).
-async function handleHubConnected(): Promise<void> {
-  await catchUpOnConnect({
-    getActiveSessionId: async () => (await getActiveSession())?.sessionId ?? null,
-    isInSession: (sessionId) => {
-      if (!hubClient) return Promise.reject(new Error('no hub client'));
-      return hubClient.isInSession(sessionId);
-    },
-    endSession: handleSessionEnded,
-    getStartedSession: () => {
-      if (!hubClient) return Promise.reject(new Error('no hub client'));
-      return hubClient.getStartedSession();
-    },
-    startSession: async (payload) => {
-      await hubClient?.joinStartedSession(payload);
-    },
-  });
+// Each handler reads and writes chrome.storage.session; run them one at a time,
+// in arrival order, so a session_ended can't overtake the session_started before
+// it.
+let agentMessages: Promise<void> = Promise.resolve();
+
+function enqueueAgentMessage(message: AgentMessage): void {
+  agentMessages = agentMessages
+    .then(() => handleAgentMessage(message))
+    .catch((err) => log.error('handling an agent message failed', { type: message.type, err }));
 }
 
+async function handleAgentMessage(message: AgentMessage): Promise<void> {
+  switch (message.type) {
+    case 'session_started':
+      await handleSessionStarted(message);
+      return;
+    case 'no_session':
+      await handleNoSession();
+      return;
+    case 'session_ended':
+      await handleSessionEnded(message.sessionId);
+      return;
+    case 'allowlist_replaced':
+      await handleAllowlistReplaced(message.sessionId, message.domains);
+      return;
+    case 'allowlist_amended':
+      await handleAllowlistAmended(message.sessionId, message.addedDomains);
+      return;
+  }
+}
+
+// The student is in this session: sent when the agent joined it, and again on
+// every (re)connect while they are in it, with the allowlist as it stands then.
 async function handleSessionStarted(payload: SessionStartedPayload): Promise<void> {
+  const current = await getActiveSession();
+  if (current && current.sessionId !== payload.sessionId) {
+    // A session we missed the end of while the link was down.
+    log.info('a newer session replaces the cached one', {
+      cachedSessionId: current.sessionId,
+      sessionId: payload.sessionId,
+    });
+    await endSession(current.sessionId);
+  }
+
   const state: ActiveSessionState = {
     sessionId: payload.sessionId,
     classId: payload.classId,
@@ -224,21 +126,31 @@ async function handleSessionStarted(payload: SessionStartedPayload): Promise<voi
     startedAt: payload.startedAt,
     // Wire shape already matches the matcher's AllowedDomain (camelCase
     // matchType + value), so no field renaming is needed here.
-    domains: payload.domains ?? [],
+    domains: [...payload.domains],
   };
   await setActiveSession(state);
   log.info('active session cached', {
     sessionId: state.sessionId,
     domainCount: state.domains.length,
   });
+  // A reconnect can bring a wider allowlist than the cached one (a grant or a
+  // bundle the extension missed): let block pages it now covers go back.
+  await notifyBlockPages(state);
   // Catch tabs the student opened before the session started — they predate
   // any navigation event, so only an explicit scan can close that loophole.
   await scanAndBlockOpenTabs(state);
 }
 
-// The session ended, or the student is no longer in it (#462): drop it, which
-// also stops the heartbeat from pinging it (it pings only the active session),
-// and send the tabs parked on its block page back to their pages.
+// The agent is in no session: the one cached here ended, or the student left
+// it, while the link was down.
+async function handleNoSession(): Promise<void> {
+  const current = await getActiveSession();
+  if (!current) return;
+  log.info('the agent is in no session; ending the cached one', { sessionId: current.sessionId });
+  await endSession(current.sessionId);
+}
+
+// The session ended, or the student left it (#462).
 async function handleSessionEnded(sessionId: string): Promise<void> {
   const current = await getActiveSession();
   if (current && current.sessionId !== sessionId) {
@@ -248,6 +160,12 @@ async function handleSessionEnded(sessionId: string): Promise<void> {
     });
     return;
   }
+  await endSession(sessionId);
+}
+
+// Drop the session and send the tabs parked on its block page back to their
+// pages.
+async function endSession(sessionId: string): Promise<void> {
   await clearActiveSession();
   log.info('active session cleared', { sessionId });
   await restoreRedirectedTabs(sessionId);
@@ -286,17 +204,18 @@ async function restoreRedirectedTabs(sessionId: string): Promise<void> {
   }
 }
 
-async function handleAllowlistAmended(payload: AllowlistAmendedPayload): Promise<void> {
-  const merged = await mergeAddedDomains(payload.sessionId, payload.addedDomains ?? []);
+async function handleAllowlistAmended(
+  sessionId: string,
+  addedDomains: ReadonlyArray<AllowedDomainDto>,
+): Promise<void> {
+  const merged = await mergeAddedDomains(sessionId, addedDomains);
   if (!merged) {
-    log.warn('AllowlistAmended dropped — no matching active session in cache', {
-      sessionId: payload.sessionId,
-    });
+    log.warn('allowlist amendment dropped — no matching active session in cache', { sessionId });
     return;
   }
   log.info('allowlist amended', {
-    sessionId: payload.sessionId,
-    addedCount: payload.addedDomains?.length ?? 0,
+    sessionId,
+    addedCount: addedDomains.length,
     totalDomains: merged.domains.length,
   });
   await notifyBlockPages(merged);
@@ -324,19 +243,20 @@ async function notifyBlockPages(state: ActiveSessionState): Promise<void> {
   }
 }
 
-async function handleSessionBundlesUpdated(payload: SessionBundlesUpdatedPayload): Promise<void> {
+async function handleAllowlistReplaced(
+  sessionId: string,
+  domains: ReadonlyArray<AllowedDomainDto>,
+): Promise<void> {
   // Full replacement of this student's domain set after the teacher changed
-  // the session's bundles. The payload already folds in the student's unblock
+  // the session's bundles. The list already folds in the student's unblock
   // grants, so a straight replace can't lose them.
-  const next = await replaceDomains(payload.sessionId, payload.domains ?? []);
+  const next = await replaceDomains(sessionId, domains);
   if (!next) {
-    log.warn('SessionBundlesUpdated dropped — no matching active session in cache', {
-      sessionId: payload.sessionId,
-    });
+    log.warn('allowlist replacement dropped — no matching active session in cache', { sessionId });
     return;
   }
   log.info('active session allowlist replaced', {
-    sessionId: payload.sessionId,
+    sessionId,
     domainCount: next.domains.length,
   });
   // Adding a bundle can cover a tab already parked on the block page: the
@@ -373,17 +293,19 @@ async function handleUnblockRequestFromPage(
   sessionId: string,
   payload: UnblockRequestPayload,
 ): Promise<void> {
-  if (!hubClient) {
-    // Block page can only render when we'd previously cached an active
-    // session, so the hub should already be up. If it isn't, surface that
-    // — the block page will show a "couldn't reach teacher" message.
-    throw new Error('Hub not initialised');
-  }
   const current = await getActiveSession();
   if (current?.sessionId !== sessionId) {
     throw new Error('Active session has changed; reload the page.');
   }
-  await hubClient.reportUnblockRequest(sessionId, payload);
+  if (!witness) {
+    throw new Error('The Anchor app is not connected.');
+  }
+  // The agent sends it to the teacher and answers; a refusal or no answer
+  // surfaces on the block page, so the request never silently vanishes.
+  const result = await witness.requestUnblock({ sessionId, ...payload });
+  if (!result.ok) {
+    throw new Error(result.error ?? 'The Anchor app could not send the request.');
+  }
   log.info('forwarded UnblockRequest', { sessionId, host: payload.host });
 }
 
@@ -428,14 +350,15 @@ async function evaluateAndMaybeBlock(tabId: number, url: string): Promise<void> 
 
   log.info('blocking off-allowlist navigation', { tabId, url, sessionId: session.sessionId });
   await redirectToBlockPage(tabId, url, session);
-  await reportBlockedUrl(session.sessionId, tabId, url);
+  reportBlockedUrl(session.sessionId, tabId, url);
 }
 
 // Scan every open tab against the session's allowlist and redirect off-list
-// ones to the block page. Triggered by allowlist *arrival* (session start, or
-// a mid-session bundle change), not by a timer — the session passed in is the
-// allowlist that just landed, so there's no window where this races the
-// forward-navigation listeners: both judge against the same cached domains.
+// ones to the block page. Triggered by allowlist *arrival* (session start, a
+// reconnect, or a mid-session bundle change), not by a timer — the session
+// passed in is the allowlist that just landed, so there's no window where this
+// races the forward-navigation listeners: both judge against the same cached
+// domains.
 async function scanAndBlockOpenTabs(session: ActiveSessionState): Promise<void> {
   let tabs: chrome.tabs.Tab[];
   try {
@@ -454,7 +377,7 @@ async function scanAndBlockOpenTabs(session: ActiveSessionState): Promise<void> 
   });
   for (const { tabId, url } of toBlock) {
     await redirectToBlockPage(tabId, url, session);
-    await reportBlockedUrl(session.sessionId, tabId, url);
+    reportBlockedUrl(session.sessionId, tabId, url);
   }
 }
 
@@ -471,15 +394,17 @@ async function redirectToBlockPage(tabId: number, blockedUrl: string, session: A
   }
 }
 
-async function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: string): Promise<void> {
-  if (!hubClient) return;
+// The agent sends it on to the teacher's session log as a BlockedUrl event.
+function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: string): void {
   let host = '';
   try {
     host = new URL(blockedUrl).hostname;
   } catch {
     // Unparseable — leave host empty; the URL itself is still informative.
   }
-  await hubClient.reportBlockedUrl(sessionId, {
+  witness?.report({
+    type: 'blocked_url',
+    sessionId,
     url: blockedUrl,
     host,
     tabId,
@@ -492,9 +417,8 @@ async function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: st
 // ---------------------------------------------------------------------------
 // Soft enforcement (design §5.4): make tampering visible to the teacher rather
 // than trying to prevent it. These listeners catch what the extension can
-// witness itself while running; the agent covers what the extension cannot
-// witness about itself (disabled/removed) as the on-box witness, over the
-// native-messaging link below (#146 part 1).
+// witness itself while running, and hand it to the agent to report; the agent
+// covers what the extension cannot witness about itself (disabled/removed).
 
 chrome.windows.onCreated.addListener((window) => {
   const kind = classifyCreatedWindow(window);
@@ -505,86 +429,6 @@ chrome.permissions.onRemoved.addListener((removed) => {
   if (isHostAccessLoss(removed)) void reportTamperIfInSession('host_permission_revoked');
 });
 
-// The native-messaging witness link to the on-box FocusAgent (#146 part 1). The
-// agent watches this link to detect the extension being disabled/removed (the
-// browser tears the host down → the agent's pipe drops); in return the host
-// tells us when the *agent* went away, which we surface as `agent_unavailable`.
-// Always-on like the hub: the SignalR connection already keeps the service
-// worker alive, and reporting stays gated to an active session.
-function ensureWitness(): void {
-  if (witness) return;
-  witness = new WitnessClient({
-    connect: () => chrome.runtime.connectNative(WITNESS_HOST_NAME),
-    onAgentUnavailable: () => void reportTamperIfInSession('agent_unavailable'),
-    onBackendUrl: (url) => void handleBackendUrlFromAgent(url),
-    onAuthConfig: (config) => void handleAuthConfigFromAgent(config),
-  });
-  witness.start();
-}
-
-// The agent is the source of truth for which backend a deployment targets
-// (#204). It hands the URL down over the witness link; we persist it and, if it
-// changed (or the hub never came up because nothing told us a backend yet),
-// (re)establish the hub against it. Only the registered native host can reach
-// this path, so an arbitrary web page can't repoint the extension.
-async function handleBackendUrlFromAgent(url: string): Promise<void> {
-  let changed: boolean;
-  try {
-    changed = await persistBackendUrl(url);
-  } catch (err) {
-    log.error('failed to persist agent-provided backend url', err);
-    return;
-  }
-  if (changed && hubClient) {
-    // Tear the existing hub down so the next ensureHub() rebuilds it against
-    // the new backend; loadSettings() re-reads the URL we just stored.
-    log.info('backend url changed — restarting hub onto the new backend');
-    try {
-      await hubClient.stop();
-    } catch (err) {
-      log.debug('stopping hub before backend switch threw', err);
-    }
-    hubClient = null;
-  }
-  await ensureHub();
-}
-
-// The agent is also the source of truth for the deployment's Entra auth config
-// (#289), handed down over the same witness link so one published extension serves
-// every fork. We persist it and, if it changed (or the hub never came up because
-// no auth was configured yet), rebuild the hub — and the authenticator — against
-// it. Same trust boundary as the backend URL: only the registered native host can
-// reach this path.
-async function handleAuthConfigFromAgent(config: AuthConfig): Promise<void> {
-  let changed: boolean;
-  try {
-    changed = await persistAuthConfig(config);
-  } catch (err) {
-    log.error('failed to persist agent-provided auth config', err);
-    return;
-  }
-  if (changed) {
-    // Drop the cached authenticator + both halves of the interactive guard so the
-    // next connect re-acquires a token under the new tenant/client/scope: a config
-    // change is precisely the event that can fix a failing sign-in, so it must not
-    // stay stuck behind the #331 backoff (or keep showing the stale failure).
-    authenticator = null;
-    interactiveSignInTried = false;
-    await clearAuthGate();
-    await paintAuthBadge(null);
-    if (hubClient) {
-      log.info('auth config changed — restarting hub under the new auth config');
-      try {
-        await hubClient.stop();
-      } catch (err) {
-        log.debug('stopping hub before auth switch threw', err);
-      }
-      hubClient = null;
-    }
-  }
-  await ensureHub();
-}
-
 async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
   // Tampering is only actionable while a session is enforcing — outside one the
   // student may browse and reconfigure freely, so an InPrivate window or a
@@ -594,10 +438,6 @@ async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
     log.debug('tamper signal ignored — no active session', { kind });
     return;
   }
-  if (!hubClient) {
-    log.warn('tamper signal observed but hub not initialised', { kind });
-    return;
-  }
   log.warn('tamper detected', { kind, sessionId: session.sessionId });
-  await hubClient.reportTamper(session.sessionId, { kind });
+  witness?.report({ type: 'tamper', sessionId: session.sessionId, kind });
 }

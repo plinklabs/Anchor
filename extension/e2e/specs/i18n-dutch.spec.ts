@@ -8,7 +8,7 @@
 //
 // Neither surface needs a session for this check: the block page renders its
 // static copy from the URL params alone, and the popup shows its idle face when
-// no session is cached — so this spec drives no backend, just the loaded pages.
+// no session is cached — so this spec needs no agent, just the loaded pages.
 
 import { test, expect } from '@playwright/test';
 import { loadExtension, type LoadedExtension } from '../extension.ts';

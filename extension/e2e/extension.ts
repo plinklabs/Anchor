@@ -1,22 +1,19 @@
 // Loads the *real* unpacked extension into Edge and gives the specs a small,
 // reliable surface over it: the extension id, a live feed of service-worker
-// console logs, and a configure() step that points the extension at the e2e
-// backend and waits until its SignalR hub is actually connected.
+// console logs, and a way to stop and revive its service worker.
 //
-// The MV3 service worker reads its settings (backendUrl, devImpersonateOid)
-// from chrome.storage.local exactly once, at the top of background.ts, on a
-// cold start. A freshly-loaded extension therefore comes up *unconfigured* and
-// refuses to connect. We can't pre-seed storage before the worker first runs,
-// so configure() writes the settings and then calls chrome.runtime.reload()
-// to force a cold restart that re-reads them — verified to re-run background.ts
-// top-level and re-establish the hub.
+// The extension learns its session only from the on-box agent, over the
+// native-messaging witness link (#489). A spec that hands sessions down passes
+// a FakeAgent: the harness registers the REAL native host for the extension
+// under test and launches Edge with the agent's pipe in ANCHOR_WITNESS_PIPE, so
+// the host Edge starts connects to the fake agent. Every other spec gets the
+// link cut.
 
 import { chromium, type BrowserContext, type Worker } from '@playwright/test';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import {
-  BACKEND_URL,
   BROWSER_CHANNEL,
   DEFAULT_LOCALE,
   DIST_PATH,
@@ -24,8 +21,8 @@ import {
   MAPPED_HOSTS,
   OFFLIST_HOST,
   STABLE_EXTENSION_ID,
-  STUDENT_OID,
 } from './config.ts';
+import type { FakeAgent } from './fake-agent.ts';
 import {
   describeEntry,
   extensionIdForPath,
@@ -100,20 +97,13 @@ function stageExtension(): void {
 
 export interface LoadExtensionOptions {
   /**
-   * When set (Windows only), register the REAL witness native-messaging host
-   * and launch Edge with this URL in ANCHOR_WITNESS_BACKEND_URL, so the host
-   * hands it to the extension over native messaging at runtime (#204). Lets a
-   * spec prove the extension learns its backend from the on-box agent rather
-   * than a seeded chrome.storage value.
+   * The stand-in for the on-box agent (Windows only). The harness registers the
+   * REAL witness native-messaging host for the extension under test and launches
+   * Edge with the agent's pipe in ANCHOR_WITNESS_PIPE (connectNative inherits
+   * the browser's environment), so the extension talks to this agent exactly as
+   * it talks to the real one (#489). Left out, the link is cut.
    */
-  witnessBackendUrl?: string;
-  /**
-   * When set (Windows only), launch Edge with the ANCHOR_WITNESS_AUTH_* env vars
-   * so the real host also hands down a production auth_config (#289). Lets a spec
-   * prove the agent→extension auth-config plumbing works end-to-end (the AAD
-   * sign-in itself can't be driven without a real tenant, so it's out of scope).
-   */
-  witnessAuth?: { tenantId: string; clientId: string; scope: string };
+  agent?: FakeAgent;
   /**
    * BCP-47 UI language to launch the browser in (e.g. `nl`). Passed as Chromium's
    * `--lang`, which is what `chrome.i18n` selects its `_locales/<lang>` catalogue
@@ -121,12 +111,6 @@ export interface LoadExtensionOptions {
    * so a spec renders the same copy on every machine (#364).
    */
   locale?: string;
-}
-
-export interface ExtensionSettings {
-  backendUrl?: string;
-  /** Seeded student OID to impersonate over the hub's query-string auth. */
-  devImpersonateOid?: string;
 }
 
 export interface LoadedExtension {
@@ -150,14 +134,9 @@ export interface LoadedExtension {
    *  bursts, which is where worker-memory state is lost (#331). Resolves once
    *  the new generation has run background.js top-level again.
    *  `whileStopped` runs after the worker is gone and before anything revives
-   *  it: no hub connection is open meanwhile, so whatever the backend
-   *  broadcasts then never reaches the extension (#354). */
+   *  it: its native port to the agent is closed meanwhile, so whatever the
+   *  agent would hand down then never reaches the extension until it is back. */
   restartServiceWorker(whileStopped?: () => Promise<void>): Promise<void>;
-  /** Write settings, cold-restart the SW, and wait for the hub to connect.
-   *  Returns the post-restart service worker. With `awaitHub: false` it
-   *  returns once the new worker runs, for a spec whose backend can't be
-   *  reached yet (#374). */
-  configure(settings?: ExtensionSettings, options?: { awaitHub?: boolean }): Promise<Worker>;
   /** Read chrome.storage.local restart-safe (#313): re-acquires the live
    *  service worker on every attempt and retries if the MV3 worker idle-
    *  terminates mid-`evaluate` (Playwright throws "Service worker restarted"
@@ -165,7 +144,7 @@ export interface LoadedExtension {
    *  `serviceWorkers()[0]` and awaiting `evaluate` on it. */
   getStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T>;
   /** Same, over chrome.storage.session — the worker-restart-surviving store the
-   *  active session and the sign-in gate (#331) live in. */
+   *  active session lives in. */
   getSessionStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T>;
   close(): Promise<void>;
 }
@@ -177,29 +156,21 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   stageExtension();
 
   // The native-messaging witness link is opt-IN, per run (#332). A spec that
-  // asks for it gets the REAL host, registered here with the backend URL / auth
-  // config it should hand down (#204/#289; connectNative inherits the browser's
+  // passes an agent gets the REAL host, registered here for the extension under
+  // test and pointed at that agent's pipe (connectNative inherits the browser's
   // env, so setting it here is what the launched host reads). Every other spec
   // gets the link cut, because on a developer box the installed Anchor agent
-  // owns this registry key permanently and its host would push that machine's
-  // *production* backend URL and auth config over the settings the spec just
-  // seeded. Either way the key is restored to what the box had on close.
+  // owns this registry key permanently, and its host would connect the
+  // extension under test to that box's real agent and its real session. Either
+  // way the key is restored to what the box had on close.
   let witnessHost: RegisteredWitnessHost | null = null;
   let suppressedWitness: SuppressedWitnessHost | null = null;
-  if (options.witnessBackendUrl || options.witnessAuth) {
+  const previousPipe = process.env.ANCHOR_WITNESS_PIPE;
+  if (options.agent) {
     witnessHost = registerWitnessHost(EXTENSION_ID);
+    process.env.ANCHOR_WITNESS_PIPE = options.agent.pipeName;
   } else {
     suppressedWitness = suppressWitnessHost();
-  }
-  if (options.witnessBackendUrl) {
-    process.env.ANCHOR_WITNESS_BACKEND_URL = options.witnessBackendUrl;
-  }
-  // #289: the host reads these from its inherited env and hands the values down
-  // as an auth_config message (the per-deployment source).
-  if (options.witnessAuth) {
-    process.env.ANCHOR_WITNESS_AUTH_TENANT_ID = options.witnessAuth.tenantId;
-    process.env.ANCHOR_WITNESS_AUTH_CLIENT_ID = options.witnessAuth.clientId;
-    process.env.ANCHOR_WITNESS_AUTH_SCOPE = options.witnessAuth.scope;
   }
 
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anchor-ext-e2e-'));
@@ -238,36 +209,6 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     );
   }
   const blockPagePrefix = `chrome-extension://${extensionId}/block-page.html`;
-
-  async function configure(
-    settings: ExtensionSettings = {},
-    { awaitHub = true }: { awaitHub?: boolean } = {},
-  ): Promise<Worker> {
-    const backendUrl = settings.backendUrl ?? BACKEND_URL;
-    const devImpersonateOid = settings.devImpersonateOid ?? STUDENT_OID;
-
-    const current = await getServiceWorker(context);
-    await current.evaluate(
-      (s) => chrome.storage.local.set(s),
-      { backendUrl, devImpersonateOid },
-    );
-
-    // chrome.runtime.reload() tears down this worker and starts a fresh one
-    // that re-reads storage. Race-proof the swap by arming the waiter before
-    // firing the reload; the reload() evaluate rejects as the context dies, so
-    // swallow it.
-    const nextWorker = context.waitForEvent('serviceworker', {
-      predicate: (w) => w !== current,
-      timeout: 15_000,
-    });
-    await current.evaluate(() => chrome.runtime.reload()).catch(() => {});
-    const worker = await nextWorker;
-
-    if (awaitHub) {
-      await waitForLog('hub connection established', 20_000);
-    }
-    return worker;
-  }
 
   // Chrome tears an idle MV3 worker down and revives it on the next event it
   // has a listener for; waiting for that to happen on its own would make a spec
@@ -310,7 +251,6 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     waitForLog,
     waitForLogCount,
     countLogs,
-    configure,
     restartServiceWorker,
     getStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T> {
       return readStorage<T>(context, keys, 'local');
@@ -322,10 +262,8 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
       await context.close();
       if (witnessHost) {
         witnessHost.unregister();
-        delete process.env.ANCHOR_WITNESS_BACKEND_URL;
-        delete process.env.ANCHOR_WITNESS_AUTH_TENANT_ID;
-        delete process.env.ANCHOR_WITNESS_AUTH_CLIENT_ID;
-        delete process.env.ANCHOR_WITNESS_AUTH_SCOPE;
+        if (previousPipe === undefined) delete process.env.ANCHOR_WITNESS_PIPE;
+        else process.env.ANCHOR_WITNESS_PIPE = previousPipe;
       }
       suppressedWitness?.restore();
       fs.rmSync(userDataDir, { recursive: true, force: true });

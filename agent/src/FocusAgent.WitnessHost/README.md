@@ -23,23 +23,39 @@ extension  --connectNative("net.anchor.witness")-->  Edge
   hits EOF → the host exits → the agent's pipe read returns EOF → the agent
   reports `TamperDetected{kind:"extension_disabled"}` (if a session is joined).
 - **Agent died** → the host's pipe drops → the host sends `agent_unavailable`
-  to the extension → the extension reports `TamperDetected{kind:"agent_unavailable"}`.
+  to the extension, which keeps enforcing the session it has until the agent is
+  back and hands it the current one. The teacher sees the agent go through its
+  own heartbeat.
+
+Since #489 the link also carries the **session**: the agent is the extension's
+only identity. It hands the joined session down (and every allowlist change, and
+the session's end), and the extension hands back what it reports — blocked URLs,
+unblock requests, its in-browser tamper signals — which the agent sends with its
+own backend connection. The extension has no sign-in and no hub connection.
 
 The host itself is a thin bridge: browser **stdio** ↔ agent **named pipe**. The
-decision logic lives in the unit-tested `ExtensionWitnessMonitor`
-(FocusAgent.Core) and `witness.ts` (extension); only the framing
-(`NativeMessaging`) and bridge wiring (`WitnessBridge`) live here, both unit-tested
-with `MemoryStream`s.
+decision logic lives in the unit-tested `ExtensionWitnessMonitor` and
+`ExtensionSessionRelay` (FocusAgent.Core) and `witness.ts` (extension); only the
+framing (`NativeMessaging`) and bridge wiring (`WitnessBridge`) live here, both
+unit-tested with `MemoryStream`s.
 
 ## Wire protocol
 
 - **Browser ↔ host (stdio):** Chrome/Edge native messaging — a 4-byte
-  little-endian length prefix + UTF-8 JSON per message. The host relays the
-  extension's `{"type":"ping"}` keepalives to the agent and emits
-  `{"type":"agent_available"}` / `{"type":"agent_unavailable"}` to the extension.
-- **Host → agent (named pipe `anchor-witness`):** newline-delimited JSON
-  (`hello`, `ping`). Write-only from the host; the agent only needs the pipe's
-  liveness (connect = up, EOF = the extension is gone).
+  little-endian length prefix + UTF-8 JSON per message. The host forwards every
+  extension message to the agent, forwards every agent message to the extension,
+  and emits `{"type":"agent_available"}` / `{"type":"agent_unavailable"}` itself.
+  It also hands down `backend_url` / `auth_config` on start, which only an
+  extension from before #489 reads.
+- **Host ↔ agent (named pipe `anchor-witness`):** newline-delimited JSON, both
+  ways. The host adds its own `hello` and `ping` keepalives; the pipe's liveness
+  is still the witness (connect = up, EOF = the extension is gone).
+- **The messages** (`FocusAgent.Core.Extension.ExtensionMessages`, mirrored in
+  `witness.ts`): agent → extension `session_started`, `no_session`,
+  `allowlist_replaced`, `allowlist_amended`, `session_ended`,
+  `unblock_request_result`; extension → agent `ping`, `blocked_url`,
+  `unblock_request`, `tamper`. The agent sends the current session (or
+  `no_session`) on every connect.
 
 Names are shared via `FocusAgent.Core.Tamper.WitnessLink`; the extension repeats
 the host name in `witness.ts`, and the host manifest's `allowed_origins` pins the
