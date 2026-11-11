@@ -212,6 +212,9 @@ class SessionDetail {
   );
 }
 
+/// One event the backend stored for a session: the detail's most recent ones,
+/// and those [SessionsApi.sessionEvents] returns (#492). [kind] is the
+/// backend's `EventKind` name, not a hub event's.
 class SessionRecentEvent {
   SessionRecentEvent({
     required this.id,
@@ -454,6 +457,29 @@ class SessionsApi {
     final res = await _client.get('sessions/$sessionId');
     _ensureOk(res);
     return SessionDetail.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+  }
+
+  /// The session's stored events, newest first (#492): only those of [kinds]
+  /// (the backend's `EventKind` names), every kind when there are none, and at
+  /// most [limit]. The live page's feed loads what happened before it opened
+  /// from these. Only the owning teacher; anyone else gets a 403.
+  Future<List<SessionRecentEvent>> sessionEvents(
+    String sessionId, {
+    Iterable<String> kinds = const <String>[],
+    int limit = 200,
+  }) async {
+    final query = Uri(
+      queryParameters: <String, dynamic>{
+        if (kinds.isNotEmpty) 'kind': kinds.toList(growable: false),
+        'limit': '$limit',
+      },
+    ).query;
+    final res = await _client.get('sessions/$sessionId/events?$query');
+    _ensureOk(res);
+    final list = jsonDecode(res.body) as List<dynamic>;
+    return list
+        .map((e) => SessionRecentEvent.fromJson(e as Map<String, dynamic>))
+        .toList(growable: false);
   }
 
   /// The classes the caller teaches, archived ones left out (#395): what

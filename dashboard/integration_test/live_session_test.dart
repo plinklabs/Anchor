@@ -34,6 +34,8 @@ import 'support/e2e_binding.dart';
 //   - pushed events render in the live activity feed as plain sentences,
 //     only what needs the teacher until they show all activity, which the
 //     browser remembers (#491),
+//   - a running session opened again shows what happened in it so far, then
+//     continues live, each event once (#492),
 //   - the end of the teacher's other session doesn't end this one (#354),
 //   - after a hub reconnect the page joins its session again and catches up on
 //     what it missed while offline (#365),
@@ -224,6 +226,14 @@ class _FakeSessions extends SessionsApi {
   Object? endError;
   Object? approveError;
   Object? updateBundlesError;
+  // The teacher's running sessions, which Home offers to resume (#126).
+  List<ActiveSession> active = const [];
+  // What the backend stored for the session, newest first, which the page
+  // loads its feed's history from (#492); how often it did; and what happens
+  // while it does, e.g. an event broadcast between its join and the load.
+  List<SessionRecentEvent> stored = const [];
+  int sessionEventsCalls = 0;
+  void Function()? whileLoadingEvents;
 
   @override
   Future<MeResponse> me() async =>
@@ -235,7 +245,7 @@ class _FakeSessions extends SessionsApi {
   ];
 
   @override
-  Future<List<ActiveSession>> activeSessions() async => const [];
+  Future<List<ActiveSession>> activeSessions() async => active;
 
   @override
   Future<SessionEndOptions> endOptions(String classId) async => endOptionsValue;
@@ -278,6 +288,17 @@ class _FakeSessions extends SessionsApi {
   Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async {
     unblockRequestsCalls++;
     return pending;
+  }
+
+  @override
+  Future<List<SessionRecentEvent>> sessionEvents(
+    String sessionId, {
+    Iterable<String> kinds = const <String>[],
+    int limit = 200,
+  }) async {
+    sessionEventsCalls++;
+    whileLoadingEvents?.call();
+    return stored;
   }
 
   @override
@@ -356,13 +377,16 @@ Color? _feedDotColor(WidgetTester tester, String sentence) {
 
 typedef _Harness = ({
   _StubHub hub,
+  List<_StubHub> hubs,
   _FakeSessions sessions,
   _FakeBundles bundles,
 });
 
 /// Boots the real app authenticated, then drives the real Home → Start-session
 /// navigation to land on the live session view. Returns the fakes so the test
-/// can push events and inspect recorded calls. [joinError] is what the hub's
+/// can push events and inspect recorded calls: [_Harness.hub] is the first
+/// live page's feed, and each live page the test opens after it gets its own,
+/// in [_Harness.hubs], as production builds one per page. [joinError] is what the hub's
 /// JoinSession throws when the page opens; [roster] replaces the one-student
 /// class. [endOptions] is what Home offers for the session's end, and
 /// [plannedEnd] the end the detail then reports (#447); [beforeStart] makes the
@@ -385,7 +409,13 @@ Future<_Harness> _bootToLiveSession(
 }) async {
   if (reload) await tester.pumpWidget(const SizedBox.shrink());
   final store = settings ?? (createAlertSettingsStore()..write('{}'));
-  final hub = _StubHub()..joinError = joinError;
+  final hubs = <_StubHub>[];
+  _StubHub newHub() {
+    final hub = _StubHub()..joinError = joinError;
+    hubs.add(hub);
+    return hub;
+  }
+
   final sessions = _FakeSessions()..plannedEnd = plannedEnd;
   if (roster != null) sessions.roster = roster;
   if (endOptions != null) sessions.endOptionsValue = endOptions;
@@ -410,7 +440,8 @@ Future<_Harness> _bootToLiveSession(
       bundles: bundles,
       classes: ClassesApi(_dummyClient()),
       apiBaseUrl: Uri.parse('http://localhost'),
-      hubClientFactory: ({required apiBaseUrl, required tokenProvider}) => hub,
+      hubClientFactory: ({required apiBaseUrl, required tokenProvider}) =>
+          newHub(),
       // The browser's own, as production builds them, on [store].
       alertServices: LiveAlertServices(
         settings: LiveAlertSettings(store: store),
@@ -431,7 +462,7 @@ Future<_Harness> _bootToLiveSession(
   // Sanity: we are now on the live session view.
   expect(find.text('Allowed bundles'), findsOneWidget);
 
-  return (hub: hub, sessions: sessions, bundles: bundles);
+  return (hub: hubs.first, hubs: hubs, sessions: sessions, bundles: bundles);
 }
 
 void main() {
@@ -876,6 +907,165 @@ void main() {
       again.hub.emit('ParticipantStateChanged', state('Ada', 'Joined'));
       await tester.pumpAndSettle();
       expect(find.text('Ada joined.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a running session opened again shows what happened in it so far, then '
+    'continues live (#492)',
+    (tester) async {
+      const asks = 'Ada asks for access to chat.example.com.';
+      const left = 'Bo left the session.';
+      const silent = "Ada's Anchor extension is off or not responding.";
+      const lost = "Ada's agent stopped reporting.";
+      final joinedAt = DateTime.parse('2026-06-12T07:16:00.5000000+00:00');
+      const askedAt = '2026-06-12T07:20:00.1234567+00:00';
+      // When the server recorded Bo's leave, and broadcast it.
+      const leftAt = '2026-06-12T07:22:00.4170000+00:00';
+      SessionParticipantInfo student(String name, {String? left}) =>
+          SessionParticipantInfo(
+            userId: name,
+            displayName: name,
+            joinedAt: joinedAt,
+            declinedAt: null,
+            leftAt: left == null ? null : DateTime.parse(left),
+            state: left == null
+                ? ParticipantLiveState.joined
+                : ParticipantLiveState.left,
+          );
+      String local(String wire) {
+        final t = DateTime.parse(wire).toLocal();
+        String two(int n) => n.toString().padLeft(2, '0');
+        return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+      }
+
+      double top(String text) => tester.getTopLeft(find.text(text)).dy;
+
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [student('Ada'), student('Bo')],
+      );
+      // Ada and Bo joined before the page opened, which doesn't need the
+      // teacher: the feed says so rather than that it is waiting.
+      expect(
+        find.text('Nothing that needs your attention yet'),
+        findsOneWidget,
+      );
+
+      // While the teacher watches, Ada asks for a site and Bo leaves.
+      h.hub
+        ..emit('UnblockRequested', {
+          'sessionId': _sessionId,
+          'userId': 'Ada',
+          'userDisplayName': 'Ada',
+          'host': 'chat.example.com',
+          'url': 'https://chat.example.com/',
+          'requestedAt': askedAt,
+        })
+        ..emit('ParticipantStateChanged', {
+          'sessionId': _sessionId,
+          'userId': 'Bo',
+          'displayName': 'Bo',
+          'state': 'Left',
+          'at': leftAt,
+        });
+      await tester.pumpAndSettle();
+      expect(find.text(asks), findsOneWidget);
+      expect(find.text(left), findsOneWidget);
+
+      // The backend stored both (Bo's leave as his agent reported it, by its
+      // own clock), and Bo is out of the session.
+      h.sessions
+        ..stored = [
+          SessionRecentEvent(
+            id: 'e2',
+            userId: 'Bo',
+            kind: 'ManualLeave',
+            payloadJson: '{}',
+            occurredAt: DateTime.parse('2026-06-12T07:22:00.1000000+00:00'),
+          ),
+          SessionRecentEvent(
+            id: 'e1',
+            userId: 'Ada',
+            kind: 'UnblockRequest',
+            payloadJson:
+                '{"url":"https://chat.example.com/","host":"chat.example.com"}',
+            occurredAt: DateTime.parse(askedAt),
+          ),
+        ]
+        ..roster = [student('Ada'), student('Bo', left: leftAt)]
+        ..active = [
+          ActiveSession(id: _sessionId, classId: 'c1', startedAt: _startedAt),
+        ];
+
+      // The teacher goes back to the overview, leaving the session running.
+      await tester.tap(find.byTooltip('Leave session'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Leave running'));
+      await tester.pumpAndSettle();
+      expect(find.text('Allowed bundles'), findsNothing);
+
+      // And opens it again. Between the page's join and its load, Ada's
+      // extension goes silent: the page hears it, and it is stored too.
+      const silentAt = '2026-06-12T07:25:00.2500000+00:00';
+      h.sessions.whileLoadingEvents = () {
+        h.hubs.last.emit('TamperDetected', {
+          'sessionId': _sessionId,
+          'userId': 'Ada',
+          'userDisplayName': 'Ada',
+          'kind': 'extension_silent',
+          'detectedAt': silentAt,
+        });
+        h.sessions.stored = [
+          SessionRecentEvent(
+            id: 'e3',
+            userId: 'Ada',
+            kind: 'TamperDetected',
+            payloadJson: '{"kind":"extension_silent"}',
+            occurredAt: DateTime.parse(silentAt),
+          ),
+          ...h.sessions.stored,
+        ];
+      };
+      await tester.tap(find.text('Resume'));
+      await tester.pumpAndSettle();
+      expect(find.text('Allowed bundles'), findsOneWidget);
+      expect(h.hubs, hasLength(2));
+      expect(h.hubs.last.joinCalls, 1);
+      expect(h.sessions.sessionEventsCalls, 2);
+
+      // The feed shows what happened so far, newest first, each once, at
+      // the server's time of it, not "Waiting for events…".
+      expect(find.text('Waiting for events…'), findsNothing);
+      expect(find.text(silent), findsOneWidget);
+      expect(find.text(left), findsOneWidget);
+      expect(find.text(asks), findsOneWidget);
+      expect(find.textContaining('×'), findsNothing);
+      expect(top(silent), lessThan(top(left)));
+      expect(top(left), lessThan(top(asks)));
+      expect(find.text(local(leftAt)), findsOneWidget);
+      expect(find.text(local(askedAt)), findsOneWidget);
+      for (final raw in ['ManualLeave', 'UnblockRequest', '+00:00']) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+
+      // All activity shows the joins too, below.
+      await tester.tap(find.byKey(const Key('feed-show-all')));
+      await tester.pumpAndSettle();
+      expect(find.text('Ada joined.'), findsOneWidget);
+      expect(find.text('Bo joined.'), findsOneWidget);
+      expect(top(asks), lessThan(top('Bo joined.')));
+
+      // And it continues live, above what came before.
+      h.hubs.last.emit('HeartbeatLost', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'lastSeenAt': '2026-06-12T07:26:00+00:00',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text(lost), findsOneWidget);
+      expect(top(lost), lessThan(top(silent)));
       expect(tester.takeException(), isNull);
     },
   );

@@ -8,6 +8,7 @@ import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/feed/feed_history.dart';
 import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:anchor_dashboard/realtime/session_hub_client.dart';
@@ -34,12 +35,16 @@ ApiClient _dummyClient() => ApiClient(
 );
 
 class _StubHub extends SessionHubClient {
-  _StubHub()
-    : super(apiBaseUrl: Uri.parse('http://localhost'), tokenProvider: _noToken);
+  _StubHub({List<String>? log})
+    : _log = log,
+      super(apiBaseUrl: Uri.parse('http://localhost'), tokenProvider: _noToken);
 
   static Future<String?> _noToken() async => null;
 
   final _ctrl = StreamController<SessionEvent>.broadcast();
+
+  /// Where the page's join is noted, next to its loads (#492).
+  final List<String>? _log;
 
   void emit(String kind, Map<String, dynamic> payload, {DateTime? at}) =>
       _ctrl.add(
@@ -64,7 +69,8 @@ class _StubHub extends SessionHubClient {
   @override
   Future<void> connect() async {}
   @override
-  Future<void> joinSession(String sessionId, {String? joinCode}) async {}
+  Future<void> joinSession(String sessionId, {String? joinCode}) async =>
+      _log?.add('join');
   @override
   Future<void> leaveSession(String sessionId) async {}
   @override
@@ -73,18 +79,50 @@ class _StubHub extends SessionHubClient {
   Future<void> dispose() async => _ctrl.close();
 }
 
-SessionParticipantInfo _participant(String id, String name) =>
-    SessionParticipantInfo(
-      userId: id,
-      displayName: name,
-      joinedAt: null,
-      declinedAt: null,
-      leftAt: null,
-      state: ParticipantLiveState.joined,
-    );
+SessionParticipantInfo _participant(
+  String id,
+  String name, {
+  DateTime? joinedAt,
+  DateTime? leftAt,
+}) => SessionParticipantInfo(
+  userId: id,
+  displayName: name,
+  joinedAt: joinedAt,
+  declinedAt: null,
+  leftAt: leftAt,
+  state: leftAt == null
+      ? ParticipantLiveState.joined
+      : ParticipantLiveState.left,
+);
 
 class _FakeSessions extends SessionsApi {
-  _FakeSessions() : super(_dummyClient());
+  _FakeSessions({
+    this.participants,
+    this.stored = const [],
+    this.eventsError,
+    this.whileLoading,
+  }) : super(_dummyClient());
+
+  /// The roster; Ada and Bo, joined, when null.
+  final List<SessionParticipantInfo>? participants;
+
+  /// What the backend stored for the session (#492), newest first.
+  final List<SessionRecentEvent> stored;
+
+  /// What loading them throws, when set.
+  final Object? eventsError;
+
+  /// What happens while the page loads them: an event the hub broadcasts
+  /// between the page's join and the load (#492).
+  final void Function(_StubHub hub)? whileLoading;
+
+  /// The page's hub, for [whileLoading].
+  _StubHub? hub;
+
+  /// The page's join and loads, in order.
+  final List<String> log = [];
+  Iterable<String>? askedKinds;
+  int? askedLimit;
 
   @override
   Future<SessionDetail> getSession(String sessionId) async => SessionDetail(
@@ -96,7 +134,9 @@ class _FakeSessions extends SessionsApi {
     endedAt: null,
     summaries: const [],
     recentEvents: const [],
-    participants: [_participant(_adaId, 'Ada'), _participant(_boId, 'Bo')],
+    participants:
+        participants ??
+        [_participant(_adaId, 'Ada'), _participant(_boId, 'Bo')],
     bundles: const [],
     grants: const [],
   );
@@ -104,6 +144,21 @@ class _FakeSessions extends SessionsApi {
   @override
   Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async =>
       const [];
+
+  @override
+  Future<List<SessionRecentEvent>> sessionEvents(
+    String sessionId, {
+    Iterable<String> kinds = const <String>[],
+    int limit = 200,
+  }) async {
+    log.add('events');
+    askedKinds = kinds;
+    askedLimit = limit;
+    whileLoading?.call(hub!);
+    final error = eventsError;
+    if (error != null) throw error;
+    return stored;
+  }
 }
 
 class _FakeBundles extends BundlesApi {
@@ -118,13 +173,15 @@ Future<_StubHub> _pump(
   WidgetTester tester,
   LiveAlertSettings settings, {
   Locale locale = const Locale('en'),
+  _FakeSessions? sessions,
 }) async {
   tester.view.physicalSize = const Size(1400, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
-  final hub = _StubHub();
+  final hub = _StubHub(log: sessions?.log);
+  sessions?.hub = hub;
   await tester.pumpWidget(
     MaterialApp(
       // NoSplash avoids loading the ink_sparkle fragment shader, which fails
@@ -136,7 +193,7 @@ Future<_StubHub> _pump(
       home: SessionPage(
         sessionId: _sessionId,
         tokens: AuthTokenStore(),
-        sessions: _FakeSessions(),
+        sessions: sessions ?? _FakeSessions(),
         bundles: _FakeBundles(),
         apiBaseUrl: Uri.parse('http://localhost'),
         hubClientFactory: ({required apiBaseUrl, required tokenProvider}) =>
@@ -400,5 +457,152 @@ void main() {
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
+  });
+
+  group('#492: what happened before the page opened', () {
+    final start = DateTime.utc(2026, 11, 11, 19, 25);
+    DateTime min(int m, [int ms = 0]) =>
+        start.add(Duration(minutes: m, milliseconds: ms));
+    SessionRecentEvent stored(
+      String kind,
+      DateTime at, {
+      String userId = _adaId,
+      String payloadJson = '{}',
+    }) => SessionRecentEvent(
+      id: '$kind$at',
+      userId: userId,
+      kind: kind,
+      payloadJson: payloadJson,
+      occurredAt: at,
+    );
+    String local(DateTime at) {
+      final t = at.toLocal();
+      String two(int n) => n.toString().padLeft(2, '0');
+      return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+    }
+
+    double top(WidgetTester tester, String text) =>
+        tester.getTopLeft(find.text(text)).dy;
+
+    testWidgets('the feed shows it once the page has joined the session, '
+        'newest first, as the live feed would have', (tester) async {
+      final sessions = _FakeSessions(
+        participants: [
+          _participant(_adaId, 'Ada', joinedAt: min(1)),
+          _participant(_boId, 'Bo', joinedAt: min(2), leftAt: min(6, 300)),
+        ],
+        stored: [
+          stored(
+            'TamperDetected',
+            min(8),
+            payloadJson: '{"kind":"extension_silent"}',
+          ),
+          stored('ManualLeave', min(6), userId: _boId),
+          stored(
+            'UnblockRequest',
+            min(4),
+            payloadJson:
+                '{"url":"https://chat.example.com/","host":"chat.example.com"}',
+          ),
+          stored('HeartbeatLost', min(3)),
+        ],
+      );
+      await _pump(tester, LiveAlertSettings(), sessions: sessions);
+
+      // Loaded after the join: an event before it is in what it loads.
+      expect(sessions.log, ['join', 'events']);
+      expect(sessions.askedKinds, feedStoredKinds);
+      expect(sessions.askedLimit, feedHistoryLimit);
+
+      const tamper = "Ada's Anchor extension is off or not responding.";
+      const left = 'Bo left the session.';
+      const asks = 'Ada asks for access to chat.example.com.';
+      const lost = "Ada's agent stopped reporting.";
+      expect(find.text(_waiting), findsNothing);
+      for (final sentence in [tamper, left, asks, lost]) {
+        expect(find.text(sentence), findsOneWidget, reason: sentence);
+      }
+      expect(top(tester, tamper), lessThan(top(tester, left)));
+      expect(top(tester, left), lessThan(top(tester, asks)));
+      expect(top(tester, asks), lessThan(top(tester, lost)));
+      // At the time it happened, the server's (the leave as it recorded it),
+      // in local time.
+      expect(find.text(local(min(8))), findsOneWidget);
+      expect(find.text(local(min(6, 300))), findsOneWidget);
+      // The joins only with all activity, the first one last.
+      expect(find.text('Ada joined.'), findsNothing);
+
+      await tester.tap(find.byKey(const Key('feed-show-all')));
+      await tester.pumpAndSettle();
+      expect(find.text('Bo joined.'), findsOneWidget);
+      expect(find.text('Ada joined.'), findsOneWidget);
+      expect(top(tester, lost), lessThan(top(tester, 'Bo joined.')));
+      expect(top(tester, 'Bo joined.'), lessThan(top(tester, 'Ada joined.')));
+      // The page hears the session starting only when the teacher takes part
+      // (#410): the header says when it started.
+      expect(find.textContaining('Session started'), findsNothing);
+      expect(find.textContaining('ManualLeave'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('it continues live above it, and an event the page both hears '
+        'and loads shows once', (tester) async {
+      final sessions = _FakeSessions(
+        stored: [
+          stored(
+            'UnblockRequest',
+            DateTime.parse('2026-11-11T19:30:00.1234567+00:00'),
+            payloadJson: '{"host":"chat.example.com"}',
+          ),
+          stored('ManualLeave', min(2), userId: _boId),
+        ],
+        // Between the join and the load: broadcast, and stored too.
+        whileLoading: (hub) => hub.emit('UnblockRequested', {
+          'userId': _adaId,
+          'userDisplayName': 'Ada',
+          'host': 'chat.example.com',
+          'url': 'https://chat.example.com/',
+          'requestedAt': '2026-11-11T19:30:00.1234567+00:00',
+        }),
+      );
+      final hub = await _pump(tester, LiveAlertSettings(), sessions: sessions);
+
+      expect(
+        find.text('Ada asks for access to chat.example.com.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('×'), findsNothing);
+      expect(find.text('Bo left the session.'), findsOneWidget);
+
+      hub.emit('TamperDetected', {
+        'userId': _boId,
+        'userDisplayName': 'Bo',
+        'kind': 'inprivate_opened',
+        'detectedAt': '2026-11-11T19:31:00+00:00',
+      });
+      await tester.pumpAndSettle();
+      expect(
+        top(tester, 'Bo opened an InPrivate window.'),
+        lessThan(top(tester, 'Ada asks for access to chat.example.com.')),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('without it, the feed shows what the page hears, as before', (
+      tester,
+    ) async {
+      final sessions = _FakeSessions(
+        stored: [stored('ManualLeave', min(2), userId: _boId)],
+        eventsError: ApiException(500, 'boom'),
+      );
+      final hub = await _pump(tester, LiveAlertSettings(), sessions: sessions);
+
+      expect(find.text(_waiting), findsOneWidget);
+      expect(find.textContaining('boom'), findsNothing);
+      hub.state(_adaId, 'Ada', 'Left');
+      await tester.pumpAndSettle();
+      expect(find.text('Ada left the session.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 }

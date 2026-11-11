@@ -13,6 +13,7 @@ import '../alerts/live_alerts.dart';
 import '../api/auth_token_store.dart';
 import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
+import '../feed/feed_history.dart';
 import '../feed/live_feed.dart';
 import '../l10n/app_localizations.dart';
 import '../realtime/session_hub_client.dart';
@@ -69,7 +70,11 @@ class _SessionPageState extends State<SessionPage> {
   AlertPopupCue? _popupCue;
   // The pending requests panel, which an access-request pop-up leads to.
   final GlobalKey _pendingRequestsKey = GlobalKey();
+  // What the page heard live since it opened, newest first.
   final List<SessionEvent> _events = [];
+  // What happened in the session before that (#492), in the hub's shapes,
+  // newest first: empty until it loads, and if it can't.
+  List<SessionEvent> _history = const [];
   bool _connecting = true;
   bool _ending = false;
   bool _ended = false;
@@ -182,7 +187,40 @@ class _SessionPageState extends State<SessionPage> {
       context.go('/history/${widget.sessionId}');
       return;
     }
-    await Future.wait([_connect(), _loadPendingRequests(), _loadBundles()]);
+    await Future.wait([
+      // The feed's history once the page has joined the session (#492): an
+      // event after the join reaches the page live, one before it is in the
+      // history, and one in between is in both, which the feed shows once.
+      _connect().then((_) => _loadHistory()),
+      _loadPendingRequests(),
+      _loadBundles(),
+    ]);
+  }
+
+  /// Loads what happened in the session before the page opened (#492): the
+  /// feed holds only what the page hears live, so it was empty each time the
+  /// teacher came back to the session, or reloaded it.
+  Future<void> _loadHistory() async {
+    if (!mounted || _notYours || _ended) return;
+    try {
+      final stored = await widget.sessions.sessionEvents(
+        widget.sessionId,
+        kinds: feedStoredKinds,
+        limit: feedHistoryLimit,
+      );
+      if (!mounted) return;
+      setState(
+        () => _history = feedHistory(
+          sessionId: widget.sessionId,
+          stored: stored,
+          participants: _detail?.participants ?? const [],
+          complete: stored.length < feedHistoryLimit,
+        ),
+      );
+    } catch (e) {
+      if (_isNotYours(e)) _showNotYours();
+      // Otherwise non-fatal: the feed shows what the page hears from now on.
+    }
   }
 
   Set<String> get _selectedBundleIds => {
@@ -709,7 +747,7 @@ class _SessionPageState extends State<SessionPage> {
               child: SizedBox(
                 height: _feedMinHeight,
                 child: _ActivityPanel(
-                  events: _events,
+                  events: feedTimeline(_events, _history),
                   settings: _alertServices.settings,
                   nameOf: _participantName,
                 ),
@@ -1117,7 +1155,8 @@ class _ActivityPanel extends StatelessWidget {
     required this.nameOf,
   });
 
-  /// Newest first.
+  /// Newest first: what the page heard live, then what happened in the
+  /// session before it opened (#492).
   final List<SessionEvent> events;
 
   /// Where the switch is kept, with the alert settings.

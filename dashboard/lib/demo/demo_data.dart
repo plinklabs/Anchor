@@ -199,7 +199,8 @@ List<UnblockRequestSummary> demoPendingRequests() => [
 /// (contracts/session-hub.json), so the feed reads them as its sentences
 /// (#491), in step with [demoLiveRoster] and [demoPendingRequests]. By
 /// default the feed shows what needs the teacher; the joins and the start
-/// show with all activity.
+/// show with all activity. The joins carry the server times the roster has,
+/// so the history the page rebuilds from the roster (#492) shows them once.
 List<({String kind, Map<String, dynamic> payload})> demoLiveEvents() => [
   (
     kind: 'SessionStarted',
@@ -223,6 +224,8 @@ List<({String kind, Map<String, dynamic> payload})> demoLiveEvents() => [
         'userId': id,
         'displayName': name,
         'state': 'Joined',
+        // Their joinedAt in [demoLiveRoster].
+        'at': demoSessionStartedAt.toUtc().toIso8601String(),
       },
     ),
   (
