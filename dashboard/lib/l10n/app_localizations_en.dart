@@ -743,6 +743,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Only the browser extension joined. Apps aren\'t being blocked on this laptop.';
 
   @override
+  String get sessionStateNotConnected => 'Not connected';
+
+  @override
+  String get sessionStateNotConnectedTooltip =>
+      'This laptop hasn\'t joined the session. Nothing is being blocked for this student, or they\'re absent.';
+
+  @override
   String get sessionStateLeft => 'Left';
 
   @override
@@ -1464,6 +1471,17 @@ class AppLocalizationsEn extends AppLocalizations {
       locale: localeName,
       other: 'agent didn\'t report in $count times',
       one: 'agent didn\'t report in',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryNotConnected(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'didn\'t join at the start $count times',
+      one: 'didn\'t join at the start',
     );
     return '$_temp0';
   }

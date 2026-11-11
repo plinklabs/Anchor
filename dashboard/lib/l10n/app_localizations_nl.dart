@@ -759,6 +759,13 @@ class AppLocalizationsNl extends AppLocalizations {
       'Alleen de browserextensie is aangesloten. Apps worden op deze laptop niet geblokkeerd.';
 
   @override
+  String get sessionStateNotConnected => 'Niet verbonden';
+
+  @override
+  String get sessionStateNotConnectedTooltip =>
+      'Deze laptop heeft zich niet aangesloten bij de sessie. Voor deze leerling wordt niets geblokkeerd, of de leerling is afwezig.';
+
+  @override
   String get sessionStateLeft => 'Verlaten';
 
   @override
@@ -1490,6 +1497,17 @@ class AppLocalizationsNl extends AppLocalizations {
       locale: localeName,
       other: 'agent meldde zich $count keer niet',
       one: 'agent meldde zich niet',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryNotConnected(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'was $count keer niet aangesloten bij de start',
+      one: 'was niet aangesloten bij de start',
     );
     return '$_temp0';
   }

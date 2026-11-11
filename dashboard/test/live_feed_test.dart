@@ -115,6 +115,11 @@ void main() {
           "Ada hasn't joined yet.",
           'Ada heeft zich nog niet aangesloten.',
         ),
+        // A class member whose laptop never joined (#493).
+        'NotConnected': (
+          "Ada hasn't joined yet.",
+          'Ada heeft zich nog niet aangesloten.',
+        ),
         'SomethingNew': (
           "Ada's status changed.",
           'De status van Ada is gewijzigd.',
@@ -225,7 +230,14 @@ void main() {
           'domains': const [],
         }),
         _event('SessionEnded'),
-        for (final s in ['Joined', 'Left', 'Declined', 'AgentMissing', 'X'])
+        for (final s in [
+          'Joined',
+          'Left',
+          'Declined',
+          'AgentMissing',
+          'NotConnected',
+          'X',
+        ])
           _state(s),
         _event('HeartbeatLost', {'userId': _adaId}),
         _event('AgentReconnected', {'userId': _adaId}),
@@ -261,6 +273,8 @@ void main() {
         _tamper('extension_silent'): FeedPriority.warning,
         _state('AgentMissing'): FeedPriority.warning,
         _state('HeartbeatStale'): FeedPriority.warning,
+        // Nothing is enforced for a class member who never joined (#493).
+        _state('NotConnected'): FeedPriority.warning,
         _state('Joined'): FeedPriority.routine,
         _state('NeverJoined'): FeedPriority.routine,
         _event('AgentReconnected', {'userId': _adaId}): FeedPriority.routine,

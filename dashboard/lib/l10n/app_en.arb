@@ -271,6 +271,14 @@
   "@sessionStateAgentMissingTooltip": {
     "description": "Tooltip on the 'Agent not connected' roster state, saying what it means for the teacher (#444)."
   },
+  "sessionStateNotConnected": "Not connected",
+  "@sessionStateNotConnected": {
+    "description": "Live roster state of a class member whose laptop still hasn't joined the session 30 seconds after it started: no working Anchor on it, or the student is absent (#493)."
+  },
+  "sessionStateNotConnectedTooltip": "This laptop hasn't joined the session. Nothing is being blocked for this student, or they're absent.",
+  "@sessionStateNotConnectedTooltip": {
+    "description": "Tooltip on the 'Not connected' roster state, saying what it means for the teacher (#493)."
+  },
   "sessionStateLeft": "Left",
   "sessionStateDeclined": "Declined",
   "sessionStateNotJoined": "Not joined",
@@ -563,6 +571,8 @@
   "@pastSummaryAgentStopped": { "placeholders": { "count": { "type": "int" } } },
   "pastSummaryAgentMissing": "{count, plural, =1{agent didn't report in} other{agent didn't report in {count} times}}",
   "@pastSummaryAgentMissing": { "placeholders": { "count": { "type": "int" } } },
+  "pastSummaryNotConnected": "{count, plural, =1{didn't join at the start} other{didn't join at the start {count} times}}",
+  "@pastSummaryNotConnected": { "description": "The student's laptop hadn't joined the session 30 seconds after it started (#493).", "placeholders": { "count": { "type": "int" } } },
   "pastSummaryLeft": "{count, plural, =1{left the session} other{left the session {count} times}}",
   "@pastSummaryLeft": { "description": "Counts leaving the session and closing the Anchor app, which the live feed also reads as leaving.", "placeholders": { "count": { "type": "int" } } },
   "pastSummaryDeclined": "{count, plural, =1{declined the session} other{declined the session {count} times}}",

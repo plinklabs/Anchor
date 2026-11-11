@@ -18,17 +18,19 @@ enum FeedPriority {
   attention,
 
   /// Worth their attention, with the stronger marker: a student's laptop
-  /// isn't enforced (their agent stopped reporting or never connected), or
-  /// someone tampered with it. Shown by default.
+  /// isn't enforced (their agent stopped reporting or never connected, or the
+  /// laptop never joined), or someone tampered with it. Shown by default.
   warning,
 }
 
 /// The live states a `ParticipantStateChanged` can carry that mean nothing
 /// is being enforced on the student's laptop, although no alert goes off for
-/// them (#444). The teacher can act on these, so the feed shows them.
+/// them (#444): their agent is missing or silent, or the laptop never joined
+/// (#493). The teacher can act on these, so the feed shows them.
 const Set<ParticipantLiveState> _unenforcedStates = {
   ParticipantLiveState.agentMissing,
   ParticipantLiveState.heartbeatStale,
+  ParticipantLiveState.notConnected,
 };
 
 /// The live state a `ParticipantStateChanged` carries, or null for any other
@@ -86,7 +88,8 @@ String feedSentence(
         ParticipantLiveState.joined => l10n.feedJoined(who, n),
         ParticipantLiveState.left => l10n.feedLeft(who, n),
         ParticipantLiveState.declined => l10n.feedDeclined(who, n),
-        ParticipantLiveState.neverJoined => l10n.feedNotJoined(who, n),
+        ParticipantLiveState.neverJoined ||
+        ParticipantLiveState.notConnected => l10n.feedNotJoined(who, n),
         ParticipantLiveState.agentMissing => l10n.feedAgentMissing(who, n),
         ParticipantLiveState.heartbeatStale => l10n.feedAgentStopped(who, n),
         ParticipantLiveState.unknown => l10n.feedStateChanged(who, n),

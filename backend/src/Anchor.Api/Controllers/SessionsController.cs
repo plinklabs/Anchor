@@ -44,6 +44,7 @@ public sealed class SessionsController : ControllerBase
     private readonly SessionEnder _sessionEnder;
     private readonly SessionEndPlanner _endPlanner;
     private readonly SessionEndSchedule _endSchedule;
+    private readonly HeartbeatTracker _heartbeats;
 
     public SessionsController(
         AnchorDbContext db,
@@ -56,7 +57,8 @@ public sealed class SessionsController : ControllerBase
         ActiveParticipantCache activeParticipants,
         SessionEnder sessionEnder,
         SessionEndPlanner endPlanner,
-        SessionEndSchedule endSchedule)
+        SessionEndSchedule endSchedule,
+        HeartbeatTracker heartbeats)
     {
         _db = db;
         _users = users;
@@ -69,6 +71,7 @@ public sealed class SessionsController : ControllerBase
         _sessionEnder = sessionEnder;
         _endPlanner = endPlanner;
         _endSchedule = endSchedule;
+        _heartbeats = heartbeats;
     }
 
     [HttpPost]
@@ -183,6 +186,10 @@ public sealed class SessionsController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         if (endsAt is { } plannedEnd)
             _endSchedule.Schedule(session.Id, plannedEnd);
+        // Every running agent of the class joins after its join toast. The
+        // heartbeat monitor reports each member still out once the join grace
+        // has passed: their laptop isn't enforcing anything (#493).
+        _heartbeats.ExpectJoins(session.Id, memberIds, now);
 
         var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
         await _broadcaster.SessionStartedAsync(
@@ -474,6 +481,17 @@ public sealed class SessionsController : ControllerBase
                 .ToListAsync(cancellationToken))
             .ToHashSet();
 
+        // A class member of a running session was expected to join from its
+        // start: still out past the join grace, they read as not connected
+        // (#493). Anyone else took part by code, and is waited on by no one.
+        var classMemberIds = session.EndedAt is null
+            ? (await _db.ClassMemberships.AsNoTracking()
+                .Where(m => m.ClassId == session.ClassId && m.Role == ClassMembershipRole.Member)
+                .Select(m => m.UserId)
+                .ToListAsync(cancellationToken))
+                .ToHashSet()
+            : new HashSet<Guid>();
+
         var participants = participantRows
             .Select(p => new SessionParticipantSummary(
                 p.UserId,
@@ -481,7 +499,9 @@ public sealed class SessionsController : ControllerBase
                 p.JoinedAt,
                 p.DeclinedAt,
                 p.LeftAt,
-                _liveState.Resolve(id, p.UserId, p.JoinedAt, p.DeclinedAt, p.LeftAt).ToString(),
+                _liveState.Resolve(
+                    id, p.UserId, p.JoinedAt, p.DeclinedAt, p.LeftAt,
+                    expectedSince: classMemberIds.Contains(p.UserId) ? session.StartedAt : null).ToString(),
                 tamperedUserIds.Contains(p.UserId)))
             .ToList();
 

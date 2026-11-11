@@ -250,6 +250,11 @@ enum ParticipantLiveState {
   /// Joined, but their agent never sent a heartbeat (#444): usually only the
   /// Edge extension joined, so apps aren't being enforced on that laptop.
   agentMissing,
+
+  /// A class member who still hadn't joined once the join grace after the
+  /// session's start had passed (#493): their laptop has no working Anchor,
+  /// or they aren't there. Nothing is enforced for them until they join.
+  notConnected,
   declined,
   left,
   unknown;
@@ -264,6 +269,8 @@ enum ParticipantLiveState {
         return ParticipantLiveState.heartbeatStale;
       case 'AgentMissing':
         return ParticipantLiveState.agentMissing;
+      case 'NotConnected':
+        return ParticipantLiveState.notConnected;
       case 'Declined':
         return ParticipantLiveState.declined;
       case 'Left':

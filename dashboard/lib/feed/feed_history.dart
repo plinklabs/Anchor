@@ -16,6 +16,7 @@ const List<String> feedStoredKinds = <String>[
   'HeartbeatLost',
   'AgentReconnected',
   'AgentMissing',
+  'NotConnected',
   'JoinDeclined',
   'ManualLeave',
   'AgentKilled',
@@ -93,6 +94,8 @@ SessionEvent? feedEventOfStored(
       );
     case 'AgentMissing':
       return _stateChanged(sessionId, stored.userId, name, 'AgentMissing', at);
+    case 'NotConnected':
+      return _stateChanged(sessionId, stored.userId, name, 'NotConnected', at);
     case 'JoinDeclined':
       return _stateChanged(sessionId, stored.userId, name, 'Declined', at);
     case 'ManualLeave':
@@ -177,6 +180,7 @@ List<String> storedSummaryPhrases(
           _SummaryTopic.tamper => l10n.pastSummaryTamper(count),
           _SummaryTopic.agentStopped => l10n.pastSummaryAgentStopped(count),
           _SummaryTopic.agentMissing => l10n.pastSummaryAgentMissing(count),
+          _SummaryTopic.notConnected => l10n.pastSummaryNotConnected(count),
           _SummaryTopic.left => l10n.pastSummaryLeft(count),
           _SummaryTopic.declined => l10n.pastSummaryDeclined(count),
           _SummaryTopic.accessRequests => l10n.pastSummaryAccessRequests(count),
@@ -195,6 +199,7 @@ enum _SummaryTopic {
   tamper,
   agentStopped,
   agentMissing,
+  notConnected,
   left,
   declined,
   accessRequests,
@@ -209,6 +214,7 @@ _SummaryTopic _summaryTopicOf(String kind) => switch (kind) {
   'TamperDetected' => _SummaryTopic.tamper,
   'HeartbeatLost' => _SummaryTopic.agentStopped,
   'AgentMissing' => _SummaryTopic.agentMissing,
+  'NotConnected' => _SummaryTopic.notConnected,
   'ManualLeave' || 'AgentKilled' => _SummaryTopic.left,
   'JoinDeclined' => _SummaryTopic.declined,
   'UnblockRequest' => _SummaryTopic.accessRequests,

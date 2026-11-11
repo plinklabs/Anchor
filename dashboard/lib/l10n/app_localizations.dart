@@ -1130,6 +1130,18 @@ abstract class AppLocalizations {
   /// **'Only the browser extension joined. Apps aren\'t being blocked on this laptop.'**
   String get sessionStateAgentMissingTooltip;
 
+  /// Live roster state of a class member whose laptop still hasn't joined the session 30 seconds after it started: no working Anchor on it, or the student is absent (#493).
+  ///
+  /// In en, this message translates to:
+  /// **'Not connected'**
+  String get sessionStateNotConnected;
+
+  /// Tooltip on the 'Not connected' roster state, saying what it means for the teacher (#493).
+  ///
+  /// In en, this message translates to:
+  /// **'This laptop hasn\'t joined the session. Nothing is being blocked for this student, or they\'re absent.'**
+  String get sessionStateNotConnectedTooltip;
+
   /// No description provided for @sessionStateLeft.
   ///
   /// In en, this message translates to:
@@ -2203,6 +2215,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{agent didn\'t report in} other{agent didn\'t report in {count} times}}'**
   String pastSummaryAgentMissing(int count);
+
+  /// The student's laptop hadn't joined the session 30 seconds after it started (#493).
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{didn\'t join at the start} other{didn\'t join at the start {count} times}}'**
+  String pastSummaryNotConnected(int count);
 
   /// Counts leaving the session and closing the Anchor app, which the live feed also reads as leaving.
   ///

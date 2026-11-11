@@ -1391,7 +1391,8 @@ class _FeedRow extends StatelessWidget {
 /// Visual treatment for one live participant state (#100). The stale state is
 /// the loudest — per design §5.4 it's "agent stopped reporting", the signal
 /// teachers actually act on — together with an agent that never connected
-/// (#444): either way apps aren't being enforced on that laptop.
+/// (#444) and a laptop that never joined the session (#493): either way
+/// nothing is being enforced on that laptop.
 class _RosterStateStyle {
   const _RosterStateStyle(this.icon, this.sortRank);
   final IconData icon;
@@ -1406,27 +1407,30 @@ class _RosterStateStyle {
         return const _RosterStateStyle(Icons.sensors_off, 0);
       case ParticipantLiveState.agentMissing:
         return const _RosterStateStyle(Icons.desktop_access_disabled, 1);
+      case ParticipantLiveState.notConnected:
+        return const _RosterStateStyle(Icons.link_off, 2);
       case ParticipantLiveState.left:
-        return const _RosterStateStyle(Icons.logout, 2);
+        return const _RosterStateStyle(Icons.logout, 3);
       case ParticipantLiveState.declined:
-        return const _RosterStateStyle(Icons.cancel_outlined, 3);
+        return const _RosterStateStyle(Icons.cancel_outlined, 4);
       case ParticipantLiveState.neverJoined:
-        return const _RosterStateStyle(Icons.radio_button_unchecked, 4);
+        return const _RosterStateStyle(Icons.radio_button_unchecked, 5);
       case ParticipantLiveState.joined:
-        return const _RosterStateStyle(Icons.check_circle, 5);
+        return const _RosterStateStyle(Icons.check_circle, 6);
       case ParticipantLiveState.unknown:
-        return const _RosterStateStyle(Icons.help_outline, 6);
+        return const _RosterStateStyle(Icons.help_outline, 7);
     }
   }
 
-  /// Brand-token colours only — no off-palette green/orange. Stale and a
-  /// missing agent are the states painted in the error colour (the signals to
-  /// act on); everyone else is calm ink / muted, leaning on the label, never
-  /// colour alone.
+  /// Brand-token colours only — no off-palette green/orange. Stale, a missing
+  /// agent and a laptop that isn't connected are the states painted in the
+  /// error colour (the signals to act on); everyone else is calm ink / muted,
+  /// leaning on the label, never colour alone.
   Color color(ColorScheme scheme) {
     switch (icon) {
       case Icons.sensors_off:
       case Icons.desktop_access_disabled:
+      case Icons.link_off:
         return scheme.error;
       case Icons.check_circle:
         return PlinkColors.ink60;
@@ -1443,6 +1447,8 @@ String _rosterStateLabel(AppLocalizations l10n, ParticipantLiveState s) {
       return l10n.sessionStateStale;
     case ParticipantLiveState.agentMissing:
       return l10n.sessionStateAgentMissing;
+    case ParticipantLiveState.notConnected:
+      return l10n.sessionStateNotConnected;
     case ParticipantLiveState.left:
       return l10n.sessionStateLeft;
     case ParticipantLiveState.declined:
@@ -1455,6 +1461,15 @@ String _rosterStateLabel(AppLocalizations l10n, ParticipantLiveState s) {
       return l10n.sessionStateUnknown;
   }
 }
+
+/// What a live participant state means for the class, for the states whose
+/// label alone doesn't say that nothing is enforced on the student's laptop.
+String? _rosterStateTooltip(AppLocalizations l10n, ParticipantLiveState s) =>
+    switch (s) {
+      ParticipantLiveState.agentMissing => l10n.sessionStateAgentMissingTooltip,
+      ParticipantLiveState.notConnected => l10n.sessionStateNotConnectedTooltip,
+      _ => null,
+    };
 
 class _RosterPanel extends StatelessWidget {
   const _RosterPanel({required this.participants});
@@ -1554,13 +1569,12 @@ class _RosterRow extends StatelessWidget {
             ),
             const SizedBox(width: PlinkSpacing.s2),
           ],
-          // A missing agent (#444) says what it means for the class on hover:
-          // the label alone doesn't tell a teacher that apps go unblocked.
-          if (participant.state == ParticipantLiveState.agentMissing)
-            Tooltip(
-              message: l10n.sessionStateAgentMissingTooltip,
-              child: stateLabel,
-            )
+          // A missing agent (#444) or a laptop that never joined (#493) says
+          // what it means for the class on hover: the label alone doesn't tell
+          // a teacher that nothing is blocked for that student.
+          if (_rosterStateTooltip(l10n, participant.state)
+              case final String tip)
+            Tooltip(message: tip, child: stateLabel)
           else
             stateLabel,
         ],

@@ -144,6 +144,16 @@ void main() {
       expect(
         _sentence(
           _stored(
+            'NotConnected',
+            _min(1),
+            payloadJson: '{"expectedSince":"2026-11-11T08:25:00+00:00"}',
+          ),
+        ),
+        "Ada hasn't joined yet.",
+      );
+      expect(
+        _sentence(
+          _stored(
             'JoinDeclined',
             _min(1),
             payloadJson: '{"reason":"user_cancelled"}',
@@ -190,6 +200,18 @@ void main() {
       )!;
       expect(missing.payload['state'], 'AgentMissing');
       expect(feedPriorityOf(missing), FeedPriority.warning);
+
+      // A class member whose laptop never joined (#493).
+      final SessionEvent notConnected = feedEventOfStored(
+        _stored('NotConnected', _min(1)),
+        sessionId: _sessionId,
+        name: 'Ada',
+      )!;
+      expect(notConnected.kind, 'ParticipantStateChanged');
+      expect(notConnected.payload['state'], 'NotConnected');
+      expect(notConnected.payload['displayName'], 'Ada');
+      expect(feedPriorityOf(notConnected), FeedPriority.warning);
+      expect(feedStoredKinds, contains('NotConnected'));
     });
 
     test('in Dutch too', () {
@@ -296,6 +318,59 @@ void main() {
       expect(_sentences(history, showAll: false), [
         'Ada opened an InPrivate window.',
         'Bo asks for access to chat.example.com.',
+      ]);
+    });
+
+    test('a class member whose laptop never joined stays on the feed after '
+        'the page opens again, and heard live as well, shows once (#493)', () {
+      // The monitor stored the report 30 s after the start; Bo's agent joined
+      // later on, Cy's never did.
+      final DateTime reportedAt = _start.add(const Duration(seconds: 31));
+      final List<SessionEvent> history = feedHistory(
+        sessionId: _sessionId,
+        stored: [
+          _stored('NotConnected', reportedAt, userId: 'c'),
+          _stored('NotConnected', reportedAt, userId: _boId),
+        ],
+        participants: [
+          _participant(_adaId, 'Ada', joinedAt: _min(0, 5000)),
+          _participant(_boId, 'Bo', joinedAt: _min(4)),
+          _participant('c', 'Cy'),
+        ],
+      );
+
+      expect(_sentences(history), [
+        'Bo joined.',
+        "Cy hasn't joined yet.",
+        "Bo hasn't joined yet.",
+        'Ada joined.',
+      ]);
+      // By default, only what needs the teacher, with the stronger marker.
+      expect(_sentences(history, showAll: false), [
+        "Cy hasn't joined yet.",
+        "Bo hasn't joined yet.",
+      ]);
+      expect(
+        feedEntries(en, history, showAll: false).map((e) => e.priority),
+        everyElement(FeedPriority.warning),
+      );
+
+      // The page that heard Cy's report live, at the server's time, loads it
+      // too: one row.
+      final SessionEvent heard = SessionEvent(
+        kind: 'ParticipantStateChanged',
+        payload: {
+          'sessionId': _sessionId,
+          'userId': 'c',
+          'displayName': 'Cy',
+          'state': 'NotConnected',
+          'at': '2026-11-11T08:25:31.0000000+00:00',
+        },
+        at: DateTime.now(),
+      );
+      expect(_sentences(feedTimeline([heard], history), showAll: false), [
+        "Cy hasn't joined yet.",
+        "Bo hasn't joined yet.",
       ]);
     });
 
@@ -669,6 +744,7 @@ void main() {
         ('HeartbeatLost', '{"lastSeenAt":"2026-11-11T08:25:30+00:00"}'),
         ('AgentReconnected', '{}'),
         ('AgentMissing', '{"expectedSince":"2026-11-11T08:25:00+00:00"}'),
+        ('NotConnected', '{"expectedSince":"2026-11-11T08:25:00+00:00"}'),
         ('JoinDeclined', '{}'),
         ('ManualLeave', '{}'),
         ('AgentKilled', '{}'),
@@ -863,6 +939,7 @@ void main() {
           count('AgentReconnected', 1),
           count('HeartbeatLost', 1),
           count('AgentMissing', 1),
+          count('NotConnected', 1),
           count('JoinDeclined', 1),
           count('ForegroundChange', 1),
           count('BlockedUrl', 1),
@@ -870,6 +947,7 @@ void main() {
         [
           'agent stopped reporting once',
           "agent didn't report in",
+          "didn't join at the start",
           'declined the session',
           '1 blocked website',
           '1 app switch',

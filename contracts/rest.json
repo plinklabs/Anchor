@@ -22,7 +22,8 @@
       "JoinDeclined",
       "UnblockApproved",
       "TamperDetected",
-      "AgentMissing"
+      "AgentMissing",
+      "NotConnected"
     ],
     "ClassMembershipRole": ["Member", "Teacher"],
     "ClassMembershipImportStatus": ["Added", "AlreadyMember", "NotFoundInEntra", "WrongSchool"],

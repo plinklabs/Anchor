@@ -32,6 +32,17 @@ namespace Anchor.Api.Realtime;
 /// </para>
 ///
 /// <para>
+/// A class member whose laptop never joins at all is caught one step earlier
+/// (#493): a session that starts waits on its class members to join, and once
+/// <see cref="HeartbeatOptions.AgentJoinGrace"/> has passed since the start,
+/// the monitor records an <see cref="EventKind.NotConnected"/> for each who
+/// still hasn't, and tells the teacher's roster they are
+/// <see cref="ParticipantLiveState.NotConnected"/>. It looks at each of them
+/// once. One who joins later reads as joined, through the hub's usual
+/// <c>ParticipantStateChanged</c>.
+/// </para>
+///
+/// <para>
 /// Only an active participant can go missing. Every way of stopping (leaving,
 /// declining, quitting the agent, the session ending) drops the participant's
 /// tracking, but a ping that passed the hub's active check just before the
@@ -103,7 +114,13 @@ public sealed class HeartbeatMonitor : BackgroundService
         var timeout = opts.Timeout;
 
         var snapshot = _tracker.Snapshot();
-        if (snapshot.Count == 0) return;
+        // Only the joins whose grace has run out: until then there is nothing
+        // to look up, so a session waiting on its class doesn't touch the
+        // database every scan.
+        var dueJoins = _tracker.AwaitedJoins()
+            .Where(j => now - j.Since > opts.AgentJoinGrace)
+            .ToList();
+        if (snapshot.Count == 0 && dueJoins.Count == 0) return;
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
@@ -139,6 +156,68 @@ public sealed class HeartbeatMonitor : BackgroundService
                 await EmitResumedAsync(db, p, now, ct).ConfigureAwait(false);
                 _tracker.ClearReported(p.SessionId, p.UserId, p.Source);
             }
+        }
+
+        if (dueJoins.Count > 0)
+            await EmitNotConnectedAsync(db, dueJoins, now, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Reports each of <paramref name="due"/>, class members whose session's
+    /// join grace has run out, who still hasn't joined (#493). One who joined,
+    /// declined or left in the meantime, or whose session ended, is left
+    /// alone. Either way the monitor stops waiting on them: a student is
+    /// reported once, and stays not connected on the roster until they join.
+    /// </summary>
+    private async Task EmitNotConnectedAsync(
+        AnchorDbContext db, IReadOnlyList<AwaitedJoin> due, DateTimeOffset now, CancellationToken ct)
+    {
+        var sessionIds = due.Select(j => j.SessionId).Distinct().ToList();
+        var userIds = due.Select(j => j.UserId).Distinct().ToList();
+        var unjoined = (await db.SessionParticipants.AsNoTracking()
+                .Where(p => sessionIds.Contains(p.SessionId) &&
+                            userIds.Contains(p.UserId) &&
+                            p.JoinedAt == null &&
+                            p.DeclinedAt == null &&
+                            p.LeftAt == null &&
+                            p.Session!.EndedAt == null)
+                .Select(p => new { p.SessionId, p.UserId, p.User!.DisplayName })
+                .ToListAsync(ct)
+                .ConfigureAwait(false))
+            .ToDictionary(p => (p.SessionId, p.UserId), p => p.DisplayName);
+
+        var reports = new List<(AwaitedJoin Join, string DisplayName)>();
+        foreach (var join in due)
+        {
+            if (!unjoined.TryGetValue((join.SessionId, join.UserId), out var displayName))
+                continue;
+            db.Events.Add(new Event
+            {
+                SessionId = join.SessionId,
+                UserId = join.UserId,
+                Kind = EventKind.NotConnected,
+                PayloadJson = JsonSerializer.Serialize(new { expectedSince = join.Since }),
+                OccurredAt = now,
+            });
+            reports.Add((join, displayName ?? string.Empty));
+        }
+
+        if (reports.Count > 0)
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        foreach (var join in due)
+            _tracker.StopAwaitingJoin(join.SessionId, join.UserId);
+
+        // A state of its own on the roster, as a missing agent is: the
+        // dashboard re-reads the roster on it.
+        foreach (var (join, displayName) in reports)
+        {
+            await _broadcaster.ParticipantStateChangedAsync(
+                new ParticipantStateChangedPayload(
+                    join.SessionId, join.UserId, displayName, nameof(ParticipantLiveState.NotConnected), now),
+                ct).ConfigureAwait(false);
+            _log.LogInformation(
+                "NotConnected session={SessionId} user={UserId} expectedSince={ExpectedSince:o}",
+                join.SessionId, join.UserId, join.Since);
         }
     }
 

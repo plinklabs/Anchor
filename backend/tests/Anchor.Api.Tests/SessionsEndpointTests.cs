@@ -756,8 +756,9 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     [Fact]
     public async Task GET_session_resolves_per_participant_live_state_including_heartbeat_stale()
     {
-        // One student per state (#100): never-joined (untouched), joined+fresh,
-        // joined+stale, declined, left, and declined after joining (#471).
+        // One student per state (#100): not connected (untouched, five minutes
+        // after the start, #493), joined+fresh, joined+stale, declined, left,
+        // and declined after joining (#471).
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 6);
         var session = await TestSeed.AddSessionAsync(
             _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
@@ -792,7 +793,7 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
 
         Assert.NotNull(body);
         string StateOf(Guid userId) => body!.Participants.Single(p => p.UserId == userId).State;
-        Assert.Equal(nameof(ParticipantLiveState.NeverJoined), StateOf(never.Id));
+        Assert.Equal(nameof(ParticipantLiveState.NotConnected), StateOf(never.Id));
         Assert.Equal(nameof(ParticipantLiveState.Joined), StateOf(joinedFresh.Id));
         Assert.Equal(nameof(ParticipantLiveState.HeartbeatStale), StateOf(joinedStale.Id));
         Assert.Equal(nameof(ParticipantLiveState.Declined), StateOf(declined.Id));
@@ -837,7 +838,42 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(nameof(ParticipantLiveState.AgentMissing), StateOf(extensionOnly.Id));
         Assert.Equal(nameof(ParticipantLiveState.Joined), StateOf(justJoined.Id));
         Assert.Equal(nameof(ParticipantLiveState.Joined), StateOf(lateAgent.Id));
-        Assert.Equal(nameof(ParticipantLiveState.NeverJoined), StateOf(nothingJoined.Id));
+        // Nothing joined at all is a laptop that isn't connected (#493), not a
+        // missing agent.
+        Assert.Equal(nameof(ParticipantLiveState.NotConnected), StateOf(nothingJoined.Id));
+    }
+
+    [Fact]
+    public async Task GET_session_resolves_not_connected_only_for_class_members_of_a_running_session_past_the_join_grace()
+    {
+        // #493: every running agent of the class joins after its join toast, so
+        // a class member still out 30s after the start has no working Anchor.
+        // Within the grace they may still be on their way; someone who took
+        // part by code isn't a class member; an ended session waits on no one.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var guest = await TestSeed.AddUserAsync(_factory, Domain.Users.UserRole.Student, "Guest");
+        var participantIds = scenario.Students.Select(s => s.Id).Append(guest.Id).ToList();
+        var running = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, participantIds);
+        var justStarted = await TestSeed.AddSessionAsync(_factory, scenario.Teacher.Id, scenario.Class.Id, participantIds);
+        var ended = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, participantIds, ended: true);
+        await SetStartedAtAsync(justStarted.Id, DateTimeOffset.UtcNow.AddSeconds(-20));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        async Task<Dictionary<Guid, string>> StatesAsync(Guid sessionId) =>
+            (await client.GetFromJsonAsync<SessionDetailResponse>($"/sessions/{sessionId}"))!
+                .Participants.ToDictionary(p => p.UserId, p => p.State);
+
+        var states = await StatesAsync(running.Id);
+        Assert.All(scenario.Students, s => Assert.Equal(nameof(ParticipantLiveState.NotConnected), states[s.Id]));
+        Assert.Equal(nameof(ParticipantLiveState.NeverJoined), states[guest.Id]);
+
+        states = await StatesAsync(justStarted.Id);
+        Assert.All(participantIds, id => Assert.Equal(nameof(ParticipantLiveState.NeverJoined), states[id]));
+
+        states = await StatesAsync(ended.Id);
+        Assert.All(participantIds, id => Assert.Equal(nameof(ParticipantLiveState.NeverJoined), states[id]));
     }
 
     [Fact]
@@ -1341,6 +1377,15 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
             });
         }
         await db.SaveChangesAsync();
+    }
+
+    private async Task SetStartedAtAsync(Guid sessionId, DateTimeOffset startedAt)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        await db.Sessions
+            .Where(s => s.Id == sessionId)
+            .ExecuteUpdateAsync(set => set.SetProperty(s => s.StartedAt, startedAt));
     }
 
     private async Task SetParticipantStateAsync(

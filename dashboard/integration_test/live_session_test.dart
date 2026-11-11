@@ -48,6 +48,9 @@ import 'support/e2e_binding.dart';
 //     (#410),
 //   - a student whose agent never connected (only the extension joined) shows
 //     on the live roster, explained, until the agent turns up (#444),
+//   - a class member whose laptop never joined shows on the live roster and
+//     in the feed, explained, also when the page is opened again, until they
+//     join (#493),
 //   - the teacher picks when the session ends on Home, and the live view shows
 //     that planned end while still offering End session (#447),
 //   - on a short window the page scrolls to every panel and the feed, and the
@@ -654,6 +657,143 @@ void main() {
       await tester.pumpAndSettle();
       expect(_feedDotColor(tester, 'Bo joined.'), isNot(error));
       expect(_feedDotColor(tester, 'Bo is connected again.'), isNot(error));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a class member whose laptop never joins shows on the live roster and in '
+    'the feed, also after the page opens again, until they join (#493)',
+    (tester) async {
+      // When the monitor noticed, 30 s after the start, and stored it.
+      const reportedAt = '2026-06-12T07:15:31.0000000+00:00';
+      SessionParticipantInfo student(String name, ParticipantLiveState state) =>
+          SessionParticipantInfo(
+            userId: name,
+            displayName: name,
+            joinedAt: state == ParticipantLiveState.joined
+                ? DateTime.parse('2026-06-12T07:15:06+00:00')
+                : null,
+            declinedAt: null,
+            leftAt: null,
+            state: state,
+          );
+      const notJoinedYet = "Bo hasn't joined yet.";
+      const tooltip =
+          "This laptop hasn't joined the session. Nothing is being blocked "
+          "for this student, or they're absent.";
+
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [
+          student('Ada', ParticipantLiveState.joined),
+          student('Bo', ParticipantLiveState.neverJoined),
+        ],
+      );
+      // Right after the start Bo's laptop may still be on its way: calm.
+      expect(find.text('Not joined'), findsOneWidget);
+      expect(find.text('Students (1/2 in session)'), findsOneWidget);
+      final error = Theme.of(tester.element(find.text('Bo'))).colorScheme.error;
+      expect(
+        tester.widget<Text>(find.text('Not joined')).style?.color,
+        isNot(error),
+      );
+
+      // The join grace passes without Bo's laptop joining: the backend's
+      // monitor pushes the state change, and the page re-fetches the roster,
+      // whose snapshot now says so.
+      h.sessions.roster = [
+        student('Ada', ParticipantLiveState.joined),
+        student('Bo', ParticipantLiveState.notConnected),
+      ];
+      h.hub.emit('ParticipantStateChanged', {
+        'sessionId': _sessionId,
+        'userId': 'Bo',
+        'displayName': 'Bo',
+        'state': 'NotConnected',
+        'at': reportedAt,
+      });
+      await tester.pumpAndSettle();
+
+      void expectMarked() {
+        expect(find.text('Not connected'), findsOneWidget);
+        expect(find.text('Not joined'), findsNothing);
+        expect(
+          tester.widget<Text>(find.text('Not connected')).style?.color,
+          error,
+        );
+        expect(tester.widget<Icon>(find.byIcon(Icons.link_off)).color, error);
+        expect(
+          tester.getTopLeft(find.text('Bo')).dy,
+          lessThan(tester.getTopLeft(find.text('Ada')).dy),
+        );
+        // The feed says so by default, once, with the stronger marker.
+        expect(find.text(notJoinedYet), findsOneWidget);
+        expect(_feedDotColor(tester, notJoinedYet), error);
+      }
+
+      expectMarked();
+      expect(find.text('Students (1/2 in session)'), findsOneWidget);
+
+      // Hovering the state says what it means for the class.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(find.text('Not connected')));
+      await tester.pumpAndSettle();
+      expect(find.text(tooltip), findsOneWidget);
+      await mouse.moveTo(Offset.zero);
+      await tester.pumpAndSettle();
+
+      // The backend stored the report (#492). The teacher goes back to the
+      // overview, leaving the session running, and opens it again: the
+      // roster and the feed both still say so.
+      h.sessions
+        ..stored = [
+          SessionRecentEvent(
+            id: 'e1',
+            userId: 'Bo',
+            kind: 'NotConnected',
+            payloadJson: '{"expectedSince":"2026-06-12T07:15:00+00:00"}',
+            occurredAt: DateTime.parse(reportedAt),
+          ),
+        ]
+        ..active = [
+          ActiveSession(id: _sessionId, classId: 'c1', startedAt: _startedAt),
+        ];
+      await tester.tap(find.byTooltip('Leave session'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Leave running'));
+      await tester.pumpAndSettle();
+      expect(find.text('Allowed bundles'), findsNothing);
+      await tester.tap(find.text('Resume'));
+      await tester.pumpAndSettle();
+      expect(find.text('Allowed bundles'), findsOneWidget);
+      expect(h.hubs, hasLength(2));
+      expectMarked();
+      for (final raw in ['NotConnected', 'ParticipantStateChanged', '+00:00']) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+
+      // Bo's agent starts after all and joins: the marker clears at once.
+      h.sessions.roster = [
+        student('Ada', ParticipantLiveState.joined),
+        student('Bo', ParticipantLiveState.joined),
+      ];
+      h.hubs.last.emit('ParticipantStateChanged', {
+        'sessionId': _sessionId,
+        'userId': 'Bo',
+        'displayName': 'Bo',
+        'state': 'Joined',
+        'at': '2026-06-12T07:18:00+00:00',
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Not connected'), findsNothing);
+      expect(find.byIcon(Icons.link_off), findsNothing);
+      expect(find.text('Students (2/2 in session)'), findsOneWidget);
+      // The feed keeps what happened; the join itself needs no attention.
+      expect(find.text(notJoinedYet), findsOneWidget);
+      expect(find.text('Bo joined.'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
