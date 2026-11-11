@@ -27,10 +27,11 @@ namespace FocusAgent.App.Updates;
 ///
 /// <para>
 /// The constructor takes an already-built <see cref="UpdateManager"/> so the same
-/// wrapper serves production (a <see cref="GithubSource"/> over the configured
-/// repo) and the integration tests (a <see cref="SimpleFileSource"/> over a locally
-/// packed feed, either with a <see cref="TestVelopackLocator"/> standing in for a
-/// real install or in an install the test assembled). See <see cref="ForGithub"/>,
+/// wrapper serves production (a <see cref="SimpleWebSource"/> over the configured
+/// repo's newest release, see <see cref="CreateGithubSource"/>) and the integration
+/// tests (a <see cref="SimpleFileSource"/> over a locally packed feed, either with a
+/// <see cref="TestVelopackLocator"/> standing in for a real install or in an install
+/// the test assembled). See <see cref="ForGithub"/>, <see cref="ForGithubRepo"/>,
 /// <see cref="ForLocalFeed"/> and <see cref="ForFeedDirectory"/>.
 /// </para>
 /// </summary>
@@ -46,18 +47,49 @@ public sealed class VelopackUpdateManager : IAgentUpdateManager
     }
 
     /// <summary>
-    /// Build the production manager: a <see cref="GithubSource"/> over the repo in
-    /// <see cref="UpdateSettings.GithubRepoUrl"/>. No access token — the agent reads
-    /// public release assets anonymously. The default platform locator decides
-    /// whether this process is a real Velopack install (it is only after Setup.exe),
-    /// which is what gates <see cref="IsInstalled"/>.
+    /// Build the production manager over the repo in
+    /// <see cref="UpdateSettings.GithubRepoUrl"/> (see <see cref="CreateGithubSource"/>).
+    /// The default platform locator decides whether this process is a real Velopack
+    /// install (it is only after Setup.exe), which is what gates
+    /// <see cref="IsInstalled"/>.
     /// </summary>
-    public static VelopackUpdateManager ForGithub(UpdateSettings settings, ILogger<VelopackUpdateManager> log)
-    {
-        var source = new GithubSource(settings.GithubRepoUrl, accessToken: null, prerelease: settings.AllowPrerelease);
-        var options = new UpdateOptions();
-        return new VelopackUpdateManager(new UpdateManager(source, options), log);
-    }
+    public static VelopackUpdateManager ForGithub(UpdateSettings settings, ILogger<VelopackUpdateManager> log) =>
+        new(new UpdateManager(CreateGithubSource(settings), new UpdateOptions()), log);
+
+    /// <summary>
+    /// The production feed source for <paramref name="settings"/> (#465): a static
+    /// feed over the newest release's assets
+    /// (<see cref="GithubReleaseFeed.LatestDownloadUrl"/>), which never touches the
+    /// GitHub REST API and so isn't held to its 60 anonymous requests an hour per IP
+    /// address that every laptop behind a school's address shares. No access token:
+    /// the agent reads public release assets anonymously.
+    ///
+    /// <para>
+    /// Only <see cref="UpdateSettings.AllowPrerelease"/> keeps Velopack's
+    /// <see cref="GithubSource"/>, because "latest" never points at a pre-release:
+    /// that source lists the releases through the API, pre-releases included, so it
+    /// is subject to the limit. Pre-releases are a tester's opt-in, never a school's.
+    /// </para>
+    /// </summary>
+    internal static IUpdateSource CreateGithubSource(UpdateSettings settings) =>
+        settings.AllowPrerelease
+            ? new GithubSource(settings.GithubRepoUrl, accessToken: null, prerelease: true)
+            : new SimpleWebSource(GithubReleaseFeed.LatestDownloadUrl(settings.GithubRepoUrl));
+
+    /// <summary>
+    /// Build a manager that reads the production feed of <paramref name="repoUrl"/>
+    /// (<see cref="CreateGithubSource"/>, stable releases), believing it is an install
+    /// of <paramref name="appId"/> at <paramref name="currentVersion"/>. The #465
+    /// integration test drives it against a stand-in for GitHub to prove the check
+    /// and the download never call the API.
+    /// </summary>
+    public static VelopackUpdateManager ForGithubRepo(
+        string repoUrl,
+        string appId,
+        string currentVersion,
+        ILogger<VelopackUpdateManager> log) =>
+        ForSourceAsInstall(
+            CreateGithubSource(new UpdateSettings { GithubRepoUrl = repoUrl }), appId, currentVersion, log);
 
     /// <summary>
     /// Build a manager that reads a locally-served Velopack feed directory (a
@@ -70,16 +102,23 @@ public sealed class VelopackUpdateManager : IAgentUpdateManager
         string feedDirectory,
         string appId,
         string currentVersion,
+        ILogger<VelopackUpdateManager> log) =>
+        ForSourceAsInstall(new SimpleFileSource(new DirectoryInfo(feedDirectory)), appId, currentVersion, log);
+
+    // A TestVelopackLocator stands in for an install at currentVersion, with a fresh
+    // temp packages folder that a download lands in.
+    private static VelopackUpdateManager ForSourceAsInstall(
+        IUpdateSource source,
+        string appId,
+        string currentVersion,
         ILogger<VelopackUpdateManager> log)
     {
-        var source = new SimpleFileSource(new DirectoryInfo(feedDirectory));
         var locator = new TestVelopackLocator(
             appId,
             currentVersion,
             packagesDir: Path.Combine(Path.GetTempPath(), "anchor-update-check", Guid.NewGuid().ToString("N")),
             logger: null);
-        var options = new UpdateOptions();
-        return new VelopackUpdateManager(new UpdateManager(source, options, locator), log);
+        return new VelopackUpdateManager(new UpdateManager(source, new UpdateOptions(), locator), log);
     }
 
     /// <summary>

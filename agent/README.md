@@ -417,7 +417,10 @@ in one of two ways:
 
 Either way the agent installs per user into `%LOCALAPPDATA%\Anchor.Agent`, with
 no admin rights, and updates itself from the release feed; Intune never pushes
-new versions. Startup at login is handled by a per-user `HKCU\...\Run` entry
+new versions. The agent reads that feed from the newest release's download address
+(`<repo>/releases/latest/download/`), not through the GitHub API, so laptops
+behind one school address don't share the API's 60 anonymous requests an hour
+(#465). Startup at login is handled by a per-user `HKCU\...\Run` entry
 written by the Velopack install hook, not a packaged startup task (see
 `FocusAgent.Core.Startup.StartupRegistrar`, #225).
 
