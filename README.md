@@ -119,7 +119,7 @@ npm install
 npm run build
 ```
 
-Output lands in `extension/dist/`. Load it via `edge://extensions` → **Developer mode** → **Load unpacked**. Phase 3 v1 lands the URL filter, friendly block page, and SignalR client; configuration + smoke-test steps are in [extension/README.md](extension/README.md). Production Entra auth (`chrome.identity`) is a follow-up issue.
+Output lands in `extension/dist/`. Load it via `edge://extensions` → **Developer mode** → **Load unpacked**. The extension has no sign-in or backend connection of its own: the on-box agent hands it the session over native messaging and reports for it (#489). Dev loop and smoke-test steps are in [extension/README.md](extension/README.md).
 
 ### Azure infrastructure
 

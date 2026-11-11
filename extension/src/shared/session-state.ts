@@ -24,11 +24,11 @@ export async function getActiveSession(): Promise<ActiveSessionState | null> {
 
 /**
  * Merge teacher-granted domains into the cached active session's allowlist.
- * Idempotent on (matchType, value) so repeated AllowlistAmended pushes from
- * the backend (e.g. after a hub reconnect) don't bloat the cache. Returns
- * the new state, or null if there's no active session to amend (in which
- * case the amendment is dropped — a grant for a session we don't know about
- * is stale and would only confuse the filter).
+ * Idempotent on (matchType, value) so a grant the agent hands down again
+ * (#489) doesn't bloat the cache. Returns the new state, or null if there's no
+ * active session to amend (in which case the amendment is dropped — a grant
+ * for a session we don't know about is stale and would only confuse the
+ * filter).
  */
 export async function mergeAddedDomains(
   sessionId: string,
@@ -44,8 +44,8 @@ export async function mergeAddedDomains(
 
 /**
  * Replace the cached active session's domain set wholesale (#93). Used when the
- * teacher changes the session's bundles mid-session: the backend sends the full
- * recomputed allowlist (per-student, grants already folded in), so a straight
+ * teacher changes the session's bundles mid-session: the agent hands down the
+ * full recomputed allowlist (per-student, grants already folded in), so a straight
  * replace is correct and can't lose grants. Returns the new state, or null if
  * there's no matching active session to update (a stale push for an unknown
  * session is dropped rather than applied to the wrong session).

@@ -57,6 +57,11 @@
          the Intune package it assembles as Anchor.Agent-win-Setup.exe. Not
          referenced as an assembly; the spec reads it from its own bin folder. -->
     <ProjectReference Include="..\FocusAgent.FakeSetup\FocusAgent.FakeSetup.csproj" ReferenceOutputAssembly="false" />
+    <!-- #489: built alongside the suite so ExtensionSessionHandDownTests can run
+         the real native-messaging host between the agent and the stand-in
+         extension. Not referenced as an assembly; the spec starts the exe from
+         the host project's own bin folder. -->
+    <ProjectReference Include="..\..\src\FocusAgent.WitnessHost\FocusAgent.WitnessHost.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

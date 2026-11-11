@@ -3,7 +3,7 @@
 // below it is trustworthy.
 
 import { test, expect } from '../fixtures.ts';
-import { BACKEND_URL, DEFAULT_LOCALE, STABLE_EXTENSION_ID, STUDENT_OID } from '../config.ts';
+import { DEFAULT_LOCALE, STABLE_EXTENSION_ID } from '../config.ts';
 import { describeEntry } from '../edge-forcelist.ts';
 import { ANCHOR_FORCELIST_ENTRY } from '../extension.ts';
 
@@ -50,22 +50,14 @@ test('the browser runs in the pinned UI language, whatever the host language', a
   await page.close();
 });
 
-test('unconfigured extension refuses to connect to the hub', async ({ ext }) => {
-  // No devImpersonateOid yet → background.ts deliberately refuses rather than
-  // spinning in a 401 loop. Guards against a regression that would connect
-  // (and fail) anonymously.
-  await expect(ext.waitForLog('no auth configured')).resolves.toContain('refusing to connect');
-});
-
-test('configure() points the SW at the backend and connects the hub', async ({ ext }) => {
-  await ext.configure({ backendUrl: BACKEND_URL, devImpersonateOid: STUDENT_OID });
-
-  // The settings round-tripped through chrome.storage.local…
-  const stored = await ext.getStorage(['backendUrl', 'devImpersonateOid']);
-  expect(stored.backendUrl).toBe(BACKEND_URL);
-  expect(stored.devImpersonateOid).toBe(STUDENT_OID);
-
-  // …and the real SignalR hub is up (configure() already awaited this; assert
-  // it explicitly so the spike's intent is self-documenting).
-  expect(ext.logs.some((l) => l.includes('hub connection established'))).toBe(true);
+test('the extension connects to the on-box agent, and to nothing else (#489)', async ({ ext, agent }) => {
+  // The fixture connected it: the real native host reached the agent's pipe,
+  // and the agent handed down its state — no session yet.
+  expect(agent.connected).toBe(true);
+  await ext.waitForLog('agent message: no_session');
+  // Nothing signs in in the browser and nothing talks to a backend: the agent
+  // is the extension's only identity.
+  expect(ext.logs.some((l) => /sign-in|hub connection|access token/i.test(l))).toBe(false);
+  // The host's hello and the extension's pings reach the agent over the link.
+  await agent.waitForMessage((m) => m.type === 'hello');
 });

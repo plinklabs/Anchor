@@ -3,24 +3,21 @@
 //
 // This is the real-browser proof the unit/structure tests can't give: it loads
 // the *actual* popup page in the browser with the extension's packaged CSS and
-// fonts, against a *real* active session cached by the background worker, and
+// fonts, against an active session the background worker cached from the agent, and
 // asserts the binding is in force — the ink palette is applied, the spark stays
 // magenta, the one per-product accent is Anchor's indigo, the living focus ping
 // is animating, and the cached session's allowed sites are actually listed.
 
 import { test, expect } from '../fixtures.ts';
-import { BUNDLE_ONLY_HOST } from '../config.ts';
+import { WITH_MS365 } from '../config.ts';
 
 // The popup is just an extension page — open it by URL like any other.
 function popupUrl(extensionId: string): string {
   return `chrome-extension://${extensionId}/popup.html`;
 }
 
-test('the popup renders the active session on the DS ink theme', async ({ ext, backend }) => {
-  await ext.configure();
-  const classId = await backend.findClassId();
-  const bundleId = await backend.findBundleId();
-  await backend.startSession(classId, [bundleId]);
+test('the popup renders the active session on the DS ink theme', async ({ ext, agent }) => {
+  agent.startSession(WITH_MS365);
   await ext.waitForLog('active session cached');
 
   const page = await ext.context.newPage();
@@ -55,17 +52,17 @@ test('the popup renders the active session on the DS ink theme', async ({ ext, b
   const t2 = await ring.evaluate((el) => getComputedStyle(el).transform);
   expect(t1).not.toBe(t2);
 
-  // The cached session's allowed sites are actually listed — the bundle that
-  // backs the seeded session includes BUNDLE_ONLY_HOST's suffix, so it shows up.
+  // The cached session's allowed sites are actually listed — the allowlist the
+  // agent handed down includes BUNDLE_ONLY_HOST's suffix, so it shows up.
   const allowlist = page.locator('[data-allowlist]');
   await expect(allowlist).toBeVisible();
   await expect(allowlist.locator('li')).not.toHaveCount(0);
 });
 
 test('the popup shows the idle face when no session is active', async ({ ext }) => {
-  // No session started — the worker comes up unconfigured, so storage.session
-  // holds no active session. The popup must read that and show the idle copy.
-  await ext.configure();
+  // The agent is in no session, so storage.session holds no active session.
+  // The popup must read that and show the idle copy.
+  await ext.waitForLog('agent message: no_session');
 
   const page = await ext.context.newPage();
   await page.goto(popupUrl(ext.extensionId));

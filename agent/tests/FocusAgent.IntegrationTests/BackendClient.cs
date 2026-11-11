@@ -155,6 +155,29 @@ internal sealed class BackendClient
         return events;
     }
 
+    /// <summary>
+    /// GET /sessions/{id}/unblock-requests → the pending requests on the teacher's
+    /// dashboard, as each host and the ids of the students who asked for it.
+    /// </summary>
+    public async Task<List<PendingUnblockRequest>> GetUnblockRequestsAsync(Guid sessionId, string oid = TestConfig.TeacherOid)
+    {
+        using var res = await SendAsync(HttpMethod.Get, $"/sessions/{sessionId}/unblock-requests", oid);
+        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        return doc.RootElement.EnumerateArray()
+            .Select(r => new PendingUnblockRequest(
+                r.GetProperty("host").GetString() ?? "",
+                r.GetProperty("requesters").EnumerateArray().Select(q => q.GetProperty("userId").GetGuid()).ToList()))
+            .ToList();
+    }
+
+    /// <summary>POST /sessions/{id}/unblock — the teacher grants one student a host (#73).</summary>
+    public async Task UnblockAsync(Guid sessionId, Guid userId, string host, string oid = TestConfig.TeacherOid)
+    {
+        using var res = await SendAsync(HttpMethod.Post, $"/sessions/{sessionId}/unblock", oid, new { userId, host });
+    }
+
+    public sealed record PendingUnblockRequest(string Host, IReadOnlyList<Guid> RequesterIds);
+
     /// <summary>GET /sessions/{id} → endedAt, or null while the session is running.</summary>
     public async Task<DateTimeOffset?> GetSessionEndedAtAsync(Guid sessionId, string oid = TestConfig.TeacherOid)
     {

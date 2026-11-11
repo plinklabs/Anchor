@@ -2,10 +2,18 @@
 
 Edge (Chromium) Manifest V3 extension that runs alongside `FocusAgent` on each
 student laptop. During an active focus session it observes the active tab URL,
-redirects off-allowlist pages to a friendly block page, and reports the block
-back to the backend over SignalR. It stops filtering when the session ends, and
-also when the student leaves or declines it in the agent while it runs on: their
+redirects off-allowlist pages to a friendly block page, and hands each block to
+the agent, which reports it to the teacher. It stops filtering when the session
+ends, and also when the student leaves or declines it in the agent: their
 blocked tabs go back to their pages, and off-list sites load again (#462).
+
+**The agent is the extension's only identity (#489).** The extension doesn't
+sign in and has no backend connection. The on-box agent, signed in silently with
+the student's Windows account, hands down the session it joined over the
+native-messaging witness link, and reports what the extension sends back with
+its own connection. So the extension filters for exactly the session the student
+is in, whatever account Edge is signed in with; there is no browser sign-in a
+student could break. See [The agent link](#the-agent-link-146-489).
 
 Design rationale lives in [focus-system-design.md](../focus-system-design.md)
 §6 (extension scope) and §11 (Phase 3 build order).
@@ -13,16 +21,14 @@ Design rationale lives in [focus-system-design.md](../focus-system-design.md)
 ## Status
 
 Phase 3, v1 — URL filter + block page (#72) layered on top of the scaffold
-from #71. The extension joins a live SignalR session, caches the allowlist,
-redirects off-list navigations to the bundled block page, and reports each
-block as a `BlockedUrl` event.
+from #71. The extension caches the allowlist of the session the agent hands it,
+redirects off-list navigations to the bundled block page, and hands each block
+to the agent, which reports it as a `BlockedUrl` event. "Request access" on the
+block page goes to the teacher the same way (#73).
 
 Out of scope for v1 (separate issues):
 
-- "Request access" button wiring (the button is rendered but disabled).
 - Path-level filtering (no `/embed/...` allow rules).
-- Production Entra auth via `chrome.identity` — dev uses the impersonation
-  fallback documented below.
 
 ## Layout
 
@@ -33,7 +39,7 @@ extension/
 ├── rollup.config.mjs
 ├── src/
 │   ├── manifest.json         — MV3 manifest (permissions, background SW)
-│   ├── background.ts         — service worker; navigation filter + hub client
+│   ├── background.ts         — service worker; navigation filter + agent link
 │   ├── _locales/             — chrome.i18n catalogues (en source + nl)
 │   │   ├── en/messages.json
 │   │   └── nl/messages.json
@@ -44,11 +50,10 @@ extension/
 │       ├── i18n.ts           — chrome.i18n seam (t() + localizeDocument)
 │       ├── host-matcher.ts   — pure URL/host allowlist matcher
 │       ├── host-matcher.test.ts — vitest unit tests for the matcher
-│       ├── hub-client.ts     — @microsoft/signalr wrapper
 │       ├── logger.ts         — thin console wrapper, prefixed scope
 │       ├── session-state.ts  — chrome.storage.session helpers
-│       ├── settings.ts       — chrome.storage.local config reader
-│       └── types.ts          — wire DTOs mirroring backend payloads
+│       ├── types.ts          — wire DTOs of the session the agent hands down
+│       └── witness.ts        — native-messaging link to the agent (#146, #489)
 └── dist/                     — build output (gitignored), the unpacked extension
 ```
 
@@ -275,22 +280,24 @@ npm run e2e          # build + run the Playwright suite (headed Edge)
 npm run e2e:report   # open the last HTML report
 ```
 
-`npm run e2e` drives the **real** unpacked extension in Edge against a **real**
-backend — no mocked `chrome`, no stubbed SignalR hub. The harness (under
-[`e2e/`](e2e/)):
+`npm run e2e` drives the **real** unpacked extension in Edge, connected through
+the **real** native-messaging host to a stand-in for the on-box agent — no mocked
+`chrome`, no stubbed host. The harness (under [`e2e/`](e2e/)):
 
-1. Boots the backend itself (Playwright `webServer` → `node e2e/run-backend.ts`
-   → `dotnet run`) in Development on port **5281** with a throwaway, freshly
-   seeded SQLite DB under the OS temp dir — never the dev `anchor.dev.db`.
-2. Loads `dist/` into Edge via a Playwright persistent context, writes the
-   backend URL + the seeded **Dev Student** OID into `chrome.storage.local`, and
-   `chrome.runtime.reload()`s so the MV3 service worker re-reads them and
-   connects to the live hub.
-3. Drives session lifecycle over **REST** with the dev-impersonation header
-   (`POST /sessions`, `PUT /sessions/{id}/bundles`, `POST /sessions/{id}/end`) —
-   the same wire contract the dashboard uses.
-4. Runs no agent. Where a spec needs the student's agent, `e2e/student-agent.ts`
-   makes its hub calls as the seeded student (join, leave, decline, quit).
+1. Starts a fake agent ([`e2e/fake-agent.ts`](e2e/fake-agent.ts)) listening on a
+   per-test named pipe. Like the real agent it hands the current session (or
+   `no_session`) to every connection, and it records what the extension reports.
+2. Builds and registers the real `anchor-witness-host.exe` for the extension
+   under test, and loads `dist/` into Edge via a Playwright persistent context
+   with the fake agent's pipe in `ANCHOR_WITNESS_PIPE`, so the host Edge starts
+   connects to it.
+3. Drives the session the way the agent does: `session_started`,
+   `allowlist_replaced`, `allowlist_amended`, `session_ended`, and the agent
+   going away.
+
+What the agent hands down when the backend says so, and what it sends on, is the
+agent e2e's part (`ExtensionSessionHandDownTests`, real agent + real backend +
+real host). Together they cover the chain. No backend runs here.
 
 The specs assert real behaviour, and navigate only to loopback hosts (Edge's
 `--host-resolver-rules` maps the synthetic test hosts to a local static server,
@@ -298,24 +305,24 @@ so no spec touches the public internet):
 
 | Spec | Covers |
 | ---- | ------ |
-| `extension-loads` | the SW boots, refuses without auth, then connects once configured (spike) |
-| `block-on-start` | a tab already off-list when a session starts is redirected (#91) |
-| `block-on-navigation` | off-list navigations are blocked; on-list ones are left untouched (#72) |
-| `amend-bundles` | dropping a bundle mid-session re-scans and blocks a now-off-list tab (#93) |
-| `leave-session` | leaving, declining or quitting the agent stops the filtering, also for an extension that was offline then; joining again by code brings it back (#462) |
+| `extension-loads` | the SW boots in the pinned id and language, and connects to the agent and nothing else (#489) |
+| `block-on-start` | a tab already off-list when the session arrives is redirected and reported (#91), also when it arrived while the SW was stopped |
+| `block-on-navigation` | off-list navigations are blocked and reported; on-list ones are left untouched (#72); the session stays in force with the agent gone |
+| `amend-bundles` | bundle changes re-scan or release tabs (#93, #426); an approved unblock request releases its tab (#73) |
+| `restore-on-end` | the end of the session sends blocked tabs back (#121) |
+| `end-after-reconnect` | an end the extension missed while its SW was stopped still releases its tabs (#354) |
+| `unblock-request` | "Request access" reaches the agent, and its answer — or its absence — shows on the block page (#73) |
 
 **Hermetic against an on-box agent (#332).** On a developer machine the installed
 Anchor agent registers the witness native-messaging host *permanently*
-(`HKCU\…\Edge\NativeMessagingHosts\net.anchor.witness`), and that host hands the
-extension the box's **production** backend URL and auth config over the witness
-link — straight over whatever a spec just seeded. So `loadExtension()` repoints
-that key at a missing manifest for the duration of every run that doesn't
-explicitly ask for a witness host (`witnessBackendUrl` / `witnessAuth` — the #204
-/ #289 specs, which register the real one). Both paths put the key back to
-whatever the box had, on close and on process exit, so a run never leaves your
-agent unregistered from Edge. `hermetic-witness.spec.ts` drives that exact
-situation — a registered host trying to push a foreign backend URL — and proves
-none of it reaches the extension under test.
+(`HKCU\…\Edge\NativeMessagingHosts\net.anchor.witness`), and through it the
+extension under test would get that box's real student session. So
+`loadExtension()` points that key at the harness's own host for a spec that
+brings a fake agent, and at a missing manifest for one that doesn't. Both paths
+put the key back to whatever the box had, on close and on process exit, so a run
+never leaves your agent unregistered from Edge. `hermetic-witness.spec.ts` drives
+that exact situation — an "installed" agent in a session, with the real host
+registered for it — and proves it never hears from the extension under test.
 
 **Pinned to English (#364).** The block page and popup render in the browser UI
 language (see [Localization](#localization-i18n)), and Edge takes that from the
@@ -337,15 +344,12 @@ assertion in `extension-loads.spec.ts`, which is skipped. Neither the policy nor
 `dist/` is changed. CI has no such entry and loads `dist/` itself. The check
 does nothing off Windows or with a non-Edge `E2E_BROWSER_CHANNEL`.
 
-Prerequisites: Node ≥ 22 (the harness is TypeScript run via Node's built-in type
-stripping), Microsoft Edge, and the .NET SDK on `PATH` (the harness builds and
-runs the backend). Loading an MV3 extension needs a **headed** browser, so the
-suite runs headed by default; CI runs it on a Windows runner with Edge
-preinstalled (`.github/workflows/extension-e2e.yml`).
-
-> Not covered: session-end does **not** restore a blocked tab to its original
-> URL (the block page only offers a manual **Go back**), so there is no
-> restore-on-end spec — that behaviour isn't implemented in the extension.
+Prerequisites: Windows (native messaging needs the HKCU host registration),
+Node ≥ 22 (the harness is TypeScript run via Node's built-in type stripping),
+Microsoft Edge, and the .NET SDK on `PATH` (the harness builds the witness host).
+Loading an MV3 extension needs a **headed** browser, so the suite runs headed by
+default; CI runs it on a Windows runner with Edge preinstalled
+(`.github/workflows/extension-e2e.yml`).
 
 ## Dev loop (one command)
 
@@ -353,28 +357,28 @@ preinstalled (`.github/workflows/extension-e2e.yml`).
 npm run dev:extension
 ```
 
-Removes the manual multi-process startup: it builds the extension, boots a
-seeded backend if one isn't already running (reusing a dev backend on
-`http://localhost:5276` if present), opens Edge with the extension preconfigured
-as the Dev Student, and drops you into a tiny console:
+Builds the extension, opens Edge with it connected through the real witness
+host to a stand-in agent (the e2e harness's), and drops you into a tiny console
+that hands sessions down the way the agent does:
 
 ```
 s  start a session (Microsoft 365 bundle)
 a  amend → drop all bundles (turns open tabs off-list)
 m  amend → restore the Microsoft 365 bundle
 e  end the current session
-q  quit (closes Edge, stops the backend if it started one)
+q  quit (closes Edge)
 ```
 
 With a session running, open `https://reddit.com` → block page; open
-`https://outlook.office.com` → loads. No dashboard, no agent.
+`https://team.sharepoint.com` → loads. No backend, no dashboard, no agent.
+Windows-only, like the host. The witness-host registration is put back when it
+quits.
 
 On a box whose Edge policy force-installs Anchor (the agent's HKLM forcelist
 entry, #405), Edge refuses `dist/` and the launch would never return. There the
 launcher loads a key-less copy of `dist/` instead, the same way the e2e harness
-does (#429), and says so in one line with the copy's path-derived ID (#431). The
-agent's witness host only accepts the pinned ID, so it can't repoint that copy
-at the agent's backend.
+does (#429), says so in one line with the copy's path-derived ID (#431), and
+registers the host for that ID.
 
 ## Dev load
 
@@ -393,74 +397,41 @@ unpacked-extension changes.
 
 ## Configure (dev)
 
-The extension reads two settings from `chrome.storage.local`:
+There is nothing to configure: the extension has no settings, no backend URL and
+no sign-in. It gets the session from the agent over the witness link (#489). To
+see it enforce a real session in dev, run the agent and register the witness
+host so Edge can reach it:
 
-| Key                  | Default                 | What it does |
-| -------------------- | ----------------------- | ------------ |
-| `backendUrl`         | `http://localhost:5276` | Base URL of the Anchor backend. No trailing slash. |
-| `devImpersonateOid`  | _(none)_                | Dev-only impersonation OID. Sent as the `dev_impersonate_oid` query parameter on the SignalR hub URL so the backend can authenticate without a real Entra token. Takes precedence over production auth. |
-| `authConfig`         | _(none)_                | Production Entra config `{tenantId, clientId, scope}`. The agent hands it down over the witness link in release; with it set (and no `devImpersonateOid`) the extension acquires a real student token. Not for dev. |
+```powershell
+pwsh scripts/dev/register-witness-host.ps1   # build + HKCU registration (no admin)
+```
 
-With neither `devImpersonateOid` nor `authConfig` set, the extension refuses to
-connect to the hub — spinning in a 401 loop is worse than a clean refuse.
+then start the agent (`scripts/dev/dev-agent.ps1`, see the agent README) and a
+session from the dashboard. Without a backend or agent, `npm run dev:extension`
+(above) hands sessions down itself.
 
-### Production authentication (#289)
-
-In release the extension authenticates to the hub with a **real Entra access
-token** instead of `dev_impersonate_oid`. It can't use the Windows WAM broker the
-on-box agent uses, so it rides Edge's existing Office 365 session via
-`chrome.identity.launchWebAuthFlow` (OAuth2 **implicit** flow — the token comes
-back in the redirect fragment, so there's no token-endpoint call and thus no SPA
-CORS problem). The token is sent as the hub's `access_token` via SignalR's
-`accessTokenFactory`; acquisition is silent-first (`prompt=none`) and only falls
-back to an interactive sign-in if SSO can't satisfy it.
-
-The deployment's Entra **tenant / client / scope** are *not* baked into the
-published extension (one listing serves every fork, like `backendUrl`, #204). The
-agent hands them down over the witness link as an `auth_config` message, sourced
-from its own `Auth` config — see `extension/src/shared/auth.ts` and the agent's
-`AuthConfig`/`WitnessHostRegistrar`.
-
-**App-registration requirement (one-time, per deployment).** The flow redirects to
-the fixed `https://<extension-id>.chromiumapp.org/` URL, which must be registered
-on the agent's app registration as a **Web** redirect URI with **implicit
-access-token issuance** enabled. `scripts/setup.ps1` wires this automatically; for
-a hand-rolled tenant, add that redirect URI and tick *Access tokens* under the
-app's Implicit grant settings.
-
-To set the values for dev:
-
-1. Open `edge://extensions`, click **Inspect views: service worker** on the
-   Anchor card. A DevTools window opens, scoped to the background SW.
-2. In the **Console** tab, paste:
-
-   ```js
-   chrome.storage.local.set({
-     backendUrl: 'http://localhost:5276',
-     devImpersonateOid: '22222222-2222-2222-2222-222222222222'
-   })
-   ```
-
-   The OID above is the seeded `Dev Student` from [DevDataSeeder](../backend/src/Anchor.Infrastructure/Persistence/DevDataSeeder.cs).
-3. Reload the extension (extension card → **Reload**) so the background SW
-   re-reads settings on startup.
+Extensions before #489 signed the student in through the browser
+(`chrome.identity.launchWebAuthFlow`) and connected to the hub themselves, with
+the backend URL and Entra config the host handed down (`backend_url`,
+`auth_config`). The host still sends those for an extension the store hasn't
+updated yet; this extension ignores them.
 
 ## Smoke test
 
-With the backend running (`dotnet run --project backend/src/Anchor.Api`) and
-the seeded teacher/student data in place:
+With the backend and the agent running, the witness host registered, and the
+seeded teacher/student data in place:
 
-1. Configure the extension to impersonate the seeded student (see above).
-2. Reload the extension and confirm the background SW logs `hub connection established`.
-3. Start a session from the dashboard for class `3A` with the **Microsoft 365**
-   bundle selected.
-4. The background SW should log `SessionStarted received` followed by `active
-   session cached`.
-5. Open a new tab and visit `https://outlook.office.com` — loads normally.
-6. Open another tab and visit `https://reddit.com` — the tab redirects to the
+1. Open Edge. The extension's service worker logs `witness port connected to
+   agent host`, then `agent message: no_session`.
+2. Start a session from the dashboard for class `3A` with the **Microsoft 365**
+   bundle selected, and confirm it in the agent.
+3. The service worker logs `agent message: session_started` followed by
+   `active session cached`.
+4. Open a new tab and visit `https://outlook.office.com` — loads normally.
+5. Open another tab and visit `https://reddit.com` — the tab redirects to the
    block page with the blocked URL displayed. The dashboard event feed receives
    a `BlockedUrl` event within ~1 second.
-7. End the session from the dashboard. The background SW logs `active session
+6. End the session from the dashboard. The service worker logs `active session
    cleared`. Any URL loads normally again.
 
 ## Tamper detection
@@ -469,9 +440,10 @@ Soft enforcement (design §5.4): we can't stop a student reconfiguring or
 sidestepping the extension via Edge's own `edge://extensions` page — no extension
 can hide that page, and Anchor deliberately uses **no enterprise policy** (it's
 BYOD). Instead the extension makes tampering **visible to the teacher**: during an
-active session it reports a `TamperDetected` event (an `EventKind` on the
-backend), which the dashboard surfaces as a flag on the student's live-roster row
-(#105). The flag is computed server-side, so it survives a dashboard reload.
+active session it hands a tamper signal to the agent, which reports it as a
+`TamperDetected` event (an `EventKind` on the backend); the dashboard surfaces it
+as a flag on the student's live-roster row (#105). The flag is computed
+server-side, so it survives a dashboard reload.
 
 What the extension itself can witness while running:
 
@@ -479,24 +451,36 @@ What the extension itself can witness while running:
 | ------ | --------- | --------------- |
 | Site access downgraded ("On all sites" → "On click"/"On specific sites") | `chrome.permissions.onRemoved` | `host_permission_revoked` |
 | InPrivate window opened | `chrome.windows.onCreated` (`incognito: true`) | `inprivate_opened` |
-| On-box FocusAgent went away mid-session | native-messaging host relays its pipe to the agent dropped | `agent_unavailable` |
 
 InPrivate detection is **best-effort**: the extension only sees incognito windows
 once it's been allowed in InPrivate — which is also the case where it still
 filters them — so the *reliable* InPrivate signal comes from the agent acting as
 an on-box witness (a follow-up, #148).
 
-### Agent-as-witness link (#146 part 1)
+### The agent link (#146, #489)
 
-The signal the extension **cannot** witness about itself — being disabled or
-removed — comes from the agent. The extension opens a native-messaging link to a
-small host the FocusAgent registers (`chrome.runtime.connectNative`, see
-[`witness.ts`](src/shared/witness.ts) and the [`nativeMessaging`](src/manifest.json)
-permission). While the link is up the agent has a live witness; when the
-extension is disabled/removed the browser tears the host down and the agent
-reports `extension_disabled`. The reverse — the agent dying — is relayed back to
-the extension as `agent_unavailable` (above). Host, pipe protocol, and dev
-registration: [`agent/src/FocusAgent.WitnessHost/README.md`](../agent/src/FocusAgent.WitnessHost/README.md).
+The extension opens a native-messaging link to a small host the FocusAgent
+registers (`chrome.runtime.connectNative`, see [`witness.ts`](src/shared/witness.ts)
+and the [`nativeMessaging`](src/manifest.json) permission). Two things ride on it:
+
+- **The agent witnesses the extension.** While the link is up the agent has a
+  live witness; when the extension is disabled or removed the browser tears the
+  host down, the agent reports `extension_disabled`, and it pauses Edge while the
+  extension stays off during a session (#427). That is the signal the extension
+  cannot witness about itself.
+- **The agent hands down the session (#489).** `session_started` when the agent
+  has joined a session (a declined one never arrives), `allowlist_replaced` and
+  `allowlist_amended` as the teacher changes it, `session_ended` when it ends or
+  the student leaves it, and on every connect the current session or
+  `no_session`. The extension sends back `blocked_url`, `unblock_request`
+  (answered with `unblock_request_result`) and `tamper`, which the agent sends
+  with its own connection; it also pings the backend for the extension while the
+  link is up, so a silent extension still shows (#149).
+
+If the agent goes away mid-session the extension keeps enforcing the session it
+has until the agent is back and says otherwise; the teacher sees the agent's
+missing heartbeat. Host, pipe protocol, and dev registration:
+[`agent/src/FocusAgent.WitnessHost/README.md`](../agent/src/FocusAgent.WitnessHost/README.md).
 
 ## Stable extension ID
 

@@ -225,6 +225,10 @@ public partial class App : Application
             // session. Reports only fire on a drop during a joined session.
             var witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
             _witnessMonitor = witnessMonitor;
+            // #489: the session relay is the extension's only source of the session
+            // (and its only way to report). Resolved before the pipe starts listening
+            // so the first extension to connect gets the current state handed down.
+            _ = _host.Services.GetRequiredService<ExtensionSessionRelay>();
             _ = witnessMonitor.StartAsync();
             // #427: and the guard that pauses Edge while the witness stays down in a
             // session — resolved now so its SessionJoined / ConnectionChanged
@@ -246,15 +250,14 @@ public partial class App : Application
             // #288: register the witness native-messaging host so Edge can launch
             // anchor-witness-host.exe when the extension connectNative()s — the link
             // the extension self-detection (the guided-install popup's success signal)
-            // and the backend_url hand-down both ride on. In dev this is the
+            // and the session hand-down (#489) both ride on. In dev this is the
             // register-witness-host.ps1 script's job; the release installer never did
             // the equivalent, so the agent does it itself at startup (idempotent),
-            // mirroring the force-install policy write above. Hands the host the
-            // agent's configured Backend:BaseUrl so the extension targets the right
-            // backend in release, not the dev fallback. Also hands down the deployment's
-            // Entra tenant/client/scope (#289) so the extension can mint a real student
-            // token for the hub — null in dev (no Auth configured), where the extension
-            // stays on the dev impersonation shortcut. Best-effort, off the UI thread.
+            // mirroring the force-install policy write above. Also hands the host the
+            // agent's Backend:BaseUrl and the deployment's Entra tenant/client/scope
+            // (#204/#289): an extension from before #489 still signs in and connects to
+            // the hub itself and needs both, until the store has updated it. Current
+            // extensions ignore them. Best-effort, off the UI thread.
             var backendBaseUrl = _host.Services.GetRequiredService<IOptions<BackendSettings>>().Value.BaseUrl;
             var auth = _host.Services.GetRequiredService<IOptions<AuthSettings>>().Value;
             var witnessAuth = !string.IsNullOrWhiteSpace(auth.TenantId)
@@ -1437,9 +1440,11 @@ public partial class App : Application
         builder.Services.AddSingleton<ITamperReporter, SignalRTamperReporter>();
         builder.Services.AddOptions<WitnessSettings>()
             .Bind(builder.Configuration.GetSection(WitnessSettings.SectionName));
-        builder.Services.AddSingleton<IExtensionWitnessTransport>(sp => new NamedPipeWitnessTransport(
+        builder.Services.AddSingleton(sp => new NamedPipeWitnessTransport(
             sp.GetRequiredService<ILogger<NamedPipeWitnessTransport>>(),
             sp.GetRequiredService<IOptions<WitnessSettings>>().Value.PipeName));
+        builder.Services.AddSingleton<IExtensionWitnessTransport>(sp => sp.GetRequiredService<NamedPipeWitnessTransport>());
+        builder.Services.AddSingleton<IExtensionWitnessChannel>(sp => sp.GetRequiredService<NamedPipeWitnessTransport>());
         builder.Services.AddSingleton(sp => new ExtensionWitnessMonitor(
             sp.GetRequiredService<IExtensionWitnessTransport>(),
             sp.GetRequiredService<ITamperReporter>(),
@@ -1451,6 +1456,11 @@ public partial class App : Application
         // controller (which takes it as an optional dependency) enforces the pause
         // like an off-list app until the witness reconnects.
         builder.Services.AddSingleton<ExtensionGuard>();
+        // #489 -- the agent is the extension's only identity: it hands the joined
+        // session down over the same link and reports blocked URLs, unblock
+        // requests and the extension's tamper signals with its own connection, so
+        // the extension needs no sign-in in the browser.
+        builder.Services.AddSingleton<ExtensionSessionRelay>();
 
         // #148 -- agent-side robust InPrivate detection. The scanner enumerates
         // live Edge windows; the monitor polls it while in a joined session and

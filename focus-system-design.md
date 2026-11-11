@@ -23,17 +23,17 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 │ Student Windows laptop                  │
 │                                         │
 │  ┌──────────────┐    ┌───────────────┐  │
-│  │ FocusAgent   │    │ Edge          │  │
-│  │ (WinUI 3)    │    │ + extension   │  │
+│  │ FocusAgent   │ NM │ Edge          │  │
+│  │ (WinUI 3)    │◄──►│ + extension   │  │
 │  │              │    │               │  │
 │  │ • tray       │    │ • URL filter  │  │
-│  │ • overlay    │    │ • reports     │  │
-│  │ • Win32 hooks│    │   active tab  │  │
-│  └──────┬───────┘    └───────┬───────┘  │
-│         │ SignalR            │ SignalR  │
-└─────────┼────────────────────┼──────────┘
-          │                    │
-          ▼                    ▼
+│  │ • overlay    │    │ • block page  │  │
+│  │ • Win32 hooks│    │               │  │
+│  └──────┬───────┘    └───────────────┘  │
+│         │ SignalR                       │
+└─────────┼───────────────────────────────┘
+          │
+          ▼
 ┌─────────────────────────────────────────┐
 │ Azure                                   │
 │                                         │
@@ -57,6 +57,10 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 │ (Flutter Web on Static Web Apps)        │
 └─────────────────────────────────────────┘
 ```
+
+NM is native messaging: the agent and the extension talk over a local link, and
+the agent is the only one with a backend connection. It hands the extension the
+session it joined and reports what the extension sees (#489; §6, §10).
 
 ## 4. Technology decisions
 
@@ -133,8 +137,9 @@ We accept that BYOD without admin rights means a determined student can kill the
 - Subscribes to `chrome.tabs.onUpdated` and `chrome.webNavigation` to observe URL changes.
 - During an active session:
   - Checks each navigation against the session allowlist.
-  - Blocked navigations show a friendly "this site isn't allowed during the current focus session" page and are reported to the backend.
-- Communicates with the agent via SignalR (its own connection to the backend) rather than directly with the agent process. Simpler than building agent ↔ extension IPC.
+  - Blocked navigations show a friendly "this site isn't allowed during the current focus session" page and are reported to the backend through the agent.
+- Talks only to the agent, over native messaging (a small host the agent registers, which bridges to the agent's local pipe). The agent hands it the session once the student has joined it (so a declined session never reaches the extension), every allowlist change, and the end of the session, and on every (re)connect the current session again. The extension hands back blocked URLs, unblock requests and its own tamper signals, which the agent reports with its own connection (#489). The extension has no backend connection and no sign-in, so nothing a student does to the browser's account can leave Edge unfiltered.
+- The same link is the agent's witness of the extension (#146): when it drops during a session the agent reports `extension_disabled` and pauses Edge until the extension is back (#427). With the session coming from the agent, the cases are: extension connected (it filters), or not connected (Edge paused). The exception is a device where the extension never connected, which the pause leaves alone.
 
 ## 7. Allowlist model
 
@@ -208,7 +213,7 @@ Events older than 14 days are pruned once their session has ended. Aggregated co
 
 - **Teacher dashboard** → MSAL.js (or `msal_flutter`) signs in against the school's Entra tenant. Token sent as bearer to the backend API.
 - **Student agent** → WAM (Web Account Manager) acquires a token for the backend silently, using the Windows-signed-in account. No login screen.
-- **Edge extension** → uses `chrome.identity.getAuthToken` or a redirect-based flow against Entra. Could share a session cookie via the backend if simpler in practice.
+- **Edge extension** → no sign-in of its own. The agent is its identity: it hands the extension the session over native messaging and reports for it (#489). An earlier design signed the student in through the browser (`chrome.identity.launchWebAuthFlow`); any failure there — another account, a personal one, a closed sign-in window — left the extension unfiltered without anyone seeing it.
 
 Identity is always the Entra object ID. We do not store or trust client-supplied usernames.
 

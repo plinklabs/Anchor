@@ -825,6 +825,9 @@ public class SessionCoordinatorTests
         public event EventHandler<Guid>? SessionEnded;
 #pragma warning restore CS0067
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
+#pragma warning disable CS0067 // Not raised by these tests.
+        public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+#pragma warning restore CS0067
 
         public void RaiseBundlesUpdated(SessionBundlesUpdatedPayload payload) =>
             SessionBundlesUpdated?.Invoke(this, payload);
@@ -869,6 +872,7 @@ public class SessionCoordinatorTests
             Operations.Add($"report:{kind}");
             return ReportThrows is null ? Task.CompletedTask : Task.FromException(ReportThrows);
         }
+        public Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         // The backend's answer to IsInSession (#354), or the failure to ask.
         public bool StillInSession { get; set; } = true;

@@ -1,17 +1,15 @@
 import { logger } from '../shared/logger';
 import { localizeDocument, t } from '../shared/i18n';
 import { getActiveSession } from '../shared/session-state';
-import { getAuthFailure } from '../shared/auth-gate';
-import type { AuthFailure } from '../shared/auth-gate';
 import type { ActiveSessionState } from '../shared/types';
 
 const log = logger('popup');
 
 /**
  * The popup is a *view* over the session the background worker already cached in
- * chrome.storage.session — it never reaches the hub itself. The student opens it
- * to answer two questions: "am I in a session right now?" and "which sites am I
- * allowed to use?". So this file is pure read-and-render: pull the cached
+ * chrome.storage.session, as the on-box agent handed it down (#489). The student
+ * opens it to answer two questions: "am I in a session right now?" and "which
+ * sites am I allowed to use?". So this file is pure read-and-render: pull the cached
  * ActiveSessionState (or null) and paint the active / idle face of popup.html.
  */
 
@@ -25,23 +23,6 @@ export function allowedSiteLabels(session: ActiveSessionState): string[] {
     if (value) seen.add(value);
   }
   return [...seen].sort((a, b) => a.localeCompare(b));
-}
-
-/** Longest failure text the notice shows before it stops being readable. */
-const MAX_DETAIL_LENGTH = 240;
-
-/**
- * The one line the student is asked to relay (#331). Entra folds its diagnostic
- * code into the description, so the raw message is already the most actionable
- * text there is — we only put the bare code in front when the message doesn't
- * carry it, and cap the length so a stack-trace-ish error can't blow the popup
- * out of shape.
- */
-export function authFailureDetail(failure: AuthFailure): string {
-  const message = failure.message.trim();
-  const code = failure.code;
-  const text = code && !message.includes(code) ? `${code} — ${message}` : message || code || '';
-  return text.length > MAX_DETAIL_LENGTH ? `${text.slice(0, MAX_DETAIL_LENGTH - 1)}…` : text;
 }
 
 function setText(selector: string, text: string): void {
@@ -96,13 +77,6 @@ function renderIdle(): void {
   setText('[data-eyebrow-label]', t('popupEyebrowIdle'));
 }
 
-function renderAuthFailure(failure: AuthFailure): void {
-  const wrap = document.querySelector<HTMLElement>('[data-auth-error]');
-  if (!wrap) return;
-  wrap.hidden = false;
-  setText('[data-auth-error-detail]', authFailureDetail(failure));
-}
-
 async function main(): Promise<void> {
   // Translate the static copy up front; renderActive/renderIdle then paint the
   // session-specific bits (and the idle eyebrow) over the localized page.
@@ -115,18 +89,6 @@ async function main(): Promise<void> {
     // storage.session can reject if the popup outlives its context; fall back
     // to the idle face rather than throwing into an empty popup.
     log.error('failed to read active session', err);
-  }
-
-  // A hard sign-in failure (#331) is shown on top of whichever face follows: it
-  // is the reason the hub is down, and without it the student only sees a popup
-  // that quietly claims nothing is happening.
-  const failure = await getAuthFailure();
-  if (failure) {
-    log.warn('popup opened with a recorded sign-in failure', {
-      code: failure.code,
-      message: failure.message,
-    });
-    renderAuthFailure(failure);
   }
 
   if (session) {
