@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -672,108 +673,146 @@ class _SessionPageState extends State<SessionPage> {
         ? _detail!.joinCode
         : null;
 
-    // The instrument panels above the feed — only what applies to the session's
-    // current state. The feed itself is the hero and fills the rest below.
-    final List<Widget> panels = <Widget>[
-      if (!_ended && _pendingRequests.isNotEmpty)
-        _PendingRequestsPanel(
-          key: _pendingRequestsKey,
-          requests: _pendingRequests,
-          approving: _approving,
-          error: _unblockError,
-          onApprove: _approveHost,
-          onApproveClass: _approveHostForClass,
-        ),
-      if (!_ended && (_detail?.participants.isNotEmpty ?? false))
-        _RosterPanel(participants: _detail!.participants),
-      if (!_ended && _availableBundles != null)
-        _LiveBundlePanel(
-          available: _availableBundles!,
-          selectedIds: _selectedBundleIds,
-          busy: _updatingBundles,
-          error: _bundleError,
-          onToggle: (id, selected) {
-            final next = {..._selectedBundleIds};
-            if (selected) {
-              next.add(id);
-            } else {
-              next.remove(id);
-            }
-            _updateBundles(next);
-          },
-        ),
-      if (_ended) const _EndedBanner(),
-      if (_ended && (_detail?.summaries.isNotEmpty ?? false))
-        _SessionSummaryPanel(summaries: _detail!.summaries),
-    ];
+    // The instrument panels — only what applies to the session's current
+    // state. The feed itself is the hero and fills the rest.
+    final Widget? pending = !_ended && _pendingRequests.isNotEmpty
+        ? _PendingRequestsPanel(
+            key: _pendingRequestsKey,
+            requests: _pendingRequests,
+            approving: _approving,
+            error: _unblockError,
+            onApprove: _approveHost,
+            onApproveClass: _approveHostForClass,
+          )
+        : null;
+    final List<SessionParticipantInfo> participants = !_ended
+        ? _detail?.participants ?? const <SessionParticipantInfo>[]
+        : const <SessionParticipantInfo>[];
+    final Widget? bundles = !_ended && _availableBundles != null
+        ? _LiveBundlePanel(
+            available: _availableBundles!,
+            selectedIds: _selectedBundleIds,
+            busy: _updatingBundles,
+            error: _bundleError,
+            onToggle: (id, selected) {
+              final next = {..._selectedBundleIds};
+              if (selected) {
+                next.add(id);
+              } else {
+                next.remove(id);
+              }
+              _updateBundles(next);
+            },
+          )
+        : null;
+    final Widget feed = _ActivityPanel(
+      events: feedTimeline(_events, _history),
+      settings: _alertServices.settings,
+      nameOf: _participantName,
+    );
 
-    // The page scrolls as a whole (#422). The panels stack to more than a short
-    // window holds; in a plain column they squeezed the feed to nothing and
-    // clipped the last panel, with nothing to scroll it back into view.
-    //
-    // A click anywhere on it lets the browser play the alert sound (#454): a
-    // pointer down for a mouse, a pointer up for a touch screen.
+    // A click anywhere on the page lets the browser play the alert sound
+    // (#454): a pointer down for a mouse, a pointer up for a touch screen.
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => _unlockSound(),
       onPointerUp: (_) => _unlockSound(),
       child: Scaffold(
         backgroundColor: PlinkColors.paper,
-        body: CustomScrollView(
-          slivers: <Widget>[
-            SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  _SessionHeader(
-                    headline: headline,
-                    spec: _titleText(AppLocalizations.of(context)),
-                    ended: _ended,
-                    ending: _ending,
-                    joinCode: joinCode,
-                    onLeave: _confirmExit,
-                    onEnd: _endSession,
-                    onCopyCode: _copyJoinCode,
-                    onOpenNotifications: () =>
-                        showLiveAlertSettings(context, _alertServices),
-                    headlineStyle: text.displaySmall,
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            // On a wide window the students get a column of their own on the
+            // left, over the window's height, and the requests, the bundles
+            // and the feed share the right (#494). Below [_columnsMinWidth],
+            // and once the session has ended (the roster and the bundles go,
+            // the summary shows), the panels stack over the feed as before.
+            final bool columns =
+                participants.isNotEmpty &&
+                constraints.maxWidth >= _columnsMinWidth;
+            final List<Widget> panels = columns
+                ? const <Widget>[]
+                : <Widget>[
+                    ?pending,
+                    if (participants.isNotEmpty)
+                      _RosterPanel(participants: participants),
+                    ?bundles,
+                    if (_ended) const _EndedBanner(),
+                    if (_ended && (_detail?.summaries.isNotEmpty ?? false))
+                      _SessionSummaryPanel(summaries: _detail!.summaries),
+                  ];
+
+            // The page scrolls as a whole (#422). Stacked, the panels take
+            // more than a short window holds; in a plain column they squeezed
+            // the feed to nothing and clipped the last panel, with nothing to
+            // scroll it back into view. In columns each column scrolls on its
+            // own, and the page only on a window too short for them.
+            return CustomScrollView(
+              slivers: <Widget>[
+                SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      _SessionHeader(
+                        headline: headline,
+                        spec: _titleText(AppLocalizations.of(context)),
+                        ended: _ended,
+                        ending: _ending,
+                        joinCode: joinCode,
+                        onLeave: _confirmExit,
+                        onEnd: _endSession,
+                        onCopyCode: _copyJoinCode,
+                        onOpenNotifications: () =>
+                            showLiveAlertSettings(context, _alertServices),
+                        headlineStyle: text.displaySmall,
+                      ),
+                      const _Hairline(),
+                      if (_connecting)
+                        _StatusLine(
+                          AppLocalizations.of(context).sessionConnecting,
+                        ),
+                      if (!_ended) _SoundBlockedLine(services: _alertServices),
+                      if (!_ended &&
+                          (_link == SessionHubLinkState.reconnecting ||
+                              _link == SessionHubLinkState.disconnected))
+                        _ConnectionLine(
+                          state: _link!,
+                          onReconnect: _restartHub,
+                        ),
+                      if (_joinError != null) _ErrorBanner(_joinError!),
+                      if (_error != null) _ErrorBanner(_error!),
+                      for (final Widget panel in panels) ...<Widget>[
+                        panel,
+                        const _Hairline(),
+                      ],
+                    ],
                   ),
-                  const _Hairline(),
-                  if (_connecting)
-                    _StatusLine(AppLocalizations.of(context).sessionConnecting),
-                  if (!_ended) _SoundBlockedLine(services: _alertServices),
-                  if (!_ended &&
-                      (_link == SessionHubLinkState.reconnecting ||
-                          _link == SessionHubLinkState.disconnected))
-                    _ConnectionLine(state: _link!, onReconnect: _restartHub),
-                  if (_joinError != null) _ErrorBanner(_joinError!),
-                  if (_error != null) _ErrorBanner(_error!),
-                  for (final Widget panel in panels) ...<Widget>[
-                    panel,
-                    const _Hairline(),
-                  ],
-                ],
-              ),
-            ),
-            // The activity feed — the instrument's read-out, filling the rest
-            // of the window, but never shorter than [_feedMinHeight]: on a
-            // short window the page scrolls down to it instead. Without a
-            // scroll body the sliver is the larger of the space left and its
-            // child's height, which the SizedBox states without asking the
-            // list (a list can't measure itself). The feed's list scrolls
-            // inside that height, under its header.
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: SizedBox(
-                height: _feedMinHeight,
-                child: _ActivityPanel(
-                  events: feedTimeline(_events, _history),
-                  settings: _alertServices.settings,
-                  nameOf: _participantName,
                 ),
-              ),
-            ),
-          ],
+                // The rest of the window: the feed — the instrument's
+                // read-out — or the two columns, but never shorter than their
+                // least height: on a short window the page scrolls down to
+                // them instead. Without a scroll body the sliver is the larger
+                // of the space left and its child's height, which the SizedBox
+                // states without asking the list (a list can't measure
+                // itself). The lists scroll inside that height.
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: SizedBox(
+                    height: columns ? _columnsMinHeight : _feedMinHeight,
+                    child: columns
+                        ? _LiveColumns(
+                            roster: _RosterPanel(
+                              participants: participants,
+                              fillHeight: true,
+                            ),
+                            panels: <Widget>[?pending, ?bundles],
+                            feed: feed,
+                          )
+                        : feed,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -788,6 +827,22 @@ const double _gutter = PlinkSpacing.s6; // 32
 /// handful of event rows when the panels above it already fill a short window.
 const double _feedMinHeight = 368;
 
+/// The least width the live page lays out in two columns (#494): the
+/// students' column and, next to it, room for the bundles' chips and the
+/// feed's sentences. Narrower, the panels stack over the feed.
+const double _columnsMinWidth = 900;
+
+/// The width of the students' column (#494): a name, the tamper flag and the
+/// state label between the page's gutters. Dutch's longest label, "Agent
+/// rapporteert niet meer", takes some 210 px of it; at 400 px it cut a name
+/// as short as "Grace Hopper".
+const double _rosterColumnWidth = 448;
+
+/// The least height the two columns get (#494): a handful of students, and
+/// the feed's header with a few rows. On a shorter window the page scrolls
+/// down to them, as it does to the feed when the panels stack.
+const double _columnsMinHeight = 320;
+
 /// A full-width 1px instrument rule — the system separates with hairlines,
 /// never shadows.
 class _Hairline extends StatelessWidget {
@@ -798,6 +853,72 @@ class _Hairline extends StatelessWidget {
     return const SizedBox(
       height: PlinkBorders.width,
       child: ColoredBox(color: PlinkColors.hairline),
+    );
+  }
+}
+
+/// The live page's two columns on a wide window (#494): the students on the
+/// left over the full height, and on the right the pending requests, the
+/// allowed bundles and then the feed, filling the rest of the column's
+/// height. Each column scrolls on its own: the roster's list in the left
+/// one, and the right one as a whole when the requests and the bundles leave
+/// the feed less than its least height.
+class _LiveColumns extends StatelessWidget {
+  const _LiveColumns({
+    required this.roster,
+    required this.panels,
+    required this.feed,
+  });
+
+  /// The students, filling the left column.
+  final Widget roster;
+
+  /// What tops the right column: the requests the teacher acts on, then the
+  /// bundles.
+  final List<Widget> panels;
+  final Widget feed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        SizedBox(width: _rosterColumnWidth, child: roster),
+        // A 1px rule between the columns, like the rules between panels.
+        const SizedBox(
+          width: PlinkBorders.width,
+          child: ColoredBox(color: PlinkColors.hairline),
+        ),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) => CustomScrollView(
+              slivers: <Widget>[
+                SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      for (final Widget panel in panels) ...<Widget>[
+                        panel,
+                        const _Hairline(),
+                      ],
+                    ],
+                  ),
+                ),
+                // As on the stacked page: the feed fills the rest of the
+                // column, but never gets less than its least height, nor more
+                // than the column holds, so scrolled down to it shows whole.
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: SizedBox(
+                    height: math.min(_feedMinHeight, constraints.maxHeight),
+                    child: feed,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1472,9 +1593,14 @@ String? _rosterStateTooltip(AppLocalizations l10n, ParticipantLiveState s) =>
     };
 
 class _RosterPanel extends StatelessWidget {
-  const _RosterPanel({required this.participants});
+  const _RosterPanel({required this.participants, this.fillHeight = false});
 
   final List<SessionParticipantInfo> participants;
+
+  /// Whether the roster fills the height it is given, its list scrolling in
+  /// it: the students' column on a wide window (#494). Otherwise it is one of
+  /// the stacked panels, its list capped so the feed stays in reach.
+  final bool fillHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -1495,11 +1621,13 @@ class _RosterPanel extends StatelessWidget {
         .length;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         _gutter,
         PlinkSpacing.s4,
         _gutter,
-        PlinkSpacing.s4,
+        // In its column the list runs to the window's bottom edge, and keeps
+        // this space under its last row itself.
+        fillHeight ? 0 : PlinkSpacing.s4,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1511,16 +1639,28 @@ class _RosterPanel extends StatelessWidget {
             style: _monoLabel(PlinkColors.ink60),
           ),
           const SizedBox(height: PlinkSpacing.s3),
-          // Bounded so a 30-student class doesn't push the event feed off-screen
-          // (a11y: it scrolls inside the panel, never clips).
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 240),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: sorted.length,
-              itemBuilder: (context, i) => _RosterRow(participant: sorted[i]),
+          if (fillHeight)
+            // The whole class at once on a classroom screen; a longer one
+            // scrolls inside the column (#494).
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.only(bottom: PlinkSpacing.s4),
+                itemCount: sorted.length,
+                itemBuilder: (context, i) =>
+                    _RosterRow(participant: sorted[i], dense: true),
+              ),
+            )
+          else
+            // Bounded so a 30-student class doesn't push the event feed
+            // off-screen (a11y: it scrolls inside the panel, never clips).
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: sorted.length,
+                itemBuilder: (context, i) => _RosterRow(participant: sorted[i]),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -1528,9 +1668,13 @@ class _RosterPanel extends StatelessWidget {
 }
 
 class _RosterRow extends StatelessWidget {
-  const _RosterRow({required this.participant});
+  const _RosterRow({required this.participant, this.dense = false});
 
   final SessionParticipantInfo participant;
+
+  /// Closer rows, for the students' column (#494): at the text's full size,
+  /// a class of 18 fits on a 1080p classroom screen.
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -1543,7 +1687,9 @@ class _RosterRow extends StatelessWidget {
       style: _monoLabel(color),
     );
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s2),
+      padding: EdgeInsets.symmetric(
+        vertical: dense ? PlinkSpacing.s1 : PlinkSpacing.s2,
+      ),
       child: Row(
         children: [
           Icon(style.icon, size: 18, color: color),

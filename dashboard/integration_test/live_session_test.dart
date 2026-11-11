@@ -55,7 +55,11 @@ import 'support/e2e_binding.dart';
 //     that planned end while still offering End session (#447),
 //   - on a short window the page scrolls to every panel and the feed, and the
 //     join code sits in the header row, dropping under the title on a narrow
-//     one (#422).
+//     one (#422),
+//   - on a wide window the students fill a column on the left, the whole
+//     class at once, and the requests, the bundles and the feed share the
+//     right, each column scrolling on its own; a narrower window stacks the
+//     panels as before (#494).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -1725,15 +1729,20 @@ void main() {
     // A laptop at 150% with the browser's chrome and the taskbar: about
     // 1280x600 logical px is left for the page, as the issue reports.
     const short = Size(1280, 600);
+    // That height in a window too narrow for the two columns (#494), where
+    // the panels stack over the feed as #422 found them.
+    const shortNarrow = Size(860, 600);
 
     final sixStudents = [
       for (final name in ['Ada', 'Bo', 'Cas', 'Dina', 'Eli', 'Fien'])
         _participant(name, ParticipantLiveState.joined),
     ];
 
-    /// The part of the window the page scrolls in, under the shell's chrome.
+    /// The part of the window the page scrolls in, under the shell's chrome:
+    /// the outermost scroll view, as on a wide window the right column has
+    /// one of its own (#494).
     Rect page(WidgetTester tester) =>
-        tester.getRect(find.byType(CustomScrollView));
+        tester.getRect(find.byType(CustomScrollView).first);
 
     bool inView(WidgetTester tester, Finder finder) {
       final rect = tester.getRect(finder);
@@ -1760,7 +1769,9 @@ void main() {
     testWidgets(
       'every panel and the feed can be scrolled to on a short window',
       (tester) async {
-        window(tester, short);
+        // Stacked: #494 gives the laptop's 1280 px two columns, each
+        // scrolling on its own, which its own group below covers.
+        window(tester, shortNarrow);
         final h = await _bootToLiveSession(tester, roster: sixStudents);
         final now = DateTime(2026, 6, 12, 9, 20);
         h.sessions.pending = [
@@ -1837,7 +1848,8 @@ void main() {
       'on a tall window the feed still fills the rest, with nothing to scroll',
       (tester) async {
         // The default 1400x1000 window: the panels leave the feed more than
-        // its least height, so it takes all of it, as before #422.
+        // its least height, so it takes all of it, as before #422 (in the
+        // right column since #494).
         await _bootToLiveSession(tester);
 
         final feed = tester.getRect(
@@ -1854,7 +1866,7 @@ void main() {
             .state<ScrollableState>(
               find
                   .descendant(
-                    of: find.byType(CustomScrollView),
+                    of: find.byType(CustomScrollView).first,
                     matching: find.byType(Scrollable),
                   )
                   .first,
@@ -1925,6 +1937,290 @@ void main() {
         expect(code.left, headline.left);
         expect(end.top, lessThan(headline.bottom));
         expect(copy.right, lessThanOrEqualTo(end.left));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  });
+
+  group('the live view in two columns on a wide window (#494)', () {
+    void window(WidgetTester tester, Size size) {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+    }
+
+    /// A class of [count], named so they sort in this order: Student 01, …
+    List<SessionParticipantInfo> students(int count) => [
+      for (var i = 1; i <= count; i++)
+        _participant(
+          'Student ${i.toString().padLeft(2, '0')}',
+          ParticipantLiveState.joined,
+        ),
+    ];
+
+    UnblockRequestSummary request(String host) {
+      final now = DateTime(2026, 6, 12, 9, 20);
+      return UnblockRequestSummary(
+        host: host,
+        count: 1,
+        firstRequestedAt: now,
+        latestRequestedAt: now,
+        requesters: [
+          UnblockRequestRequester(
+            userId: 'Student 01',
+            displayName: 'Student 01',
+            requestedAt: now,
+          ),
+        ],
+      );
+    }
+
+    /// The part of the window the page lays out in, under the shell's chrome.
+    Rect page(WidgetTester tester) =>
+        tester.getRect(find.byType(CustomScrollView).first);
+
+    bool inView(WidgetTester tester, Finder finder) {
+      // A row a lazy list hasn't built is nowhere near the window.
+      if (finder.evaluate().isEmpty) return false;
+      final rect = tester.getRect(finder);
+      return rect.top >= page(tester).top && rect.bottom <= page(tester).bottom;
+    }
+
+    /// Turns the mouse wheel by [dy] at [at], the way a teacher scrolls.
+    Future<void> wheelAt(WidgetTester tester, Offset at, double dy) async {
+      final pointer = TestPointer(1, PointerDeviceKind.mouse)..hover(at);
+      await tester.sendEventToBinding(pointer.scroll(Offset(0, dy)));
+      await tester.pumpAndSettle();
+    }
+
+    /// The roster's list: the one around [student]'s row.
+    Rect rosterList(WidgetTester tester, String student) => tester.getRect(
+      find
+          .ancestor(of: find.text(student), matching: find.byType(ListView))
+          .first,
+    );
+
+    testWidgets(
+      'on a classroom screen the whole class shows at once on the left, and '
+      'the requests, the bundles and the feed share the right',
+      (tester) async {
+        // A 1080p classroom screen, less the browser's chrome and the
+        // taskbar: some 940 px high. (Narrower than its 1920 px, to stay
+        // within the e2e browser's own window.)
+        window(tester, const Size(1600, 940));
+        final h = await _bootToLiveSession(tester, roster: students(18));
+        h.sessions.pending = [request('chat.example.com')];
+        h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+        await tester.pumpAndSettle();
+
+        // Every student in view, with the real fonts: no box of 240 px to
+        // scroll in, and no page to scroll either.
+        expect(find.text('Students (18/18 in session)'), findsOneWidget);
+        for (final p in students(18)) {
+          expect(
+            inView(tester, find.text(p.displayName)),
+            isTrue,
+            reason: p.displayName,
+          );
+        }
+        final roster = rosterList(tester, 'Student 01');
+        expect(roster.height, greaterThan(240));
+        expect(roster.bottom, page(tester).bottom);
+
+        // Right of the students, top to bottom: the requests the teacher
+        // acts on, the bundles, then the feed down to the window's bottom.
+        final requests = tester.getRect(find.text('Pending requests'));
+        final bundles = tester.getRect(find.text('Allowed bundles'));
+        final activity = tester.getRect(find.text('Activity'));
+        expect(roster.right, lessThan(requests.left));
+        expect(bundles.left, requests.left);
+        expect(activity.left, requests.left);
+        expect(
+          requests.top,
+          tester.getRect(find.text('Students (18/18 in session)')).top,
+        );
+        expect(requests.bottom, lessThan(bundles.top));
+        expect(bundles.bottom, lessThan(activity.top));
+        // The feed's box, around its header.
+        final feed = tester.getRect(
+          find
+              .ancestor(
+                of: find.text('Activity'),
+                matching: find.byType(SizedBox),
+              )
+              .first,
+        );
+        expect(feed.bottom, page(tester).bottom);
+        expect(feed.left, greaterThanOrEqualTo(roster.right));
+        // The students' column keeps its width; the right one takes the rest.
+        expect(roster.right, lessThanOrEqualTo(448));
+        expect(feed.width, greaterThan(page(tester).width / 2));
+        final pageScroll = tester
+            .state<ScrollableState>(
+              find
+                  .descendant(
+                    of: find.byType(CustomScrollView).first,
+                    matching: find.byType(Scrollable),
+                  )
+                  .first,
+            )
+            .position;
+        expect(pageScroll.maxScrollExtent, 0);
+
+        // The right column works as the panels did: approve, toggle a
+        // bundle, read the feed.
+        await tester.tap(find.widgetWithText(OutlinedButton, 'Approve'));
+        await tester.pumpAndSettle();
+        expect(h.sessions.perStudentApprovals, [
+          ('Student 01', 'chat.example.com'),
+        ]);
+        await tester.tap(find.widgetWithText(FilterChip, 'Math'));
+        await tester.pumpAndSettle();
+        expect(h.sessions.updateBundlesCalls, [
+          ['b1'],
+        ]);
+
+        // A student who needs the teacher tops the column, still in view,
+        // and the feed says so on the right (#493, #491).
+        h.sessions.roster = [
+          ...students(18).skip(1),
+          _participant('Student 01', ParticipantLiveState.heartbeatStale),
+        ];
+        h.hub.emit('HeartbeatLost', {
+          'sessionId': _sessionId,
+          'userId': 'Student 01',
+        });
+        await tester.pumpAndSettle();
+        expect(
+          tester.getRect(find.text('Agent stopped reporting')).top,
+          lessThan(tester.getRect(find.text('Student 02')).top),
+        );
+        final sentence = find.text("Student 01's agent stopped reporting.");
+        expect(inView(tester, sentence), isTrue);
+        expect(tester.getRect(sentence).left, greaterThan(roster.right));
+        expect(tester.takeException(), isNull);
+
+        // Once the session ends the view is one column again: the students
+        // and the bundles go, the feed spans the page under the notice.
+        h.hub.emit('SessionEnded', {'sessionId': _sessionId});
+        await tester.pumpAndSettle();
+        expect(find.text('Students (17/18 in session)'), findsNothing);
+        expect(find.text('Allowed bundles'), findsNothing);
+        expect(
+          tester.getRect(find.text('Activity')).left,
+          tester
+              .getRect(find.text('Session ended — event stream stopped.'))
+              .left,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'on a short laptop window each column scrolls on its own, under the '
+      'header',
+      (tester) async {
+        // A laptop at 150% (#422): about 1280x600 is left for the page.
+        window(tester, const Size(1280, 600));
+        final h = await _bootToLiveSession(tester, roster: students(30));
+        h.sessions.pending = [request('chat.example.com')];
+        h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        final first = find.text('Student 01');
+        final last = find.text('Student 30', skipOffstage: false);
+        final requests = find.text('Pending requests');
+        // Where [finder] sits under the header. The page itself scrolls only
+        // on a window shorter than the header and the columns' least height,
+        // which this one about is: what a column does shows against it.
+        double underHeader(Finder finder) =>
+            tester.getRect(finder).top -
+            tester.getRect(find.text('Math 101')).top;
+        final requestsAt = underHeader(requests);
+        expect(inView(tester, first), isTrue);
+        expect(inView(tester, last), isFalse, reason: 'below the window');
+        // Side by side, the requests level with the students.
+        final studentsLabel = find.text('Students (30/30 in session)');
+        expect(
+          tester.getRect(first).right,
+          lessThan(tester.getRect(requests).left),
+        );
+        expect(underHeader(requests), underHeader(studentsLabel));
+
+        // The wheel over the students scrolls their list to the last one;
+        // the right column stays where it is.
+        final overRoster = tester.getCenter(first);
+        for (var i = 0; i < 40 && !inView(tester, last); i++) {
+          await wheelAt(tester, overRoster, 80);
+        }
+        expect(inView(tester, last), isTrue);
+        expect(underHeader(requests), requestsAt);
+
+        // The wheel over the right column scrolls it down to the feed, under
+        // the requests and the bundles; the students stay where they are.
+        final lastAt = underHeader(last);
+        h.hub.emit('HeartbeatLost', {
+          'sessionId': _sessionId,
+          'userId': 'Student 02',
+        });
+        await tester.pumpAndSettle();
+        final event = find.text(
+          "Student 02's agent stopped reporting.",
+          skipOffstage: false,
+        );
+        await wheelAt(tester, tester.getCenter(requests), 5000);
+        expect(inView(tester, event), isTrue);
+        expect(inView(tester, find.text('Activity')), isTrue);
+        expect(underHeader(last), lastAt);
+        // The students are still in view beside it, their label too.
+        expect(inView(tester, last), isTrue);
+        expect(inView(tester, studentsLabel), isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'a narrower window stacks the panels as before, and the layout follows '
+      'the window across the breakpoint',
+      (tester) async {
+        window(tester, const Size(1400, 1000));
+        final h = await _bootToLiveSession(tester, roster: students(18));
+        h.sessions.pending = [request('chat.example.com')];
+        h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+        await tester.pumpAndSettle();
+        Rect rect(String text) => tester.getRect(find.text(text));
+        const studentsLabel = 'Students (18/18 in session)';
+        expect(rect('Pending requests').top, rect(studentsLabel).top);
+
+        // The teacher makes the window narrower: one column, the requests,
+        // the students (capped, as before), the bundles, then the feed.
+        tester.view.physicalSize = const Size(860, 1000);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        final requests = rect('Pending requests');
+        for (final label in [studentsLabel, 'Allowed bundles', 'Activity']) {
+          expect(rect(label).left, requests.left, reason: label);
+        }
+        expect(requests.bottom, lessThan(rect(studentsLabel).top));
+        expect(
+          rect(studentsLabel).bottom,
+          lessThan(rect('Allowed bundles').top),
+        );
+        expect(rosterList(tester, 'Student 01').height, lessThanOrEqualTo(240));
+        expect(find.text('chat.example.com'), findsOneWidget);
+
+        // And wide again: two columns, the requests still there to approve.
+        tester.view.physicalSize = const Size(1400, 1000);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(rect('Pending requests').top, rect(studentsLabel).top);
+        await tester.tap(find.widgetWithText(OutlinedButton, 'Approve'));
+        await tester.pumpAndSettle();
+        expect(h.sessions.perStudentApprovals, [
+          ('Student 01', 'chat.example.com'),
+        ]);
         expect(tester.takeException(), isNull);
       },
     );
