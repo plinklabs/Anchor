@@ -625,11 +625,17 @@ and updates stay silent, and asks for elevation **only for this one write**:
    so startup doesn't ask again; the tray menu offers **Set up the Edge
    extension…** for as long as no policy is in place.
 
-Once the policy is in place, the existing mutual agent↔extension witness link is
-the success signal: if the extension hasn't checked in after a grace period, the
-guided install opens after all. On unmanaged devices Edge honours forcelist
-entries only for store-hosted extensions; ours is, so the forcelist also wins over
-an `ExtensionInstallBlocklist` of `*` that would block a store install.
+Once the policy is in place, the agent counts the extension as there when Edge
+has installed it in a profile (its unpacked folder under
+`%LOCALAPPDATA%\Microsoft\Edge\User Data\<profile>\Extensions\<id>`, which
+the agent reads without Edge running) or when it checks in over the mutual
+agent↔extension witness link. The check-in needs a running Edge, and after a
+sign-in the agent is usually up long before Edge is, so the grace period for it
+(45 s) only starts once Edge runs (#488). If the extension is then still neither
+installed nor checked in, the guided install opens after all. On unmanaged
+devices Edge honours forcelist entries only for store-hosted extensions; ours is,
+so the forcelist also wins over an `ExtensionInstallBlocklist` of `*` that would
+block a store install.
 
 **Uninstall.** The Velopack uninstall hook fires-and-forgets the elevated
 removal of the HKLM value the agent wrote: `reg.exe delete … /v <n> /f`, again
@@ -659,6 +665,7 @@ the secure desktop with nobody there to answer it). The elevated write sits
 behind `IElevatedPolicyWriter`; only a user-facing Release launch (Production,
 no dev/test flag) composes the real `reg.exe` writer. Unit tests fake it, and the
 agent e2e (`ExtensionPolicySetupTests`) runs the real startup against a throwaway
-HKCU subtree with the UAC answer simulated. The real prompt needs a one-time
+HKCU subtree with the UAC answer simulated, a throwaway Edge `User Data` folder,
+and a stand-in process playing Edge. The real prompt needs a one-time
 manual check on a real laptop: install → prompt → value under HKLM → Edge
 installs the extension; uninstall → prompt → value removed.

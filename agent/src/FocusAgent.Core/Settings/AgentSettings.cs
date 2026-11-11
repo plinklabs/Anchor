@@ -149,6 +149,14 @@ public sealed record ExtensionSettings
 
     /// <summary>Overrides the wait for the extension to check in (seconds). Empty: 45 s.</summary>
     public int? GracePeriodSeconds { get; init; }
+
+    /// <summary>
+    /// A folder standing in for Edge's <c>User Data</c> folder (#488), where the
+    /// run looks for the installed extension
+    /// (<c>&lt;profile&gt;\Extensions\&lt;id&gt;\&lt;version&gt;\manifest.json</c>).
+    /// Empty: the real Edge profiles under <c>%LOCALAPPDATA%</c> (reading is harmless).
+    /// </summary>
+    public string TestEdgeUserDataPath { get; init; } = "";
 }
 
 /// <summary>

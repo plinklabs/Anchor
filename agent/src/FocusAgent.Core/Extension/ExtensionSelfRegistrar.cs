@@ -17,6 +17,37 @@ public enum ExtensionPolicyLocation
 }
 
 /// <summary>
+/// How far the startup check for the extension got (#488), for the log and the
+/// e2e's status endpoint.
+/// </summary>
+public enum ExtensionVerification
+{
+    /// <summary>Not checked yet (the setup window may be open).</summary>
+    NotStarted,
+
+    /// <summary>
+    /// Not installed in any Edge profile and Edge isn't running: the wait for the
+    /// extension starts once Edge does, since only a running Edge can install it.
+    /// </summary>
+    WaitingForBrowser,
+
+    /// <summary>Edge is running; the grace period for the extension to check in is counting.</summary>
+    WaitingForCheckIn,
+
+    /// <summary>The extension checked in over the witness link: installed and running.</summary>
+    CheckedIn,
+
+    /// <summary>
+    /// The extension is installed in an Edge profile on disk; it checks in once
+    /// Edge has loaded it. Nothing to install.
+    /// </summary>
+    Installed,
+
+    /// <summary>Neither: the guided install was opened.</summary>
+    GuidedInstall,
+}
+
+/// <summary>
 /// Makes Edge install Anchor's canonical extension itself, with a guided-install
 /// fallback (#211), through a one-time UAC prompt (#405).
 ///
@@ -36,13 +67,18 @@ public enum ExtensionPolicyLocation
 ///   The answer is remembered so startup doesn't ask on every launch; the tray
 ///   menu offers the setup again (<see cref="OfferAgainAsync"/>).</item>
 /// </list>
-/// Once a policy is in place, the success signal is the existing agent↔extension
-/// witness link: if the extension hasn't checked in after a grace period, the
+/// Once a policy is in place, the extension counts as there when it is installed
+/// in an Edge profile on disk (<see cref="EdgeProfileExtensionProbe"/>, #488) or
+/// has checked in over the agent↔extension witness link. The check-in can't
+/// happen before Edge runs, and right after sign-in the agent is up long before
+/// Edge is, so the grace period for the check-in only starts once Edge is
+/// running. If, after it, the extension is neither installed nor checked in, the
 /// guided install opens after all.
 ///
 /// Pure orchestration — the registry reads (<see cref="IExtensionPolicyStore"/>),
 /// the elevated write, the remembered answer, the consent window, the witness
-/// signal, the delay and the guided fallback are all injected — so every branch is
+/// signal, the profile probe, the "is Edge running" check, the delay and the
+/// guided fallback are all injected — so every branch is
 /// unit-testable on any OS without a registry, a UAC prompt, a browser or a real
 /// wall-clock wait.
 /// </summary>
@@ -55,13 +91,25 @@ public sealed class ExtensionSelfRegistrar
     private readonly Func<CancellationToken, Task<bool?>> _askConsent;
     private readonly Func<bool> _extensionCheckedIn;
     private readonly Func<CancellationToken, Task> _showGuidedInstall;
+    private readonly Func<string?> _installedProfile;
+    private readonly Func<bool> _browserRunning;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly TimeSpan _grace;
+    private readonly TimeSpan _browserPoll;
     private readonly ILogger<ExtensionSelfRegistrar> _log;
+    private readonly object _verifyGate = new();
+    private Task<bool>? _verifying;
     private int _offering;
+    private int _verification;
 
-    /// <summary>Default time to let Edge pick up the policy + the extension check in.</summary>
+    /// <summary>
+    /// Default time, once Edge is running, to let it pick up the policy and the
+    /// extension check in.
+    /// </summary>
     public static readonly TimeSpan DefaultGracePeriod = TimeSpan.FromSeconds(45);
+
+    /// <summary>How often to look whether Edge has started while waiting for it (#488).</summary>
+    public static readonly TimeSpan DefaultBrowserPollInterval = TimeSpan.FromSeconds(5);
 
     /// <param name="machineStore">Reads the <c>HKLM</c> forcelist (no elevation).</param>
     /// <param name="userStore">Reads the <c>HKCU</c> forcelist; uninstall also clears old entries there.</param>
@@ -73,15 +121,30 @@ public sealed class ExtensionSelfRegistrar
     /// when the window went away without an answer (the agent is shutting down).
     /// </param>
     /// <param name="extensionCheckedIn">
-    /// The success signal: true once the extension has connected over the witness
-    /// link, i.e. it is installed and running.
+    /// The "running" signal: true once the extension has connected over the witness
+    /// link, i.e. it is installed and running, which needs a running Edge.
     /// </param>
     /// <param name="showGuidedInstall">Opens the guided one-click install (the store listing).</param>
-    /// <param name="delayAsync">
-    /// The grace-period wait. Injected so tests run instantly; defaults to
-    /// <see cref="Task.Delay(TimeSpan, CancellationToken)"/>.
+    /// <param name="installedProfile">
+    /// The "installed" signal (#488): the Edge profile the extension is installed
+    /// in on disk, or null when none has it
+    /// (<see cref="EdgeProfileExtensionProbe.FindInstalledProfile"/>). Defaults to
+    /// never installed.
     /// </param>
-    /// <param name="gracePeriod">How long to wait for the check-in. Defaults to <see cref="DefaultGracePeriod"/>.</param>
+    /// <param name="browserRunning">
+    /// True while Edge is running in the student's session (#488): the grace
+    /// period only starts once it is. Defaults to always running.
+    /// </param>
+    /// <param name="delayAsync">
+    /// The grace-period wait and the wait between looks for Edge. Injected so tests
+    /// run instantly; defaults to <see cref="Task.Delay(TimeSpan, CancellationToken)"/>.
+    /// </param>
+    /// <param name="gracePeriod">
+    /// How long to wait for the check-in once Edge runs. Defaults to <see cref="DefaultGracePeriod"/>.
+    /// </param>
+    /// <param name="browserPollInterval">
+    /// How often to look for Edge while it isn't running. Defaults to <see cref="DefaultBrowserPollInterval"/>.
+    /// </param>
     public ExtensionSelfRegistrar(
         IExtensionPolicyStore machineStore,
         IExtensionPolicyStore userStore,
@@ -90,8 +153,11 @@ public sealed class ExtensionSelfRegistrar
         Func<CancellationToken, Task<bool?>> askConsent,
         Func<bool> extensionCheckedIn,
         Func<CancellationToken, Task> showGuidedInstall,
+        Func<string?>? installedProfile = null,
+        Func<bool>? browserRunning = null,
         Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
         TimeSpan? gracePeriod = null,
+        TimeSpan? browserPollInterval = null,
         ILogger<ExtensionSelfRegistrar>? log = null)
     {
         _machine = machineStore;
@@ -101,10 +167,16 @@ public sealed class ExtensionSelfRegistrar
         _askConsent = askConsent;
         _extensionCheckedIn = extensionCheckedIn;
         _showGuidedInstall = showGuidedInstall;
+        _installedProfile = installedProfile ?? (() => null);
+        _browserRunning = browserRunning ?? (() => true);
         _delayAsync = delayAsync ?? Task.Delay;
         _grace = gracePeriod ?? DefaultGracePeriod;
+        _browserPoll = browserPollInterval ?? DefaultBrowserPollInterval;
         _log = log ?? NullLogger<ExtensionSelfRegistrar>.Instance;
     }
+
+    /// <summary>How far the check for the extension got (#488).</summary>
+    public ExtensionVerification Verification => (ExtensionVerification)Volatile.Read(ref _verification);
 
     /// <summary>
     /// Where an Anchor entry already is, read without elevation: the HKLM
@@ -119,12 +191,12 @@ public sealed class ExtensionSelfRegistrar
     }
 
     /// <summary>
-    /// Startup flow. With a policy already in place, verify the extension checks
-    /// in (else open the guided install). Without one, ask the student — unless
-    /// they said "not now" before — and add the HKLM entry through one UAC prompt;
-    /// any outcome but a written entry falls back to the guided install. Returns
-    /// true when the extension is confirmed present, false when the guided install
-    /// was opened.
+    /// Startup flow. With a policy already in place, verify the extension is
+    /// installed, or checks in once Edge runs (else open the guided install).
+    /// Without one, ask the student — unless they said "not now" before — and add
+    /// the HKLM entry through one UAC prompt; any outcome but a written entry falls
+    /// back to the guided install. Returns true when the extension is confirmed
+    /// present, false when the guided install was opened.
     /// </summary>
     public async Task<bool> RegisterAndVerifyAsync(CancellationToken ct = default)
     {
@@ -336,18 +408,57 @@ public sealed class ExtensionSelfRegistrar
     }
 
     /// <summary>
-    /// With a policy in place: if the extension already checked in, done; else wait
-    /// the grace period for Edge to install it, and open the guided install if it
-    /// still hasn't checked in.
+    /// With a policy in place (or a remembered "not now"): done when the extension
+    /// is installed in an Edge profile or has checked in. Else wait for Edge to run
+    /// — right after sign-in it usually doesn't yet, and only a running Edge can
+    /// install the extension or let it check in (#488) — then the grace period,
+    /// and open the guided install if the extension is still neither. One wait at
+    /// a time: a second call (the tray's setup while startup still waits for Edge)
+    /// joins the one under way, so the guided install can't open twice.
     /// </summary>
-    private async Task<bool> VerifyAsync(CancellationToken ct)
+    private Task<bool> VerifyAsync(CancellationToken ct)
     {
-        if (_extensionCheckedIn())
+        lock (_verifyGate)
         {
-            _log.LogInformation("Extension already checked in; no install needed.");
-            return true;
+            if (_verifying is { IsCompleted: false })
+            {
+                _log.LogInformation("Already waiting for the extension; joining that wait.");
+                return _verifying;
+            }
+            return _verifying = VerifyOnceAsync(ct);
+        }
+    }
+
+    private async Task<bool> VerifyOnceAsync(CancellationToken ct)
+    {
+        if (IsPresent()) return true;
+
+        if (!IsBrowserRunning())
+        {
+            SetVerification(ExtensionVerification.WaitingForBrowser);
+            _log.LogInformation(
+                "The extension isn't installed in an Edge profile and Edge isn't running; " +
+                "the {Seconds:N0}s wait for it starts once Edge runs.",
+                _grace.TotalSeconds);
+            do
+            {
+                try
+                {
+                    await _delayAsync(_browserPoll, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return IsPresent();
+                }
+
+                // Edge may have come and gone between two looks.
+                if (IsPresent()) return true;
+            }
+            while (!IsBrowserRunning());
+            _log.LogInformation("Edge is running.");
         }
 
+        SetVerification(ExtensionVerification.WaitingForCheckIn);
         _log.LogInformation(
             "Waiting {Seconds:N0}s for the extension to check in.",
             _grace.TotalSeconds);
@@ -357,18 +468,16 @@ public sealed class ExtensionSelfRegistrar
         }
         catch (OperationCanceledException)
         {
-            return _extensionCheckedIn();
+            return IsPresent();
         }
 
-        if (_extensionCheckedIn())
-        {
-            _log.LogInformation("Extension checked in within the grace period.");
-            return true;
-        }
+        if (IsPresent()) return true;
 
         _log.LogWarning(
-            "Extension did not check in within {Seconds:N0}s — opening guided install.",
+            "Extension did not check in within {Seconds:N0}s of Edge running and isn't installed in any " +
+            "Edge profile — opening guided install.",
             _grace.TotalSeconds);
+        SetVerification(ExtensionVerification.GuidedInstall);
         await _showGuidedInstall(ct).ConfigureAwait(false);
         return false;
     }
@@ -376,19 +485,66 @@ public sealed class ExtensionSelfRegistrar
     /// <summary>
     /// Without a policy (the student just said no, or the write failed): the
     /// student is at the screen now, so open the guided install straight away
-    /// unless the extension is already running (installed from the store before).
+    /// unless the extension is already there (installed from the store before).
     /// </summary>
     private async Task<bool> GuidedUnlessCheckedInAsync(CancellationToken ct)
     {
-        if (_extensionCheckedIn())
-        {
-            _log.LogInformation("Extension already checked in; no guided install needed.");
-            return true;
-        }
+        if (IsPresent()) return true;
 
+        SetVerification(ExtensionVerification.GuidedInstall);
         await _showGuidedInstall(ct).ConfigureAwait(false);
         return false;
     }
+
+    /// <summary>
+    /// Whether the extension is there now: checked in over the witness link, or
+    /// installed in an Edge profile on disk (#488), which needs no running Edge.
+    /// </summary>
+    private bool IsPresent()
+    {
+        if (_extensionCheckedIn())
+        {
+            SetVerification(ExtensionVerification.CheckedIn);
+            _log.LogInformation("Extension checked in; no install needed.");
+            return true;
+        }
+
+        string? profile;
+        try
+        {
+            profile = _installedProfile();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Looking for the extension in Edge's profiles failed; treating it as not installed.");
+            profile = null;
+        }
+
+        if (profile is null) return false;
+
+        SetVerification(ExtensionVerification.Installed);
+        _log.LogInformation(
+            "Extension is installed in Edge ({Profile}); it checks in once Edge has loaded it. No install needed.",
+            profile);
+        return true;
+    }
+
+    private bool IsBrowserRunning()
+    {
+        try
+        {
+            return _browserRunning();
+        }
+        catch (Exception ex)
+        {
+            // Can't tell: count Edge as running, so the grace period isn't put off forever.
+            _log.LogWarning(ex, "Checking whether Edge is running failed; treating it as running.");
+            return true;
+        }
+    }
+
+    private void SetVerification(ExtensionVerification verification) =>
+        Volatile.Write(ref _verification, (int)verification);
 
     private bool HasAnchorEntry(IExtensionPolicyStore store, string hive)
     {

@@ -60,7 +60,9 @@ internal sealed record ExtensionGuardSnapshot(
 /// </summary>
 internal sealed record ExtensionPolicySnapshot(
     [property: JsonPropertyName("location")] string? Location,
-    [property: JsonPropertyName("consentOpen")] bool ConsentOpen);
+    [property: JsonPropertyName("consentOpen")] bool ConsentOpen,
+    // #488: how far the startup check for the extension got.
+    [property: JsonPropertyName("verification")] string? Verification = null);
 
 /// <summary>
 /// The agent's session-start sweep result (#104) as exposed on /status: how many

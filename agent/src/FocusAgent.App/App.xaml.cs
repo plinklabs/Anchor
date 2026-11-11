@@ -341,6 +341,8 @@ public partial class App : Application
                     {
                         location = extensionRegistrar.FindPolicy().ToString(),
                         consentOpen = extensionConsent.IsOpen,
+                        // #488: how far the check for the extension got.
+                        verification = extensionRegistrar.Verification.ToString(),
                     },
                     onAnswerExtensionConsent: allow => extensionConsent.TryAnswer(allow),
                     // ...and pick the tray's "Set up the Edge extension…" item.
@@ -1467,8 +1469,10 @@ public partial class App : Application
         // entry under HKLM through ONE UAC prompt (the system reg.exe, elevated) so
         // Edge force-installs + pins the canonical listing (#210). "Not now", a
         // declined prompt or a failed write fall back to the guided install. The
-        // witness monitor's connected state is the success signal. The registrar
-        // itself is pure (unit-tested); ExtensionPolicyComposition decides whether
+        // extension counts as there once it is installed in an Edge profile on disk
+        // or the witness monitor sees it connected; the wait for the latter starts
+        // only once Edge runs, which right after sign-in it usually doesn't (#488).
+        // The registrar itself is pure (unit-tested); ExtensionPolicyComposition decides whether
         // this launch may show a real UAC prompt at all: only a user-facing release
         // launch (Production, no dev/test flag) — never `dotnet run` or the e2e.
         builder.Services.AddOptions<ExtensionSettings>()
@@ -1492,10 +1496,16 @@ public partial class App : Application
                 parts.State,
                 // The agent's own explanation, before Windows' UAC prompt.
                 askConsent: ct => sp.GetRequiredService<ExtensionPolicyConsentLauncher>().AskAsync(ct),
-                // Success signal: the extension has connected over the witness link.
+                // Running signal: the extension has connected over the witness link.
                 extensionCheckedIn: () => sp.GetRequiredService<ExtensionWitnessMonitor>().IsConnected,
                 // Fallback: open the guided one-click install on the UI thread.
                 showGuidedInstall: ct => sp.GetRequiredService<GuidedInstallLauncher>().ShowAsync(ct),
+                // #488: the installed signal, which needs no running Edge: the
+                // extension's folder in an Edge profile.
+                installedProfile: parts.Profiles.FindInstalledProfile,
+                // #488: the wait for the check-in starts once Edge runs.
+                browserRunning: () => BrowserProcess.IsRunningInThisSession(
+                    sp.GetRequiredService<IOptions<WitnessSettings>>().Value.BrowserProcessName),
                 gracePeriod: parts.GracePeriod,
                 log: sp.GetRequiredService<ILogger<ExtensionSelfRegistrar>>());
         });

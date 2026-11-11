@@ -6,11 +6,15 @@ namespace FocusAgent.Core.Tests;
 /// The Edge extension setup's decisions (#211, #405): when a policy is already in
 /// place (HKLM or HKCU, ours or Intune's), when to ask, what a "not now" / declined
 /// UAC prompt / failed write leads to, what is remembered, and what uninstall
-/// removes. Every side effect is faked: no registry, no UAC prompt, no window.
+/// removes; and (#488) when the extension counts as there: installed in an Edge
+/// profile, or checked in once Edge runs. Every side effect is faked: no registry,
+/// no UAC prompt, no window, no Edge.
 /// </summary>
 public class ExtensionSelfRegistrarTests
 {
     private const string Other = "someotherextensionidaaaaaaaaaaaa;https://example/crx";
+    private static readonly TimeSpan Grace = TimeSpan.FromMilliseconds(1);
+    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(7);
 
     // --- Detecting an existing policy (no elevation) -------------------------
 
@@ -300,6 +304,186 @@ public class ExtensionSelfRegistrarTests
         Assert.Equal(1, h.GuidedShown);
     }
 
+    // --- After a reboot: Edge not running yet (#488) ---------------------------
+
+    [Fact]
+    public async Task With_the_policy_in_place_an_extension_installed_in_an_Edge_profile_needs_no_wait_and_no_install()
+    {
+        // The reboot case: the agent starts at sign-in, Edge isn't open, so the
+        // extension can't check in, but Edge installed it long ago.
+        var h = new Harness { BrowserRunning = false, InstalledIn = @"Edge\Default" };
+        h.Machine.Entries["1"] = EdgeExtensionPolicy.ForcelistEntry;
+        var registrar = h.Registrar();
+
+        Assert.True(await registrar.RegisterAndVerifyAsync());
+        Assert.Equal(ExtensionVerification.Installed, registrar.Verification);
+        Assert.Empty(h.DelayedIn);
+        Assert.Equal(0, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task With_the_policy_in_place_the_grace_period_starts_only_once_Edge_runs()
+    {
+        var h = new Harness { BrowserRunning = false, BrowserStartsAfterPolls = 3 };
+        h.Machine.Entries["1"] = EdgeExtensionPolicy.ForcelistEntry;
+        var registrar = h.Registrar();
+
+        Assert.False(await registrar.RegisterAndVerifyAsync());
+
+        // Three looks for Edge, however long that takes, then one grace period.
+        Assert.Equal(
+            new[]
+            {
+                ExtensionVerification.WaitingForBrowser,
+                ExtensionVerification.WaitingForBrowser,
+                ExtensionVerification.WaitingForBrowser,
+                ExtensionVerification.WaitingForCheckIn,
+            },
+            h.DelayedIn);
+        Assert.Equal(new[] { PollInterval, PollInterval, PollInterval, Grace }, h.Delayed);
+        Assert.Equal(1, h.GuidedShown);
+        Assert.Equal(ExtensionVerification.GuidedInstall, registrar.Verification);
+    }
+
+    [Fact]
+    public async Task While_Edge_isnt_running_nothing_opens()
+    {
+        // Edge stays closed: the agent keeps waiting, the guided install never opens.
+        var h = new Harness { BrowserRunning = false };
+        h.Machine.Entries["1"] = EdgeExtensionPolicy.ForcelistEntry;
+        using var stop = new CancellationTokenSource();
+        h.OnDelay = _ =>
+        {
+            if (h.DelayedIn.Count == 50) stop.Cancel();
+        };
+        var registrar = h.Registrar();
+
+        Assert.False(await registrar.RegisterAndVerifyAsync(stop.Token));
+        Assert.All(h.DelayedIn, state => Assert.Equal(ExtensionVerification.WaitingForBrowser, state));
+        Assert.Equal(0, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task An_extension_that_checks_in_while_waiting_for_Edge_ends_the_wait()
+    {
+        var h = new Harness { BrowserRunning = false };
+        h.Machine.Entries["1"] = EdgeExtensionPolicy.ForcelistEntry;
+        h.OnDelay = _ =>
+        {
+            if (h.DelayedIn.Count == 2) h.CheckedIn = true;
+        };
+        var registrar = h.Registrar();
+
+        Assert.True(await registrar.RegisterAndVerifyAsync());
+        Assert.Equal(2, h.DelayedIn.Count); // no grace period after it
+        Assert.Equal(ExtensionVerification.CheckedIn, registrar.Verification);
+        Assert.Equal(0, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task An_extension_Edge_installed_between_two_looks_ends_the_wait()
+    {
+        // Edge was opened and closed again between two looks for it, and installed
+        // the force-installed extension meanwhile.
+        var h = new Harness { BrowserRunning = false };
+        h.Machine.Entries["1"] = EdgeExtensionPolicy.ForcelistEntry;
+        h.OnDelay = _ =>
+        {
+            if (h.DelayedIn.Count == 2) h.InstalledIn = @"Edge\Profile 1";
+        };
+        var registrar = h.Registrar();
+
+        Assert.True(await registrar.RegisterAndVerifyAsync());
+        Assert.Equal(ExtensionVerification.Installed, registrar.Verification);
+        Assert.Equal(0, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task An_extension_installed_by_the_end_of_the_grace_period_that_hasnt_checked_in_needs_no_install()
+    {
+        // Edge installed it, but it hasn't connected (yet): installing it again
+        // from the store can't help.
+        var h = new Harness();
+        h.Machine.Entries["1"] = EdgeExtensionPolicy.ForcelistEntry;
+        h.OnDelay = _ => h.InstalledIn = @"Edge\Default";
+        var registrar = h.Registrar();
+
+        Assert.True(await registrar.RegisterAndVerifyAsync());
+        Assert.Equal(ExtensionVerification.WaitingForCheckIn, Assert.Single(h.DelayedIn));
+        Assert.Equal(ExtensionVerification.Installed, registrar.Verification);
+        Assert.Equal(0, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task After_a_remembered_not_now_an_extension_installed_from_the_store_needs_no_install()
+    {
+        var h = new Harness { BrowserRunning = false, InstalledIn = @"Edge\Default" };
+        h.State.Saved = new ExtensionPolicyState { PromptDeclined = true, PromptDeclinedAt = DateTimeOffset.UtcNow };
+
+        Assert.True(await h.Registrar().RegisterAndVerifyAsync());
+        Assert.Empty(h.DelayedIn);
+        Assert.Equal(0, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task Not_now_with_the_extension_installed_from_the_store_opens_no_guided_install()
+    {
+        var h = new Harness { ConsentAnswer = false, BrowserRunning = false, InstalledIn = @"Edge\Default" };
+
+        Assert.True(await h.Registrar().RegisterAndVerifyAsync());
+        Assert.Equal(0, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task The_tray_setup_while_startup_waits_for_Edge_joins_that_wait_and_opens_one_guided_install()
+    {
+        // Startup remembered a "not now" and waits for Edge; meanwhile the student
+        // sets the policy up from the tray. One wait, one guided install at most.
+        var h = new Harness { ConsentAnswer = true, BrowserRunning = false };
+        h.State.Saved = new ExtensionPolicyState { PromptDeclined = true, PromptDeclinedAt = DateTimeOffset.UtcNow };
+        var edgeStarted = new TaskCompletionSource();
+        h.DelayOverride = async (state, _) =>
+        {
+            if (state == ExtensionVerification.WaitingForBrowser)
+            {
+                await edgeStarted.Task;
+                h.BrowserRunning = true;
+            }
+        };
+        var registrar = h.Registrar();
+
+        var startup = registrar.RegisterAndVerifyAsync();
+        var tray = registrar.OfferAgainAsync();
+        Assert.Single(h.Elevated.AddCalls); // the tray's write went through...
+        Assert.False(tray.IsCompleted);     // ...and joined the wait for Edge
+        edgeStarted.SetResult();
+
+        Assert.False(await startup);
+        Assert.False(await tray);
+        Assert.Equal(1, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task A_failing_Edge_check_counts_Edge_as_running()
+    {
+        var h = new Harness { BrowserThrows = true };
+        h.Machine.Entries["1"] = EdgeExtensionPolicy.ForcelistEntry;
+
+        Assert.False(await h.Registrar().RegisterAndVerifyAsync());
+        Assert.Equal(ExtensionVerification.WaitingForCheckIn, Assert.Single(h.DelayedIn));
+        Assert.Equal(1, h.GuidedShown);
+    }
+
+    [Fact]
+    public async Task A_failing_profile_probe_counts_the_extension_as_not_installed()
+    {
+        var h = new Harness { ProbeThrows = true };
+        h.Machine.Entries["1"] = EdgeExtensionPolicy.ForcelistEntry;
+
+        Assert.False(await h.Registrar().RegisterAndVerifyAsync());
+        Assert.Equal(1, h.GuidedShown);
+    }
+
     // --- Uninstall -----------------------------------------------------------
 
     [Fact]
@@ -395,14 +579,38 @@ public class ExtensionSelfRegistrarTests
         public bool CheckedIn { get; set; }
         public bool CheckedInAfterGrace { get; init; }
 
+        /// <summary>The Edge profile the extension is installed in on disk; null: none.</summary>
+        public string? InstalledIn { get; set; }
+        public bool ProbeThrows { get; init; }
+
+        /// <summary>Whether Edge is running; it is unless a spec says otherwise.</summary>
+        public bool BrowserRunning { get; set; } = true;
+        public bool BrowserThrows { get; init; }
+
+        /// <summary>Edge starts after this many looks for it.</summary>
+        public int? BrowserStartsAfterPolls { get; init; }
+
+        /// <summary>Runs after each wait is recorded.</summary>
+        public Action<TimeSpan>? OnDelay { get; set; }
+
+        /// <summary>Replaces the instant wait, given what the registrar was waiting for.</summary>
+        public Func<ExtensionVerification, CancellationToken, Task>? DelayOverride { get; set; }
+
         public int ConsentAsked { get; private set; }
         public int GuidedShown { get; private set; }
-        public int Delays { get; private set; }
+        public int Delays => Delayed.Count;
+
+        /// <summary>Every wait, and what the registrar was waiting for during it.</summary>
+        public List<TimeSpan> Delayed { get; } = new();
+        public List<ExtensionVerification> DelayedIn { get; } = new();
 
         public Harness() => Elevated = new FakeElevatedWriter(Machine);
 
-        public ExtensionSelfRegistrar Registrar() =>
-            new(
+        public ExtensionSelfRegistrar Registrar()
+        {
+            ExtensionSelfRegistrar? registrar = null;
+            var polls = 0;
+            registrar = new(
                 Machine,
                 User,
                 Elevated,
@@ -419,13 +627,27 @@ public class ExtensionSelfRegistrarTests
                     GuidedShown++;
                     return Task.CompletedTask;
                 },
-                delayAsync: (_, _) =>
+                installedProfile: () => ProbeThrows ? throw new IOException("locked") : InstalledIn,
+                browserRunning: () => BrowserThrows ? throw new InvalidOperationException("no access") : BrowserRunning,
+                delayAsync: (delay, ct) =>
                 {
-                    Delays++;
-                    if (CheckedInAfterGrace) CheckedIn = true;
-                    return Task.CompletedTask;
+                    ct.ThrowIfCancellationRequested();
+                    var waitingFor = registrar!.Verification;
+                    Delayed.Add(delay);
+                    DelayedIn.Add(waitingFor);
+                    if (waitingFor == ExtensionVerification.WaitingForBrowser &&
+                        BrowserStartsAfterPolls is { } after && ++polls >= after)
+                    {
+                        BrowserRunning = true;
+                    }
+                    if (waitingFor == ExtensionVerification.WaitingForCheckIn && CheckedInAfterGrace) CheckedIn = true;
+                    OnDelay?.Invoke(delay);
+                    return DelayOverride?.Invoke(waitingFor, ct) ?? Task.CompletedTask;
                 },
-                gracePeriod: TimeSpan.FromMilliseconds(1));
+                gracePeriod: Grace,
+                browserPollInterval: PollInterval);
+            return registrar;
+        }
     }
 
     private sealed class FakeElevatedWriter(FakePolicyStore machine) : IElevatedPolicyWriter
