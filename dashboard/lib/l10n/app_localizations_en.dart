@@ -185,6 +185,37 @@ class AppLocalizationsEn extends AppLocalizations {
   String get homeEnd => 'End';
 
   @override
+  String get homeEndLabel => 'Session ends';
+
+  @override
+  String homeEndThisPeriod(String time) {
+    return 'At the end of this period ($time)';
+  }
+
+  @override
+  String homeEndNextPeriod(String time) {
+    return 'At the end of the next period ($time)';
+  }
+
+  @override
+  String get homeEndSpecificTime => 'At a time I pick';
+
+  @override
+  String get homeEndTimeLabel => 'End time';
+
+  @override
+  String get homeEndTimeInvalid => 'Use a time like 11:30.';
+
+  @override
+  String homeEndTimeTooLate(String time) {
+    return 'Pick a time no later than $time.';
+  }
+
+  @override
+  String get homeEndPeriodChanged =>
+      'The lesson period has changed in the meantime. Check when the session ends, then start it again.';
+
+  @override
   String get classesLoadError => 'Could not load classes. Please try again.';
 
   @override
@@ -437,6 +468,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String sessionEndsAt(String time) {
+    return 'ends $time';
+  }
+
+  @override
   String get sessionHeadlineFallback => 'Live session';
 
   @override
@@ -466,6 +502,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sessionStateStale => 'Agent stopped reporting';
+
+  @override
+  String get sessionStateAgentMissing => 'Agent not connected';
+
+  @override
+  String get sessionStateAgentMissingTooltip =>
+      'Only the browser extension joined. Apps aren\'t being blocked on this laptop.';
 
   @override
   String get sessionStateLeft => 'Left';
@@ -532,6 +575,156 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get sessionTakePartHint =>
       'Taking part yourself? Use \'Join by code\' in the agent.';
+
+  @override
+  String get alertsTitle => 'Notifications';
+
+  @override
+  String get alertsIntro =>
+      'During a live session, the dashboard tells you when something needs you, also while it\'s in a background tab: it plays a short sound, the tab\'s title counts what you haven\'t seen yet, and pop-ups, if you turn them on, show it on top of other apps.';
+
+  @override
+  String get alertsSound => 'Play a sound';
+
+  @override
+  String get alertsCategoriesLabel => 'Alert me when';
+
+  @override
+  String get alertsAccessRequest => 'A student asks for access to a site';
+
+  @override
+  String get alertsStudentLeft => 'A student leaves or declines the session';
+
+  @override
+  String get alertsAgentLost => 'A student\'s agent stops reporting';
+
+  @override
+  String get alertsTamper => 'Tampering is detected';
+
+  @override
+  String get alertsKeptInBrowser => 'These settings are kept in this browser.';
+
+  @override
+  String get alertsTest => 'Test';
+
+  @override
+  String get alertsSoundBlocked => 'Click anywhere to turn on sound.';
+
+  @override
+  String get alertsPopups => 'Show pop-ups';
+
+  @override
+  String get alertsPopupsNotAsked =>
+      'Your browser asks for permission when you turn them on.';
+
+  @override
+  String get alertsPopupsAllowed => 'Allowed in this browser.';
+
+  @override
+  String get alertsPopupsBlocked => 'Blocked in this browser.';
+
+  @override
+  String get alertsPopupsUnsupported => 'This browser can\'t show pop-ups.';
+
+  @override
+  String get alertsPopupsHowToAllow => 'To allow pop-ups in Edge or Chrome:';
+
+  @override
+  String get alertsPopupsStepIcon =>
+      '1. Click the icon left of the address bar.';
+
+  @override
+  String get alertsPopupsStepAllow => '2. Set Notifications to Allow.';
+
+  @override
+  String get alertsPopupsStepReload => '3. Reload the page.';
+
+  @override
+  String get alertsPopupsWindows =>
+      'Still no pop-ups? Check that notifications for your browser are on in Windows: Settings → System → Notifications.';
+
+  @override
+  String get alertsPopupNames => 'Show student names and sites in pop-ups';
+
+  @override
+  String get alertsPopupNamesHint =>
+      'Off, a pop-up only says what happened, in case your screen is projected.';
+
+  @override
+  String alertsPopupAccessRequest(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'New access requests ($count)',
+      one: 'New access request',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupStudentLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Students left the session ($count)',
+      one: 'A student left the session',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupAgentLost(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Agents stopped reporting ($count)',
+      one: 'A student\'s agent stopped reporting',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupTamper(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Tampering detected ($count)',
+      one: 'Tampering detected',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupAsks(String name, String host) {
+    return '$name asks for access to $host';
+  }
+
+  @override
+  String alertsPopupLeft(String name) {
+    return '$name left the session';
+  }
+
+  @override
+  String alertsPopupDeclined(String name) {
+    return '$name declined the session';
+  }
+
+  @override
+  String alertsPopupAgentLostOf(String name) {
+    return '$name\'s agent stopped reporting';
+  }
+
+  @override
+  String alertsPopupTamperOf(String name) {
+    return 'Tampering detected on $name\'s computer';
+  }
+
+  @override
+  String get alertsPopupTestTitle => 'Test pop-up';
+
+  @override
+  String get alertsPopupTestBody =>
+      'Alerts from a live session show up like this.';
 
   @override
   String get bundlesLoadListError =>
@@ -886,6 +1079,66 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get schoolsEmpty =>
       'No schools found. Schools come from your directory; once teachers belong to one, it will appear here.';
+
+  @override
+  String schoolsLessonPeriodCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count lesson periods',
+      one: '1 lesson period',
+      zero: 'No lesson periods',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get schoolsEditLessonPeriods => 'Lesson periods';
+
+  @override
+  String schoolsLessonPeriodsTitle(String name) {
+    return 'Lesson periods · $name';
+  }
+
+  @override
+  String get schoolsLessonPeriodsIntro =>
+      'One timetable for every school day, in school time. Teachers of this school can then end a session at the end of the current or the next period.';
+
+  @override
+  String schoolsLessonPeriodNumber(int number) {
+    return 'Period $number';
+  }
+
+  @override
+  String get schoolsLessonPeriodStart => 'Start';
+
+  @override
+  String get schoolsLessonPeriodEnd => 'End';
+
+  @override
+  String get schoolsAddLessonPeriod => 'Add period';
+
+  @override
+  String get schoolsRemoveLessonPeriod => 'Remove period';
+
+  @override
+  String get schoolsLessonPeriodsEmpty =>
+      'No lesson periods yet. Teachers of this school pick an end time for each session.';
+
+  @override
+  String get schoolsLessonPeriodInvalidTime => 'Use a time like 08:25.';
+
+  @override
+  String get schoolsLessonPeriodEndBeforeStart =>
+      'A period has to end after it starts.';
+
+  @override
+  String get schoolsLessonPeriodsOverlap => 'This period overlaps another one.';
+
+  @override
+  String schoolsLessonPeriodsSaveError(String name) {
+    return 'Could not save the lesson periods of $name. Please try again.';
+  }
 
   @override
   String get historyLoadError =>

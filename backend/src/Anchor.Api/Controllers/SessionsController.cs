@@ -36,6 +36,8 @@ public sealed class SessionsController : ControllerBase
     private readonly ParticipantLiveStateResolver _liveState;
     private readonly ActiveParticipantCache _activeParticipants;
     private readonly SessionEnder _sessionEnder;
+    private readonly SessionEndPlanner _endPlanner;
+    private readonly SessionEndSchedule _endSchedule;
 
     public SessionsController(
         AnchorDbContext db,
@@ -46,7 +48,9 @@ public sealed class SessionsController : ControllerBase
         ISessionAllowlistExpander allowlist,
         ParticipantLiveStateResolver liveState,
         ActiveParticipantCache activeParticipants,
-        SessionEnder sessionEnder)
+        SessionEnder sessionEnder,
+        SessionEndPlanner endPlanner,
+        SessionEndSchedule endSchedule)
     {
         _db = db;
         _users = users;
@@ -57,6 +61,8 @@ public sealed class SessionsController : ControllerBase
         _liveState = liveState;
         _activeParticipants = activeParticipants;
         _sessionEnder = sessionEnder;
+        _endPlanner = endPlanner;
+        _endSchedule = endSchedule;
     }
 
     [HttpPost]
@@ -101,6 +107,34 @@ public sealed class SessionsController : ControllerBase
                 return ValidationProblem("One or more bundle ids do not exist.");
         }
 
+        var now = _clock.GetUtcNow();
+
+        // The planned end (#447): the end of this or the next lesson period of
+        // the class's school, worked out here, at the start itself, or a time
+        // the teacher picked. A start that asks for none has none, and only
+        // the MaxDuration safety net (#345) ends it on its own.
+        DateTimeOffset? endsAt = null;
+        var endMode = request.EndMode ?? (request.EndsAt is null ? null : SessionEndMode.SpecificTime);
+        if (endMode is SessionEndMode.ThisPeriod or SessionEndMode.NextPeriod)
+        {
+            var periodEnds = await _endPlanner.PeriodEndsAsync(@class.SchoolTag, now, cancellationToken);
+            endsAt = endMode == SessionEndMode.ThisPeriod ? periodEnds.ThisPeriod : periodEnds.NextPeriod;
+            // The dashboard offers a period end only while there is one, but
+            // the period may have run out while the teacher was choosing.
+            if (endsAt is null)
+                return Conflict(new { error = "no lesson period to end the session with right now; pick an end time", noLessonPeriod = true });
+        }
+        else if (endMode == SessionEndMode.SpecificTime)
+        {
+            if (request.EndsAt is not { } pickedEnd)
+                return ValidationProblem("An end time is required to end the session at a specific time.");
+            if (pickedEnd <= now)
+                return ValidationProblem("The end time must be in the future.");
+            if (_endPlanner.LatestEndsAt(now) is { } latest && pickedEnd > latest)
+                return ValidationProblem($"The end time can be at most {latest - now} after the start.");
+            endsAt = pickedEnd;
+        }
+
         // The class's members take part; its teachers don't (#410). The
         // teacher who starts the session, and any co-teacher of the class, get
         // no participant row and no SessionStarted, so an agent or extension
@@ -114,13 +148,13 @@ public sealed class SessionsController : ControllerBase
             .ToListAsync(cancellationToken);
 
         var joinCode = await GenerateUniqueJoinCodeAsync(cancellationToken);
-        var now = _clock.GetUtcNow();
 
         var session = new Session
         {
             TeacherId = caller.Id,
             ClassId = request.ClassId,
             StartedAt = now,
+            EndsAt = endsAt,
             JoinCode = joinCode,
         };
 
@@ -141,6 +175,8 @@ public sealed class SessionsController : ControllerBase
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+        if (endsAt is { } plannedEnd)
+            _endSchedule.Schedule(session.Id, plannedEnd);
 
         var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
         await _broadcaster.SessionStartedAsync(
@@ -148,8 +184,53 @@ public sealed class SessionsController : ControllerBase
             memberIds,
             cancellationToken);
 
-        var response = new StartSessionResponse(session.Id, session.ClassId, session.StartedAt, session.JoinCode);
+        var response = new StartSessionResponse(session.Id, session.ClassId, session.StartedAt, session.JoinCode, session.EndsAt);
         return CreatedAtAction(nameof(Get), new { id = session.Id }, response);
+    }
+
+    /// <summary>
+    /// The ends a session of the class can take if it starts now (#447), for
+    /// the dashboard's start form: the end of the lesson period going on at
+    /// the class's school and of the one after it, each null when there is no
+    /// such period, and the latest time the teacher may pick instead. The
+    /// start itself works the period ends out again, at its own moment.
+    /// </summary>
+    [HttpGet("end-options")]
+    [Authorize(Policy = AuthorizationPolicies.Teacher)]
+    [ProducesResponseType(typeof(SessionEndOptionsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<SessionEndOptionsResponse>> EndOptions(
+        [FromQuery] Guid classId,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var @class = await _db.Classes.AsNoTracking()
+            .Where(c => c.Id == classId)
+            .Select(c => new { c.SchoolTag })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (@class is null)
+            return NotFound();
+
+        var callerTeaches = await _db.ClassMemberships.AsNoTracking().AnyAsync(
+            m => m.ClassId == classId && m.UserId == caller.Id && m.Role == ClassMembershipRole.Teacher,
+            cancellationToken);
+        if (!callerTeaches)
+            return Forbid();
+
+        var now = _clock.GetUtcNow();
+        var periodEnds = await _endPlanner.PeriodEndsAsync(@class.SchoolTag, now, cancellationToken);
+        return Ok(new SessionEndOptionsResponse(
+            periodEnds.ThisPeriod,
+            periodEnds.NextPeriod,
+            _endPlanner.LatestEndsAt(now)));
     }
 
     private static SessionStartedPayload BuildStartedPayload(Session session, ExpandedAllowlist allowlist) =>
@@ -454,6 +535,7 @@ public sealed class SessionsController : ControllerBase
             session.TeacherId,
             session.StartedAt,
             session.EndedAt,
+            session.EndsAt,
             session.JoinCode,
             participants,
             recentEvents,
@@ -485,7 +567,7 @@ public sealed class SessionsController : ControllerBase
             .Where(s => s.EndedAt == null)
             .Where(s => s.TeacherId == caller.Id ||
                         _db.SessionParticipants.Any(p => p.SessionId == s.Id && p.UserId == caller.Id))
-            .Select(s => new SessionSummary(s.Id, s.ClassId, s.TeacherId, s.StartedAt, s.EndedAt, s.JoinCode))
+            .Select(s => new SessionSummary(s.Id, s.ClassId, s.TeacherId, s.StartedAt, s.EndedAt, s.EndsAt, s.JoinCode))
             .ToListAsync(cancellationToken);
         var sessions = rows.OrderByDescending(s => s.StartedAt).ToList();
 
@@ -533,6 +615,7 @@ public sealed class SessionsController : ControllerBase
                     s.TeacherId,
                     s.StartedAt,
                     s.EndedAt,
+                    s.EndsAt,
                 })
             .ToListAsync(cancellationToken);
 
@@ -549,7 +632,8 @@ public sealed class SessionsController : ControllerBase
                 s.ClassName,
                 s.TeacherId,
                 s.StartedAt,
-                s.EndedAt!.Value))
+                s.EndedAt!.Value,
+                s.EndsAt))
             .ToList();
 
         return Ok(entries);
@@ -586,14 +670,29 @@ public sealed class SessionsController : ControllerBase
                 p.JoinedAt != null &&
                 p.LeftAt == null &&
                 p.DeclinedAt == null))
-            .Select(s => new { s.Id, s.ClassId, s.StartedAt, s.JoinCode })
+            .Select(s => new { s.Id, s.ClassId, s.StartedAt, s.EndsAt, s.JoinCode })
             .ToListAsync(cancellationToken);
+
+        // A session past its planned end (#447) is over, even in the moment
+        // before the auto-end marks it ended: an agent starting after the
+        // lesson must not be put back into it. Seeing its planned end here also
+        // gets it ended on time should the backend have restarted since the
+        // session started, which emptied the schedule.
+        var now = _clock.GetUtcNow();
+        foreach (var row in rows)
+        {
+            if (row.EndsAt is { } endsAt)
+                _endSchedule.Schedule(row.Id, endsAt);
+        }
 
         // SQLite (used by dev + tests) can't ORDER BY a DateTimeOffset server
         // side, so sort after materialisation. Production SqlServer would
         // happily do this in the query, but keeping a single path keeps the
         // test suite honest.
-        var ordered = rows.OrderByDescending(s => s.StartedAt).ToList();
+        var ordered = rows
+            .Where(s => !Session.IsPastPlannedEnd(s.EndsAt, now))
+            .OrderByDescending(s => s.StartedAt)
+            .ToList();
 
         var sessions = new List<SessionStartedPayload>(ordered.Count);
         foreach (var row in ordered)
@@ -647,7 +746,12 @@ public sealed class SessionsController : ControllerBase
         }
 
         var now = _clock.GetUtcNow();
-        var expired = session.EndedAt is not null || (now - session.StartedAt) > JoinCodeFreshnessWindow;
+        if (session.EndedAt is null && session.EndsAt is { } endsAt)
+            _endSchedule.Schedule(session.Id, endsAt);
+        // Past its planned end (#447) the session is over, as if ended.
+        var expired = session.EndedAt is not null
+            || Session.IsPastPlannedEnd(session.EndsAt, now)
+            || (now - session.StartedAt) > JoinCodeFreshnessWindow;
         if (expired)
         {
             _joinByCodeLimiter.RecordFailure(caller.Id);
@@ -990,13 +1094,35 @@ public sealed class SessionsController : ControllerBase
     }
 }
 
-public sealed record StartSessionRequest(Guid ClassId, IReadOnlyList<Guid>? BundleIds);
+/// <summary>
+/// Start a session of a class. <see cref="EndMode"/> says how it ends (#447):
+/// at the end of this or the next lesson period of the class's school, worked
+/// out at the start, or at <see cref="EndsAt"/> for
+/// <see cref="SessionEndMode.SpecificTime"/>. An <see cref="EndsAt"/> without a
+/// mode is a specific time; neither starts a session without a planned end.
+/// </summary>
+public sealed record StartSessionRequest(
+    Guid ClassId,
+    IReadOnlyList<Guid>? BundleIds,
+    SessionEndMode? EndMode = null,
+    DateTimeOffset? EndsAt = null);
 
 public sealed record StartSessionResponse(
     Guid Id,
     Guid ClassId,
     DateTimeOffset StartedAt,
-    string JoinCode);
+    string JoinCode,
+    DateTimeOffset? EndsAt);
+
+/// <summary>
+/// What a session of a class starting now can end at (#447): the end of the
+/// current and the next lesson period (null when there is none), and the
+/// latest specific time the teacher may pick (null when there's no limit).
+/// </summary>
+public sealed record SessionEndOptionsResponse(
+    DateTimeOffset? ThisPeriodEndsAt,
+    DateTimeOffset? NextPeriodEndsAt,
+    DateTimeOffset? LatestEndsAt);
 
 public sealed record EndSessionResponse(Guid Id, DateTimeOffset EndedAt);
 
@@ -1010,6 +1136,7 @@ public sealed record SessionSummary(
     Guid TeacherId,
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
+    DateTimeOffset? EndsAt,
     string JoinCode);
 
 public sealed record SessionHistoryEntry(
@@ -1018,7 +1145,8 @@ public sealed record SessionHistoryEntry(
     string ClassName,
     Guid TeacherId,
     DateTimeOffset StartedAt,
-    DateTimeOffset EndedAt);
+    DateTimeOffset EndedAt,
+    DateTimeOffset? EndsAt);
 
 public sealed record SessionDetailResponse(
     Guid Id,
@@ -1027,6 +1155,7 @@ public sealed record SessionDetailResponse(
     Guid TeacherId,
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
+    DateTimeOffset? EndsAt,
     string JoinCode,
     IReadOnlyList<SessionParticipantSummary> Participants,
     IReadOnlyList<SessionRecentEvent> RecentEvents,

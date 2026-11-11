@@ -7,9 +7,17 @@ namespace FocusAgent.Core.Updates;
 /// unit-tested against a fake instead of a real install + GitHub feed.
 ///
 /// <para>
-/// The three methods mirror Velopack's own three-phase flow — check, download,
-/// apply — so the production implementation is a near-passthrough and the policy
-/// (when to check, how often, whether the agent is even updatable) stays here.
+/// The methods cover the two phases the running agent does itself, check and
+/// download, plus a read-back of what the next start will apply. A downloaded
+/// package is applied by <c>VelopackApp</c>'s auto-apply when the agent next
+/// starts (Program.Main), or, when the agent is idle, by handing it to Velopack's
+/// updater right before the agent exits on its own to restart into it (#456,
+/// <see cref="ApplyOnExitAndRestart"/>). Velopack's updater gives a running agent
+/// 60 s to exit and then kills it (#449), so that hand-over is only ever the last
+/// thing an exiting agent does. The production implementation is a
+/// near-passthrough and the policy (when to check, how often, whether the agent is
+/// even updatable, when it may restart) stays in <see cref="AgentUpdateService"/>
+/// and <see cref="IdleUpdateRestarter"/>.
 /// </para>
 /// </summary>
 public interface IAgentUpdateManager
@@ -34,25 +42,41 @@ public interface IAgentUpdateManager
 
     /// <summary>
     /// Download the delta (or full, if no usable delta) package for the update
-    /// discovered by <see cref="CheckForUpdateAsync"/>. Best-effort: a failure
-    /// leaves the agent on its current version.
+    /// discovered by <see cref="CheckForUpdateAsync"/> into the install's packages
+    /// folder, and nothing more: it must not start the updater or touch the running
+    /// agent (#449). The package then waits there for the next agent start, which
+    /// applies it. Students keep working; an in-session student is never interrupted
+    /// and single-instance gating is never fought (#224 scope). Best-effort: a
+    /// failure leaves the agent on its current version.
     /// </summary>
     Task DownloadUpdateAsync(AgentUpdateCheckResult update, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Stage the downloaded update to be applied on the next ordinary restart,
-    /// WITHOUT relaunching now. Students keep working; the new version takes effect
-    /// the next time the agent starts (single-instance gating and an in-session
-    /// student are never interrupted mid-flight — #224 scope: "don't fight the
-    /// single-instance gating").
+    /// The version a downloaded package will bring the next time the agent starts,
+    /// or <c>null</c> when no newer package is waiting. This is Velopack's own
+    /// "update pending restart" test (a full package in the packages folder newer
+    /// than the installed version), the same one its startup auto-apply uses, so a
+    /// non-null answer means the next start applies that version.
     /// </summary>
-    void StageUpdateForNextRestart(AgentUpdateCheckResult update);
+    string? GetPendingRestartVersion();
+
+    /// <summary>
+    /// Start Velopack's updater on the downloaded package (#456): it waits for this
+    /// process to exit, applies the package, and starts the agent again with
+    /// <paramref name="restartArgs"/>, silently (no window, no prompt). If applying
+    /// fails it starts the old version again. The updater waits only 60 s for the
+    /// exit and then kills the process (#449), so call this only when the agent is
+    /// about to exit on its own, and exit promptly. Returns once the updater has been
+    /// started; throws when there is nothing to apply or the updater can't start, and
+    /// the agent then simply keeps running.
+    /// </summary>
+    void ApplyOnExitAndRestart(IReadOnlyList<string> restartArgs);
 }
 
 /// <summary>
 /// The outcome of a feed check. <see cref="IsUpdateAvailable"/> is the only thing
 /// the policy needs to branch on; <see cref="TargetVersion"/> is carried for
-/// logging and so the result can be threaded back into download/apply. The opaque
+/// logging and so the result can be threaded back into the download. The opaque
 /// <see cref="Payload"/> lets the production implementation round-trip Velopack's
 /// own <c>UpdateInfo</c> without leaking the type into Core.
 /// </summary>

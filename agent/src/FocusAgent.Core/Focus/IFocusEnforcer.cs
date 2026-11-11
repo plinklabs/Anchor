@@ -2,7 +2,16 @@ namespace FocusAgent.Core.Focus;
 
 public interface IFocusEnforcer
 {
-    void RememberAllowed(nint windowHandle);
+    /// <summary>
+    /// Remembers an allowed window as the one <see cref="Block"/> hands focus back
+    /// to. Windows that are no place to return a student to, such as explorer's
+    /// taskbar, its flyouts and the desktop, or a window already hidden, are
+    /// ignored and leave the previous one in place (#437). Returns whether
+    /// <paramref name="windowHandle"/> is now the window to fall back to, so the
+    /// caller knows which app that window belongs to: a paused browser's window is
+    /// no fallback while the pause lasts (#452).
+    /// </summary>
+    bool RememberAllowed(nint windowHandle);
 
     /// <summary>
     /// Minimizes a single window without touching foreground. Used by the
@@ -11,17 +20,83 @@ public interface IFocusEnforcer
     /// restore a previously-allowed window, because a bulk sweep has no single
     /// window to hand focus back to. A dialog goes down with the app window that
     /// owns it (#428): minimizing the owner hides its dialogs too, and they come
-    /// back with the app.
+    /// back with the app. Never held up by an app that is not responding (#440):
+    /// the caller carries on after a moment, and the window goes down the moment its
+    /// app responds.
     /// </summary>
     void Minimize(nint windowHandle);
 
     /// <summary>
-    /// Minimizes the off-list window (a dialog together with the app window that
-    /// owns it, like <see cref="Minimize"/>). Returns true if focus was returned
-    /// to a previously remembered allowed window; false if there was nothing
-    /// valid to fall back to (caller should surface the overlay).
+    /// Blocks the off-list window. Returns true if a previously remembered allowed
+    /// window is there to fall back to: the blocked window (a dialog together with
+    /// the app window that owns it, like <see cref="Minimize"/>) then minimizes
+    /// itself, so Windows hands the foreground to the window below it, and a
+    /// minimized fallback is restored first (#438). Returns false if there was
+    /// nothing valid to fall back to: the window is left as it is, for the caller
+    /// to surface the overlay and hand the window over to it with
+    /// <see cref="HandOverAsync"/> (#441). Never held up by a blocked app that is not
+    /// responding, like <see cref="Minimize"/> (#440), nor by a minimized fallback
+    /// whose app is not responding (#451): the blocked window goes down all the
+    /// same, and the fallback comes back as soon as its app responds.
     /// </summary>
     bool Block(nint offendingWindowHandle);
+
+    /// <summary>
+    /// Takes a blocked window down so that <paramref name="successorWindowHandle"/>,
+    /// the focus overlay, gets the foreground and with it the keyboard (#441). The
+    /// agent may not give its own window the foreground, so the successor is put
+    /// above every app window, out of the topmost band, and the blocked window
+    /// minimizes itself: Windows then activates the first window from the top that
+    /// is on screen and not topmost (#475). A blocked window that is already
+    /// minimized but still has the foreground is restored first, because a window
+    /// that is minimized already hands nothing on when it is minimized again; one
+    /// that is minimized without the foreground is left as it is. When the
+    /// successor has the foreground already (the same window blocked twice), the
+    /// window only goes down. The successor loses its topmost place for the
+    /// hand-over; the caller puts it back once the task completes, and must not
+    /// before: back in the topmost band, it is passed over when the window goes
+    /// down (#475). Never held up
+    /// by the blocked app. The task completes with true once the successor has the
+    /// foreground, or with false when it did not get it within a short time (an
+    /// app that is not responding).
+    /// <para>
+    /// The window carries its minimize out whenever its app gets to it, after what
+    /// it is asked meanwhile, such as the student's restore: a second minimize still
+    /// on its way then takes the window down again. So it is not asked to minimize
+    /// while a minimize a hand-over asked of it is still on its way, nor when it is
+    /// down already and the successor has the keyboard (#474). It is asked once that
+    /// minimize is done, should it be on screen then (#476): Windows says a window
+    /// started to minimize only once its app is done with the minimize, after a
+    /// restore the student sent in the middle of it, which keeps the window up.
+    /// <paramref name="stillToGoDown"/>, checked right before the window is restored
+    /// or minimized, calls the hand-over off when it returns false, leaving the
+    /// window as it is: a paused browser whose pause was lifted meanwhile (#474).
+    /// The task then completes with false.
+    /// </para>
+    /// </summary>
+    Task<bool> HandOverAsync(
+        nint offendingWindowHandle,
+        nint successorWindowHandle,
+        Func<bool>? stillToGoDown = null);
+
+    /// <summary>
+    /// The foreground window, the one the student's keystrokes go to, when it is
+    /// <paramref name="windowHandle"/> or a dialog that window owns (#428); 0 when
+    /// the foreground is elsewhere. Pausing the browser hands that window over to
+    /// the overlay with <see cref="HandOverAsync"/> rather than minimizing it with
+    /// <see cref="Minimize"/> (#450).
+    /// </summary>
+    nint ForegroundWindowOf(nint windowHandle);
+
+    /// <summary>
+    /// Brings an allowed app's window forward for the student, as picking it on the
+    /// focus overlay does (<see cref="IAppIdentifier.LaunchOrActivate"/>): restored
+    /// if it is minimized, then given the foreground. Never held up by an app that
+    /// is not responding (#453): the caller carries on after a moment, and the
+    /// window comes back as soon as its app responds. The foreground only moves
+    /// while the agent may set it, as right after the student clicked the overlay.
+    /// </summary>
+    void BringForward(nint windowHandle);
 
     void Reset();
 }

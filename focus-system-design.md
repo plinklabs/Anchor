@@ -11,7 +11,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 ## 2. Scope and constraints
 
 - **Single school, one tenant.** No multi-tenancy needed.
-- **BYOD, Windows only.** No MDM, no admin rights at runtime.
+- **Windows only, managed or BYOD.** Most student laptops get the agent through Intune, as a Win32 app in user context (`docs/INTUNE.md`); students on their own laptop with a personal account install it themselves. Nothing depends on a laptop being managed, and nothing needs admin rights at runtime.
 - **Edge is the only supported browser.** Students are signed in with their Office 365 account; Edge picks up the Entra identity automatically.
 - **Teacher dashboard is web-based.** Used during lessons, sometimes while presenting.
 - **One developer**, evenings and weekends, leveraging Claude Code.
@@ -83,7 +83,7 @@ We are deliberately building **soft enforcement**: the agent actively pulls focu
 
 ### 5.1 Lifecycle
 
-- Installs per user from a Velopack package on GitHub Releases (BYOD, no admin rights, no code-signing cert); updates itself via Velopack deltas. The one step that asks for elevation is the Edge extension policy (§6), with a single UAC prompt.
+- Installs per user from a Velopack package on GitHub Releases (no admin rights, no code-signing cert): pushed by Intune through the release's install script on managed laptops, which also starts the agent right away (#457), or run by the student on their own laptop. Updates itself via Velopack deltas; Intune never pushes new versions. The one step that asks for elevation is the Edge extension policy (§6), with a single UAC prompt, and only where no Intune profile already sets that policy.
 - Runs at user login as a tray app.
 - Authenticates silently to the backend via Entra (WAM).
 - Maintains a persistent SignalR connection.

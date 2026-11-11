@@ -9,14 +9,15 @@ namespace FocusAgent.IntegrationTests;
 /// with <c>--test-crash-at &lt;stage&gt;</c> (one startup stage throws) and
 /// <c>--test-update-probe</c> (the update manager is a probe that claims an installed
 /// agent with a newer release on the feed, and logs each phase the real
-/// <c>AgentUpdateService</c> drives it through: check, download, stage). Then it
+/// <c>AgentUpdateService</c> drives it through: check, download, pending). Then it
 /// plays the student: waits for the real crash dialog, closes it at once, and
 /// asserts that
 /// <list type="bullet">
 ///   <item>the update check ran: before the crash where startup reached the update
 ///   service, or on the fatal path where it didn't (the host never came up);</item>
 ///   <item>the process did not exit under the in-flight download when the dialog
-///   closed, but waited until the fixed release was staged, then exited non-zero.</item>
+///   closed, but waited until the fixed release was downloaded and pending for the
+///   next launch, then exited non-zero.</item>
 /// </list>
 ///
 /// <para>
@@ -24,9 +25,9 @@ namespace FocusAgent.IntegrationTests;
 /// <c>&lt;probe file&gt;.release</c>, so "still alive after the dialog closed" is
 /// observed deterministically rather than raced against a timer. The real Velopack
 /// check path is covered by <see cref="UpdateCheckTests"/>; the cadence and
-/// join-or-run policy by <c>AgentUpdateServiceTests</c>. Applying a staged package on
-/// the next launch is Velopack's own startup step (<c>VelopackApp.Run</c>, auto-apply
-/// on) and needs a real Setup.exe install, so it is not driven here.
+/// join-or-run policy by <c>AgentUpdateServiceTests</c>. The next launch handing a
+/// downloaded package to Velopack's updater (<c>VelopackApp.Run</c>, auto-apply on)
+/// needs an install, so it is driven by <see cref="UpdateApplyTests"/> (#449), not here.
 /// </para>
 ///
 /// No backend is needed: every stage crashes before the agent connects. These runs
@@ -46,17 +47,18 @@ public sealed class StartupCrashUpdateTests
     // then opens on top of the crash dialog.
     private const string CrashSurfaceTitle = "Anchor";
     private const string CheckLine = "check";
-    private const string StagedLine = "stage 9.9.9";
+    private const string PendingLine = "pending 9.9.9";
 
     // CrashReporter.FatalExitCode: the crash dialog's explicit exit.
     private const int FatalExitCode = 1;
 
     [Fact]
-    public async Task Crash_creating_the_main_window_still_runs_the_startup_update_check_and_stages_the_fix_before_exiting()
+    public async Task Crash_creating_the_main_window_still_runs_the_startup_update_check_and_downloads_the_fix_before_exiting()
     {
         // #403's shape: everything up to MainWindow works, then its creation throws.
         await using var run = CrashRun.Launch("window");
         var dialog = await run.WaitForCrashSurfaceAsync(WinUiWindowClass);
+        run.AssertCrashLoggedInTheRunsLogFolder("window");
 
         // The update check was started before any window was created, so it ran
         // even though window creation threw.
@@ -66,16 +68,17 @@ public sealed class StartupCrashUpdateTests
         var exitCode = await run.ReleaseUpdateAndWaitForExitAsync();
 
         Assert.Equal(FatalExitCode, exitCode);
-        Assert.Contains(StagedLine, run.ReadProbe());
+        Assert.Contains(PendingLine, run.ReadProbe());
     }
 
     [Fact]
-    public async Task Crash_building_the_host_runs_an_update_check_on_the_fatal_path_and_stages_the_fix_before_exiting()
+    public async Task Crash_building_the_host_runs_an_update_check_on_the_fatal_path_and_downloads_the_fix_before_exiting()
     {
         // The earliest startup failure: no DI host, so no update service either.
         // The fatal path builds one from the config files and runs the check itself.
         await using var run = CrashRun.Launch("host");
         var dialog = await run.WaitForCrashSurfaceAsync(WinUiWindowClass);
+        run.AssertCrashLoggedInTheRunsLogFolder("host");
 
         var lines = run.ReadProbe();
         AssertBefore(lines, "crash-at:host", CheckLine);
@@ -85,16 +88,17 @@ public sealed class StartupCrashUpdateTests
         var exitCode = await run.ReleaseUpdateAndWaitForExitAsync();
 
         Assert.Equal(FatalExitCode, exitCode);
-        Assert.Contains(StagedLine, run.ReadProbe());
+        Assert.Contains(PendingLine, run.ReadProbe());
     }
 
     [Fact]
-    public async Task Background_thread_crash_waits_for_the_update_check_to_stage_the_fix_before_the_process_ends()
+    public async Task Background_thread_crash_waits_for_the_update_check_to_download_the_fix_before_the_process_ends()
     {
         // A fatal exception on a background thread: the runtime ends the process as
         // soon as the handler returns, after the blocking fallback message box.
         await using var run = CrashRun.Launch("background");
         var box = await run.WaitForCrashSurfaceAsync(MessageBoxClass);
+        run.AssertCrashLoggedInTheRunsLogFolder("background");
 
         AssertBefore(run.ReadProbe(), CheckLine, "crash-at:background");
 
@@ -103,7 +107,7 @@ public sealed class StartupCrashUpdateTests
 
         // The runtime's unhandled-exception exit code, not the dialog's.
         Assert.NotEqual(0, exitCode);
-        Assert.Contains(StagedLine, run.ReadProbe());
+        Assert.Contains(PendingLine, run.ReadProbe());
     }
 
     private static void AssertBefore(IReadOnlyList<string> lines, string first, string then)
@@ -118,13 +122,18 @@ public sealed class StartupCrashUpdateTests
     /// <summary>One crashing agent launch plus its probe file; killed and cleaned up on dispose.</summary>
     private sealed class CrashRun : IAsyncDisposable
     {
+        // The crash log in the run's log folder, which the agent inherits (#463).
+        private static readonly string CrashLogPath = Path.Combine(AgentTestLogs.Folder, "startup-error.log");
+
         private readonly Process _process;
         private readonly string _probePath;
+        private readonly long _crashLogStart;
 
-        private CrashRun(Process process, string probePath)
+        private CrashRun(Process process, string probePath, long crashLogStart)
         {
             _process = process;
             _probePath = probePath;
+            _crashLogStart = crashLogStart;
         }
 
         public static CrashRun Launch(string stage)
@@ -136,6 +145,7 @@ public sealed class StartupCrashUpdateTests
                     TestConfig.AgentExe);
 
             var probePath = Path.Combine(Path.GetTempPath(), $"anchor-update-probe-{Guid.NewGuid():N}.txt");
+            var crashLogStart = File.Exists(CrashLogPath) ? new FileInfo(CrashLogPath).Length : 0;
             var psi = new ProcessStartInfo(TestConfig.AgentExe) { UseShellExecute = false };
             psi.ArgumentList.Add("--test-crash-at");
             psi.ArgumentList.Add(stage);
@@ -144,7 +154,28 @@ public sealed class StartupCrashUpdateTests
 
             var process = Process.Start(psi)
                 ?? throw new InvalidOperationException("Failed to start the agent process.");
-            return new CrashRun(process, probePath);
+            return new CrashRun(process, probePath, crashLogStart);
+        }
+
+        /// <summary>
+        /// Assert this launch's crash reached the crash log in the run's log folder
+        /// (#463): a <c>--test-crash-at</c> launch moves its logs like every dev
+        /// launch, so it writes nothing into the machine's own agent log. The crash
+        /// log is written before the crash surface shows.
+        /// </summary>
+        public void AssertCrashLoggedInTheRunsLogFolder(string stage)
+        {
+            var logged = "";
+            if (File.Exists(CrashLogPath))
+            {
+                using var stream = new FileStream(CrashLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                stream.Seek(_crashLogStart, SeekOrigin.Begin);
+                using var reader = new StreamReader(stream);
+                logged = reader.ReadToEnd();
+            }
+            Assert.True(
+                logged.Contains($"Test-only startup crash at '{stage}'"),
+                $"The crash at '{stage}' is not in the run's crash log {CrashLogPath}. What this launch added to it:\n{logged}");
         }
 
         /// <summary>The probe's lines so far (it appends while we read).</summary>
@@ -184,7 +215,7 @@ public sealed class StartupCrashUpdateTests
         /// </summary>
         public async Task CloseAndAssertProcessWaitsForTheUpdateAsync(IntPtr hwnd)
         {
-            Assert.DoesNotContain(StagedLine, ReadProbe());
+            Assert.DoesNotContain(PendingLine, ReadProbe());
 
             WindowCapture.PostClose(hwnd);
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);

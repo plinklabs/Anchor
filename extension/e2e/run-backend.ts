@@ -37,6 +37,11 @@ const child = spawn(
       // 1, so the Development appsettings' http://localhost:5173 (index 0)
       // stays. Its host is always allowed in a session (#409).
       Cors__AllowedOrigins__1: DASHBOARD_ORIGIN,
+      // How long a joined student's agent has to send its first heartbeat
+      // before the teacher's roster shows it missing (#444). No spec runs an
+      // agent, so every joined student's agent goes missing; shortened from
+      // the 30 s default so the spec that checks it doesn't wait half a minute.
+      Heartbeat__AgentJoinGraceSeconds: '5',
       // Keep the piped webServer / CI log readable — the EF command logger is
       // otherwise hundreds of SQL lines per run.
       'Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command': 'Warning',

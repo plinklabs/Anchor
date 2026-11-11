@@ -7,8 +7,8 @@ namespace Anchor.Api.Sessions;
 
 /// <summary>
 /// The one way a session ends, whoever ends it: the teacher's
-/// <c>POST /sessions/{id}/end</c>, or <see cref="SessionAutoEnder"/> closing a
-/// session the teacher forgot (#345). Ending a session sets <c>EndedAt</c> and
+/// <c>POST /sessions/{id}/end</c>, or <see cref="SessionAutoEnder"/> ending a
+/// session at its planned end (#447) or one the teacher forgot (#345). Ending a session sets <c>EndedAt</c> and
 /// writes its per-(student, kind) <see cref="SessionEventSummary"/> rows in one
 /// transaction, drops its cached heartbeat-validation entries (#342), and
 /// broadcasts <c>SessionEnded</c> — which also drops its heartbeat tracking — to
@@ -20,17 +20,20 @@ public sealed class SessionEnder
     private readonly AnchorDbContext _db;
     private readonly ISessionBroadcaster _broadcaster;
     private readonly ActiveParticipantCache _activeParticipants;
+    private readonly SessionEndSchedule _endSchedule;
     private readonly TimeProvider _clock;
 
     public SessionEnder(
         AnchorDbContext db,
         ISessionBroadcaster broadcaster,
         ActiveParticipantCache activeParticipants,
+        SessionEndSchedule endSchedule,
         TimeProvider clock)
     {
         _db = db;
         _broadcaster = broadcaster;
         _activeParticipants = activeParticipants;
+        _endSchedule = endSchedule;
         _clock = clock;
     }
 
@@ -78,8 +81,10 @@ public sealed class SessionEnder
         }
 
         // Drop the session's cached heartbeat-validation entries (#342) so they
-        // don't outlive it in memory.
+        // don't outlive it in memory, and its planned end (#447): ended early by
+        // the teacher, there's nothing left to end then.
         _activeParticipants.ClearSession(sessionId);
+        _endSchedule.Remove(sessionId);
         await _broadcaster.SessionEndedAsync(sessionId, recipients, cancellationToken);
         return new SessionEndOutcome(endedAt, EndedNow: true);
     }

@@ -39,6 +39,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     private readonly ActiveParticipantCache _activeParticipants;
     private readonly ISessionBroadcaster _broadcaster;
     private readonly ISessionAllowlistExpander _allowlist;
+    private readonly SessionEndSchedule _endSchedule;
     private readonly ILogger<SessionHub> _log;
 
     public SessionHub(
@@ -50,6 +51,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         ActiveParticipantCache activeParticipants,
         ISessionBroadcaster broadcaster,
         ISessionAllowlistExpander allowlist,
+        SessionEndSchedule endSchedule,
         ILogger<SessionHub> log)
     {
         _db = db;
@@ -60,6 +62,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         _activeParticipants = activeParticipants;
         _broadcaster = broadcaster;
         _allowlist = allowlist;
+        _endSchedule = endSchedule;
         _log = log;
     }
 
@@ -107,10 +110,22 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         // or a participant row.
         var isOwningTeacher = session.TeacherId == user.Id;
 
+        // Past its planned end (#447) the session is over, even in the moment
+        // before the auto-end marks it ended: no agent or extension joins or
+        // rejoins it any more, so a student whose agent starts after the lesson
+        // stays out. Only its teacher's page may still subscribe, to hear it
+        // end. Scheduling its end here gets it ended on time, or at once, should
+        // the backend have restarted since it started.
+        var now = _clock.GetUtcNow();
+        if (session.EndsAt is { } endsAt)
+            _endSchedule.Schedule(session.Id, endsAt);
+        var pastPlannedEnd = Session.IsPastPlannedEnd(session.EndsAt, now);
+        if (pastPlannedEnd && !isOwningTeacher)
+            throw new HubException("Session not found or already ended.");
+
         var participant = await _db.SessionParticipants
             .FirstOrDefaultAsync(p => p.SessionId == session.Id && p.UserId == user.Id, ct);
 
-        var now = _clock.GetUtcNow();
         var joined = false;
         if (participant is null && !isOwningTeacher)
         {
@@ -133,11 +148,18 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         }
         else if (participant is not null && !isOwningTeacher)
         {
+            // A student who declined stays out of the session until they join
+            // it again by code, which clears the decline (#471). The extension
+            // joins without asking them, so its join can't undo their answer,
+            // nor tell the teacher's roster they joined.
+            if (participant.DeclinedAt is not null)
+                throw new HubException("Session declined. Join it again by code to take part.");
+
             participant.JoinedAt ??= now;
             participant.LeftAt = null;
             joined = true;
         }
-        else if (participant is not null &&
+        else if (participant is not null && !pastPlannedEnd &&
                  participant.JoinedAt is null && participant.LeftAt is null && participant.DeclinedAt is null)
         {
             // The owning teacher took part by code and their agent or extension
@@ -152,6 +174,13 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         await _db.SaveChangesAsync(ct);
         if (participant is not null)
             _activeParticipants.Update(participant);
+
+        // The agent and the extension both join, so this join may be the
+        // extension's alone. Start waiting for the agent's first heartbeat; the
+        // monitor reports it missing if none arrives in time (#444). Already
+        // tracked, as when the agent joined first, it stays as it is.
+        if (joined)
+            _heartbeats.ExpectAgent(session.Id, user.Id, now);
 
         if (isOwningTeacher)
         {
@@ -195,11 +224,23 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             await _db.SaveChangesAsync(ct);
             _activeParticipants.Update(participant);
 
+            // The agent and the extension stop pinging once the student has
+            // left, so drop their heartbeat tracking, as AgentKilled does: left
+            // in place, their last pings would age into a HeartbeatLost and an
+            // extension_silent flag for a student who left normally (#448).
+            // After the cache update above, so a ping arriving from now on is
+            // rejected rather than tracked again.
+            _heartbeats.Clear(sessionId, user.Id);
+
             await _broadcaster.ParticipantStateChangedAsync(
                 new ParticipantStateChangedPayload(
                     sessionId, user.Id, user.DisplayName,
                     nameof(ParticipantLiveState.Left), leftAt),
                 ct);
+
+            // The agent called this; the student's extension would otherwise
+            // go on filtering and pinging a session they left (#462).
+            await _broadcaster.ParticipationEndedAsync(sessionId, user.Id, ct);
         }
 
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupName(sessionId), ct);
@@ -247,12 +288,27 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         });
 
         await _db.SaveChangesAsync(ct);
+        // Declining takes the student out of the session even when their
+        // extension already joined it: it joins on SessionStarted without
+        // waiting for the student's answer in the agent, which set JoinedAt
+        // (#462). So their pings are turned away from now on.
+        _activeParticipants.Update(participant);
+
+        // A student can decline a session their agent was already in: when a
+        // restarted agent's silent rejoin fails, its catch-up offers that
+        // session again (#356). An agent doesn't ping a session it declined, so
+        // drop the tracking its earlier pings left, which would otherwise age
+        // into a HeartbeatLost for a student the roster shows as Declined (#448).
+        _heartbeats.Clear(session.Id, user.Id);
 
         await _broadcaster.ParticipantStateChangedAsync(
             new ParticipantStateChangedPayload(
                 session.Id, user.Id, user.DisplayName,
                 nameof(ParticipantLiveState.Declined), now),
             ct);
+
+        // The extension may be enforcing the session already, as above (#462).
+        await _broadcaster.ParticipationEndedAsync(session.Id, user.Id, ct);
     }
 
     public Task Heartbeat(Guid sessionId) => RecordHeartbeatAsync(sessionId, WitnessSource.Agent);
@@ -280,7 +336,15 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         if (!await _activeParticipants.IsActiveAsync(_db.SessionParticipants.AsNoTracking(), sessionId, user.Id, ct))
             throw new HubException("Not an active participant of this session.");
 
-        _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow(), source);
+        var now = _clock.GetUtcNow();
+        _heartbeats.Record(sessionId, user.Id, now, source);
+
+        // A pinging extension means its student's agent should be pinging too.
+        // JoinSession already started waiting for it, but a backend restart
+        // empties the tracker, and the extension keeps pinging without joining
+        // again, so its pings start the wait anew (#444).
+        if (source == WitnessSource.Extension)
+            _heartbeats.ExpectAgent(sessionId, user.Id, now);
     }
 
     /// <summary>
@@ -291,17 +355,29 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     /// (#354): <c>SessionEnded</c> reaches only the connections open when it is
     /// sent, so a session that ended while a client was offline — a network
     /// drop, a backend restart, a laptop asleep through the automatic end —
-    /// would otherwise stay in force on that client. Read from the database
+    /// would otherwise stay in force on that client. The same goes for a
+    /// student who left, declined or quit the agent while their extension was
+    /// offline: they are out of the session too, and miss the
+    /// <c>ParticipationEnded</c> that says so (#462). Read from the database
     /// rather than <see cref="ActiveParticipantCache"/>: it runs once per
     /// reconnect, not per ping, and decides whether the student leaves focus
-    /// mode.
+    /// mode. A session past its planned end (#447) counts as ended, so the
+    /// sweep's interval leaves no gap after the backend restarts.
     /// </summary>
     public async Task<bool> IsInSession(Guid sessionId)
     {
         var ct = Context.ConnectionAborted;
         var user = await ResolveCurrentUserAsync(ct);
-        return await _db.SessionParticipants.AsNoTracking()
-            .AnyAsync(ActiveParticipantCache.IsActive(sessionId, user.Id), ct);
+        var active = await _db.SessionParticipants.AsNoTracking()
+            .Where(ActiveParticipantCache.IsActive(sessionId, user.Id))
+            .Select(p => new { p.Session!.EndsAt })
+            .FirstOrDefaultAsync(ct);
+        if (active is null)
+            return false;
+
+        if (active.EndsAt is { } endsAt)
+            _endSchedule.Schedule(sessionId, endsAt);
+        return !Session.IsPastPlannedEnd(active.EndsAt, _clock.GetUtcNow());
     }
 
     /// <summary>
@@ -318,7 +394,8 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     /// connection to its user group. An invocation is dispatched only once
     /// OnConnectedAsync has finished, so a session saved before this query runs
     /// is in its answer, and any later one's broadcast finds the connection in
-    /// its group.
+    /// its group. A session past its planned end (#447) is left out: it is
+    /// over, so an agent or extension starting after the lesson stays out of it.
     /// </summary>
     public async Task<SessionStartedPayload?> GetStartedSession()
     {
@@ -330,11 +407,19 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                         p.DeclinedAt == null &&
                         p.LeftAt == null &&
                         p.Session!.EndedAt == null)
-            .Select(p => new { p.Session!.Id, p.Session.ClassId, p.Session.StartedAt, p.Session.JoinCode })
+            .Select(p => new { p.Session!.Id, p.Session.ClassId, p.Session.StartedAt, p.Session.EndsAt, p.Session.JoinCode })
             .ToListAsync(ct);
+        var now = _clock.GetUtcNow();
+        foreach (var row in rows)
+        {
+            if (row.EndsAt is { } endsAt)
+                _endSchedule.Schedule(row.Id, endsAt);
+        }
         // SQLite (dev + tests) can't ORDER BY a DateTimeOffset; sort in memory,
         // as /sessions/rejoinable does.
-        var latest = rows.MaxBy(s => s.StartedAt);
+        var latest = rows
+            .Where(s => !Session.IsPastPlannedEnd(s.EndsAt, now))
+            .MaxBy(s => s.StartedAt);
         if (latest is null)
             return null;
 
@@ -441,6 +526,10 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                     request.SessionId, user.Id, user.DisplayName,
                     nameof(ParticipantLiveState.Left), occurredAt),
                 ct);
+
+            // The extension outlives the agent, and the student is out of the
+            // session now, as after a leave (#462).
+            await _broadcaster.ParticipationEndedAsync(request.SessionId, user.Id, ct);
         }
     }
 

@@ -12,17 +12,19 @@ namespace Anchor.Api.Realtime;
 /// ~300 students a database query per ping was ~60 queries per second — by far
 /// the largest share of database load. "Active" means a
 /// <see cref="SessionParticipant"/> row with <c>JoinedAt</c> set and
-/// <c>LeftAt</c> null, in a session that hasn't ended (<see cref="IsActive"/>).
+/// <c>LeftAt</c> and <c>DeclinedAt</c> null, in a session that hasn't ended
+/// (<see cref="IsActive"/>).
 /// The query this replaced didn't check the session: an agent or extension that
 /// never heard its session end could ping it back into the heartbeat tracker,
 /// and the monitor would then report the student lost, or the extension
 /// silent, after the session was over (#354).
 ///
 /// <para>
-/// Every code path that changes those two columns reports the row it just
-/// saved through <see cref="Update"/>: <c>JoinSession</c> (including a rejoin),
+/// Every code path that changes those columns reports the row it just saved
+/// through <see cref="Update"/>: <c>JoinSession</c> (including a rejoin),
 /// <c>LeaveSession</c> (which also covers a ManualLeave — the agent reports that
-/// event and then leaves), the AgentKilled event and the join-by-code rejoin.
+/// event and then leaves), <c>DeclineSession</c>, the AgentKilled event and the
+/// join-by-code rejoin.
 /// Ending a session drops its entries through <see cref="ClearSession"/>.
 /// </para>
 ///
@@ -65,14 +67,19 @@ public sealed class ActiveParticipantCache
 
     /// <summary>
     /// The database form of "active": the user's participant row in the
-    /// session has <c>JoinedAt</c> set and <c>LeftAt</c> null, and the session
-    /// hasn't ended.
+    /// session has <c>JoinedAt</c> set and <c>LeftAt</c> and <c>DeclinedAt</c>
+    /// null, and the session hasn't ended. The same participation the rest of
+    /// the backend counts as active (<c>/sessions/rejoinable</c>, the bundle and
+    /// grant pushes). Declining used to count here as long as the extension had
+    /// joined first, which it does on SessionStarted without waiting for the
+    /// student's answer, so its pings went on being accepted (#462).
     /// </summary>
     public static Expression<Func<SessionParticipant, bool>> IsActive(Guid sessionId, Guid userId) =>
         p => p.SessionId == sessionId &&
              p.UserId == userId &&
              p.JoinedAt != null &&
              p.LeftAt == null &&
+             p.DeclinedAt == null &&
              p.Session!.EndedAt == null;
 
     /// <summary>
@@ -140,7 +147,7 @@ public sealed class ActiveParticipantCache
     public void Update(SessionParticipant participant)
     {
         var sequence = Interlocked.Increment(ref _updateSequence);
-        var isActive = participant.JoinedAt is not null && participant.LeftAt is null;
+        var isActive = participant.JoinedAt is not null && participant.LeftAt is null && participant.DeclinedAt is null;
         _entries[(participant.SessionId, participant.UserId)] =
             new Entry(isActive, _clock.GetUtcNow(), sequence);
     }

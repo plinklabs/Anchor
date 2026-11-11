@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import 'alerts/live_alert_services.dart';
+import 'alerts/live_alert_settings_dialog.dart';
 import 'api/admins_api.dart';
 import 'api/auth_token_store.dart';
 import 'api/bundles_api.dart';
@@ -82,8 +84,12 @@ GoRouter buildRouter({
   required Uri apiBaseUrl,
   SessionHubClientFactory? hubClientFactory,
   BundleFileIo? bundleFileIo,
+  LiveAlertServices? alertServices,
   Duration loginSilentTimeout = const Duration(seconds: 30),
 }) {
+  // One for the whole app (#454): the app bar's Notifications dialog and the
+  // live page share the teacher's settings and the one sound.
+  final LiveAlertServices alerts = alertServices ?? LiveAlertServices.browser();
   late final GoRouter router;
   router = GoRouter(
     refreshListenable: tokens,
@@ -130,6 +136,7 @@ GoRouter buildRouter({
           tokens: tokens,
           auth: auth,
           sessions: sessions,
+          alerts: alerts,
           child: child,
         ),
         routes: [
@@ -147,6 +154,7 @@ GoRouter buildRouter({
               bundles: bundles,
               apiBaseUrl: apiBaseUrl,
               hubClientFactory: hubClientFactory,
+              alertServices: alerts,
             ),
           ),
           GoRoute(
@@ -245,6 +253,7 @@ class _AppShellHost extends StatefulWidget {
     required this.tokens,
     required this.auth,
     required this.sessions,
+    required this.alerts,
   });
 
   final String location;
@@ -252,6 +261,7 @@ class _AppShellHost extends StatefulWidget {
   final AuthTokenStore tokens;
   final MsalAuthService auth;
   final SessionsApi sessions;
+  final LiveAlertServices alerts;
 
   @override
   State<_AppShellHost> createState() => _AppShellHostState();
@@ -293,6 +303,7 @@ class _AppShellHostState extends State<_AppShellHost> {
       accountName: widget.tokens.account?.displayName,
       onSignOut: _signOut,
       onNavigate: (location) => context.go(location),
+      onOpenNotifications: () => showLiveAlertSettings(context, widget.alerts),
       child: widget.child,
     );
   }

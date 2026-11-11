@@ -19,7 +19,9 @@ import 'support/e2e_binding.dart';
 // can't hide behind the isolated widget tests. The Start→live-session and
 // Resume taps aren't driven here — the real SessionPage's SignalR hub never
 // settles in a test (see home_page_resume_test.dart) — those are covered by the
-// widget tests against a fake route.
+// widget tests against a fake route, and by live_session_test.dart with a
+// stubbed hub. The composer's choice of when the session ends (#447) renders
+// here in both its forms: the period ends, and a time to type.
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -42,7 +44,19 @@ class _FakeAuth implements MsalAuthService {
 }
 
 class _FakeSessions extends SessionsApi {
-  _FakeSessions() : super(_dummyClient());
+  _FakeSessions({SessionEndOptions? endOptions})
+    : endOptionsValue =
+          endOptions ??
+          SessionEndOptions(
+            thisPeriodEndsAt: DateTime(2026, 6, 14, 10, 5),
+            nextPeriodEndsAt: DateTime(2026, 6, 14, 10, 55),
+          ),
+      super(_dummyClient());
+
+  final SessionEndOptions endOptionsValue;
+
+  @override
+  Future<SessionEndOptions> endOptions(String classId) async => endOptionsValue;
 
   @override
   Future<MeResponse> me() async =>
@@ -84,6 +98,28 @@ class _FakeBundles extends BundlesApi {
       const [];
 }
 
+Widget _app(_FakeSessions sessions) {
+  final tokens = AuthTokenStore()
+    ..setSession(
+      token: 'fake-token',
+      account: const AccountInfo(
+        homeAccountId: 'home-1',
+        username: 'teacher@school.example',
+        displayName: 'Ms Teacher',
+        department: null,
+      ),
+    );
+  return AnchorDashboard(
+    tokens: tokens,
+    auth: _FakeAuth(),
+    api: _dummyClient(),
+    sessions: sessions,
+    bundles: _FakeBundles(),
+    classes: _FakeClasses(),
+    apiBaseUrl: Uri.parse('http://localhost'),
+  );
+}
+
 void main() {
   ensureE2eBinding();
 
@@ -95,28 +131,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      final tokens = AuthTokenStore()
-        ..setSession(
-          token: 'fake-token',
-          account: const AccountInfo(
-            homeAccountId: 'home-1',
-            username: 'teacher@school.example',
-            displayName: 'Ms Teacher',
-            department: null,
-          ),
-        );
-
-      await tester.pumpWidget(
-        AnchorDashboard(
-          tokens: tokens,
-          auth: _FakeAuth(),
-          api: _dummyClient(),
-          sessions: _FakeSessions(),
-          bundles: _FakeBundles(),
-          classes: _FakeClasses(),
-          apiBaseUrl: Uri.parse('http://localhost'),
-        ),
-      );
+      await tester.pumpWidget(_app(_FakeSessions()));
       await tester.pumpAndSettle();
 
       // The shared chrome (AD1) frames the page: the lockup and the home
@@ -141,9 +156,49 @@ void main() {
         find.widgetWithText(ElevatedButton, 'Start session for Math 101'),
         findsOneWidget,
       );
+      // When the session ends (#447): the end of this period by default.
+      expect(find.byKey(const Key('end-picker')), findsOneWidget);
+      expect(find.text('At the end of this period (10:05)'), findsOneWidget);
 
       // No RenderFlex overflow or other exception with the real fonts at this
       // size — the bug an isolated widget test structurally misses.
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'the choice of end time renders its period ends and its time field under '
+    'the real shell, in a narrow window too (#447)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 1000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(_app(_FakeSessions()));
+      await tester.pumpAndSettle();
+
+      // The menu: both period ends and a time of the teacher's choosing.
+      await tester.tap(find.byKey(const Key('end-picker')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('At the end of the next period (10:55)'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('At a time I pick').last);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('end-time')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      // A school without lesson periods, on a narrow window: only the time.
+      tester.view.physicalSize = const Size(750, 900);
+      await tester.pumpWidget(
+        _app(_FakeSessions(endOptions: SessionEndOptions())),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('At a time I pick'), findsOneWidget);
+      expect(find.byKey(const Key('end-time')), findsOneWidget);
+      expect(find.textContaining('period'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

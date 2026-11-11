@@ -78,6 +78,10 @@ async function ensureHub(): Promise<void> {
   const callbacks = {
     onSessionStarted: handleSessionStarted,
     onSessionEnded: handleSessionEnded,
+    // The student left, declined or quit the agent while the session runs on
+    // (#462). They are out of it, so stop filtering exactly as when it ends:
+    // nothing keeps enforcing a session the backend no longer counts them in.
+    onParticipationEnded: handleSessionEnded,
     onAllowlistAmended: handleAllowlistAmended,
     onSessionBundlesUpdated: handleSessionBundlesUpdated,
     onConnected: handleHubConnected,
@@ -186,11 +190,14 @@ function ensureHeartbeat(): void {
 // Every (re)connect is a new hub connection, which never receives a SessionEnded
 // the backend sent while the extension was offline — between service-worker
 // generations, or through a network drop. Ask instead, so an ended session
-// doesn't stay in force until the browser restarts (#354). The same goes for a
-// SessionStarted, which also misses a connection in the moment before the
-// backend adds it to the student's user group: ask which session the student is
-// in, so a started one is enforced (#356). The hub client runs this after
-// every connect, however long the outage before it was (#374).
+// doesn't stay in force until the browser restarts (#354). Nor a
+// ParticipationEnded: a student who left or declined the session, or quit the
+// agent, meanwhile is no longer in it either, and IsInSession says so (#462).
+// The same goes for a SessionStarted, which also misses a connection in the
+// moment before the backend adds it to the student's user group: ask which
+// session the student is in, so a started one is enforced (#356). The hub
+// client runs this after every connect, however long the outage before it was
+// (#374).
 async function handleHubConnected(): Promise<void> {
   await catchUpOnConnect({
     getActiveSessionId: async () => (await getActiveSession())?.sessionId ?? null,
@@ -229,10 +236,13 @@ async function handleSessionStarted(payload: SessionStartedPayload): Promise<voi
   await scanAndBlockOpenTabs(state);
 }
 
+// The session ended, or the student is no longer in it (#462): drop it, which
+// also stops the heartbeat from pinging it (it pings only the active session),
+// and send the tabs parked on its block page back to their pages.
 async function handleSessionEnded(sessionId: string): Promise<void> {
   const current = await getActiveSession();
   if (current && current.sessionId !== sessionId) {
-    log.warn('ignoring SessionEnded for a different session', {
+    log.warn('ignoring the end of a session other than the active one', {
       activeSessionId: current.sessionId,
       endedSessionId: sessionId,
     });

@@ -1,7 +1,7 @@
 using System.Net;
-using System.Reflection;
 using System.Text.Json;
 using FocusAgent.App.Connectivity;
+using FocusAgent.Core.Diagnostics;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Tamper;
@@ -40,9 +40,10 @@ namespace FocusAgent.App.Connectivity;
 ///   POST /leave -> the student "Leave session" button: emits ManualLeave and
 ///                  ends the session locally while the agent keeps running.
 ///   POST /close -> the window "Close" button: hides the window to the tray.
-///   POST /quit  -> the tray/window "Quit" action (#110): shuts the agent down
-///                  cleanly, which emits a best-effort AgentKilled event first
-///                  if quit happens mid-session.
+///   POST /quit  -> the tray's "Exit Anchor" action (#110): shuts the agent down
+///                  cleanly. Under the tray's rule (#445): while a session is
+///                  going on the tray offers no Exit, so this answers 409 and the
+///                  agent keeps running.
 ///   POST /extension-consent?answer=allow|not-now
 ///               -> the Edge extension setup window's buttons (#405): answers
 ///                  the open window like a click (404 when none is open). In a
@@ -54,36 +55,34 @@ namespace FocusAgent.App.Connectivity;
 ///               -> the paused-Edge overlay's "switch the extension back on"
 ///                  action (#427): opens Edge for the repair window (409 when
 ///                  Edge isn't paused).
+///   POST /overlay-app?app=&lt;rule value&gt;
+///               -> the focus overlay's row for that allowed app (#453): clicks it
+///                  on the UI thread, as the student does, without waiting for
+///                  the click (409 when the overlay isn't up).
 ///
 /// And /status carries <c>extensionPolicy</c> (#405): where the Anchor
 /// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>)
-/// and whether the setup window is open; and <c>extensionGuard</c> (#427):
-/// whether the extension's witness is connected and the Edge pause's state.
+/// and whether the setup window is open; <c>extensionGuard</c> (#427):
+/// whether the extension's witness is connected and the Edge pause's state; and
+/// <c>overlay</c> (#452): what the focus overlay shows while it is up
+/// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not; and
+/// <c>pendingUpdate</c> (#449): the version of a downloaded update that the next
+/// agent start applies, null while none is waiting; and <c>lastUpdateCheck</c>
+/// (#456): when the last update check started, by the agent's clock; and
+/// <c>logUpload</c> (#446): how many log-upload passes ran in this process, how
+/// many session windows they uploaded, when the last one ended and its error.
+///
+/// Two more POST controls drive the #456 update restart:
+///   POST /check-update
+///               -> run an update check now, as the interval timer does.
+///   POST /simulate-sleep?slept=&lt;hh:mm:ss&gt;
+///               -> what time asleep does to the agent: the update clock jumps
+///                  by <c>slept</c> while the timers stay put. The e2e then sends
+///                  the wake itself, the way Windows does (a power or session
+///                  message to the agent's SystemEvents window).
 /// </summary>
 public sealed class StatusEndpoint : IAsyncDisposable
 {
-    /// <summary>
-    /// The agent's own version, as baked into the assembly from the single
-    /// version source (agent/Directory.Build.props, #208). Read from the
-    /// InformationalVersion that MSBuild derives from &lt;Version&gt;; the
-    /// "+&lt;commit&gt;" SourceLink suffix (if any) is trimmed so the reported
-    /// value is the clean SemVer the build was stamped with. This is the runtime
-    /// proof that the single version source actually flows into the produced exe.
-    /// </summary>
-    public static string AgentVersion { get; } = ResolveAgentVersion();
-
-    private static string ResolveAgentVersion()
-    {
-        var informational = Assembly.GetExecutingAssembly()
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-            ?.InformationalVersion;
-        if (string.IsNullOrEmpty(informational))
-            return "0.0.0";
-        // Strip the SourceLink "+<sha>" build metadata if present.
-        var plus = informational.IndexOf('+');
-        return plus >= 0 ? informational[..plus] : informational;
-    }
-
     private readonly ConnectionManager _connection;
     private readonly SessionCoordinator _coordinator;
     private readonly FocusSessionController _focus;
@@ -92,11 +91,19 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<CancellationToken, Task>? _onLeaveSession;
     private readonly Action? _onCloseWindow;
     private readonly Action? _onQuit;
+    private readonly Func<bool>? _canQuit;
     private readonly Func<object?>? _extensionPolicy;
     private readonly Func<bool, bool>? _onAnswerExtensionConsent;
     private readonly Action? _onOfferExtensionSetup;
     private readonly Func<object?>? _extensionGuard;
     private readonly Func<bool>? _onTurnExtensionBackOn;
+    private readonly Func<string?>? _overlay;
+    private readonly Func<string, bool>? _onClickOverlayApp;
+    private readonly Func<string?>? _pendingUpdate;
+    private readonly Func<DateTimeOffset?>? _lastUpdateCheck;
+    private readonly Action? _onCheckUpdate;
+    private readonly Action<TimeSpan>? _onSimulateSleep;
+    private readonly Func<object?>? _logUpload;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -114,7 +121,15 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<bool, bool>? onAnswerExtensionConsent = null,
         Action? onOfferExtensionSetup = null,
         Func<object?>? extensionGuard = null,
-        Func<bool>? onTurnExtensionBackOn = null)
+        Func<bool>? onTurnExtensionBackOn = null,
+        Func<string?>? overlay = null,
+        Func<string, bool>? onClickOverlayApp = null,
+        Func<string?>? pendingUpdate = null,
+        Func<DateTimeOffset?>? lastUpdateCheck = null,
+        Action? onCheckUpdate = null,
+        Action<TimeSpan>? onSimulateSleep = null,
+        Func<bool>? canQuit = null,
+        Func<object?>? logUpload = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -129,6 +144,14 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _onOfferExtensionSetup = onOfferExtensionSetup;
         _extensionGuard = extensionGuard;
         _onTurnExtensionBackOn = onTurnExtensionBackOn;
+        _overlay = overlay;
+        _onClickOverlayApp = onClickOverlayApp;
+        _pendingUpdate = pendingUpdate;
+        _lastUpdateCheck = lastUpdateCheck;
+        _onCheckUpdate = onCheckUpdate;
+        _onSimulateSleep = onSimulateSleep;
+        _canQuit = canQuit;
+        _logUpload = logUpload;
         _listener = new HttpListener();
     }
 
@@ -190,10 +213,14 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // Respond *before* triggering quit: ShutdownCleanly tears the
                 // process down, so the 204 must already be on the wire. The
                 // callback marshals onto the UI thread (see App.OnLaunched).
-                var canQuit = _onQuit is not null;
-                ctx.Response.StatusCode = canQuit ? 204 : 404;
+                // #445: 409 while a session is going on, when the tray offers no
+                // Exit, so a spec can tell "quitting" from "refused".
+                var status = _onQuit is null ? 404 : _canQuit?.Invoke() == false ? 409 : 204;
+                ctx.Response.StatusCode = status;
                 ctx.Response.Close();
-                if (canQuit) _onQuit!.Invoke();
+                if (status == 204) _onQuit!.Invoke();
+                else if (status == 409)
+                    _log.LogInformation("Quit refused: a session is going on, and the tray offers no Exit then.");
                 return;
             }
 
@@ -225,6 +252,39 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 return;
             }
 
+            if (method == "POST" && path == "/overlay-app")
+            {
+                // 409 when the overlay isn't up, so a spec can tell "clicked" from "no-op".
+                var app = ctx.Request.QueryString["app"];
+                var clicked = string.IsNullOrWhiteSpace(app) ? null : _onClickOverlayApp?.Invoke(app);
+                ctx.Response.StatusCode = string.IsNullOrWhiteSpace(app)
+                    ? 400
+                    : clicked switch { null => 404, true => 204, false => 409 };
+                ctx.Response.Close();
+                return;
+            }
+
+            if (method == "POST" && path == "/check-update")
+            {
+                _onCheckUpdate?.Invoke();
+                ctx.Response.StatusCode = _onCheckUpdate is null ? 404 : 204;
+                ctx.Response.Close();
+                return;
+            }
+
+            if (method == "POST" && path == "/simulate-sleep")
+            {
+                var valid = TimeSpan.TryParse(
+                                ctx.Request.QueryString["slept"],
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                out var slept)
+                            && slept >= TimeSpan.Zero;
+                if (valid) _onSimulateSleep?.Invoke(slept);
+                ctx.Response.StatusCode = !valid ? 400 : _onSimulateSleep is null ? 404 : 204;
+                ctx.Response.Close();
+                return;
+            }
+
             if (path != "/status")
             {
                 ctx.Response.StatusCode = 404;
@@ -237,8 +297,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
             var payload = new
             {
                 // #208: the agent's own version, proving the single version
-                // source (agent/Directory.Build.props) flowed into this exe.
-                agentVersion = AgentVersion,
+                // source (agent/Directory.Build.props) flowed into this exe. The
+                // same AgentVersion the main window and tray menu show (#423).
+                agentVersion = AgentVersion.Current,
                 connectionStatus = snap.Status.ToString(),
                 displayName = snap.DisplayName,
                 lastError = snap.LastError,
@@ -265,6 +326,20 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // #427: whether the extension's witness is connected and where the
                 // Edge pause stands, so the headless e2e can follow a switch-off.
                 extensionGuard = _extensionGuard?.Invoke(),
+                // #452: which overlay the student is on, if any, so the headless
+                // e2e can tell the paused-browser overlay from the blocked-app one.
+                overlay = _overlay?.Invoke(),
+                // #449: the downloaded update the next agent start applies, so the
+                // headless e2e can tell the update pass finished while the agent
+                // kept running.
+                pendingUpdate = _pendingUpdate?.Invoke(),
+                // #456: when the last update check started, so the headless e2e can
+                // tell whether a wake ran one.
+                lastUpdateCheck = _lastUpdateCheck?.Invoke(),
+                // #446: what the log uploads did in this process (passes run,
+                // windows uploaded, when the last pass ended, its error if any),
+                // so the headless e2e can tell a pass ran.
+                logUpload = _logUpload?.Invoke(),
             };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions
             {

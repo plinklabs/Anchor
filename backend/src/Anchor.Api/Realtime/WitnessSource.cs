@@ -9,7 +9,10 @@ namespace Anchor.Api.Realtime;
 /// </summary>
 public enum WitnessSource
 {
-    /// <summary>The on-box FocusAgent. Drives HeartbeatLost / AgentReconnected.</summary>
+    /// <summary>
+    /// The on-box FocusAgent. Drives HeartbeatLost / AgentReconnected, and
+    /// AgentMissing when it never pings after its student joined (#444).
+    /// </summary>
     Agent,
 
     /// <summary>

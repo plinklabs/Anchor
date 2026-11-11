@@ -13,7 +13,8 @@ namespace FocusAgent.IntegrationTests;
 ///
 /// Self-test modes skip single-instance gating (see <c>Program.Main</c>), and
 /// the window probe matches on this process's PID, so a developer's own running
-/// agent never collides with the throwaway self-test process.
+/// agent never collides with the throwaway self-test process. Like every agent
+/// the suite launches, it logs to <see cref="AgentTestLogs.Folder"/> (#463).
 /// </summary>
 internal sealed class AgentSelfTestProcess : IAsyncDisposable
 {
@@ -25,6 +26,8 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     public const string ShowTestMainWindowArg = "--show-test-mainwindow";
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";
     public const string ShowTestTrayMenuArg = "--show-test-traymenu";
+    /// <summary>With <see cref="ShowTestTrayMenuArg"/>: show the menu as it is during a session (#445).</summary>
+    public const string TrayMenuInSessionArg = "--traymenu-in-session";
     public const string ShowTestGuidedInstallArg = "--show-test-guided-install";
     public const string ShowTestExtensionConsentArg = "--show-test-extension-consent";
     public const string ShowTestCrashArg = "--show-test-crash";

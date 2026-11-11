@@ -22,7 +22,27 @@ internal sealed record StatusSnapshot(
     [property: JsonPropertyName("startupSweep")] StartupSweepSnapshot? StartupSweep,
     [property: JsonPropertyName("inPrivateDetections")] int InPrivateDetections,
     [property: JsonPropertyName("extensionPolicy")] ExtensionPolicySnapshot? ExtensionPolicy = null,
-    [property: JsonPropertyName("extensionGuard")] ExtensionGuardSnapshot? ExtensionGuard = null);
+    [property: JsonPropertyName("extensionGuard")] ExtensionGuardSnapshot? ExtensionGuard = null,
+    // #452: what the focus overlay shows while it is up (Blocked / BrowserPaused),
+    // null while it is not.
+    [property: JsonPropertyName("overlay")] string? Overlay = null,
+    // #449: the downloaded update the next agent start applies, null while none is.
+    [property: JsonPropertyName("pendingUpdate")] string? PendingUpdate = null,
+    // #456: when the last update check started, by the agent's update clock.
+    [property: JsonPropertyName("lastUpdateCheck")] DateTimeOffset? LastUpdateCheck = null,
+    // #446: what the log uploads did in this agent process.
+    [property: JsonPropertyName("logUpload")] LogUploadSnapshot? LogUpload = null);
+
+/// <summary>
+/// The log uploads as exposed on /status (#446): how many passes ran in this agent
+/// process (one per connect), how many session windows they uploaded, when the
+/// last pass ended and its error, if any.
+/// </summary>
+internal sealed record LogUploadSnapshot(
+    [property: JsonPropertyName("passes")] int Passes,
+    [property: JsonPropertyName("uploaded")] int Uploaded,
+    [property: JsonPropertyName("lastPassAt")] DateTimeOffset? LastPassAt,
+    [property: JsonPropertyName("lastError")] string? LastError);
 
 /// <summary>
 /// The Edge pause as exposed on /status (#427): whether the extension's witness
@@ -65,7 +85,10 @@ internal sealed record StartupSweepSnapshot(
 /// Config is overridden per launch via environment variables, which the agent
 /// honours only under <c>--inject-token</c> (see App.BuildHost): the backend URL
 /// (so the agent talks to the throwaway e2e backend, not the dev default), which
-/// seeded student to impersonate, and the heartbeat cadence.
+/// seeded student to impersonate, and the heartbeat cadence. The agent logs to the
+/// run's temporary folder, <see cref="AgentTestLogs.Folder"/>, which it inherits
+/// from the test process (#463); a spec can pass its own folder through
+/// <c>extraEnvironment</c> (<c>Diagnostics__LogDirectory</c>).
 /// </summary>
 internal sealed class AgentProcess : IAsyncDisposable
 {
@@ -76,9 +99,10 @@ internal sealed class AgentProcess : IAsyncDisposable
     private readonly string _statusUrl;
     private readonly string _controlBase;
 
-    private AgentProcess(Process process, int statusPort)
+    private AgentProcess(Process process, int statusPort, IReadOnlyList<string> arguments)
     {
         _process = process;
+        Arguments = arguments;
         _controlBase = $"http://127.0.0.1:{statusPort}";
         _statusUrl = $"{_controlBase}/status";
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
@@ -92,10 +116,18 @@ internal sealed class AgentProcess : IAsyncDisposable
     /// <summary>True once the agent process has exited.</summary>
     public bool HasExited => _process.HasExited;
 
+    /// <summary>The exit code, once the agent process has exited.</summary>
+    public int ExitCode => _process.ExitCode;
+
+    /// <summary>The command-line arguments the agent was launched with (#456: it restarts with the same).</summary>
+    public IReadOnlyList<string> Arguments { get; }
+
     /// <summary>
     /// Launch the agent impersonating <paramref name="impersonateOid"/>, pointed
     /// at the e2e backend. Set <paramref name="autoJoin"/> for flows that need
-    /// the agent to actually join (bundle pushes, heartbeats).
+    /// the agent to actually join (bundle pushes, heartbeats). <paramref name="agentExe"/>
+    /// launches a copy of the agent elsewhere (#449: one inside an install the spec
+    /// assembled) instead of the x64 Debug build.
     /// </summary>
     public static AgentProcess Launch(
         string backendUrl,
@@ -107,18 +139,20 @@ internal sealed class AgentProcess : IAsyncDisposable
         bool pointBackendViaEnv = true,
         TimeSpan? reconnectMaxBackoff = null,
         IEnumerable<string>? extraArgs = null,
-        IReadOnlyDictionary<string, string>? extraEnvironment = null)
+        IReadOnlyDictionary<string, string>? extraEnvironment = null,
+        string? agentExe = null)
     {
         if (!OperatingSystem.IsWindows())
             throw new InvalidOperationException("The agent exe is Windows-only.");
-        if (!File.Exists(TestConfig.AgentExe))
+        agentExe ??= TestConfig.AgentExe;
+        if (!File.Exists(agentExe))
             throw new FileNotFoundException(
-                $"Agent exe not found at {TestConfig.AgentExe}. Build it first: " +
-                "dotnet build agent/FocusAgent.sln -p:Platform=x64", TestConfig.AgentExe);
+                $"Agent exe not found at {agentExe}. Build it first: " +
+                "dotnet build agent/FocusAgent.sln -p:Platform=x64", agentExe);
 
         var statusPort = TestConfig.FreeLoopbackPort();
 
-        var psi = new ProcessStartInfo(TestConfig.AgentExe) { UseShellExecute = false };
+        var psi = new ProcessStartInfo(agentExe) { UseShellExecute = false };
         psi.ArgumentList.Add("--inject-token");
         psi.ArgumentList.Add("--status-endpoint");
         psi.ArgumentList.Add(statusPort.ToString());
@@ -157,7 +191,7 @@ internal sealed class AgentProcess : IAsyncDisposable
 
         var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the agent process.");
-        return new AgentProcess(process, statusPort) { StatusPort = statusPort };
+        return new AgentProcess(process, statusPort, psi.ArgumentList.ToList()) { StatusPort = statusPort };
     }
 
     public async Task<StatusSnapshot?> TryGetStatusAsync(CancellationToken ct = default)
@@ -231,15 +265,28 @@ internal sealed class AgentProcess : IAsyncDisposable
 
     /// <summary>
     /// Drive the agent's "Quit" action (#110) via POST /quit — the headless
-    /// stand-in for tray → Quit. Distinct from <see cref="Kill"/>: this is a
-    /// clean shutdown, so mid-session it emits a best-effort AgentKilled event
-    /// before the process exits. A hard <see cref="Kill"/> is the crash case and
-    /// emits nothing.
+    /// stand-in for tray → Exit Anchor. Distinct from <see cref="Kill"/>: this is a
+    /// clean shutdown. A hard <see cref="Kill"/> is the crash case. Throws when the
+    /// agent refuses, which it does while a session is going on (#445); see
+    /// <see cref="TryQuitAsync"/>.
     /// </summary>
     public async Task QuitAsync()
     {
         using var res = await _http.PostAsync($"{_controlBase}/quit", content: null);
         res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Pick the tray's "Exit Anchor" (#110) via POST /quit, where it may be refused:
+    /// true when the agent is on its way out, false when it answered 409 because a
+    /// session is going on and the tray offers no Exit then (#445).
+    /// </summary>
+    public async Task<bool> TryQuitAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/quit", content: null);
+        if (res.StatusCode == System.Net.HttpStatusCode.Conflict) return false;
+        res.EnsureSuccessStatusCode();
+        return true;
     }
 
     /// <summary>
@@ -272,6 +319,42 @@ internal sealed class AgentProcess : IAsyncDisposable
     {
         using var res = await _http.PostAsync($"{_controlBase}/extension-repair", content: null);
         return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    /// <summary>
+    /// Click the focus overlay's row for the allowed app <paramref name="app"/> (a
+    /// rule's value, such as <c>notepad</c>) via POST /overlay-app (#453). The click
+    /// runs on the agent's UI thread, as the student's does, and this does not wait
+    /// for it. Returns false when the overlay wasn't up.
+    /// </summary>
+    public async Task<bool> ClickOverlayAppAsync(string app)
+    {
+        using var res = await _http.PostAsync(
+            $"{_controlBase}/overlay-app?app={Uri.EscapeDataString(app)}", content: null);
+        return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    /// <summary>
+    /// Run an update check now (#456) via POST /check-update, as the interval timer
+    /// would. Does not wait for the check.
+    /// </summary>
+    public async Task CheckUpdateAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/check-update", content: null);
+        res.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>
+    /// Play time asleep (#456) via POST /simulate-sleep: the agent's update clock moves
+    /// on by <paramref name="slept"/> while its timers stay put, as across real sleep.
+    /// The wake that follows is sent like Windows sends it; see
+    /// <see cref="WindowCapture.PostToSystemEventsWindowAsync"/>.
+    /// </summary>
+    public async Task SimulateSleepAsync(TimeSpan slept)
+    {
+        var query = $"slept={Uri.EscapeDataString(slept.ToString("c"))}";
+        using var res = await _http.PostAsync($"{_controlBase}/simulate-sleep?{query}", content: null);
+        res.EnsureSuccessStatusCode();
     }
 
     /// <summary>Wait for the agent process to exit (e.g. after <see cref="QuitAsync"/>).</summary>

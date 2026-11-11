@@ -5,7 +5,8 @@ namespace FocusAgent.IntegrationTests;
 /// (<c>agent/Directory.Build.props</c>) that flows all the way into the produced
 /// exe. The build stamps that one &lt;VersionPrefix&gt; into the assembly's
 /// InformationalVersion; the running agent reads it back and reports it on
-/// /status (StatusEndpoint.AgentVersion).
+/// /status (AgentVersion.Current, the version the main window and tray menu also
+/// show, #423; see AgentVersionShownTests).
 ///
 /// This spec launches the <em>real</em> built agent and asserts the version it
 /// reports equals the version declared in Directory.Build.props. Bump the one

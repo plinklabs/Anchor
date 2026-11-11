@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Runtime.InteropServices;
 using FocusAgent.Core.Diagnostics;
 using FocusAgent.Core.Logging;
@@ -16,8 +15,10 @@ namespace FocusAgent.App.Diagnostics;
 ///
 /// It is deliberately self-contained: it must not touch the DI host, config, or
 /// logging, because those are exactly what may have failed. It reuses only
-/// <see cref="AgentLogPaths"/> (a pure path helper) and reads the version straight
-/// off the assembly. Two surfaces:
+/// <see cref="Program.LogDirectory"/> (a pure path helper over the launch's flags
+/// and <see cref="AgentLogPaths.LogDirectoryEnvVar"/>, #463) and the version through
+/// <see cref="AgentVersion"/>, a never-throwing read of the assembly's stamp (#423).
+/// Two surfaces:
 /// <list type="bullet">
 ///   <item>a rich, selectable <see cref="CrashReportWindow"/> for the cases where
 ///   we own the UI thread and the message pump is alive (startup + UI-thread
@@ -43,10 +44,10 @@ internal static class CrashReporter
 
     /// <summary>
     /// How long a fatal path keeps the process alive, after its dialog is gone, for
-    /// the update check to finish downloading and staging (#407). Long enough for a
-    /// check and a delta download on a school network; bounded because single-
-    /// instance gating turns a relaunch into a no-op while this process lingers.
-    /// Matches Velopack's own updater, which waits 60 s for the app to exit.
+    /// the update check to finish downloading (#407); the next launch applies what it
+    /// downloaded (#449). Long enough for a check and a delta download on a school
+    /// network; bounded because single-instance gating turns a relaunch into a no-op
+    /// while this process lingers.
     /// </summary>
     internal static readonly TimeSpan PendingUpdateGrace = TimeSpan.FromSeconds(60);
 
@@ -95,9 +96,9 @@ internal static class CrashReporter
 
     /// <summary>
     /// Block until a fatal path's update check (#407) has settled, at most
-    /// <see cref="PendingUpdateGrace"/>, so a fix it found is downloaded and staged
-    /// before the process exits. No-op for null; never throws. Safe on the UI
-    /// thread: the check runs on the thread pool and never needs it.
+    /// <see cref="PendingUpdateGrace"/>, so a fix it found is downloaded before the
+    /// process exits and the next launch applies it. No-op for null; never throws.
+    /// Safe on the UI thread: the check runs on the thread pool and never needs it.
     /// </summary>
     public static void WaitForPendingUpdate(Task? pendingUpdate)
     {
@@ -121,8 +122,7 @@ internal static class CrashReporter
     {
         try
         {
-            var dir = AgentLogPaths.LocalAppDataLogDirectory();
-            Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(Program.LogDirectory);
             File.AppendAllText(
                 LogFilePath(),
                 $"{DateTimeOffset.Now:O}{Environment.NewLine}{ex}{Environment.NewLine}{Environment.NewLine}");
@@ -141,7 +141,7 @@ internal static class CrashReporter
 
         try
         {
-            var detail = CrashDiagnostics.BuildDetail(ex, AgentVersion(), LogFilePath());
+            var detail = CrashDiagnostics.BuildDetail(ex, AgentVersion.Current, LogFilePath());
             var fullStack = CrashDiagnostics.BuildFullStack(ex);
 
             var window = new CrashReportWindow(headline, detail, fullStack);
@@ -194,7 +194,7 @@ internal static class CrashReporter
     {
         try
         {
-            var detail = CrashDiagnostics.BuildDetail(ex, AgentVersion(), LogFilePath());
+            var detail = CrashDiagnostics.BuildDetail(ex, AgentVersion.Current, LogFilePath());
             var body = $"{headline}.{Environment.NewLine}{Environment.NewLine}{detail}";
             _ = MessageBoxW(IntPtr.Zero, body, "Anchor", MB_OK | MB_ICONERROR);
         }
@@ -208,28 +208,11 @@ internal static class CrashReporter
     {
         try
         {
-            return Path.Combine(AgentLogPaths.LocalAppDataLogDirectory(), "startup-error.log");
+            return Path.Combine(Program.LogDirectory, "startup-error.log");
         }
         catch
         {
             return "startup-error.log";
-        }
-    }
-
-    private static string? AgentVersion()
-    {
-        try
-        {
-            var asm = typeof(CrashReporter).Assembly;
-            var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-            // InformationalVersion is "<VersionPrefix>" optionally plus a "+<sha>"
-            // SourceLink suffix; show just the SemVer.
-            if (!string.IsNullOrWhiteSpace(info)) return info.Split('+', 2)[0];
-            return asm.GetName().Version?.ToString();
-        }
-        catch
-        {
-            return null;
         }
     }
 

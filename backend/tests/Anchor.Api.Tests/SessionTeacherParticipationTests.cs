@@ -135,7 +135,8 @@ public sealed class SessionTeacherParticipationTests : IClassFixture<AnchorApiFa
         await agent.InvokeAsync("Heartbeat", started.Id);
         await agent.InvokeAsync("ExtensionHeartbeat", started.Id);
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
-        Assert.True(tracker.TryGet(started.Id, teacher.Id, out _, WitnessSource.Agent));
+        Assert.True(tracker.TryGet(started.Id, teacher.Id, out var agentEntry, WitnessSource.Agent));
+        Assert.False(agentEntry.AwaitingFirstPing); // pinged, not just awaited since the join (#444)
         Assert.True(tracker.TryGet(started.Id, teacher.Id, out _, WitnessSource.Extension));
         await agent.InvokeAsync("ReportEvent", new ReportEventRequest(
             started.Id, nameof(EventKind.ForegroundChange), """{"app":"powerpnt"}""", OccurredAt: null));

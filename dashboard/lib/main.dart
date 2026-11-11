@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import 'alerts/live_alert_services.dart';
 import 'api/admins_api.dart';
 import 'api/api_client.dart';
 import 'api/auth_token_store.dart';
@@ -9,6 +10,7 @@ import 'api/bundles_api.dart';
 import 'api/classes_api.dart';
 import 'api/schools_api.dart';
 import 'api/sessions_api.dart';
+import 'app_title.dart';
 import 'auth/msal_auth_service.dart';
 import 'auth/msal_config.dart';
 import 'bundles/bundle_file_io.dart';
@@ -68,6 +70,7 @@ class AnchorDashboard extends StatefulWidget {
     this.schools,
     this.hubClientFactory,
     this.bundleFileIo,
+    this.alertServices,
     this.loginSilentTimeout = const Duration(seconds: 30),
   });
 
@@ -97,6 +100,12 @@ class AnchorDashboard extends StatefulWidget {
   /// integration test injects a fake so the flow runs without an OS file
   /// dialog.
   final BundleFileIo? bundleFileIo;
+
+  /// Overrides the settings and the sound of live-session alerts (#454). Null
+  /// in production (the browser's own: `localStorage` and Web Audio); an
+  /// integration test injects a sound it can watch, since a browser driven by
+  /// a test never lets a page play sound.
+  final LiveAlertServices? alertServices;
 
   /// Upper bound on the non-interactive steps of sign-in, forwarded to
   /// [LoginPage.silentTimeout] (#303). Defaults to the production value; an
@@ -130,6 +139,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
       apiBaseUrl: widget.apiBaseUrl,
       hubClientFactory: widget.hubClientFactory,
       bundleFileIo: widget.bundleFileIo,
+      alertServices: widget.alertServices,
       loginSilentTimeout: widget.loginSilentTimeout,
     );
   }
@@ -209,7 +219,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
           // only a `builder` there is no Navigator, and the URL is left for
           // the router.
           return MaterialApp(
-            title: 'Anchor',
+            title: appTitle,
             theme: _theme,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
@@ -221,7 +231,7 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
           );
         }
         return MaterialApp.router(
-          title: 'Anchor',
+          title: appTitle,
           theme: _theme,
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,

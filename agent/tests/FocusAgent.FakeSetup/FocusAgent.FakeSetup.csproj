@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A recording stand-in for Velopack's Anchor.Agent-win-Setup.exe, used only by
+    the #457 e2e (FocusAgent.IntegrationTests/IntuneInstallScriptTests.cs), which
+    runs the Intune install script (agent/scripts/release-assets/Install-AnchorAgent.ps1)
+    against it. Two roles, picked by the name it runs under:
+
+    - As Anchor.Agent-win-Setup.exe it is the installer. It writes down the
+      arguments it was started with, "installs" by copying itself into
+      <install root>\current\ as FocusAgent.App.exe and writing the Run value the
+      agent's install hook writes (into a throwaway key), and exits with the code
+      the spec asks for. The spec passes all of that in environment variables,
+      which the script hands down to Setup.exe like any child.
+    - As FocusAgent.App.exe it is the installed agent. It writes down how it was
+      started (session, window station, parent) and then stays up, as the agent
+      does, until the spec stops it.
+
+    So the spec runs the real script, start to finish, without a real Setup.exe
+    installing anything, writing an uninstall entry or creating shortcuts in the
+    profile of the user running the tests.
+
+    WinExe, like the real Setup.exe and agent: no console window in either role.
+    Built through the integration test project's ProjectReference; like that
+    project, deliberately NOT in FocusAgent.sln.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The file name Velopack gives the agent's installer (packId-channel-Setup.exe). -->
+    <AssemblyName>Anchor.Agent-win-Setup</AssemblyName>
+    <RootNamespace>FocusAgent.FakeSetup</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

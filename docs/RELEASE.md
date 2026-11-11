@@ -155,11 +155,18 @@ is the cross-tier summary so a maintainer can cut either from here.
 push of an `agent-v*` tag. It builds the WinUI 3 agent self-contained
 (`win-x64`), packages it with **Velopack** (`vpk`), and uploads the
 `Setup.exe` + full/delta `.nupkg` + `RELEASES` feed to the **GitHub Release** for
-that tag. Installed agents read that feed and auto-update (delta) on the next tag.
+that tag. Installed agents read that feed and auto-update (delta) on the next tag:
+a running agent downloads the release and, as soon as no session is going on,
+restarts itself into it, silently, back in the tray (#456); otherwise the next agent
+start applies it. An agent is never stopped mid-session for an update (#449). Besides
+the check every `Update:CheckInterval` (6 h of awake time), the agent checks on wake
+from sleep and on unlock once the last check is that old by the clock.
 The portable `.zip` is suppressed (`--noPortable`) — the agent is installed, not
 run portably — but the `.nupkg` + `RELEASES` feed is kept; it **is** the
-auto-update channel. Setup carries the Anchor icon and a success page, and
-launches the agent automatically once installed.
+auto-update channel. Setup carries the Anchor icon and a success page, and, run
+by hand, launches the agent automatically once installed. A silent install
+(`--silent`, as Intune runs it) shows no success page and doesn't start the
+agent; the Intune install script below starts it.
 
 - The packaged `appsettings.Production.json` ships as a template with `#{...}#`
   placeholders (#203); pack time substitutes them from per-deployment repo
@@ -180,6 +187,26 @@ launches the agent automatically once installed.
   from a fork release built before #360 still check `plinklabs/Anchor`; only a
   reinstall (uninstall, then run a newer fork `Setup.exe`) moves them onto the
   fork's feed.
+- Installed agents read the feed of the release GitHub marks **Latest**, at
+  `<repo>/releases/latest/download/releases.win.json`, and download the package
+  from the same address — never through the GitHub API, whose 60 anonymous
+  requests an hour per IP address every laptop behind a school's address would
+  share (#465). So the newest published, non-pre-release release must always be
+  an agent release. It is today: agent releases are the only GitHub Releases the
+  repository publishes. Don't publish another kind of GitHub Release (or mark one
+  Latest by hand) without moving the agent onto a feed of its own first.
+  Agents released before #465 still list the releases through the API until they
+  update to a release that has it.
+- Every release also carries `Install-AnchorAgent.ps1` (#457), the install
+  command of the agent's Intune Win32 app, packaged with `Setup.exe` in the
+  `.intunewin`. It runs `Setup.exe --silent` only when the agent isn't installed
+  yet (a silent reinstall stops a running agent and doesn't start it again), and
+  then starts the agent right away, which a silent Setup doesn't.
+  `pack-release.ps1` puts it next to `Setup.exe`, and the workflow attaches it to
+  the release once `vpk` has created it. Its parameters, exit codes and log
+  location are in its help: `Get-Help .\Install-AnchorAgent.ps1 -Full`. How to
+  roll the agent out with it (packaging, detection rule, return codes, the Edge
+  extension policy, updates and uninstall) is in [`INTUNE.md`](INTUNE.md).
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
 - `pack-release.ps1` fails the build when the publish folder has no
@@ -338,7 +365,8 @@ instructions. One-time setup: [`extension/README.md`](../extension/README.md#pub
 | `EDGE_ADDONS_KEY_ROTATED` | variable | Date (`YYYY-MM-DD`) the API credentials were last created, so expiry can be warned about before it bites (#336). | Expiry can't be tracked; the weekly check files an issue saying so. |
 
 > Both client release workflows use the auto-provided `GITHUB_TOKEN`
-> (`agent-release.yml` to upload the Velopack release assets) — no setup needed.
+> (`agent-release.yml` to upload the Velopack release assets and the Intune
+> install script) — no setup needed.
 
 #### Rotating the Edge Add-ons API key (every 72 days)
 
@@ -385,12 +413,23 @@ and never reads an Azure SignalR connection string, so Bicep provisions none.
 switches to `AddAzureSignalR()` — see
 [Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
 
-`Heartbeat`, `EventRetention`, `SessionAutoEnd`, and `Logging` have committed
-defaults in `appsettings.json` and only need App Service overrides to tune them —
-not for a baseline deploy. For example, `EventRetention__RawEventDays` (default
-14) sets how many days raw session events are kept, and
+`Heartbeat`, `EventRetention`, `SessionAutoEnd`, `LogUpload`, and `Logging` have
+committed defaults in `appsettings.json` and only need App Service overrides to
+tune them — not for a baseline deploy. For example, `EventRetention__RawEventDays`
+(default 14) sets how many days raw session events are kept, and
 `SessionAutoEnd__MaxDuration` (default `04:00:00`) how long a session may run
 before it is treated as forgotten and ended.
+
+`LogUpload__Enabled` (default `false`) switches on the test phase's agent log
+uploads (#446): each agent then uploads its log lines from a window around each
+session its student was on the roster of — from `LogUpload__WindowBefore`
+(default `00:30:00`) before the session started to `LogUpload__WindowAfter`
+(default `00:10:00`) after it ended — and nothing else. Uploads are kept
+`LogUpload__RetentionDays` (default 14) and only admins can download them
+(`GET /admin/log-uploads`, then `GET /admin/log-uploads/{sessionId}/{userId}`,
+a gzipped text file). Setting it back to `false` stops the uploads without an
+agent release. Students (and parents) should be told that technical logs are
+collected while it is on.
 
 ## Cutting a release
 
@@ -431,7 +470,13 @@ release**.
    ```
 3. `agent-release.yml` builds, packs with Velopack (cross-checking the tag against
    the committed version), and publishes `Setup.exe` + the delta-update feed to the
-   GitHub Release for the tag. Installed agents auto-update from that feed.
+   GitHub Release for the tag, then attaches the Intune install script
+   `Install-AnchorAgent.ps1` (#457). Installed agents auto-update from that feed.
+
+If only the last step fails, the release is already out without the script.
+Attach it by hand (`gh release upload agent-v<version>
+agent/scripts/release-assets/Install-AnchorAgent.ps1`): a re-run of the job fails
+at the `vpk` upload, which refuses a tag that already has a release.
 
 A version/tag mismatch fails the pack step — fix `<VersionPrefix>` or the tag and
 re-push.

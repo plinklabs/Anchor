@@ -12,11 +12,15 @@ namespace FocusAgent.IntegrationTests;
 /// restarts it with a limit of <see cref="MaxDuration"/> and a one-second sweep,
 /// and restarts it with the defaults again afterwards. The limit leaves room for
 /// the control step — kill, relaunch and rehydrate the agent — on a slow runner.
+///
+/// A session started with a planned end (#447) ends at that time, which needs
+/// no restart: on the production settings, nothing else ends it that soon.
 /// </summary>
 [Collection(AgentE2ECollection.Name)]
 public sealed class SessionAutoEndTests
 {
     private static readonly TimeSpan MaxDuration = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan PlannedEndIn = TimeSpan.FromSeconds(45);
 
     private readonly BackendFixture _backend;
     public SessionAutoEndTests(BackendFixture backend) => _backend = backend;
@@ -94,6 +98,78 @@ public sealed class SessionAutoEndTests
             // that follow: their sessions would end under them.
             await _backend.StopAsync();
             await _backend.RestartAsync();
+        }
+    }
+
+    /// <summary>
+    /// A session started with a planned end (#447) ends at that time, through
+    /// the same path as the teacher's End, and a restarted agent stays out of it
+    /// afterwards. The shared backend runs its production settings here — a
+    /// four-hour limit, a five-minute sweep — so nothing but the planned end
+    /// can end the session within seconds of it. It lies
+    /// <see cref="PlannedEndIn"/> out, like <see cref="MaxDuration"/> above, to
+    /// leave room for the control step.
+    /// </summary>
+    [Fact]
+    public async Task ASessionWithAPlannedEnd_EndsAtThatTime_AndARestartedAgentDoesNotRejoinIt()
+    {
+        var api = new BackendClient(_backend.Url);
+        AgentProcess? agent = null;
+        try
+        {
+            agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+
+            var classId = await api.FindClassIdAsync();
+            var endsAt = DateTimeOffset.UtcNow + PlannedEndIn;
+            var session = await api.StartSessionEndingAtAsync(classId, endsAt);
+            var joined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
+            Assert.True(
+                joined?.JoinedSessionId == session.Id,
+                $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
+
+            // --- control: before its end, a restarted agent rejoins it --------
+            await agent.DisposeAsync();
+            agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+            var rejoined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
+            Assert.True(
+                rejoined?.JoinedSessionId == session.Id,
+                $"Restarted agent did not rejoin the running session within 8s " +
+                $"(joinedSessionId: {rejoined?.JoinedSessionId?.ToString() ?? "<none>"}). " +
+                $"If the session had already reached its planned end, raise PlannedEndIn.");
+            Assert.Null(await api.GetSessionEndedAtAsync(session.Id));
+
+            // --- the planned end comes: the backend ends it, the agent leaves -
+            var cleared = await agent.WaitForAsync(
+                s => s.ActiveSessionId is null && s.JoinedSessionId is null,
+                endsAt - DateTimeOffset.UtcNow + TimeSpan.FromSeconds(15));
+            Assert.True(
+                cleared is { ActiveSessionId: null, JoinedSessionId: null },
+                $"Agent was still in the session 15s after its planned end " +
+                $"(activeSessionId: {cleared?.ActiveSessionId?.ToString() ?? "<none>"}, " +
+                $"joinedSessionId: {cleared?.JoinedSessionId?.ToString() ?? "<none>"}).");
+            var endedAt = await api.GetSessionEndedAtAsync(session.Id);
+            Assert.NotNull(endedAt);
+            // At the planned end, not at a sweep minutes later.
+            Assert.InRange(endedAt!.Value, endsAt - TimeSpan.FromSeconds(1), endsAt + TimeSpan.FromSeconds(5));
+
+            // --- after the lesson: the restarted agent stays out of it --------
+            await agent.DisposeAsync();
+            agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+            var back = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id, TimeSpan.FromSeconds(8));
+            Assert.True(
+                back?.JoinedSessionId != session.Id,
+                "Restarted agent rejoined the session after its planned end.");
+        }
+        finally
+        {
+            if (agent is not null)
+                await agent.DisposeAsync();
         }
     }
 }

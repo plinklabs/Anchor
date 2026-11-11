@@ -299,6 +299,9 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
                 return Task.CompletedTask;
             }
 
+            public Task ParticipationEndedAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
+
             public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
             {
                 SessionBundlesUpdatedCalls.Add(new SessionBundlesUpdatedCall(userId, payload));

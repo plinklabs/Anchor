@@ -410,6 +410,54 @@ abstract class AppLocalizations {
   /// **'End'**
   String get homeEnd;
 
+  /// Label of the start form's choice of when the session ends (#447).
+  ///
+  /// In en, this message translates to:
+  /// **'Session ends'**
+  String get homeEndLabel;
+
+  /// No description provided for @homeEndThisPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'At the end of this period ({time})'**
+  String homeEndThisPeriod(String time);
+
+  /// No description provided for @homeEndNextPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'At the end of the next period ({time})'**
+  String homeEndNextPeriod(String time);
+
+  /// No description provided for @homeEndSpecificTime.
+  ///
+  /// In en, this message translates to:
+  /// **'At a time I pick'**
+  String get homeEndSpecificTime;
+
+  /// No description provided for @homeEndTimeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'End time'**
+  String get homeEndTimeLabel;
+
+  /// No description provided for @homeEndTimeInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a time like 11:30.'**
+  String get homeEndTimeInvalid;
+
+  /// No description provided for @homeEndTimeTooLate.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a time no later than {time}.'**
+  String homeEndTimeTooLate(String time);
+
+  /// No description provided for @homeEndPeriodChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The lesson period has changed in the meantime. Check when the session ends, then start it again.'**
+  String get homeEndPeriodChanged;
+
   /// No description provided for @classesLoadError.
   ///
   /// In en, this message translates to:
@@ -818,6 +866,12 @@ abstract class AppLocalizations {
   /// **'Session {datetime}'**
   String sessionTitleSpec(String datetime);
 
+  /// The planned end of a live session, after its start in the header (#447).
+  ///
+  /// In en, this message translates to:
+  /// **'ends {time}'**
+  String sessionEndsAt(String time);
+
   /// No description provided for @sessionHeadlineFallback.
   ///
   /// In en, this message translates to:
@@ -877,6 +931,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Agent stopped reporting'**
   String get sessionStateStale;
+
+  /// Live roster state of a student who joined, but whose agent never sent a heartbeat: usually only the Edge extension joined, so apps aren't blocked on that laptop (#444).
+  ///
+  /// In en, this message translates to:
+  /// **'Agent not connected'**
+  String get sessionStateAgentMissing;
+
+  /// Tooltip on the 'Agent not connected' roster state, saying what it means for the teacher (#444).
+  ///
+  /// In en, this message translates to:
+  /// **'Only the browser extension joined. Apps aren\'t being blocked on this laptop.'**
+  String get sessionStateAgentMissingTooltip;
 
   /// No description provided for @sessionStateLeft.
   ///
@@ -985,6 +1051,210 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Taking part yourself? Use \'Join by code\' in the agent.'**
   String get sessionTakePartHint;
+
+  /// Title of the dialog that sets up live-session alerts, and the tooltip of the bell that opens it, in the app bar and in the live session header (#454).
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications'**
+  String get alertsTitle;
+
+  /// No description provided for @alertsIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'During a live session, the dashboard tells you when something needs you, also while it\'s in a background tab: it plays a short sound, the tab\'s title counts what you haven\'t seen yet, and pop-ups, if you turn them on, show it on top of other apps.'**
+  String get alertsIntro;
+
+  /// No description provided for @alertsSound.
+  ///
+  /// In en, this message translates to:
+  /// **'Play a sound'**
+  String get alertsSound;
+
+  /// Label above the switches for each kind of alert; each switch label continues the sentence.
+  ///
+  /// In en, this message translates to:
+  /// **'Alert me when'**
+  String get alertsCategoriesLabel;
+
+  /// No description provided for @alertsAccessRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'A student asks for access to a site'**
+  String get alertsAccessRequest;
+
+  /// No description provided for @alertsStudentLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'A student leaves or declines the session'**
+  String get alertsStudentLeft;
+
+  /// No description provided for @alertsAgentLost.
+  ///
+  /// In en, this message translates to:
+  /// **'A student\'s agent stops reporting'**
+  String get alertsAgentLost;
+
+  /// No description provided for @alertsTamper.
+  ///
+  /// In en, this message translates to:
+  /// **'Tampering is detected'**
+  String get alertsTamper;
+
+  /// No description provided for @alertsKeptInBrowser.
+  ///
+  /// In en, this message translates to:
+  /// **'These settings are kept in this browser.'**
+  String get alertsKeptInBrowser;
+
+  /// Button in the Notifications dialog that plays the alert sound once and, while pop-ups are on, shows a sample pop-up (#455).
+  ///
+  /// In en, this message translates to:
+  /// **'Test'**
+  String get alertsTest;
+
+  /// Calm line on the live session page while the browser doesn't let the page play sound yet: after a reload, until the teacher clicks the page (#454).
+  ///
+  /// In en, this message translates to:
+  /// **'Click anywhere to turn on sound.'**
+  String get alertsSoundBlocked;
+
+  /// Switch in the Notifications dialog for system pop-ups (browser notifications) on live-session alerts (#455). Turning it on is when the browser asks for permission.
+  ///
+  /// In en, this message translates to:
+  /// **'Show pop-ups'**
+  String get alertsPopups;
+
+  /// Under the pop-ups switch while the browser hasn't asked the teacher for notification permission yet.
+  ///
+  /// In en, this message translates to:
+  /// **'Your browser asks for permission when you turn them on.'**
+  String get alertsPopupsNotAsked;
+
+  /// Under the pop-ups switch while the browser's notification permission is granted.
+  ///
+  /// In en, this message translates to:
+  /// **'Allowed in this browser.'**
+  String get alertsPopupsAllowed;
+
+  /// Under the pop-ups switch while the browser's notification permission is denied: only the teacher can allow it again, in the browser's site settings.
+  ///
+  /// In en, this message translates to:
+  /// **'Blocked in this browser.'**
+  String get alertsPopupsBlocked;
+
+  /// No description provided for @alertsPopupsUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This browser can\'t show pop-ups.'**
+  String get alertsPopupsUnsupported;
+
+  /// Above the steps to allow notifications again once they are blocked.
+  ///
+  /// In en, this message translates to:
+  /// **'To allow pop-ups in Edge or Chrome:'**
+  String get alertsPopupsHowToAllow;
+
+  /// No description provided for @alertsPopupsStepIcon.
+  ///
+  /// In en, this message translates to:
+  /// **'1. Click the icon left of the address bar.'**
+  String get alertsPopupsStepIcon;
+
+  /// 'Notifications' and 'Allow' are the browser's own labels in its site settings.
+  ///
+  /// In en, this message translates to:
+  /// **'2. Set Notifications to Allow.'**
+  String get alertsPopupsStepAllow;
+
+  /// No description provided for @alertsPopupsStepReload.
+  ///
+  /// In en, this message translates to:
+  /// **'3. Reload the page.'**
+  String get alertsPopupsStepReload;
+
+  /// Hint under the pop-ups switch: Windows can turn a browser's notifications off on its own. 'Settings → System → Notifications' is the path in the Windows Settings app.
+  ///
+  /// In en, this message translates to:
+  /// **'Still no pop-ups? Check that notifications for your browser are on in Windows: Settings → System → Notifications.'**
+  String get alertsPopupsWindows;
+
+  /// No description provided for @alertsPopupNames.
+  ///
+  /// In en, this message translates to:
+  /// **'Show student names and sites in pop-ups'**
+  String get alertsPopupNames;
+
+  /// No description provided for @alertsPopupNamesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Off, a pop-up only says what happened, in case your screen is projected.'**
+  String get alertsPopupNamesHint;
+
+  /// Title of the pop-up for access requests; count is how many came in since the teacher last looked at the live page.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{New access request} other{New access requests ({count})}}'**
+  String alertsPopupAccessRequest(int count);
+
+  /// Title of the pop-up for students leaving or declining the session.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{A student left the session} other{Students left the session ({count})}}'**
+  String alertsPopupStudentLeft(int count);
+
+  /// Title of the pop-up for students' agents that stopped reporting.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{A student\'s agent stopped reporting} other{Agents stopped reporting ({count})}}'**
+  String alertsPopupAgentLost(int count);
+
+  /// Title of the pop-up for tamper attempts.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Tampering detected} other{Tampering detected ({count})}}'**
+  String alertsPopupTamper(int count);
+
+  /// Pop-up text with names on: the student and the site of the latest access request.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} asks for access to {host}'**
+  String alertsPopupAsks(String name, String host);
+
+  /// No description provided for @alertsPopupLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} left the session'**
+  String alertsPopupLeft(String name);
+
+  /// No description provided for @alertsPopupDeclined.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} declined the session'**
+  String alertsPopupDeclined(String name);
+
+  /// No description provided for @alertsPopupAgentLostOf.
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s agent stopped reporting'**
+  String alertsPopupAgentLostOf(String name);
+
+  /// No description provided for @alertsPopupTamperOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Tampering detected on {name}\'s computer'**
+  String alertsPopupTamperOf(String name);
+
+  /// No description provided for @alertsPopupTestTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Test pop-up'**
+  String get alertsPopupTestTitle;
+
+  /// Text of the sample pop-up the Test button shows.
+  ///
+  /// In en, this message translates to:
+  /// **'Alerts from a live session show up like this.'**
+  String get alertsPopupTestBody;
 
   /// No description provided for @bundlesLoadListError.
   ///
@@ -1537,6 +1807,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No schools found. Schools come from your directory; once teachers belong to one, it will appear here.'**
   String get schoolsEmpty;
+
+  /// No description provided for @schoolsLessonPeriodCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No lesson periods} =1{1 lesson period} other{{count} lesson periods}}'**
+  String schoolsLessonPeriodCount(int count);
+
+  /// No description provided for @schoolsEditLessonPeriods.
+  ///
+  /// In en, this message translates to:
+  /// **'Lesson periods'**
+  String get schoolsEditLessonPeriods;
+
+  /// No description provided for @schoolsLessonPeriodsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Lesson periods · {name}'**
+  String schoolsLessonPeriodsTitle(String name);
+
+  /// No description provided for @schoolsLessonPeriodsIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'One timetable for every school day, in school time. Teachers of this school can then end a session at the end of the current or the next period.'**
+  String get schoolsLessonPeriodsIntro;
+
+  /// No description provided for @schoolsLessonPeriodNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'Period {number}'**
+  String schoolsLessonPeriodNumber(int number);
+
+  /// No description provided for @schoolsLessonPeriodStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start'**
+  String get schoolsLessonPeriodStart;
+
+  /// No description provided for @schoolsLessonPeriodEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'End'**
+  String get schoolsLessonPeriodEnd;
+
+  /// No description provided for @schoolsAddLessonPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'Add period'**
+  String get schoolsAddLessonPeriod;
+
+  /// No description provided for @schoolsRemoveLessonPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove period'**
+  String get schoolsRemoveLessonPeriod;
+
+  /// No description provided for @schoolsLessonPeriodsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No lesson periods yet. Teachers of this school pick an end time for each session.'**
+  String get schoolsLessonPeriodsEmpty;
+
+  /// No description provided for @schoolsLessonPeriodInvalidTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a time like 08:25.'**
+  String get schoolsLessonPeriodInvalidTime;
+
+  /// No description provided for @schoolsLessonPeriodEndBeforeStart.
+  ///
+  /// In en, this message translates to:
+  /// **'A period has to end after it starts.'**
+  String get schoolsLessonPeriodEndBeforeStart;
+
+  /// No description provided for @schoolsLessonPeriodsOverlap.
+  ///
+  /// In en, this message translates to:
+  /// **'This period overlaps another one.'**
+  String get schoolsLessonPeriodsOverlap;
+
+  /// No description provided for @schoolsLessonPeriodsSaveError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the lesson periods of {name}. Please try again.'**
+  String schoolsLessonPeriodsSaveError(String name);
 
   /// No description provided for @historyLoadError.
   ///

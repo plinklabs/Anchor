@@ -61,10 +61,12 @@ class _FakeSessions extends SessionsApi {
 
 Future<void> _pumpSession(
   WidgetTester tester,
-  List<SessionParticipantInfo> participants,
-) async {
+  List<SessionParticipantInfo> participants, {
+  Locale? locale,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: SessionPage(
@@ -117,6 +119,68 @@ void main() {
     final staleY = tester.getTopLeft(find.text('Zoe')).dy;
     final joinedY = tester.getTopLeft(find.text('Ada')).dy;
     expect(staleY, lessThan(joinedY));
+  });
+
+  test('the AgentMissing wire state parses (#444)', () {
+    expect(
+      ParticipantLiveState.parse('AgentMissing'),
+      ParticipantLiveState.agentMissing,
+    );
+  });
+
+  testWidgets(
+    'a student whose agent never connected is flagged and explained (#444)',
+    (tester) async {
+      await _pumpSession(tester, [
+        _participant('Ada', ParticipantLiveState.joined),
+        _participant('Zed', ParticipantLiveState.agentMissing),
+        _participant('Ed', ParticipantLiveState.neverJoined),
+      ]);
+
+      expect(find.text('Agent not connected'), findsOneWidget);
+      // The label says what it means for the class, on that row only.
+      expect(
+        find.byTooltip(
+          "Only the browser extension joined. Apps aren't being blocked on "
+          'this laptop.',
+        ),
+        findsOneWidget,
+      );
+      // Not counted as in session: nothing enforces apps on that laptop.
+      expect(find.text('Students (1/3 in session)'), findsOneWidget);
+      // Attention-first, above the joined student despite the name.
+      expect(
+        tester.getTopLeft(find.text('Zed')).dy,
+        lessThan(tester.getTopLeft(find.text('Ada')).dy),
+      );
+      // Painted in the error colour, as a stopped agent is: icon and label.
+      final error = Theme.of(
+        tester.element(find.text('Zed')),
+      ).colorScheme.error;
+      expect(
+        tester.widget<Icon>(find.byIcon(Icons.desktop_access_disabled)).color,
+        error,
+      );
+      expect(
+        tester.widget<Text>(find.text('Agent not connected')).style?.color,
+        error,
+      );
+    },
+  );
+
+  testWidgets('the missing-agent state reads in Dutch (#444)', (tester) async {
+    await _pumpSession(tester, [
+      _participant('Zed', ParticipantLiveState.agentMissing),
+    ], locale: const Locale('nl'));
+
+    expect(find.text('Agent niet verbonden'), findsOneWidget);
+    expect(
+      find.byTooltip(
+        'Alleen de browserextensie is aangesloten. Apps worden op deze laptop '
+        'niet geblokkeerd.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('roster flags only tampered students, on the right row (#105)', (

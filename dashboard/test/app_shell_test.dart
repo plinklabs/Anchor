@@ -16,6 +16,7 @@ Widget _host({
   String? accountName,
   void Function(String location)? onNavigate,
   VoidCallback? onSignOut,
+  VoidCallback? onOpenNotifications,
   Widget? child,
 }) {
   return MaterialApp(
@@ -31,6 +32,7 @@ Widget _host({
       isAdmin: isAdmin,
       accountName: accountName,
       onSignOut: onSignOut,
+      onOpenNotifications: onOpenNotifications,
       onNavigate: onNavigate ?? (_) {},
       child: child ?? const SizedBox(key: Key('page-body')),
     ),
@@ -126,4 +128,40 @@ void main() {
     await tester.tap(find.byKey(const Key('sign-out')));
     expect(signedOut, isTrue);
   });
+
+  testWidgets(
+    'the bell opens the Notifications dialog from every page, before a '
+    'lesson too (#454)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(_host(section: AppSection.home));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('notifications')), findsNothing);
+
+      var opened = 0;
+      await tester.pumpWidget(
+        _host(
+          section: AppSection.classes,
+          accountName: 'Ms Teacher',
+          onSignOut: () {},
+          onOpenNotifications: () => opened++,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Notifications'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('notifications')));
+      expect(opened, 1);
+      // Left of the account and Sign out.
+      expect(
+        tester.getRect(find.byKey(const Key('notifications'))).right,
+        lessThanOrEqualTo(tester.getRect(find.text('Ms Teacher')).left),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

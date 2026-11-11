@@ -1,3 +1,4 @@
+using Anchor.Api.Diagnostics;
 using Anchor.Api.Events;
 using Anchor.Api.Realtime;
 using Anchor.Api.Sessions;
@@ -92,10 +93,11 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// <summary>
     /// Keeps Program.cs's background services out of the test host: tests
     /// drive <see cref="HeartbeatMonitor.ScanOnceAsync"/>,
-    /// <see cref="EventPruner.PruneOnceAsync"/> and
-    /// <see cref="SessionAutoEnder.EndForgottenSessionsAsync"/> themselves, so
-    /// no loop on the real clock emits HeartbeatLost / ExtensionSilent events,
-    /// prunes seeded events or ends seeded sessions behind their backs.
+    /// <see cref="EventPruner.PruneOnceAsync"/>,
+    /// <see cref="SessionAutoEnder.EndForgottenSessionsAsync"/> and
+    /// <see cref="LogUploadPruner.PruneOnceAsync"/> themselves, so no loop on
+    /// the real clock emits HeartbeatLost / ExtensionSilent events, prunes
+    /// seeded events or log uploads, or ends seeded sessions behind their backs.
     /// <para>
     /// Host settings, not <c>ConfigureAppConfiguration</c>: Program.cs reads
     /// these flags before <c>Build()</c>, and under minimal hosting only host
@@ -108,6 +110,7 @@ public class AnchorApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting($"{HeartbeatOptions.SectionName}:{nameof(HeartbeatOptions.EnableMonitor)}", "false");
         builder.UseSetting($"{EventRetentionOptions.SectionName}:{nameof(EventRetentionOptions.EnablePruner)}", "false");
         builder.UseSetting($"{SessionAutoEndOptions.SectionName}:{nameof(SessionAutoEndOptions.EnableAutoEnder)}", "false");
+        builder.UseSetting($"{LogUploadOptions.SectionName}:{nameof(LogUploadOptions.EnablePruner)}", "false");
     }
 
     public async Task InitializeAsync()

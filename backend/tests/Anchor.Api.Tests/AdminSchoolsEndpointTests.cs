@@ -196,5 +196,145 @@ public sealed class AdminSchoolsEndpointTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    // ---------- PUT /admin/schools/lesson-periods (#447) ----------
+
+    [Fact]
+    public async Task PUT_lesson_periods_replaces_the_timetable_and_the_list_shows_it_in_start_order()
+    {
+        var token = Suffix();
+        var school = $"Timetable {token}";
+        var admin = await TestSeed.AddUserAsync(_factory, UserRole.Admin, "Caller " + token);
+        await TestSeed.AddSchoolAsync(_factory, school, isActive: false);
+        Fake().ListCompaniesHandler = _ => Task.FromResult<IReadOnlyList<string>>(new[] { school });
+        using var client = _factory.CreateClient();
+        TestAuth.SetAdmin(client, admin);
+
+        // Entered out of order, one without a leading zero, two back to back.
+        var response = await client.PutAsJsonAsync("/admin/schools/lesson-periods", new
+        {
+            name = school,
+            lessonPeriods = new[]
+            {
+                new { start = "10:20", end = "11:10" },
+                new { start = "8:25", end = "09:15" },
+                new { start = "09:15", end = "10:05" },
+            },
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await response.Content.ReadFromJsonAsync<SchoolResponse>();
+        var expected = new[]
+        {
+            new LessonPeriodDto("08:25", "09:15"),
+            new LessonPeriodDto("09:15", "10:05"),
+            new LessonPeriodDto("10:20", "11:10"),
+        };
+        Assert.Equal(expected, saved!.LessonPeriods);
+        Assert.False(saved.IsActive); // the timetable leaves activation alone
+
+        var listed = await client.GetFromJsonAsync<List<SchoolResponse>>("/admin/schools");
+        Assert.Equal(expected, listed!.Single(s => s.Name == school).LessonPeriods);
+
+        // Saving again replaces the timetable; an empty one clears it.
+        await client.PutAsJsonAsync("/admin/schools/lesson-periods", new
+        {
+            name = school,
+            lessonPeriods = new[] { new { start = "13:00", end = "13:50" } },
+        });
+        listed = await client.GetFromJsonAsync<List<SchoolResponse>>("/admin/schools");
+        Assert.Equal(new[] { new LessonPeriodDto("13:00", "13:50") }, listed!.Single(s => s.Name == school).LessonPeriods);
+
+        await client.PutAsJsonAsync("/admin/schools/lesson-periods", new { name = school, lessonPeriods = Array.Empty<object>() });
+        listed = await client.GetFromJsonAsync<List<SchoolResponse>>("/admin/schools");
+        Assert.Empty(listed!.Single(s => s.Name == school).LessonPeriods);
+    }
+
+    [Fact]
+    public async Task PUT_lesson_periods_for_a_school_without_a_row_creates_it_active()
+    {
+        var token = Suffix();
+        var school = $"New {token}";
+        var admin = await TestSeed.AddUserAsync(_factory, UserRole.Admin, "Caller " + token);
+        using var client = _factory.CreateClient();
+        TestAuth.SetAdmin(client, admin);
+
+        var response = await client.PutAsJsonAsync("/admin/schools/lesson-periods", new
+        {
+            name = school,
+            lessonPeriods = new[] { new { start = "08:25", end = "09:15" } },
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var saved = await response.Content.ReadFromJsonAsync<SchoolResponse>();
+        Assert.True(saved!.IsActive);
+        Assert.Equal(new[] { new LessonPeriodDto("08:25", "09:15") }, saved.LessonPeriods);
+    }
+
+    [Theory]
+    [InlineData("8.25", "09:15")] // not a time
+    [InlineData("25:00", "26:00")] // not a time of day
+    [InlineData("09:15", "09:15")] // ends when it starts
+    [InlineData("10:05", "09:15")] // ends before it starts
+    public async Task PUT_lesson_periods_refuses_a_period_that_is_not_one(string start, string end)
+    {
+        var admin = await TestSeed.AddUserAsync(_factory, UserRole.Admin, "Caller " + Suffix());
+        using var client = _factory.CreateClient();
+        TestAuth.SetAdmin(client, admin);
+
+        var response = await client.PutAsJsonAsync("/admin/schools/lesson-periods", new
+        {
+            name = "School " + Suffix(),
+            lessonPeriods = new[] { new { start, end } },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PUT_lesson_periods_refuses_overlapping_periods_and_keeps_the_old_timetable()
+    {
+        var token = Suffix();
+        var school = $"Overlap {token}";
+        var admin = await TestSeed.AddUserAsync(_factory, UserRole.Admin, "Caller " + token);
+        Fake().ListCompaniesHandler = _ => Task.FromResult<IReadOnlyList<string>>(new[] { school });
+        using var client = _factory.CreateClient();
+        TestAuth.SetAdmin(client, admin);
+        await client.PutAsJsonAsync("/admin/schools/lesson-periods", new
+        {
+            name = school,
+            lessonPeriods = new[] { new { start = "08:25", end = "09:15" } },
+        });
+
+        var response = await client.PutAsJsonAsync("/admin/schools/lesson-periods", new
+        {
+            name = school,
+            lessonPeriods = new[]
+            {
+                new { start = "08:25", end = "09:15" },
+                new { start = "09:10", end = "10:00" },
+            },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var listed = await client.GetFromJsonAsync<List<SchoolResponse>>("/admin/schools");
+        Assert.Equal(new[] { new LessonPeriodDto("08:25", "09:15") }, listed!.Single(s => s.Name == school).LessonPeriods);
+    }
+
+    [Fact]
+    public async Task PUT_lesson_periods_as_teacher_returns_403()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PutAsJsonAsync("/admin/schools/lesson-periods", new
+        {
+            name = "Anything",
+            lessonPeriods = new[] { new { start = "08:25", end = "09:15" } },
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     private static string Suffix() => Guid.NewGuid().ToString("N").Substring(0, 6);
 }

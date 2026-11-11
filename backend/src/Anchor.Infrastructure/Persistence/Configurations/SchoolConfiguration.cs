@@ -16,5 +16,11 @@ internal sealed class SchoolConfiguration : IEntityTypeConfiguration<School>
         builder.HasIndex(s => s.Name).IsUnique();
 
         builder.Property(s => s.IsActive).IsRequired();
+
+        // The timetable belongs to the school (#447) and goes with it.
+        builder.HasMany(s => s.LessonPeriods)
+            .WithOne()
+            .HasForeignKey(p => p.SchoolId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

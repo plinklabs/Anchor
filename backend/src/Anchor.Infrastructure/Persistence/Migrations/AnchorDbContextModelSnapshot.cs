@@ -203,6 +203,28 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                     b.ToTable("SessionEventSummaries", (string)null);
                 });
 
+            modelBuilder.Entity("Anchor.Domain.Schools.LessonPeriod", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<TimeOnly>("End")
+                        .HasColumnType("time");
+
+                    b.Property<Guid>("SchoolId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<TimeOnly>("Start")
+                        .HasColumnType("time");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SchoolId");
+
+                    b.ToTable("LessonPeriods", (string)null);
+                });
+
             modelBuilder.Entity("Anchor.Domain.Schools.School", b =>
                 {
                     b.Property<Guid>("Id")
@@ -235,6 +257,9 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTimeOffset?>("EndedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset?>("EndsAt")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<string>("JoinCode")
@@ -273,6 +298,51 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                     b.HasIndex("BundleId");
 
                     b.ToTable("SessionBundles", (string)null);
+                });
+
+            modelBuilder.Entity("Anchor.Domain.Sessions.SessionLogUpload", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AgentVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<int>("ContentLength")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsComplete")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("UploadedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("WindowFrom")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<DateTimeOffset>("WindowTo")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("SessionId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("SessionLogUploads", (string)null);
                 });
 
             modelBuilder.Entity("Anchor.Domain.Sessions.SessionParticipant", b =>
@@ -435,6 +505,15 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Anchor.Domain.Schools.LessonPeriod", b =>
+                {
+                    b.HasOne("Anchor.Domain.Schools.School", null)
+                        .WithMany("LessonPeriods")
+                        .HasForeignKey("SchoolId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Anchor.Domain.Sessions.Session", b =>
                 {
                     b.HasOne("Anchor.Domain.Classes.Class", "Class")
@@ -471,6 +550,25 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                     b.Navigation("Bundle");
 
                     b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("Anchor.Domain.Sessions.SessionLogUpload", b =>
+                {
+                    b.HasOne("Anchor.Domain.Sessions.Session", "Session")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Anchor.Domain.Users.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Session");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Anchor.Domain.Sessions.SessionParticipant", b =>
@@ -530,6 +628,11 @@ namespace Anchor.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Anchor.Domain.Classes.Class", b =>
                 {
                     b.Navigation("Memberships");
+                });
+
+            modelBuilder.Entity("Anchor.Domain.Schools.School", b =>
+                {
+                    b.Navigation("LessonPeriods");
                 });
 
             modelBuilder.Entity("Anchor.Domain.Sessions.Session", b =>

@@ -1,9 +1,11 @@
 using FocusAgent.App.Extension;
 using FocusAgent.App.Startup;
 using FocusAgent.App.Tamper;
+using FocusAgent.Core.Logging;
+using FocusAgent.Core.Startup;
+using FocusAgent.Native;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
-using Microsoft.Windows.AppLifecycle;
 using Velopack;
 
 namespace FocusAgent.App;
@@ -69,6 +71,14 @@ public static class Program
     /// Used by the visual e2e (TrayMenuVisualTests) and scripts/dev/verify-traymenu.ps1.
     /// </summary>
     public const string ShowTestTrayMenuArg = "--show-test-traymenu";
+
+    /// <summary>
+    /// Dev-only modifier for <see cref="ShowTestTrayMenuArg"/> (#445): show the menu
+    /// as it is while the agent has a session going on, with no "Exit Anchor" (and
+    /// "Join a session…" disabled). Read by the e2e (TrayMenuExitTests) and
+    /// scripts/dev/verify-traymenu.ps1 -InSession.
+    /// </summary>
+    public const string TrayMenuInSessionArg = "--traymenu-in-session";
 
     /// <summary>
     /// Dev-only flag (#211): show the real <see cref="Extension.GuidedInstallWindow"/>
@@ -303,8 +313,19 @@ public static class Program
     /// a fake feed, without GitHub, admin, or a real install. The flag is followed
     /// by the feed directory path:
     /// <c>--check-update C:\path\to\feed</c>.
+    /// Or by a repository URL (#465), which reads that repo's feed exactly as the
+    /// production agent does (<see cref="Updates.VelopackUpdateManager.ForGithubRepo"/>):
+    /// <c>--check-update http://127.0.0.1:5123/owner/repo</c>.
     /// </summary>
     public const string CheckUpdateArg = "--check-update";
+
+    /// <summary>
+    /// Dev-only env var (#465): when <c>1</c>, the <see cref="CheckUpdateArg"/> mode
+    /// also downloads an update it finds, into a throwaway packages folder, and
+    /// reports <c>downloaded: &lt;version&gt;</c> once the package is there. Proves the
+    /// package itself comes through the feed, not only the feed index.
+    /// </summary>
+    public const string CheckUpdateDownloadEnvVar = "ANCHOR_UPDATE_DOWNLOAD";
 
     /// <summary>
     /// Dev-only env var (#224): the pretend "currently installed" version the
@@ -341,11 +362,23 @@ public static class Program
     /// Dev-only flag (#407): swap the real Velopack update manager for
     /// <see cref="Updates.ProbeUpdateManager"/>, which pretends to be an installed
     /// agent with a newer release on the feed and records each phase of the update
-    /// pass (check, download, stage) to the file named by
+    /// pass (check, download, pending) to the file named by
     /// <see cref="UpdateProbePathEnvVar"/>. Paired with <see cref="TestCrashAtArg"/>
     /// in the startup-crash e2e.
     /// </summary>
     public const string TestUpdateProbeArg = "--test-update-probe";
+
+    /// <summary>
+    /// Dev-only flag (#449): on a normal launch, read updates from a local Velopack
+    /// feed directory (a <c>vpk pack</c> output) instead of GitHub Releases, through
+    /// <see cref="Updates.VelopackUpdateManager.ForFeedDirectory"/>. Everything else
+    /// about the update path is the production one, including Velopack's own idea of
+    /// which install this process runs from. The integration test launches an agent
+    /// from an install it assembled with this flag, to prove a running agent survives
+    /// downloading an update and the next start applies it. Followed by the feed
+    /// directory: <c>--test-update-feed C:\path\to\feed</c>.
+    /// </summary>
+    public const string TestUpdateFeedArg = "--test-update-feed";
 
     /// <summary>
     /// Dev-only env var (#407): absolute path the <see cref="TestUpdateProbeArg"/>
@@ -367,6 +400,7 @@ public static class Program
     public static bool ShowTestMainWindow { get; private set; }
     public static bool ShowTestJoinByCode { get; private set; }
     public static bool ShowTestTrayMenu { get; private set; }
+    public static bool TrayMenuInSession { get; private set; }
     public static bool ShowTestGuidedInstall { get; private set; }
     public static bool ShowTestExtensionConsent { get; private set; }
     public static bool VerifyDsTheme { get; private set; }
@@ -376,6 +410,23 @@ public static class Program
     public static bool AutoJoin { get; private set; }
     public static bool SimulateInPrivate { get; private set; }
     public static bool TestUpdateProbe { get; private set; }
+
+    /// <summary>The feed directory from <c>--test-update-feed</c>, or null to use GitHub Releases.</summary>
+    public static string? TestUpdateFeed { get; private set; }
+
+    /// <summary>
+    /// The environment variable Velopack's updater sets on the agent it starts after
+    /// an apply (Velopack's HOOK_ENV_RESTART), whether the apply worked or not.
+    /// <c>VelopackApp.Run</c> reads and clears it, so Main reads it first.
+    /// </summary>
+    public const string VelopackRestartEnvVar = "VELOPACK_RESTART";
+
+    /// <summary>
+    /// Whether Velopack's updater started this launch after an apply (#456). With an
+    /// update still waiting, that apply failed, and the agent must not restart into
+    /// it again straight away (see AgentUpdateService.RestartedByUpdater).
+    /// </summary>
+    public static bool RestartedByUpdater { get; private set; }
 
     /// <summary>The startup stage from <c>--test-crash-at</c>, or null for a normal launch.</summary>
     public static string? TestCrashAt { get; private set; }
@@ -403,6 +454,14 @@ public static class Program
         ShowTestCrash || VerifyI18n;
 
     /// <summary>
+    /// Whether this launch carries any dev / headless / self-test / test-crash /
+    /// test-update flag, as opposed to the normal, user-facing launch that passes
+    /// none of them.
+    /// </summary>
+    public static bool IsDevLaunch =>
+        SuppressCrashDialog || TestCrashAt is not null || TestUpdateProbe || TestUpdateFeed is not null;
+
+    /// <summary>
     /// Whether this launch may show a real UAC prompt (#405): only a normal,
     /// user-facing launch. Every dev / headless / self-test / test-crash flag rules
     /// it out, because a prompt takes over the secure desktop and waits for an answer
@@ -410,8 +469,20 @@ public static class Program
     /// Production environment, so a Debug run (<c>dotnet run</c>, the e2e) never
     /// elevates either.
     /// </summary>
-    public static bool AllowsRealElevation =>
-        !SuppressCrashDialog && TestCrashAt is null && !TestUpdateProbe;
+    public static bool AllowsRealElevation => !IsDevLaunch;
+
+    /// <summary>
+    /// The folder this launch writes its logs to: the daily logs, the self-tests'
+    /// logs and the crash log (#463). A dev launch (<see cref="IsDevLaunch"/>) honours
+    /// <see cref="AgentLogPaths.LogDirectoryEnvVar"/>, which the agent e2e sets on
+    /// every agent it launches, so a test agent never writes into the log of an
+    /// agent installed on the same box. The normal launch always logs to
+    /// <c>%LOCALAPPDATA%\Anchor\FocusAgent\logs</c>: a student can't move the log the
+    /// test phase uploads (#446) with an environment variable.
+    /// </summary>
+    public static string LogDirectory =>
+        AgentLogPaths.LaunchLogDirectory(
+            IsDevLaunch, Environment.GetEnvironmentVariable(AgentLogPaths.LogDirectoryEnvVar));
 
     /// <summary>
     /// How long the uninstall hook waits for the student to answer the UAC prompt
@@ -422,6 +493,11 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        // #456: before VelopackApp.Run clears it. Velopack's own startup auto-apply
+        // skips a launch with this set; the agent's idle restart uses it to tell a
+        // failed apply from a fresh start.
+        RestartedByUpdater = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(VelopackRestartEnvVar));
+
         // Velopack lifecycle hook (#209): MUST run before any UI. On an
         // install/update/uninstall launch Velopack injects hidden hook args; this
         // call handles them (e.g. (re)creating the Start-menu/Run-key shortcuts on
@@ -431,14 +507,21 @@ public static class Program
         // UpdateManager against the GitHub Releases feed) is wired in App startup
         // via AgentUpdateService (#224), started before any window (#407).
         VelopackApp.Build()
-            // #407: a release the update check downloaded and staged is applied
-            // HERE, on the next launch, before any WinUI code runs: Run() sees a
-            // newer full package in the packages dir, hands it to the updater,
-            // restarts into the new version and exits this process. So a fixed
-            // release lands even when this launch's own startup would crash again.
-            // It's Velopack's default; set explicitly because it is the second half
-            // of the agent's crash-recovery path and must not be switched off.
-            .SetAutoApplyOnStartup(true)
+            // #407 + #449: a release the update check downloaded is applied HERE, on
+            // the next launch, before any WinUI code runs: Run() sees a newer full
+            // package in the packages dir, hands it to the updater, restarts into
+            // the new version and exits this process. The check itself only ever
+            // downloads (the updater kills a running agent, #449), so this is where
+            // an update lands unless an idle agent restarted into it first (#456),
+            // and a fixed release lands even when this launch's own startup would
+            // crash again. Run() skips it on a launch the updater itself started
+            // (VELOPACK_RESTART), so a failed apply doesn't repeat at once. It's
+            // Velopack's default; set explicitly
+            // because it is the second half of both the update path and the crash-
+            // recovery path and must stay on for every launch that becomes the agent.
+            // The one launch that doesn't is a second one while the agent already
+            // runs (see IsAnotherAgentRunningFromThisExe).
+            .SetAutoApplyOnStartup(!IsAnotherAgentRunningFromThisExe())
             // #225: "start the agent at login" lives in a per-user HKCU\...\Run
             // entry (no admin, no MDM) — the unpackaged build's equivalent of a
             // packaged app's windows.startupTask extension. Velopack fires
@@ -507,6 +590,7 @@ public static class Program
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
         ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
         ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));
+        TrayMenuInSession = args.Any(a => string.Equals(a, TrayMenuInSessionArg, StringComparison.OrdinalIgnoreCase));
         ShowTestGuidedInstall = args.Any(a => string.Equals(a, ShowTestGuidedInstallArg, StringComparison.OrdinalIgnoreCase));
         ShowTestExtensionConsent = args.Any(a => string.Equals(a, ShowTestExtensionConsentArg, StringComparison.OrdinalIgnoreCase));
         VerifyDsTheme = args.Any(a => string.Equals(a, VerifyDsThemeArg, StringComparison.OrdinalIgnoreCase));
@@ -519,6 +603,7 @@ public static class Program
         VerifyI18nLanguage = ArgValueAfter(args, VerifyI18nArg);
         TestCrashAt = ArgValueAfter(args, TestCrashAtArg);
         TestUpdateProbe = args.Any(a => string.Equals(a, TestUpdateProbeArg, StringComparison.OrdinalIgnoreCase));
+        TestUpdateFeed = ArgValueAfter(args, TestUpdateFeedArg);
 
         // #323: pin the UI language before any XAML is parsed so x:Uid resources and
         // .NET formatting both resolve to it. --verify-i18n's language wins (that mode
@@ -534,8 +619,13 @@ public static class Program
         // launch needs to be its own process). Skip it in those modes only.
         if (!ShowTestToast && !ShowTestOverlay && !ShowTestMainWindow && !ShowTestJoinByCode && !ShowTestTrayMenu && !ShowTestGuidedInstall && !ShowTestExtensionConsent && !VerifyDsTheme && !ShowTestCrash && !VerifyI18n && TestCrashAt is null)
         {
-            var keyInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
-            if (!keyInstance.IsCurrent)
+            // #461: step aside only for an agent that is running. One that was just
+            // killed still holds the key while Windows tears it down; the claim waits
+            // for it to be gone instead of leaving the student with no agent.
+            if (!SingleInstanceClaim.TryClaim(
+                    new AppInstanceKey(SingleInstanceKey),
+                    new KeyHolderProcesses(),
+                    SingleInstanceClaim.ExitingHolderBudget))
             {
                 return 0;
             }
@@ -675,19 +765,21 @@ public static class Program
     }
 
     /// <summary>
-    /// Handle the dev-only <c>--check-update &lt;feedDir&gt;</c> mode (#224): run the
-    /// real Velopack check against a locally-served feed (no GitHub, no real
-    /// install), print the outcome for the harness to read, and signal the caller to
-    /// exit. Prints one of:
-    ///   <c>update-available: &lt;version&gt;</c> when the feed has a newer release, or
+    /// Handle the dev-only <c>--check-update &lt;feedDir | repoUrl&gt;</c> mode (#224,
+    /// #465): run the real Velopack check against a locally-served feed directory or
+    /// a repository's production feed (no real install), print the outcome for the
+    /// harness to read, and signal the caller to exit. Prints one of:
+    ///   <c>update-available: &lt;version&gt;</c> when the feed has a newer release,
+    ///   <c>downloaded: &lt;version&gt;</c> when it has and <see cref="CheckUpdateDownloadEnvVar"/>
+    ///   asked for the download too, or
     ///   <c>up-to-date</c> when it doesn't.
     /// Returns false for a normal launch so <see cref="Main"/> proceeds.
     /// </summary>
     private static bool TryRunUpdateCheckMode(string[] args, out int exitCode)
     {
         exitCode = 0;
-        var feedDir = ArgValueAfter(args, CheckUpdateArg);
-        if (feedDir is null) return false;
+        var feed = ArgValueAfter(args, CheckUpdateArg);
+        if (feed is null) return false;
 
         var resultPath = Environment.GetEnvironmentVariable(CheckUpdateResultPathEnvVar);
 
@@ -699,9 +791,11 @@ public static class Program
 
         try
         {
-            if (!Directory.Exists(feedDir))
+            var isRepoUrl = Uri.TryCreate(feed, UriKind.Absolute, out var feedUri)
+                            && (feedUri.Scheme == Uri.UriSchemeHttp || feedUri.Scheme == Uri.UriSchemeHttps);
+            if (!isRepoUrl && !Directory.Exists(feed))
             {
-                WriteResult($"error: feed directory not found: {feedDir}");
+                WriteResult($"error: feed directory not found: {feed}");
                 exitCode = 1;
                 return true;
             }
@@ -710,19 +804,30 @@ public static class Program
                 Environment.GetEnvironmentVariable(CheckUpdateCurrentVersionEnvVar) is { Length: > 0 } v
                     ? v
                     : "0.0.1";
+            var log = Microsoft.Extensions.Logging.Abstractions.NullLogger<Updates.VelopackUpdateManager>.Instance;
 
-            var manager = Updates.VelopackUpdateManager.ForLocalFeed(
-                feedDir,
-                VelopackAppId,
-                currentVersion,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<Updates.VelopackUpdateManager>.Instance);
+            var manager = isRepoUrl
+                ? Updates.VelopackUpdateManager.ForGithubRepo(feed, VelopackAppId, currentVersion, log)
+                : Updates.VelopackUpdateManager.ForLocalFeed(feed, VelopackAppId, currentVersion, log);
 
-            // IsInstalled is forced true by the TestVelopackLocator in ForLocalFeed,
+            // IsInstalled is forced true by the TestVelopackLocator in both managers,
             // so the check actually runs (the production gate is in AgentUpdateService).
             var result = manager.CheckForUpdateAsync().GetAwaiter().GetResult();
-            WriteResult(result.IsUpdateAvailable
-                ? $"update-available: {result.TargetVersion}"
-                : "up-to-date");
+            if (!result.IsUpdateAvailable)
+            {
+                WriteResult("up-to-date");
+            }
+            else if (Environment.GetEnvironmentVariable(CheckUpdateDownloadEnvVar) == "1")
+            {
+                manager.DownloadUpdateAsync(result).GetAwaiter().GetResult();
+                WriteResult(manager.GetPendingRestartVersion() is { } downloaded
+                    ? $"downloaded: {downloaded}"
+                    : $"error: downloaded {result.TargetVersion}, but no package is waiting");
+            }
+            else
+            {
+                WriteResult($"update-available: {result.TargetVersion}");
+            }
         }
         catch (Exception ex)
         {
@@ -730,6 +835,52 @@ public static class Program
             exitCode = 1;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Whether another agent process is already running from this same exe (#449):
+    /// a Start-menu click while the agent sits in the tray, which single-instance
+    /// gating turns into a no-op once Velopack's hook has run. That launch must not
+    /// apply a downloaded update: Update.exe stops every process in the install
+    /// folder before it swaps versions, so it would take the running agent down
+    /// mid-session. The update then waits for the next launch that becomes the
+    /// agent. Best-effort: when the processes can't be listed at all, it answers
+    /// false and the launch applies, as before.
+    /// </summary>
+    private static bool IsAnotherAgentRunningFromThisExe()
+    {
+        try
+        {
+            using var self = System.Diagnostics.Process.GetCurrentProcess();
+            var selfPath = self.MainModule?.FileName;
+            if (string.IsNullOrEmpty(selfPath)) return false;
+
+            foreach (var process in System.Diagnostics.Process.GetProcessesByName(self.ProcessName))
+            {
+                using (process)
+                {
+                    if (process.Id == self.Id) continue;
+                    string? path;
+                    try
+                    {
+                        path = process.MainModule?.FileName;
+                    }
+                    catch
+                    {
+                        // Not ours to inspect (another user's agent, or it just
+                        // exited); it isn't running from this install either.
+                        continue;
+                    }
+                    if (string.Equals(path, selfPath, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+        }
+        catch
+        {
+            // Listing processes failed; fall back to Velopack's default (apply).
+        }
+        return false;
     }
 
     /// <summary>Return the argument value immediately following <paramref name="flag"/>, or null.</summary>

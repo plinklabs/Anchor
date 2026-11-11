@@ -187,6 +187,37 @@ class AppLocalizationsNl extends AppLocalizations {
   String get homeEnd => 'Beëindigen';
 
   @override
+  String get homeEndLabel => 'Sessie eindigt';
+
+  @override
+  String homeEndThisPeriod(String time) {
+    return 'Op het einde van dit lesuur ($time)';
+  }
+
+  @override
+  String homeEndNextPeriod(String time) {
+    return 'Op het einde van het volgende lesuur ($time)';
+  }
+
+  @override
+  String get homeEndSpecificTime => 'Op een uur dat ik kies';
+
+  @override
+  String get homeEndTimeLabel => 'Einduur';
+
+  @override
+  String get homeEndTimeInvalid => 'Gebruik een uur zoals 11:30.';
+
+  @override
+  String homeEndTimeTooLate(String time) {
+    return 'Kies een uur ten laatste om $time.';
+  }
+
+  @override
+  String get homeEndPeriodChanged =>
+      'Het lesuur is intussen veranderd. Kijk na wanneer de sessie eindigt en start ze dan opnieuw.';
+
+  @override
   String get classesLoadError =>
       'Kon de klassen niet laden. Probeer het opnieuw.';
 
@@ -444,6 +475,11 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String sessionEndsAt(String time) {
+    return 'eindigt om $time';
+  }
+
+  @override
   String get sessionHeadlineFallback => 'Live sessie';
 
   @override
@@ -475,6 +511,13 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String get sessionStateStale => 'Agent rapporteert niet meer';
+
+  @override
+  String get sessionStateAgentMissing => 'Agent niet verbonden';
+
+  @override
+  String get sessionStateAgentMissingTooltip =>
+      'Alleen de browserextensie is aangesloten. Apps worden op deze laptop niet geblokkeerd.';
 
   @override
   String get sessionStateLeft => 'Verlaten';
@@ -541,6 +584,160 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get sessionTakePartHint =>
       'Zelf meedoen? Gebruik \'Deelnemen met code\' in de agent.';
+
+  @override
+  String get alertsTitle => 'Meldingen';
+
+  @override
+  String get alertsIntro =>
+      'Tijdens een live sessie laat het dashboard je weten wanneer er iets voor je is, ook als het in een tabblad op de achtergrond staat: het speelt een kort geluid, de titel van het tabblad telt wat je nog niet gezien hebt, en pop-ups, als je ze aanzet, tonen het boven andere apps.';
+
+  @override
+  String get alertsSound => 'Geluid afspelen';
+
+  @override
+  String get alertsCategoriesLabel => 'Waarschuw me als';
+
+  @override
+  String get alertsAccessRequest => 'Een leerling toegang vraagt tot een site';
+
+  @override
+  String get alertsStudentLeft => 'Een leerling de sessie verlaat of weigert';
+
+  @override
+  String get alertsAgentLost =>
+      'De agent van een leerling niet meer rapporteert';
+
+  @override
+  String get alertsTamper => 'Er manipulatie gedetecteerd wordt';
+
+  @override
+  String get alertsKeptInBrowser =>
+      'Deze instellingen worden in deze browser bewaard.';
+
+  @override
+  String get alertsTest => 'Testen';
+
+  @override
+  String get alertsSoundBlocked => 'Klik ergens om het geluid aan te zetten.';
+
+  @override
+  String get alertsPopups => 'Pop-ups tonen';
+
+  @override
+  String get alertsPopupsNotAsked =>
+      'Je browser vraagt om toestemming wanneer je ze aanzet.';
+
+  @override
+  String get alertsPopupsAllowed => 'Toegestaan in deze browser.';
+
+  @override
+  String get alertsPopupsBlocked => 'Geblokkeerd in deze browser.';
+
+  @override
+  String get alertsPopupsUnsupported => 'Deze browser kan geen pop-ups tonen.';
+
+  @override
+  String get alertsPopupsHowToAllow =>
+      'Zo sta je pop-ups toe in Edge of Chrome:';
+
+  @override
+  String get alertsPopupsStepIcon =>
+      '1. Klik op het pictogram links van de adresbalk.';
+
+  @override
+  String get alertsPopupsStepAllow => '2. Zet Meldingen op Toestaan.';
+
+  @override
+  String get alertsPopupsStepReload => '3. Laad de pagina opnieuw.';
+
+  @override
+  String get alertsPopupsWindows =>
+      'Nog steeds geen pop-ups? Kijk na of meldingen voor je browser aan staan in Windows: Instellingen → Systeem → Meldingen.';
+
+  @override
+  String get alertsPopupNames =>
+      'Namen van leerlingen en sites tonen in pop-ups';
+
+  @override
+  String get alertsPopupNamesHint =>
+      'Staat dit uit, dan zegt een pop-up alleen wat er gebeurde, voor als je scherm geprojecteerd wordt.';
+
+  @override
+  String alertsPopupAccessRequest(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Nieuwe toegangsvragen ($count)',
+      one: 'Nieuwe toegangsvraag',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupStudentLeft(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Leerlingen verlieten de sessie ($count)',
+      one: 'Een leerling verliet de sessie',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupAgentLost(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Agents rapporteren niet meer ($count)',
+      one: 'De agent van een leerling rapporteert niet meer',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupTamper(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Manipulatie gedetecteerd ($count)',
+      one: 'Manipulatie gedetecteerd',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String alertsPopupAsks(String name, String host) {
+    return '$name vraagt toegang tot $host';
+  }
+
+  @override
+  String alertsPopupLeft(String name) {
+    return '$name verliet de sessie';
+  }
+
+  @override
+  String alertsPopupDeclined(String name) {
+    return '$name weigerde de sessie';
+  }
+
+  @override
+  String alertsPopupAgentLostOf(String name) {
+    return 'De agent van $name rapporteert niet meer';
+  }
+
+  @override
+  String alertsPopupTamperOf(String name) {
+    return 'Manipulatie gedetecteerd op de computer van $name';
+  }
+
+  @override
+  String get alertsPopupTestTitle => 'Test-pop-up';
+
+  @override
+  String get alertsPopupTestBody =>
+      'Meldingen uit een live sessie verschijnen zo.';
 
   @override
   String get bundlesLoadListError =>
@@ -899,6 +1096,67 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get schoolsEmpty =>
       'Geen scholen gevonden. Scholen komen uit je directory; zodra leerkrachten bij een school horen, verschijnt die hier.';
+
+  @override
+  String schoolsLessonPeriodCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count lesuren',
+      one: '1 lesuur',
+      zero: 'Geen lesuren',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get schoolsEditLessonPeriods => 'Lesuren';
+
+  @override
+  String schoolsLessonPeriodsTitle(String name) {
+    return 'Lesuren · $name';
+  }
+
+  @override
+  String get schoolsLessonPeriodsIntro =>
+      'Eén lesrooster voor elke schooldag, in schooltijd. Leerkrachten van deze school kunnen een sessie dan laten eindigen op het einde van het huidige of het volgende lesuur.';
+
+  @override
+  String schoolsLessonPeriodNumber(int number) {
+    return 'Lesuur $number';
+  }
+
+  @override
+  String get schoolsLessonPeriodStart => 'Begin';
+
+  @override
+  String get schoolsLessonPeriodEnd => 'Einde';
+
+  @override
+  String get schoolsAddLessonPeriod => 'Lesuur toevoegen';
+
+  @override
+  String get schoolsRemoveLessonPeriod => 'Lesuur verwijderen';
+
+  @override
+  String get schoolsLessonPeriodsEmpty =>
+      'Nog geen lesuren. Leerkrachten van deze school kiezen voor elke sessie zelf een einduur.';
+
+  @override
+  String get schoolsLessonPeriodInvalidTime => 'Gebruik een uur zoals 08:25.';
+
+  @override
+  String get schoolsLessonPeriodEndBeforeStart =>
+      'Een lesuur moet eindigen na het begin.';
+
+  @override
+  String get schoolsLessonPeriodsOverlap =>
+      'Dit lesuur overlapt met een ander lesuur.';
+
+  @override
+  String schoolsLessonPeriodsSaveError(String name) {
+    return 'Kon de lesuren van $name niet opslaan. Probeer het opnieuw.';
+  }
 
   @override
   String get historyLoadError =>

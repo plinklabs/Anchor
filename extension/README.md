@@ -3,7 +3,9 @@
 Edge (Chromium) Manifest V3 extension that runs alongside `FocusAgent` on each
 student laptop. During an active focus session it observes the active tab URL,
 redirects off-allowlist pages to a friendly block page, and reports the block
-back to the backend over SignalR.
+back to the backend over SignalR. It stops filtering when the session ends, and
+also when the student leaves or declines it in the agent while it runs on: their
+blocked tabs go back to their pages, and off-list sites load again (#462).
 
 Design rationale lives in [focus-system-design.md](../focus-system-design.md)
 §6 (extension scope) and §11 (Phase 3 build order).
@@ -287,6 +289,8 @@ backend — no mocked `chrome`, no stubbed SignalR hub. The harness (under
 3. Drives session lifecycle over **REST** with the dev-impersonation header
    (`POST /sessions`, `PUT /sessions/{id}/bundles`, `POST /sessions/{id}/end`) —
    the same wire contract the dashboard uses.
+4. Runs no agent. Where a spec needs the student's agent, `e2e/student-agent.ts`
+   makes its hub calls as the seeded student (join, leave, decline, quit).
 
 The specs assert real behaviour, and navigate only to loopback hosts (Edge's
 `--host-resolver-rules` maps the synthetic test hosts to a local static server,
@@ -298,6 +302,7 @@ so no spec touches the public internet):
 | `block-on-start` | a tab already off-list when a session starts is redirected (#91) |
 | `block-on-navigation` | off-list navigations are blocked; on-list ones are left untouched (#72) |
 | `amend-bundles` | dropping a bundle mid-session re-scans and blocks a now-off-list tab (#93) |
+| `leave-session` | leaving, declining or quitting the agent stops the filtering, also for an extension that was offline then; joining again by code brings it back (#462) |
 
 **Hermetic against an on-box agent (#332).** On a developer machine the installed
 Anchor agent registers the witness native-messaging host *permanently*
@@ -553,18 +558,20 @@ const id = createHash('sha256').update(publicKey).digest()
 
 ## Sideload (production install path)
 
-Once the extension ships, managed devices will receive it via a Group Policy /
-Intune **ExtensionInstallForcelist** entry. The registry shape (documented
-here for future reference — not implemented in this scaffold):
+Managed devices receive the extension through a Group Policy / Intune
+**ExtensionInstallForcelist** entry. For school laptops managed through Intune
+that is a configuration profile; [`docs/INTUNE.md`](../docs/INTUNE.md) has the
+setting (#458). The registry shape:
 
 ```
 HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist
-  1 = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio;<update-url>
+  1 = REG_SZ  dnkimhodjfogjibnbbfdjdapgmmiojio;https://edge.microsoft.com/extensionwebstorebase/v1/crx
 ```
 
 The ID is the pinned `dnkimhodjfogjibnbbfdjdapgmmiojio` (see **Stable extension
-ID** above). `<update-url>` points at an `updates.xml` manifest hosted on a local
-file share or HTTPS endpoint and referencing the packed `.crx`.
+ID** above), and the update URL is the Edge Add-ons store's: the same entry the
+agent writes itself (below). A self-hosted `.crx` would instead point the update
+URL at an `updates.xml` manifest on a local file share or HTTPS endpoint.
 
 For unpacked dev installs the simpler shape is:
 
@@ -577,9 +584,12 @@ paired with a developer-mode-loaded unpacked extension at a known path.
 
 ### Agent self-registration (BYOD, one UAC prompt) — #211, #405
 
-Anchor is unmanaged BYOD, so there's no MDM to push the `HKLM` policy above. The
-agent sets it up itself instead (see `FocusAgent.Core.Extension.EdgeExtensionPolicy`
-/ `ExtensionSelfRegistrar`), pointed at the canonical Edge Add-ons store:
+On school laptops managed through Intune, IT pushes the forcelist entry below
+with a configuration profile ([`docs/INTUNE.md`](../docs/INTUNE.md), #458), and
+the agent finds it and asks nothing. On a student's own, unmanaged laptop there's
+no MDM to push it, so the agent sets it up itself (see
+`FocusAgent.Core.Extension.EdgeExtensionPolicy` / `ExtensionSelfRegistrar`),
+pointed at the canonical Edge Add-ons store:
 
 ```
 HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist

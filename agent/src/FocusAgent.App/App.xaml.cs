@@ -20,7 +20,6 @@ using FocusAgent.Core.Tamper;
 using FocusAgent.Core.Updates;
 using FocusAgent.App.Updates;
 using FocusAgent.Native;
-using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -47,6 +46,7 @@ public partial class App : Application
     private ExtensionSelfRegistrar? _extensionRegistrar;
     private ExtensionPolicyConsentLauncher? _extensionConsent;
     private InPrivateWitnessMonitor? _inPrivateMonitor;
+    private LogUploadService? _logUpload;
     private SessionRehydrationService? _rehydration;
     private FocusSessionController? _focus;
     private ISessionHubConnection? _hub;
@@ -54,6 +54,10 @@ public partial class App : Application
     private StatusEndpoint? _statusEndpoint;
     private JoinByCodeFlow? _joinByCodeFlow;
     private AgentUpdateService? _updateService;
+    // #456: restarts the agent into a downloaded update once it is idle, and the
+    // wake/unlock watch that re-checks for one after time asleep.
+    private IdleUpdateRestarter? _idleRestarter;
+    private WakeWatcher? _wakeWatcher;
     // Held only by the --show-test-toast path so the logger outlives the
     // async show/decide chain rather than getting disposed at OnLaunched return.
     private ILoggerFactory? _testLoggerFactory;
@@ -136,6 +140,9 @@ public partial class App : Application
             UnhandledException += (_, e) =>
             {
                 e.Handled = true;
+                // #456: a crashing agent doesn't restart into an update under its
+                // crash dialog; the next start applies it, as before.
+                _idleRestarter?.Stop();
                 CrashReporter.ReportUiThreadFatal(this, e.Exception);
             };
         }
@@ -151,7 +158,14 @@ public partial class App : Application
             _host.Start();
 
             var logger = _host.Services.GetRequiredService<ILogger<App>>();
-            logger.LogInformation("FocusAgent starting (unpackaged WinUI 3)");
+            // #446: the version, and the process id and start time, which date the
+            // updater log's lines (they carry only a time of day) for the log upload.
+            using (var self = System.Diagnostics.Process.GetCurrentProcess())
+            {
+                logger.LogInformation(
+                    "FocusAgent {Version} starting (unpackaged WinUI 3), process {ProcessId} started at {ProcessStartedAt:o}",
+                    AgentVersion.Current, self.Id, new DateTimeOffset(self.StartTime));
+            }
 
             // #224 + #407: start the Velopack auto-update cadence FIRST — a check
             // now, then every Update:CheckInterval — before config validation and
@@ -160,9 +174,9 @@ public partial class App : Application
             // Backend:BaseUrl) has then still checked the feed and can pull the
             // release that fixes it; started last, it never got the chance. Start()
             // doesn't block (the check runs on the thread pool), no-ops unless this
-            // is a real Velopack install (dev runs / the e2e are untouched), and
-            // stages updates for the NEXT launch so a student is never interrupted
-            // mid-session.
+            // is a real Velopack install (dev runs / the e2e are untouched), and only
+            // downloads: the NEXT launch applies the update (Program.Main), so a
+            // student is never interrupted mid-session (#449).
             _updateService = _host.Services.GetRequiredService<AgentUpdateService>();
             _updateService.Start();
 
@@ -249,6 +263,9 @@ public partial class App : Application
             // Also resolve the rehydration service eagerly so it's ready when
             // the connection manager fires its first Connected event below.
             _rehydration = _host.Services.GetRequiredService<SessionRehydrationService>();
+            // #446: the test phase's log upload, run on every Connected below. Off
+            // unless the backend turns it on (it then reports no windows).
+            _logUpload = _host.Services.GetRequiredService<LogUploadService>();
             _focus = _host.Services.GetRequiredService<FocusSessionController>();
             _connection = _host.Services.GetRequiredService<ConnectionManager>();
 
@@ -266,8 +283,14 @@ public partial class App : Application
                 // Per #34: the menu item is disabled while the agent is
                 // already in (or being walked into) a session — no point
                 // letting the student type a code they can't act on.
-                canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null,
+                canJoinByCode: () => _coordinator.ActiveSessionId is null && _coordinator.JoinedSessionId is null
+                                     && !_coordinator.IsClosingForRestart,
                 onQuit: ShutdownCleanly,
+                // #445: no "Exit Anchor" while a session is going on (joined,
+                // being asked to join, or being rejoined after a restart): the
+                // student leaves it from the main window first, which asks and
+                // shows on the teacher's roster.
+                canQuit: CanExit,
                 dispatcher: dispatcher,
                 // #405: after a "not now", startup stops asking; the tray keeps
                 // offering the Edge extension setup while no policy is in place.
@@ -284,6 +307,8 @@ public partial class App : Application
             // screenshots. Off by default.
             if (Program.StatusEndpointPort is int port)
             {
+                var focusOverlay = _host.Services.GetRequiredService<IFocusOverlay>() as WinUiFocusOverlay;
+                var sleepClock = _host.Services.GetService<SimulatedSleepClock>();
                 _statusEndpoint = new StatusEndpoint(
                     _connection,
                     _coordinator,
@@ -300,6 +325,9 @@ public partial class App : Application
                     // the window and Application.Exit, so it must run on the UI
                     // thread — same marshalling as onCloseWindow above.
                     onQuit: () => _mainWindow?.DispatcherQueue.TryEnqueue(ShutdownCleanly),
+                    // #445: and under the tray's rule — refused while a session is
+                    // going on, as the tray then offers no Exit.
+                    canQuit: CanExit,
                     // #405: let the headless e2e see where the Edge policy is and
                     // answer the setup window like a click on Allow / Not now.
                     extensionPolicy: () => new
@@ -317,8 +345,51 @@ public partial class App : Application
                         witnessConnected = witnessMonitor.IsConnected,
                         state = extensionGuard.State.ToString(),
                     },
-                    onTurnExtensionBackOn: _focus.TurnExtensionBackOn);
+                    onTurnExtensionBackOn: _focus.TurnExtensionBackOn,
+                    // #452: which overlay the student is on, if any.
+                    overlay: () => focusOverlay?.Showing,
+                    // #453: click one of the overlay's allowed apps, as the student does.
+                    onClickOverlayApp: app => focusOverlay?.ClickAllowedApp(app) ?? false,
+                    // #449: the downloaded update the next start applies, if any.
+                    pendingUpdate: () => _updateService?.PendingVersion,
+                    // #456: when the last update check ran, a check on demand, and
+                    // time asleep: the update clock jumps, the timers don't.
+                    lastUpdateCheck: () => _updateService?.LastCheckStartedAt,
+                    onCheckUpdate: () => _ = _updateService?.CheckOnceAsync(),
+                    onSimulateSleep: sleepClock is null ? null : sleepClock.Sleep,
+                    // #446: what the log uploads did, so the headless e2e can tell
+                    // a pass ran (and whether it uploaded anything).
+                    logUpload: () => _logUpload?.Status);
                 _statusEndpoint.Start(port);
+            }
+
+            // #456: check for an update on wake and unlock once the last check is
+            // Update:CheckInterval old by the clock. The interval timer leaves out
+            // time asleep, so on a laptop that is mostly closed it alone would check
+            // only every few days.
+            _wakeWatcher = new WakeWatcher(OnAgentWoke, _host.Services.GetRequiredService<ILogger<WakeWatcher>>());
+            _wakeWatcher.Start();
+
+            // #456: restart into a downloaded update as soon as no session is going
+            // on, instead of leaving it for the next sign-in. Started last, once
+            // everything a restart must not cut short is wired: the coordinator
+            // (sessions) and the join-by-code dialog (a join the student is typing).
+            // The Edge extension setup window is not a reason to wait: a student can
+            // leave it open for days, and the restarted agent asks again.
+            if (_host.Services.GetRequiredService<IOptions<UpdateSettings>>().Value.RestartWhenIdle)
+            {
+                var joinByCode = _joinByCodeFlow;
+                _idleRestarter = new IdleUpdateRestarter(
+                    _updateService,
+                    _coordinator,
+                    new UpdateRestarter(
+                        _host.Services.GetRequiredService<IAgentUpdateManager>(),
+                        dispatcher,
+                        ExitForUpdateRestart,
+                        logger),
+                    isBusy: () => joinByCode.IsOpen,
+                    log: _host.Services.GetRequiredService<ILogger<IdleUpdateRestarter>>());
+                _idleRestarter.Start();
             }
         }
         catch (Exception ex)
@@ -327,7 +398,8 @@ public partial class App : Application
             // process goes away: join the startup check if it is still running, or
             // run one (on a host-independent service if the host never came up).
             // Both branches below keep the process alive, bounded, until it has
-            // settled, so a staged fix survives the dialog being closed at once.
+            // settled, so a fix it is downloading survives the dialog being closed at
+            // once and is on disk for the next launch to apply.
             var pendingUpdate = BeginFatalUpdateCheck();
 
             // #248: a headless/dev run (the e2e, a verify script) intentionally
@@ -359,6 +431,8 @@ public partial class App : Application
     /// </summary>
     private Task? BeginFatalUpdateCheck()
     {
+        // #456: from here on the crash path owns the update; no idle restart.
+        _idleRestarter?.Stop();
         try
         {
             _updateService ??= CreateStandaloneUpdateService();
@@ -392,14 +466,18 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// The production update manager over the configured GitHub Releases feed, or
-    /// the dev-only <see cref="ProbeUpdateManager"/> under <c>--test-update-probe</c>
-    /// (#407). Shared by the DI host and <see cref="CreateStandaloneUpdateService"/>.
+    /// The production update manager over the configured GitHub Releases feed, the
+    /// dev-only <see cref="ProbeUpdateManager"/> under <c>--test-update-probe</c>
+    /// (#407), or the production manager over a local feed directory under
+    /// <c>--test-update-feed</c> (#449). Shared by the DI host and
+    /// <see cref="CreateStandaloneUpdateService"/>.
     /// </summary>
     private static IAgentUpdateManager CreateUpdateManager(UpdateSettings settings, ILogger<VelopackUpdateManager> log) =>
         Program.TestUpdateProbe
             ? new ProbeUpdateManager()
-            : VelopackUpdateManager.ForGithub(settings, log);
+            : Program.TestUpdateFeed is { } feed
+                ? VelopackUpdateManager.ForFeedDirectory(feed, log)
+                : VelopackUpdateManager.ForGithub(settings, log);
 
     /// <summary>The startup stages <c>--test-crash-at</c> can fail (#407). See Program.TestCrashAtArg.</summary>
     private static class TestCrashStage
@@ -469,6 +547,11 @@ public partial class App : Application
                 // the new connection to the student's user group.
                 if (_rehydration is { } rehydrate)
                     _ = rehydrate.NotifyConnectedAsync();
+                // #446: and upload the log lines of any session window the backend
+                // still asks for. In the background: it never holds up startup or
+                // the connection, and a window that fails stays pending on the
+                // backend, so the next connect tries it again.
+                _ = _logUpload?.NotifyConnectedAsync();
                 break;
         }
     }
@@ -512,6 +595,69 @@ public partial class App : Application
             _ = Task.Run(() => registrar.OfferAgainAsync());
     }
 
+    /// <summary>
+    /// A wake from sleep or an unlock (#456): check for an update if the last check
+    /// is <c>Update:CheckInterval</c> old by the clock. What it finds is applied
+    /// under the idle rule, like any other check's.
+    /// </summary>
+    private void OnAgentWoke(string reason) => _ = _updateService?.CheckIfDueAsync(reason);
+
+    /// <summary>
+    /// The agent's exit to restart into an update (#456), on the UI thread. Velopack's
+    /// updater is already waiting for this process (see <see cref="UpdateRestarter"/>),
+    /// and the agent is idle: no session, so nothing to report. It goes quietly: no
+    /// window pops up on the way out (the sustained-disconnect auto-open is unhooked),
+    /// and the tray icon is removed now rather than left as a ghost. The extension's
+    /// witness pipe is closed on purpose, before the updater stops the native host;
+    /// the extension reconnects to the restarted agent on its own. The log needs no
+    /// flush: its file sink writes every line through.
+    /// </summary>
+    private void ExitForUpdateRestart()
+    {
+        if (_connection is not null) _connection.StatusChanged -= OnConnectionStatusChanged;
+        _wakeWatcher?.Dispose();
+        _mainWindow?.AllowClose();
+        try
+        {
+            _tray?.Dispose();
+        }
+        catch
+        {
+            // best-effort, on the way out
+        }
+        _tray = null;
+
+        var dispatcher = DispatcherQueue.GetForCurrentThread();
+        var witness = _witnessMonitor;
+        var log = _host?.Services.GetService<ILogger<App>>();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (witness is not null)
+                    await witness.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                log?.LogDebug(ex, "Closing the witness pipe before the update restart failed.");
+            }
+            log?.LogInformation("Exiting so Velopack's updater can apply the update and start the agent again.");
+            if (!dispatcher.TryEnqueue(Exit))
+                Environment.Exit(0);
+        });
+    }
+
+    /// <summary>
+    /// #445: whether the tray offers "Exit Anchor" (and the status endpoint's quit
+    /// goes through): not while a session is going on — joined, being asked to join,
+    /// or being rejoined after a restart (<see cref="SessionCoordinator.HasSessionGoingOn"/>,
+    /// the same notion that holds back the restart into an update). A one-click exit
+    /// mid-session was easy to use on purpose and to hit by accident, and showed the
+    /// teacher only a "Left"; "Leave session" in the main window asks first. Ending
+    /// the process from Task Manager still shows up as <c>HeartbeatLost</c>.
+    /// </summary>
+    private bool CanExit() => _coordinator?.HasSessionGoingOn != true;
+
     private void ShutdownCleanly()
     {
         // Let the main window's close-to-tray interception step aside for the
@@ -528,7 +674,9 @@ public partial class App : Application
     /// timeout. Time-boxed and best-effort: the bounded wait below is the only
     /// thing standing between a slow or failing network and the student's Quit, so
     /// a stalled report can never delay process exit. No-op outside a session
-    /// (the coordinator gates on <c>JoinedSessionId</c>).
+    /// (the coordinator gates on <c>JoinedSessionId</c>). Since #445 the tray offers
+    /// no Exit during a session (<see cref="CanExit"/>), so this is left for a
+    /// rejoin that lands between that check and the exit.
     /// </summary>
     private void ReportAgentKilledBeforeExit()
     {
@@ -563,7 +711,7 @@ public partial class App : Application
     private void RunToastSelfTest()
     {
         var dispatcher = DispatcherQueue.GetForCurrentThread();
-        var logDir = AgentLogPaths.LocalAppDataLogDirectory();
+        var logDir = Program.LogDirectory;
         Directory.CreateDirectory(logDir);
         var serilog = new LoggerConfiguration()
             .MinimumLevel.Debug()
@@ -614,7 +762,7 @@ public partial class App : Application
     private void RunOverlaySelfTest()
     {
         var dispatcher = DispatcherQueue.GetForCurrentThread();
-        var logDir = AgentLogPaths.LocalAppDataLogDirectory();
+        var logDir = Program.LogDirectory;
         Directory.CreateDirectory(logDir);
         var serilog = new LoggerConfiguration()
             .MinimumLevel.Debug()
@@ -660,9 +808,10 @@ public partial class App : Application
                 new BrowserPausedPrompt(
                     new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
                     TimeSpan.FromSeconds(60),
-                    () => false));
+                    () => false),
+                pausedWindowHandle: IntPtr.Zero);
         else
-            overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName);
+            overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName, blockedWindowHandle: IntPtr.Zero);
 
         // Deterministic show -> close -> linger cycle so both consumers can observe
         // it without a real backend or off-list app:
@@ -757,10 +906,8 @@ public partial class App : Application
 
         var detail = CrashDiagnostics.BuildDetail(
             synthetic,
-            typeof(App).Assembly
-                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
-                ?.InformationalVersion?.Split('+', 2)[0],
-            Path.Combine(AgentLogPaths.LocalAppDataLogDirectory(), "startup-error.log"));
+            AgentVersion.Current,
+            Path.Combine(Program.LogDirectory, "startup-error.log"));
 
         _crashSelfTestWindow = new CrashReportWindow(
             "Anchor couldn't start", detail, CrashDiagnostics.BuildFullStack(synthetic));
@@ -828,7 +975,14 @@ public partial class App : Application
         // the menu is shown; the observer kills it once it has captured.
         DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
 
-        var menu = Tray.TrayMenu.Build(onOpen: () => { }, onJoinByCode: () => { }, onQuit: () => { });
+        // #445: --traymenu-in-session shows the menu as it is during a session. The
+        // menu asks canQuit as it opens, as the real tray's does, and leaves "Exit
+        // Anchor" out; "Join a session…" is disabled, as TrayIconHost does then.
+        var inSession = Program.TrayMenuInSession;
+        var menu = Tray.TrayMenu.Build(
+            onOpen: () => { }, onJoinByCode: () => { }, onQuit: () => { },
+            canQuit: inSession ? () => false : null);
+        if (inSession) menu.JoinItem.IsEnabled = false;
         // Show a representative live state so the status eyebrow renders real text.
         // Presentable demo content (no debug strings) so this same surface is fit to
         // ship as a website screenshot (#251).
@@ -844,8 +998,9 @@ public partial class App : Application
         };
         // Title is "Anchor" (not a "(self-test)" debug label): this host window's
         // title bar is visible in the curated website screenshot of the tray menu
-        // (#251), so it must read like the shipped app.
+        // (#251), so it must read like the shipped app, Anchor icon included (#414).
         var host = new Window { Title = "Anchor" };
+        WindowIcon.Apply(host);
         host.Content = root;
         _trayMenuSelfTestWindow = host;
 
@@ -1192,6 +1347,15 @@ public partial class App : Application
             .Bind(builder.Configuration.GetSection(DevSettings.SectionName));
         builder.Services.AddOptions<UpdateSettings>()
             .Bind(builder.Configuration.GetSection(UpdateSettings.SectionName));
+        builder.Services.AddOptions<DiagnosticsSettings>()
+            .Bind(builder.Configuration.GetSection(DiagnosticsSettings.SectionName));
+        var diagnostics = builder.Configuration.GetSection(DiagnosticsSettings.SectionName).Get<DiagnosticsSettings>()
+                          ?? new DiagnosticsSettings();
+        // #463: without the setting, the launch's log folder, which a dev launch
+        // without --inject-token (a --test-crash-at run) also moves.
+        var logDir = string.IsNullOrWhiteSpace(diagnostics.LogDirectory)
+            ? Program.LogDirectory
+            : diagnostics.LogDirectory;
 
         builder.Services.AddSingleton(dispatcher);
         builder.Services.AddSingleton(TimeProvider.System);
@@ -1232,6 +1396,20 @@ public partial class App : Application
         builder.Services.AddHttpClient<IJoinByCodeClient, HttpJoinByCodeClient>();
         builder.Services.AddSingleton<JoinByCodeFlow>();
         builder.Services.AddSingleton<ConnectionManager>();
+        // #446 -- the test phase's log upload: REST client + the service that cuts
+        // the lines inside each session window the backend asks for out of the
+        // agent's logs and uploads them.
+        builder.Services.AddHttpClient<ILogUploadClient, HttpLogUploadClient>();
+        builder.Services.AddSingleton(sp => new LogUploadService(
+            sp.GetRequiredService<ILogUploadClient>(),
+            new LogUploadSources(
+                logDir,
+                string.IsNullOrWhiteSpace(diagnostics.UpdaterLogPath)
+                    ? AgentLogPaths.VelopackLogPath(Program.VelopackAppId)
+                    : diagnostics.UpdaterLogPath),
+            AgentVersion.Current,
+            TimeProvider.System,
+            sp.GetRequiredService<ILogger<LogUploadService>>()));
 
         builder.Services.AddSingleton<IAppIdentifier, AppIdentifier>();
         builder.Services.AddSingleton<IForegroundWatcher, ForegroundWatcher>();
@@ -1320,15 +1498,28 @@ public partial class App : Application
 
         // #224: Velopack auto-update. The manager wraps a real UpdateManager over
         // the configured GitHub Releases feed; the service owns the cadence (startup
-        // + interval) and the install/enabled gating, and downloads + stages deltas
-        // for the next restart. Both are no-ops on a non-install (dev run / e2e).
+        // + interval) and the install/enabled gating, and downloads deltas for the
+        // next start to apply (#449). Both are no-ops on a non-install (dev run / e2e).
         builder.Services.AddSingleton<IAgentUpdateManager>(sp =>
             CreateUpdateManager(
                 sp.GetRequiredService<IOptions<UpdateSettings>>().Value,
                 sp.GetRequiredService<ILogger<VelopackUpdateManager>>()));
-        builder.Services.AddSingleton<AgentUpdateService>();
+        // #456: under --status-endpoint (dev) the update service's clock can be
+        // moved as by a night asleep, for the wake e2e; otherwise it is the system's.
+        if (Program.StatusEndpointPort is not null)
+            builder.Services.AddSingleton<SimulatedSleepClock>();
+        builder.Services.AddSingleton(sp => new AgentUpdateService(
+            sp.GetRequiredService<IAgentUpdateManager>(),
+            sp.GetRequiredService<IOptions<UpdateSettings>>(),
+            (TimeProvider?)sp.GetService<SimulatedSleepClock>() ?? TimeProvider.System,
+            sp.GetRequiredService<ILogger<AgentUpdateService>>())
+        {
+            // A failed apply must not turn into a restart loop.
+            RestartedByUpdater = Program.RestartedByUpdater,
+        });
 
-        var logDir = AgentLogPaths.LocalAppDataLogDirectory();
+        // #446: Diagnostics:LogDirectory (dev/e2e only) moves the log, so a test
+        // agent writes, and uploads, its own temporary log.
         Directory.CreateDirectory(logDir);
 
         var serilog = new LoggerConfiguration()

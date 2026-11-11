@@ -39,6 +39,26 @@ public class BrandAssetsTests
         Assert.Contains(32, sizes);
     }
 
+    [Fact]
+    public void The_exe_embeds_TrayIcon_at_the_sizes_Explorer_shows()
+    {
+        // #414: without <ApplicationIcon> the exe has no icon resource and Explorer,
+        // Task Manager and the taskbar fallback show the generic Windows icon. The
+        // windows set the same file on themselves (WindowIcon); AgentIconTests checks
+        // the built exe and the running windows end to end.
+        var csproj = Path.Combine(RepoRoot(), "agent", "src", "FocusAgent.App", "FocusAgent.App.csproj");
+        var declared = System.Xml.Linq.XDocument.Load(csproj)
+            .Descendants("ApplicationIcon")
+            .Select(e => e.Value.Trim())
+            .ToList();
+        Assert.Equal([@"Assets\TrayIcon.ico"], declared);
+
+        // Explorer shows an exe at 16/32/48 px and, in large views, 256 px.
+        var sizes = ReadIcoSizes(Path.Combine(AssetsDir, "TrayIcon.ico"));
+        Assert.Contains(48, sizes);
+        Assert.Contains(256, sizes);
+    }
+
     /// <summary>Parse the icon-directory of an .ico into its declared widths.</summary>
     private static IReadOnlyList<int> ReadIcoSizes(string path)
     {

@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as signalR from '@microsoft/signalr';
 import { HUB_RETRY_MAX_DELAY_MS, HubClient, hubRetryDelayMs } from './hub-client';
 import { catchUpOnConnect } from './session-confirm';
+import { EXTENSION_HEARTBEAT_INTERVAL_MS, SessionHeartbeat } from './heartbeat';
 import type { SessionStartedPayload } from './types';
 
 const RECORD_SEPARATOR = '\x1e';
@@ -205,8 +206,8 @@ function startedPayload(sessionId: string): SessionStartedPayload {
 
 /**
  * A HubClient on `hub`, wired like background.ts: an in-memory active session,
- * SessionStarted/SessionEnded handlers that set and clear it, and the catch-up
- * on every connect.
+ * SessionStarted/SessionEnded handlers that set and clear it, ParticipationEnded
+ * handled as SessionEnded (#462), and the catch-up on every connect.
  */
 function makeClient(hub: FakeHub, activeSessionId: string | null) {
   const state = { activeSessionId, started: [] as string[], ended: [] as string[] };
@@ -222,6 +223,7 @@ function makeClient(hub: FakeHub, activeSessionId: string | null) {
         state.activeSessionId = payload.sessionId;
       },
       onSessionEnded,
+      onParticipationEnded: onSessionEnded,
       onAllowlistAmended: async () => {},
       onSessionBundlesUpdated: async () => {},
       onConnected: () =>
@@ -417,5 +419,88 @@ describe('HubClient (#374)', () => {
     await second.stop();
     await elapse(TEN_MINUTES);
     expect(unreachable.attempts).toHaveLength(unreachableAttempts);
+  });
+});
+
+// #462 — the student leaves, declines or quits the agent while the session runs
+// on. The extension used to go on filtering for the session and pinging it
+// every 10 s, each ping turned away by the hub, until it reconnected or the
+// session ended. The client here carries the extension's heartbeat loop too,
+// wired as background.ts wires it: it pings the active session, if any.
+describe('HubClient, once the student is out of the session (#462)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    for (const level of ['debug', 'log', 'info', 'warn', 'error'] as const) {
+      vi.spyOn(console, level).mockImplementation(() => {});
+    }
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function withHeartbeat(client: HubClient, state: { activeSessionId: string | null }): SessionHeartbeat {
+    const heartbeat = new SessionHeartbeat({
+      sendHeartbeat: (sessionId) => client.sendExtensionHeartbeat(sessionId),
+      getActiveSessionId: () => state.activeSessionId,
+    });
+    heartbeat.start();
+    return heartbeat;
+  }
+
+  it('ends the session when the backend says the student left it, and stops pinging it', async () => {
+    const hub = new FakeHub();
+    const { client, state } = makeClient(hub, 'session-a');
+    await client.start();
+    await settle();
+    const heartbeat = withHeartbeat(client, state);
+    await elapse(EXTENSION_HEARTBEAT_INTERVAL_MS);
+    expect(hub.calls('ExtensionHeartbeat')).toEqual([['session-a']]);
+
+    hub.broadcast('ParticipationEnded', 'session-a');
+    await settle();
+
+    expect(state.ended).toEqual(['session-a']);
+    expect(state.activeSessionId).toBeNull();
+    await elapse(5 * EXTENSION_HEARTBEAT_INTERVAL_MS);
+    expect(hub.calls('ExtensionHeartbeat')).toEqual([['session-a']]);
+
+    // A rejoin by code reaches it as any SessionStarted: it joins, enforces
+    // and pings again.
+    hub.broadcast('SessionStarted', startedPayload('session-a'));
+    await settle();
+    expect(hub.calls('JoinSession')).toEqual([[{ sessionId: 'session-a', joinCode: 'session-a-code' }]]);
+    expect(state.activeSessionId).toBe('session-a');
+    await elapse(EXTENSION_HEARTBEAT_INTERVAL_MS);
+    expect(hub.calls('ExtensionHeartbeat')).toEqual([['session-a'], ['session-a']]);
+
+    heartbeat.stop();
+    await client.stop();
+  });
+
+  it('ends the session once it is back, when the student left it while the connection was down, and stops pinging it', async () => {
+    const hub = new FakeHub();
+    const { client, state } = makeClient(hub, 'session-a');
+    await client.start();
+    await settle();
+    const heartbeat = withHeartbeat(client, state);
+
+    // The ParticipationEnded goes out while nothing can hear it.
+    hub.goDown();
+    hub.handlers.IsInSession = (sessionId) => sessionId !== 'session-a';
+    await elapse(60_000);
+    hub.up = true;
+    await elapse(HUB_RETRY_MAX_DELAY_MS);
+
+    expect(hub.calls('IsInSession')).toEqual([['session-a'], ['session-a']]);
+    expect(state.ended).toEqual(['session-a']);
+    expect(state.activeSessionId).toBeNull();
+    const pings = hub.calls('ExtensionHeartbeat').length;
+    await elapse(5 * EXTENSION_HEARTBEAT_INTERVAL_MS);
+    expect(hub.calls('ExtensionHeartbeat')).toHaveLength(pings);
+
+    heartbeat.stop();
+    await client.stop();
   });
 });

@@ -33,6 +33,9 @@ internal static class VisualArtifacts
 /// another) — parallel captures would fight over which surface is on top.
 /// Distinct from <see cref="AgentE2ECollection"/>: the visual specs need no
 /// backend, and CI runs them in a separate, non-blocking job.
+/// <see cref="TrayMenuExitTests"/> (#445) shares the collection for the same reason
+/// (a self-test window of its own on screen) but carries no Visual trait: it reads
+/// the window through UI Automation, not pixels, so it runs in the blocking job.
 /// </summary>
 [CollectionDefinition(Name, DisableParallelization = true)]
 public sealed class VisualE2ECollection

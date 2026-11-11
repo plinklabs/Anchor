@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:anchor_dashboard/alerts/alert_sound.dart';
+import 'package:anchor_dashboard/alerts/live_alert_services.dart';
+import 'package:anchor_dashboard/alerts/live_alert_settings.dart';
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
@@ -8,9 +11,11 @@ import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:anchor_dashboard/realtime/session_hub_client.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../support/fake_alert_popups.dart';
 import '../support/session_hub_contract.dart';
 
 // #390: the live page's side of contracts/session-hub.json. Every event the
@@ -151,7 +156,31 @@ class _LivePage {
   }
 }
 
-Future<_LivePage> _pumpLiveSession(WidgetTester tester) async {
+class _QuietSound implements AlertSound {
+  @override
+  ValueListenable<bool> get blocked => ValueNotifier(false);
+  @override
+  void unlock() {}
+  @override
+  void play() {}
+  @override
+  void dispose() {}
+}
+
+/// Alerts with everything that reads the payload on: pop-ups, allowed by
+/// the browser, with the student's name and the site in them (#455).
+LiveAlertServices _namingAlerts(FakeAlertPopups popups) => LiveAlertServices(
+  settings: LiveAlertSettings(store: MemoryAlertSettingsStore())
+    ..popups = true
+    ..popupNames = true,
+  sound: _QuietSound(),
+  popups: popups,
+);
+
+Future<_LivePage> _pumpLiveSession(
+  WidgetTester tester, {
+  LiveAlertServices? alertServices,
+}) async {
   final hub = _StubHub();
   final sessions = _FakeSessions();
   await tester.pumpWidget(
@@ -166,6 +195,7 @@ Future<_LivePage> _pumpLiveSession(WidgetTester tester) async {
         apiBaseUrl: Uri.parse('http://localhost'),
         hubClientFactory: ({required apiBaseUrl, required tokenProvider}) =>
             hub,
+        alertServices: alertServices,
       ),
     ),
   );
@@ -217,6 +247,32 @@ void main() {
 
       expect(find.text(event.name), findsOneWidget);
       _expectReadsOnlyItsFields(event, payload);
+    });
+
+    testWidgets('${event.name} in a background tab, with pop-ups naming '
+        'students on, reads only its fields too (#455)', (tester) async {
+      final popups = FakeAlertPopups(browser: 'granted');
+      final page = await _pumpLiveSession(
+        tester,
+        alertServices: _namingAlerts(popups),
+      );
+      tester.binding
+        ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+        ..handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      addTearDown(
+        () => tester.binding
+          ..handleAppLifecycleStateChanged(AppLifecycleState.inactive)
+          ..handleAppLifecycleStateChanged(AppLifecycleState.resumed),
+      );
+
+      final payload = page.push(event, _sessionId);
+      await tester.idle();
+
+      _expectReadsOnlyItsFields(event, payload);
+      if (const {'UnblockRequested', 'TamperDetected'}.contains(event.name)) {
+        // These name the student themselves.
+        expect(popups.shown.single.body, isNotEmpty, reason: event.name);
+      }
     });
 
     if (event.canNameAnotherSession) {

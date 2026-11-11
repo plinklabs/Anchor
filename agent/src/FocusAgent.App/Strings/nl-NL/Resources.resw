@@ -203,6 +203,9 @@
   <data name="Main_Leave_Stay" xml:space="preserve">
     <value>Blijven</value>
   </data>
+  <data name="Main_Version" xml:space="preserve">
+    <value>Versie {0}</value>
+  </data>
   <data name="Tray_Status_SignedOut" xml:space="preserve">
     <value>AFGEMELD</value>
   </data>
@@ -253,6 +256,9 @@
   </data>
   <data name="Tray_Tooltip_Prefix" xml:space="preserve">
     <value>Anchor — {0}</value>
+  </data>
+  <data name="Tray_Version" xml:space="preserve">
+    <value>Versie {0}</value>
   </data>
   <data name="Overlay_BlockedApp" xml:space="preserve">
     <value>Zojuist aan de kant gezet: {0}</value>

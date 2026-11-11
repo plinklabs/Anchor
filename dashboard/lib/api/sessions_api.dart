@@ -54,6 +54,65 @@ class ClassSummary {
   );
 }
 
+/// How a session the teacher starts ends (#447): at the end of this lesson
+/// period, of the next one, or at a time they picked. The backend works the
+/// period ends out at the start itself, from the class's school's timetable.
+class SessionEnd {
+  const SessionEnd.thisPeriod() : mode = 'ThisPeriod', at = null;
+  const SessionEnd.nextPeriod() : mode = 'NextPeriod', at = null;
+  const SessionEnd.at(DateTime this.at) : mode = 'SpecificTime';
+
+  /// The backend's `SessionEndMode` value.
+  final String mode;
+
+  /// The picked end, for [SessionEnd.at].
+  final DateTime? at;
+
+  Map<String, dynamic> toJson() => {
+    'endMode': mode,
+    if (at != null) 'endsAt': at!.toUtc().toIso8601String(),
+  };
+}
+
+/// What a session of a class starting now can end at (#447): the end of the
+/// lesson period going on at its school and of the one after it, null when
+/// there's no such period (no timetable, or outside every period), and the
+/// latest time the teacher may pick, null when there's no limit.
+class SessionEndOptions {
+  SessionEndOptions({
+    this.thisPeriodEndsAt,
+    this.nextPeriodEndsAt,
+    this.latestEndsAt,
+  });
+
+  final DateTime? thisPeriodEndsAt;
+  final DateTime? nextPeriodEndsAt;
+  final DateTime? latestEndsAt;
+
+  factory SessionEndOptions.fromJson(Map<String, dynamic> json) =>
+      SessionEndOptions(
+        thisPeriodEndsAt: _dateOrNull(json['thisPeriodEndsAt']),
+        nextPeriodEndsAt: _dateOrNull(json['nextPeriodEndsAt']),
+        latestEndsAt: _dateOrNull(json['latestEndsAt']),
+      );
+}
+
+DateTime? _dateOrNull(Object? json) =>
+    json == null ? null : DateTime.parse(json as String);
+
+/// Whether [error] is the backend refusing a start "at the end of this (or
+/// the next) period" because no lesson period applies at that moment (#447):
+/// the period ran out while the teacher was choosing.
+bool isNoLessonPeriodConflict(Object error) {
+  if (error is! ApiException || error.statusCode != 409) return false;
+  try {
+    final body = jsonDecode(error.message);
+    return body is Map<String, dynamic> && body['noLessonPeriod'] == true;
+  } on FormatException {
+    return false;
+  }
+}
+
 class StartSessionResponse {
   StartSessionResponse({
     required this.id,
@@ -98,6 +157,7 @@ class SessionDetail {
     required this.joinCode,
     required this.startedAt,
     required this.endedAt,
+    this.endsAt,
     required this.summaries,
     required this.recentEvents,
     required this.participants,
@@ -110,6 +170,10 @@ class SessionDetail {
   final String joinCode;
   final DateTime startedAt;
   final DateTime? endedAt;
+
+  /// When the session is planned to end (#447); null for one started without
+  /// a planned end.
+  final DateTime? endsAt;
   final List<SessionEventSummary> summaries;
   final List<SessionRecentEvent> recentEvents;
   final List<SessionParticipantInfo> participants;
@@ -125,6 +189,7 @@ class SessionDetail {
     endedAt: json['endedAt'] == null
         ? null
         : DateTime.parse(json['endedAt'] as String),
+    endsAt: _dateOrNull(json['endsAt']),
     summaries: ((json['summaries'] as List<dynamic>?) ?? const <dynamic>[])
         .map((e) => SessionEventSummary.fromJson(e as Map<String, dynamic>))
         .toList(growable: false),
@@ -178,6 +243,10 @@ enum ParticipantLiveState {
   neverJoined,
   joined,
   heartbeatStale,
+
+  /// Joined, but their agent never sent a heartbeat (#444): usually only the
+  /// Edge extension joined, so apps aren't being enforced on that laptop.
+  agentMissing,
   declined,
   left,
   unknown;
@@ -190,6 +259,8 @@ enum ParticipantLiveState {
         return ParticipantLiveState.joined;
       case 'HeartbeatStale':
         return ParticipantLiveState.heartbeatStale;
+      case 'AgentMissing':
+        return ParticipantLiveState.agentMissing;
       case 'Declined':
         return ParticipantLiveState.declined;
       case 'Left':
@@ -396,14 +467,34 @@ class SessionsApi {
         .toList(growable: false);
   }
 
+  /// What a session of [classId] starting now can end at (#447), for the
+  /// start form.
+  Future<SessionEndOptions> endOptions(String classId) async {
+    final res = await _client.get(
+      'sessions/end-options?classId=${Uri.encodeQueryComponent(classId)}',
+    );
+    _ensureOk(res);
+    return SessionEndOptions.fromJson(
+      jsonDecode(res.body) as Map<String, dynamic>,
+    );
+  }
+
+  /// Start a session of [classId], ending as [end] says (#447). A period end
+  /// no lesson period applies to any more is a 409 (see
+  /// [isNoLessonPeriodConflict]).
   Future<StartSessionResponse> startSession(
     String classId, {
     List<String> bundleIds = const <String>[],
+    SessionEnd? end,
   }) async {
     final res = await _client.post(
       'sessions',
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'classId': classId, 'bundleIds': bundleIds}),
+      body: jsonEncode({
+        'classId': classId,
+        'bundleIds': bundleIds,
+        ...?end?.toJson(),
+      }),
     );
     _ensureOk(res);
     return StartSessionResponse.fromJson(

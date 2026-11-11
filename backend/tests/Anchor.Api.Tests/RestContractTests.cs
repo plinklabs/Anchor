@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using System.Text.RegularExpressions;
 using Anchor.Api.Controllers;
+using Anchor.Api.Sessions;
 using Anchor.Api.Tests.FakeAuth;
 using Anchor.Api.Users;
 using Anchor.Domain.Bundles;
@@ -436,7 +437,9 @@ public sealed class RestContractTests : IClassFixture<RestContractTests.Contract
         await Call(adminClient, "PUT bundles/{id}", [Id(written)], new WriteBundleRequest(
             $"Contract {suffix} 2", [new WriteBundleEntry(BundleEntryKind.Domain, "example.org", BundleEntryMatchType.Exact)]));
 
-        var session = await Call(teacher, "POST sessions", [], new StartSessionRequest(classId, [bundle.Id]));
+        await Call(teacher, "GET sessions/end-options", [], query: $"classId={classId}");
+        var session = await Call(teacher, "POST sessions", [], new StartSessionRequest(
+            classId, [bundle.Id], SessionEndMode.SpecificTime, DateTimeOffset.UtcNow.AddHours(1)));
         await Call(teacher, "PUT sessions/{id}/bundles", [Id(session)], new UpdateSessionBundlesRequest([bundle.Id]));
         await Call(teacher, "GET sessions/{id}", [Id(session)]);
         await Call(teacher, "GET sessions/active", []);
@@ -447,6 +450,8 @@ public sealed class RestContractTests : IClassFixture<RestContractTests.Contract
         await Call(adminClient, "GET admin/users/candidates", [], query: $"query={Uri.EscapeDataString("Candidate " + suffix)}");
         await Call(adminClient, "GET admin/schools", []);
         await Call(adminClient, "POST admin/schools/activation", [], new SetSchoolActivationRequest(school, IsActive: true));
+        await Call(adminClient, "PUT admin/schools/lesson-periods", [], new SetSchoolLessonPeriodsRequest(
+            school, [new LessonPeriodDto("08:25", "09:15"), new LessonPeriodDto("09:15", "10:05")]));
 
         return calls;
     }

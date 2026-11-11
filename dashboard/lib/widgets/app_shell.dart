@@ -61,6 +61,7 @@ class AppShell extends StatelessWidget {
     this.isAdmin = false,
     this.accountName,
     this.onSignOut,
+    this.onOpenNotifications,
   });
 
   final AppSection section;
@@ -80,6 +81,10 @@ class AppShell extends StatelessWidget {
 
   /// Sign-out handler; the button is hidden when null.
   final VoidCallback? onSignOut;
+
+  /// Opens the Notifications dialog for live-session alerts (#454), so the
+  /// teacher can set them up before a lesson; the bell is hidden when null.
+  final VoidCallback? onOpenNotifications;
 
   @override
   Widget build(BuildContext context) {
@@ -105,6 +110,7 @@ class AppShell extends StatelessWidget {
               accountName: accountName,
               onNavigate: onNavigate,
               onSignOut: onSignOut,
+              onOpenNotifications: onOpenNotifications,
             ),
             // Hairline, never a shadow.
             const SizedBox(
@@ -158,6 +164,7 @@ class _TopBar extends StatelessWidget {
     required this.accountName,
     required this.onNavigate,
     required this.onSignOut,
+    required this.onOpenNotifications,
   });
 
   final AppSection section;
@@ -165,6 +172,7 @@ class _TopBar extends StatelessWidget {
   final String? accountName;
   final void Function(String location) onNavigate;
   final VoidCallback? onSignOut;
+  final VoidCallback? onOpenNotifications;
 
   @override
   Widget build(BuildContext context) {
@@ -207,6 +215,17 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: PlinkSpacing.s4),
+          if (onOpenNotifications != null)
+            Padding(
+              padding: const EdgeInsets.only(right: PlinkSpacing.s2),
+              child: IconButton(
+                key: const Key('notifications'),
+                icon: const Icon(Icons.notifications_none_outlined),
+                color: PlinkColors.ink,
+                tooltip: AppLocalizations.of(context).alertsTitle,
+                onPressed: onOpenNotifications,
+              ),
+            ),
           if (accountName != null)
             Padding(
               padding: const EdgeInsets.only(right: PlinkSpacing.s3),

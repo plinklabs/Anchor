@@ -21,6 +21,9 @@ namespace FocusAgent.IntegrationTests;
 /// <see cref="SessionStartSweepTests"/>). And it observes through window state
 /// (<see cref="WindowCapture.IsIconic"/>) rather than a screenshot — more
 /// reliable here than the foreground check the verify script flags as Win11-flaky.
+/// <see cref="RestoringAWindowWhileItIsGoingDown_GetsItReMinimized"/> (#476) uses
+/// the test's own window instead, which the spec can hold in the middle of its
+/// minimize.
 ///
 /// Tagged <c>Category=Visual</c> so it runs in the same NON-BLOCKING CI lane as
 /// the other deferred-visual specs until its flake rate is characterized
@@ -39,6 +42,12 @@ public sealed class ReMinimizeOnRestoreTests
     // reactivation must be re-enforced, so repeating it guards against a fix that
     // only handles the first restore (e.g. a one-shot dedupe by hwnd).
     private const int RestoreCycles = 3;
+
+    // How long the spec holds the off-list app in the middle of going down, once
+    // the student brought it back: well past the moment the agent takes to judge
+    // that restore and hand the window over again, and well within the 5 s after
+    // which Windows ghosts a window that does not respond.
+    private static readonly TimeSpan HoldWhileTheAgentJudgesTheRestore = TimeSpan.FromMilliseconds(500);
 
     private readonly BackendFixture _backend;
     public ReMinimizeOnRestoreTests(BackendFixture backend) => _backend = backend;
@@ -127,6 +136,78 @@ public sealed class ReMinimizeOnRestoreTests
         {
             KillNotepad();
         }
+    }
+
+    /// <summary>
+    /// #476: the student brings the off-list window back while it is still going
+    /// down. Windows marks it minimized before its app is done with the minimize,
+    /// and says the minimize started only once the app is, so the agent judged the
+    /// restore while the minimize it asked for still counted as on its way: it did
+    /// not ask again, and nothing asked once that minimize turned out not to keep
+    /// the window down. The window stayed on screen. The spec holds the app in the
+    /// middle of the minimize, right where the student's restore came, until the
+    /// agent has judged the restore. The test's own window stands in for the app,
+    /// so the spec can hold it there; it starts out minimized, so the agent has no
+    /// allowed window to fall back to and the overlay takes it down (#441).
+    /// </summary>
+    [Fact]
+    public async Task RestoringAWindowWhileItIsGoingDown_GetsItReMinimized()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
+        await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+
+        // No bundles: the test's own window is off-list.
+        var classId = await api.FindClassIdAsync();
+        var session = await api.StartSessionAsync(classId);
+        try
+        {
+            var joined = await agent.WaitForAsync(
+                s => s.JoinedSessionId == session.Id && s.StartupSweep is not null, TimeSpan.FromSeconds(10));
+            Assert.True(
+                joined?.JoinedSessionId == session.Id && joined.StartupSweep is not null,
+                $"Agent did not join and sweep within 10s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
+
+            using var window = await OffListWindow.OpenAsync(
+                "Anchor e2e off-list app (brought back as it goes down)", TimeSpan.FromSeconds(10), minimized: true);
+
+            // The student brings the off-list app back. The agent blocks it and asks
+            // it to minimize itself. Before the app is done with that, the student
+            // brings it back once more, as a second click on its taskbar button
+            // would, and the spec holds the app right there, in the middle of the
+            // minimize, while the agent judges that restore.
+            window.RestoreWhenMinimized(TimeSpan.FromSeconds(3));
+            window.Restore();
+            Assert.True(
+                window.WaitUntilFrozen(TimeSpan.FromSeconds(3)),
+                "The agent did not block the off-list app (it never asked it to minimize).");
+            Assert.False(
+                WindowCapture.IsIconic(window.Handle),
+                "Restoring the off-list app while it was going down did not un-minimize it.");
+            await Task.Delay(HoldWhileTheAgentJudgesTheRestore);
+            Assert.True(window.IsFrozen, "The off-list app went on before the agent could judge the restore.");
+            window.Thaw();
+
+            Assert.True(
+                await WaitUntilAsync(() => window.HasGoneDown, TimeSpan.FromSeconds(5)),
+                "The off-list app the student brought back while it was going down stayed on screen: the agent did " +
+                "not ask it to minimize again once the minimize it had asked for turned out not to keep it down (#476).");
+        }
+        finally
+        {
+            try { await api.EndSessionAsync(session.Id); } catch { /* best-effort */ }
+        }
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return true;
+            await Task.Delay(50);
+        }
+        return condition();
     }
 
     /// <summary>Poll until <paramref name="hwnd"/>'s iconic state matches, or time out.</summary>

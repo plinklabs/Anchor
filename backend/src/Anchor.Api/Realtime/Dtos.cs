@@ -61,6 +61,15 @@ public enum ParticipantLiveState
     /// <summary>Joined but no heartbeat for longer than the configured timeout.</summary>
     HeartbeatStale,
 
+    /// <summary>
+    /// Joined, but their agent hasn't sent a single heartbeat within the join
+    /// grace (<see cref="HeartbeatOptions.AgentJoinGrace"/>), so apps aren't
+    /// being enforced on their device (#444). Typically the Edge extension
+    /// joined without the agent. Unlike <see cref="HeartbeatStale"/>, the agent
+    /// was never there; it turns <see cref="Joined"/> once the agent pings.
+    /// </summary>
+    AgentMissing,
+
     /// <summary>Cancelled during the join-confirmation toast.</summary>
     Declined,
 
@@ -71,9 +80,12 @@ public enum ParticipantLiveState
 /// <summary>
 /// Live notification that a class member's lifecycle state changed
 /// (joined / declined / left) so the teacher's roster updates without polling
-/// (#100). Heartbeat-driven transitions are carried by the existing
+/// (#100). It also carries <see cref="ParticipantLiveState.AgentMissing"/>, the
+/// <see cref="HeartbeatMonitor"/>'s report of an agent that never pinged (#444).
+/// Other heartbeat-driven transitions are carried by the existing
 /// <see cref="HeartbeatLostPayload"/> / <see cref="AgentReconnectedPayload"/>
-/// instead. Pushed to the session group.
+/// instead, and a late agent's arrival by the latter. Pushed to the session
+/// group.
 /// </summary>
 public sealed record ParticipantStateChangedPayload(
     Guid SessionId,
