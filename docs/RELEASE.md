@@ -160,13 +160,18 @@ a running agent downloads the release and, as soon as no session is going on,
 restarts itself into it, silently, back in the tray (#456); otherwise the next agent
 start applies it. An agent is never stopped mid-session for an update (#449). Besides
 the check every `Update:CheckInterval` (6 h of awake time), the agent checks on wake
-from sleep and on unlock once the last check is that old by the clock.
+from sleep and on unlock once the last check is that old by the clock. An agent
+before 0.4.0 still applies with Velopack's `--norestart`, which kills it and leaves
+it closed; the new version's update hook hands its start to a waiter outside the
+install folder, which starts it once the updater has exited (#487). So such an
+agent is back within seconds, but only on a release that has the hook.
 The portable `.zip` is suppressed (`--noPortable`) — the agent is installed, not
 run portably — but the `.nupkg` + `RELEASES` feed is kept; it **is** the
 auto-update channel. Setup carries the Anchor icon and a success page, and, run
 by hand, launches the agent automatically once installed. A silent install
 (`--silent`, as Intune runs it) shows no success page and doesn't start the
-agent; the Intune install script below starts it.
+agent itself; the agent's install hook starts it once Setup has exited (#487),
+and the Intune install script below makes sure it runs.
 
 - The packaged `appsettings.Production.json` ships as a template with `#{...}#`
   placeholders (#203); pack time substitutes them from per-deployment repo

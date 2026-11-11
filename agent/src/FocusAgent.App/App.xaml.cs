@@ -166,6 +166,13 @@ public partial class App : Application
                     "FocusAgent {Version} starting (unpackaged WinUI 3), process {ProcessId} started at {ProcessStartedAt:o}",
                     AgentVersion.Current, self.Id, new DateTimeOffset(self.StartTime));
             }
+            // #487: the install or update hook's waiter started this launch.
+            if (Program.RelaunchedAfterUpdate)
+            {
+                logger.LogInformation(
+                    "Started again after an update or install that was applied without restarting the agent ({Arg}).",
+                    UpdateRelaunch.RelaunchedArg);
+            }
 
             // #224 + #407: start the Velopack auto-update cadence FIRST — a check
             // now, then every Update:CheckInterval — before config validation and

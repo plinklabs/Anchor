@@ -58,16 +58,20 @@ unpacked the `.intunewin` into, with `Setup.exe` beside it. In order, it:
 2. **Leaves an installed agent alone.** When
    `%LOCALAPPDATA%\Anchor.Agent\current\FocusAgent.App.exe` exists, it never runs
    `Setup.exe`: a silent `Setup.exe` over an installed agent stops it, also in the
-   middle of a lesson, and doesn't start it again. With the detection rule below
-   Intune doesn't run the script in that case anyway; this is the safety net.
+   middle of a lesson. (Since #487 the agent comes back once `Setup.exe` has
+   finished; before that it stayed off until the next sign-in.) With the
+   detection rule below Intune doesn't run the script in that case anyway; this
+   is the safety net.
 3. **Otherwise installs silently:** runs
    `Anchor.Agent-win-Setup.exe --silent --log "<log folder>\intune-setup.log"`
    and waits for it. When `Setup.exe` fails, the script copies the last 20 lines
    of Setup's log into its own log and exits with Setup's exit code.
 4. **Starts the agent**, unless it is already running, with the command Windows
    runs at sign-in: the `AnchorFocusAgent` Run value. A silent `Setup.exe`
-   doesn't start the agent, and the next sign-in can be weeks away on a laptop
-   that sleeps instead of restarting. The start goes through WMI
+   doesn't start the agent itself, and the next sign-in can be weeks away on a
+   laptop that sleeps instead of restarting. (Since #487 the agent's install
+   hook also starts it once `Setup.exe` has exited; whichever start comes second
+   finds the agent running and quietly exits.) The start goes through WMI
    (`Win32_Process.Create`), so the agent is not a child of the script: it shares
    no job object and no handles with whatever runs the install command. That is
    meant to keep the Intune Management Extension from waiting on the agent, or
@@ -262,8 +266,9 @@ stopped mid-session for an update (#449). So:
   before the new app installs it again. Without it, the new app finds the agent
   installed and has nothing to do, so supersedence buys nothing.
 - **Don't trigger reinstalls.** The script skips `Setup.exe` over an installed
-  agent, but `Setup.exe` itself, run silently over an installed agent, stops it
-  and doesn't start it again.
+  agent, but `Setup.exe` itself, run silently over an installed agent, stops it,
+  mid-lesson or not. Since #487 the agent comes back once `Setup.exe` has
+  finished; older versions stay off until the next sign-in.
 
 What you can do is upload a newer `.intunewin` (`Setup.exe` and script from a
 newer release) to the **same** app, with the same detection rule: in the app's

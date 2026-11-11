@@ -194,6 +194,14 @@ internal sealed class AgentProcess : IAsyncDisposable
         return new AgentProcess(process, statusPort, psi.ArgumentList.ToList()) { StatusPort = statusPort };
     }
 
+    /// <summary>
+    /// Take over an agent the spec didn't launch itself but knows the status port of
+    /// (#487: one the updater restarted, or one the update relaunch started), so it
+    /// can be watched like a launched one and is killed when disposed.
+    /// </summary>
+    public static AgentProcess Attach(Process process, int statusPort, IReadOnlyList<string> arguments) =>
+        new(process, statusPort, arguments) { StatusPort = statusPort };
+
     public async Task<StatusSnapshot?> TryGetStatusAsync(CancellationToken ct = default)
     {
         try
