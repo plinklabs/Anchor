@@ -69,8 +69,15 @@ class _SessionPageState extends State<SessionPage> {
   late final AlertSoundCue _soundCue;
   AlertTabTitle? _tabTitle;
   AlertPopupCue? _popupCue;
-  // The pending requests panel, which an access-request pop-up leads to.
-  final GlobalKey _pendingRequestsKey = GlobalKey();
+  // The pending requests panel, which an access-request pop-up leads to: one
+  // key where the panels stack, another in the right column (#494). With one
+  // key, crossing the breakpoint moved the panel's subtree from one layout
+  // into the other, and the web engine mishandles a semantics subtree moved
+  // out of a removed parent: it keeps the parent's other children in its
+  // node map (a debug build throws "Semantics node map was inconsistent").
+  // With a key each, the panel is built anew in its new place.
+  final GlobalKey _stackedRequestsKey = GlobalKey();
+  final GlobalKey _columnRequestsKey = GlobalKey();
   // What the page heard live since it opened, newest first.
   final List<SessionEvent> _events = [];
   // What happened in the session before that (#492), and while the page was
@@ -170,7 +177,9 @@ class _SessionPageState extends State<SessionPage> {
     if (category != LiveAlertCategory.accessRequest) return;
     WidgetsBinding.instance
       ..addPostFrameCallback((_) {
-        final BuildContext? panel = _pendingRequestsKey.currentContext;
+        final BuildContext? panel =
+            _stackedRequestsKey.currentContext ??
+            _columnRequestsKey.currentContext;
         if (!mounted || panel == null) return;
         Scrollable.ensureVisible(
           panel,
@@ -675,9 +684,10 @@ class _SessionPageState extends State<SessionPage> {
 
     // The instrument panels — only what applies to the session's current
     // state. The feed itself is the hero and fills the rest.
-    final Widget? pending = !_ended && _pendingRequests.isNotEmpty
+    Widget? pendingPanel(GlobalKey key) =>
+        !_ended && _pendingRequests.isNotEmpty
         ? _PendingRequestsPanel(
-            key: _pendingRequestsKey,
+            key: key,
             requests: _pendingRequests,
             approving: _approving,
             error: _unblockError,
@@ -729,6 +739,9 @@ class _SessionPageState extends State<SessionPage> {
             final bool columns =
                 participants.isNotEmpty &&
                 constraints.maxWidth >= _columnsMinWidth;
+            final Widget? pending = pendingPanel(
+              columns ? _columnRequestsKey : _stackedRequestsKey,
+            );
             final List<Widget> panels = columns
                 ? const <Widget>[]
                 : <Widget>[
