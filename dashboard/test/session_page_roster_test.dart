@@ -183,6 +183,76 @@ void main() {
     );
   });
 
+  test('the NotConnected wire state parses (#493)', () {
+    expect(
+      ParticipantLiveState.parse('NotConnected'),
+      ParticipantLiveState.notConnected,
+    );
+  });
+
+  testWidgets(
+    'a class member whose laptop never joined is flagged, sorted to the top '
+    'and explained (#493)',
+    (tester) async {
+      await _pumpSession(tester, [
+        _participant('Ada', ParticipantLiveState.joined),
+        _participant('Bo', ParticipantLiveState.left),
+        _participant('Zed', ParticipantLiveState.notConnected),
+        _participant('Ed', ParticipantLiveState.neverJoined),
+      ]);
+
+      expect(find.text('Not connected'), findsOneWidget);
+      // The label says what it means for the class, on that row only.
+      expect(
+        find.byTooltip(
+          "This laptop hasn't joined the session. Nothing is being blocked "
+          "for this student, or they're absent.",
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Students (1/4 in session)'), findsOneWidget);
+      // Attention-first: above everyone who answered or may still join,
+      // despite the name.
+      final zedY = tester.getTopLeft(find.text('Zed')).dy;
+      for (final other in ['Ada', 'Bo', 'Ed']) {
+        expect(
+          zedY,
+          lessThan(tester.getTopLeft(find.text(other)).dy),
+          reason: other,
+        );
+      }
+      // Painted in the error colour, as a missing agent is: icon and label.
+      // Still within the join grace, a member is calm grey "Not joined".
+      final error = Theme.of(
+        tester.element(find.text('Zed')),
+      ).colorScheme.error;
+      expect(tester.widget<Icon>(find.byIcon(Icons.link_off)).color, error);
+      expect(
+        tester.widget<Text>(find.text('Not connected')).style?.color,
+        error,
+      );
+      expect(
+        tester.widget<Text>(find.text('Not joined')).style?.color,
+        isNot(error),
+      );
+    },
+  );
+
+  testWidgets('the not-connected state reads in Dutch (#493)', (tester) async {
+    await _pumpSession(tester, [
+      _participant('Zed', ParticipantLiveState.notConnected),
+    ], locale: const Locale('nl'));
+
+    expect(find.text('Niet verbonden'), findsOneWidget);
+    expect(
+      find.byTooltip(
+        'Deze laptop heeft zich niet aangesloten bij de sessie. Voor deze '
+        'leerling wordt niets geblokkeerd, of de leerling is afwezig.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('roster flags only tampered students, on the right row (#105)', (
     tester,
   ) async {

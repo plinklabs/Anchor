@@ -79,6 +79,41 @@ LiveAlertCategory? liveAlertCategoryOf(SessionEvent event) {
   return null;
 }
 
+/// The student [event] is about, by id: every event in a
+/// [LiveAlertCategory], and the joins and an agent coming back, carry
+/// `userId` in the hub contract. Null for the others, which are about the
+/// session.
+String? liveEventUserId(SessionEvent event) {
+  switch (event.kind) {
+    case 'UnblockRequested':
+    case 'ParticipantStateChanged':
+    case 'HeartbeatLost':
+    case 'TamperDetected':
+    case 'AgentReconnected':
+      final Object? id = event.payload['userId'];
+      return id == null ? null : '$id';
+  }
+  return null;
+}
+
+/// The student [event] is about, by name: from the field its kind carries in
+/// the hub contract, or else [nameOf] its `userId` (a lost or returning agent
+/// carries only the id). Null when neither knows it.
+String? liveEventStudentName(
+  SessionEvent event,
+  String? Function(String userId)? nameOf,
+) {
+  final Object? name = switch (event.kind) {
+    'UnblockRequested' || 'TamperDetected' => event.payload['userDisplayName'],
+    'ParticipantStateChanged' => event.payload['displayName'],
+    _ => null,
+  };
+  if (name is String && name.isNotEmpty) return name;
+  final String? id = liveEventUserId(event);
+  final String? looked = id == null ? null : nameOf?.call(id);
+  return looked == null || looked.isEmpty ? null : looked;
+}
+
 /// The one place that decides whether an event from a live session is a new
 /// alert the teacher should be told about (#454), and keeps count of the
 /// alerts they haven't seen. Its consumers ([AlertSoundCue], [AlertTabTitle],
@@ -155,7 +190,7 @@ class LiveAlerts extends ChangeNotifier {
   /// returns the new alert it raises, or null.
   LiveAlert? handle(SessionEvent event) {
     final LiveAlertCategory? category = liveAlertCategoryOf(event);
-    final String? userId = _userOf(event);
+    final String? userId = liveEventUserId(event);
     if (category == null) {
       // Back in the session: news about this student alerts again.
       if (userId != null &&
@@ -205,21 +240,6 @@ class LiveAlerts extends ChangeNotifier {
     if (burstStartedAt == null) return true;
     final Duration since = now.difference(burstStartedAt);
     return since >= burstWindow || since.isNegative;
-  }
-
-  /// The student an event is about. Every event in a category, and the
-  /// joins, carry `userId` in the hub contract.
-  static String? _userOf(SessionEvent event) {
-    switch (event.kind) {
-      case 'UnblockRequested':
-      case 'ParticipantStateChanged':
-      case 'HeartbeatLost':
-      case 'TamperDetected':
-      case 'AgentReconnected':
-        final Object? id = event.payload['userId'];
-        return id == null ? null : '$id';
-    }
-    return null;
   }
 
   @override

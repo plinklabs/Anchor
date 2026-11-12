@@ -124,6 +124,15 @@ final _calls = <_Call>[
     (j) => SessionDetail.fromJson(_map(j)),
   ),
   _Call(
+    'GET sessions/{id}/events',
+    'SessionsApi.sessionEvents',
+    (a) => a.sessions.sessionEvents(
+      'p1',
+      kinds: ['UnblockRequest', 'ManualLeave'],
+    ),
+    (j) => _list(j, SessionRecentEvent.fromJson),
+  ),
+  _Call(
     'GET classes',
     'SessionsApi.classes',
     (a) => a.sessions.classes(),

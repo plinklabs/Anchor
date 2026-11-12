@@ -444,6 +444,7 @@ public sealed class RestContractTests : IClassFixture<RestContractTests.Contract
         await Call(teacher, "GET sessions/{id}", [Id(session)]);
         await Call(teacher, "GET sessions/active", []);
         await Call(teacher, "GET sessions/{id}/unblock-requests", [Id(session)]);
+        await Call(teacher, "GET sessions/{id}/events", [Id(session)], query: "kind=UnblockRequest&kind=ManualLeave&limit=200");
         await Call(teacher, "GET sessions/history", [], query: "limit=50&offset=0");
 
         await Call(adminClient, "GET admin/users/admins", []);

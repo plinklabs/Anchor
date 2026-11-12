@@ -18,6 +18,9 @@ import 'package:flutter_test/flutter_test.dart';
 // #370: however long the connection is down, the page says that live updates
 // are paused, catches up once it's back, and starts a closed connection again
 // when the teacher asks or comes back to the page.
+//
+// #499: its activity feed catches up too, with what was broadcast while it
+// was offline, in its place in time.
 
 const _sessionId = 'aaaaaaaa-0000-0000-0000-000000000001';
 
@@ -26,16 +29,19 @@ ApiClient _dummyClient() => ApiClient(
   tokenProvider: () async => null,
 );
 
-SessionParticipantInfo _participant(String name, ParticipantLiveState state) =>
-    SessionParticipantInfo(
-      userId: name,
-      displayName: name,
-      joinedAt: null,
-      declinedAt: null,
-      leftAt: null,
-      state: state,
-      tampered: false,
-    );
+SessionParticipantInfo _participant(
+  String name,
+  ParticipantLiveState state, {
+  DateTime? leftAt,
+}) => SessionParticipantInfo(
+  userId: name,
+  displayName: name,
+  joinedAt: null,
+  declinedAt: null,
+  leftAt: leftAt,
+  state: state,
+  tampered: false,
+);
 
 /// Stands in for the SignalR client and routes the way the hub does: nothing
 /// reaches the page while its connection is down, and a roster signal goes to
@@ -151,9 +157,26 @@ class _FakeSessions extends SessionsApi {
   int getSessionCalls = 0;
   int unblockRequestsCalls = 0;
 
+  /// What the backend stored for the session, newest first, which the page
+  /// loads its feed's history from (#492, #499).
+  List<SessionRecentEvent> stored = const [];
+
+  /// How the backend answers the [call]th load of them (from 1), when set:
+  /// e.g. late. Otherwise at once, with [stored].
+  Future<List<SessionRecentEvent>> Function(int call)? answerEvents;
+
+  /// What happens while the page loads them: e.g. an event the hub
+  /// broadcasts between the page's join and the load.
+  void Function()? whileLoadingEvents;
+
+  /// The page's detail and history loads, in order.
+  final List<String> log = [];
+  int sessionEventsCalls = 0;
+
   @override
   Future<SessionDetail> getSession(String sessionId) async {
     getSessionCalls++;
+    log.add('detail');
     return SessionDetail(
       id: sessionId,
       classId: 'c1',
@@ -173,6 +196,19 @@ class _FakeSessions extends SessionsApi {
   Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async {
     unblockRequestsCalls++;
     return pending;
+  }
+
+  @override
+  Future<List<SessionRecentEvent>> sessionEvents(
+    String sessionId, {
+    Iterable<String> kinds = const <String>[],
+    int limit = 200,
+  }) async {
+    final call = ++sessionEventsCalls;
+    log.add('events');
+    whileLoadingEvents?.call();
+    final answer = answerEvents;
+    return answer == null ? stored : await answer(call);
   }
 }
 
@@ -205,6 +241,7 @@ Future<({_StubHub hub, _FakeSessions sessions})> _pumpLiveSession(
   WidgetTester tester, {
   Object? connectError,
   Object? joinError,
+  _FakeSessions? sessions,
 }) async {
   // Room for the pending-requests panel next to the roster.
   tester.view.physicalSize = const Size(1400, 1000);
@@ -215,7 +252,7 @@ Future<({_StubHub hub, _FakeSessions sessions})> _pumpLiveSession(
   final hub = _StubHub()
     ..connectError = connectError
     ..joinError = joinError;
-  final sessions = _FakeSessions();
+  sessions ??= _FakeSessions();
   await tester.pumpWidget(
     MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -256,12 +293,14 @@ void main() {
       h.hub.broadcastToSessionGroup('ParticipantStateChanged', {
         'sessionId': _sessionId,
         'userId': 'Ada',
+        'displayName': 'Ada',
+        'state': 'HeartbeatStale',
       });
       await tester.pumpAndSettle();
 
       expect(find.text('Agent stopped reporting'), findsOneWidget);
       expect(find.text('In session'), findsNothing);
-      expect(find.text('ParticipantStateChanged'), findsOneWidget);
+      expect(find.text("Ada's agent stopped reporting."), findsOneWidget);
     },
   );
 
@@ -454,4 +493,186 @@ void main() {
       expect(find.textContaining('Could not connect'), findsNothing);
     },
   );
+
+  group('#499: the feed after a reconnect', () {
+    const asks = 'Ada asks for access to chat.example.com.';
+    const left = 'Bo left the session.';
+    const inPrivate = 'Ada opened an InPrivate window.';
+    const switchedOff = "Bo's Anchor extension was switched off or removed.";
+    const stopped = "Ada's agent stopped reporting.";
+    // The server's times of them, as the hub sends them.
+    const askedAt = '2026-05-26T07:20:00.1234567+00:00';
+    const leftAt = '2026-05-26T07:22:00.4000000+00:00';
+    const inPrivateAt = '2026-05-26T07:24:00+00:00';
+    const switchedOffAt = '2026-05-26T07:26:00.5000000+00:00';
+
+    SessionRecentEvent stored(
+      String id,
+      String userId,
+      String kind,
+      String at, [
+      String payloadJson = '{}',
+    ]) => SessionRecentEvent(
+      id: id,
+      userId: userId,
+      kind: kind,
+      payloadJson: payloadJson,
+      occurredAt: DateTime.parse(at),
+    );
+
+    double top(WidgetTester tester, String text) =>
+        tester.getTopLeft(find.text(text)).dy;
+
+    testWidgets('it shows what the page missed while offline, in its place in '
+        'time, each once, then continues live', (tester) async {
+      final h = await _pumpLiveSession(tester);
+      h.sessions.roster = [
+        _participant('Ada', ParticipantLiveState.joined),
+        _participant('Bo', ParticipantLiveState.joined),
+      ];
+
+      // The page hears Ada ask for a site, and the backend stores it.
+      h.hub.broadcastToSessionGroup('UnblockRequested', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'userDisplayName': 'Ada',
+        'host': 'chat.example.com',
+        'requestedAt': askedAt,
+      });
+      h.sessions.stored = [
+        stored(
+          'e1',
+          'Ada',
+          'UnblockRequest',
+          askedAt,
+          '{"host":"chat.example.com"}',
+        ),
+      ];
+      await tester.pumpAndSettle();
+      expect(find.text(asks), findsOneWidget);
+
+      // Offline, it misses Bo leaving (his agent reports it by its own
+      // clock; the server keeps when it heard) and Ada opening InPrivate.
+      h.hub.drop();
+      h.hub.broadcastToSessionGroup('ParticipantStateChanged', {
+        'sessionId': _sessionId,
+        'userId': 'Bo',
+        'displayName': 'Bo',
+        'state': 'Left',
+        'at': leftAt,
+      });
+      h.hub.broadcastToSessionGroup('TamperDetected', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'userDisplayName': 'Ada',
+        'kind': 'inprivate_opened',
+        'detectedAt': inPrivateAt,
+      });
+      h.sessions
+        ..roster = [
+          _participant('Ada', ParticipantLiveState.joined),
+          _participant(
+            'Bo',
+            ParticipantLiveState.left,
+            leftAt: DateTime.parse(leftAt),
+          ),
+        ]
+        ..stored = [
+          stored(
+            'e3',
+            'Ada',
+            'TamperDetected',
+            inPrivateAt,
+            '{"kind":"inprivate_opened"}',
+          ),
+          stored('e2', 'Bo', 'ManualLeave', '2026-05-26T07:22:00.1+00:00'),
+          ...h.sessions.stored,
+        ];
+      await tester.pumpAndSettle();
+      expect(find.text(left), findsNothing);
+      expect(find.text(inPrivate), findsNothing);
+
+      // Back, between the page's join and its load Bo's extension goes off:
+      // the page hears it, and it is stored too.
+      final loadsBefore = h.sessions.log.length;
+      h.sessions.whileLoadingEvents = () {
+        h.hub.broadcastToSessionGroup('TamperDetected', {
+          'sessionId': _sessionId,
+          'userId': 'Bo',
+          'userDisplayName': 'Bo',
+          'kind': 'extension_disabled',
+          'detectedAt': switchedOffAt,
+        });
+        h.sessions.stored = [
+          stored(
+            'e4',
+            'Bo',
+            'TamperDetected',
+            switchedOffAt,
+            '{"kind":"extension_disabled"}',
+          ),
+          ...h.sessions.stored,
+        ];
+      };
+      h.hub.reconnect();
+      await tester.pumpAndSettle();
+
+      // It loaded the history again, after the roster it rebuilds the leave
+      // from (and the tamper it heard re-reads the roster again).
+      expect(h.sessions.log.sublist(loadsBefore).take(2), ['detail', 'events']);
+      for (final sentence in [switchedOff, inPrivate, left, asks]) {
+        expect(find.text(sentence), findsOneWidget, reason: sentence);
+      }
+      expect(find.textContaining('×'), findsNothing);
+      expect(top(tester, switchedOff), lessThan(top(tester, inPrivate)));
+      expect(top(tester, inPrivate), lessThan(top(tester, left)));
+      expect(top(tester, left), lessThan(top(tester, asks)));
+
+      // And it continues live, on top.
+      h.hub.broadcastToSessionGroup('HeartbeatLost', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'lastSeenAt': '2026-05-26T07:27:00+00:00',
+      });
+      await tester.pumpAndSettle();
+      expect(top(tester, stopped), lessThan(top(tester, switchedOff)));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets("a load that answers late doesn't undo a newer one", (
+      tester,
+    ) async {
+      final firstLoad = Completer<List<SessionRecentEvent>>();
+      final sessions = _FakeSessions();
+      final h = await _pumpLiveSession(
+        tester,
+        sessions: sessions
+          ..answerEvents = (call) async =>
+              call == 1 ? firstLoad.future : sessions.stored,
+      );
+      expect(h.sessions.sessionEventsCalls, 1);
+
+      // The page reconnects before its first load answers, and Ada opened
+      // InPrivate meanwhile.
+      h.hub.drop();
+      h.sessions.stored = [
+        stored(
+          'e1',
+          'Ada',
+          'TamperDetected',
+          inPrivateAt,
+          '{"kind":"inprivate_opened"}',
+        ),
+      ];
+      h.hub.reconnect();
+      await tester.pumpAndSettle();
+      expect(h.sessions.sessionEventsCalls, 2);
+      expect(find.text(inPrivate), findsOneWidget);
+
+      // The first load answers now, with what the backend had then.
+      firstLoad.complete(const []);
+      await tester.pumpAndSettle();
+      expect(find.text(inPrivate), findsOneWidget);
+    });
+  });
 }

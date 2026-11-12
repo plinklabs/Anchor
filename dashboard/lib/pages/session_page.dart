@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,11 +8,14 @@ import 'package:plink_design_system/plink_design_system.dart';
 
 import '../alerts/live_alert_cues.dart';
 import '../alerts/live_alert_services.dart';
+import '../alerts/live_alert_settings.dart';
 import '../alerts/live_alert_settings_dialog.dart';
 import '../alerts/live_alerts.dart';
 import '../api/auth_token_store.dart';
 import '../api/bundles_api.dart';
 import '../api/sessions_api.dart';
+import '../feed/feed_history.dart';
+import '../feed/live_feed.dart';
 import '../l10n/app_localizations.dart';
 import '../realtime/session_hub_client.dart';
 import '../widgets/api_error_text.dart';
@@ -65,9 +69,26 @@ class _SessionPageState extends State<SessionPage> {
   late final AlertSoundCue _soundCue;
   AlertTabTitle? _tabTitle;
   AlertPopupCue? _popupCue;
-  // The pending requests panel, which an access-request pop-up leads to.
-  final GlobalKey _pendingRequestsKey = GlobalKey();
+  // The pending requests panel, which an access-request pop-up leads to: one
+  // key where the panels stack, another in the right column (#494). With one
+  // key, crossing the breakpoint moved the panel's subtree from one layout
+  // into the other, and the web engine mishandles a semantics subtree moved
+  // out of a removed parent: it keeps the parent's other children in its
+  // node map (a debug build throws "Semantics node map was inconsistent").
+  // With a key each, the panel is built anew in its new place.
+  final GlobalKey _stackedRequestsKey = GlobalKey();
+  final GlobalKey _columnRequestsKey = GlobalKey();
+  // What the page heard live since it opened, newest first.
   final List<SessionEvent> _events = [];
+  // What happened in the session before that (#492), and while the page was
+  // offline (#499), in the hub's shapes, newest first: empty until it loads,
+  // and if it can't.
+  List<SessionEvent> _history = const [];
+  // The history loads the page started, and the one the feed shows: a
+  // reconnect loads it again (#499), and an older load that answers late
+  // mustn't undo a newer one.
+  int _historyLoads = 0;
+  int _historyShown = 0;
   bool _connecting = true;
   bool _ending = false;
   bool _ended = false;
@@ -156,7 +177,9 @@ class _SessionPageState extends State<SessionPage> {
     if (category != LiveAlertCategory.accessRequest) return;
     WidgetsBinding.instance
       ..addPostFrameCallback((_) {
-        final BuildContext? panel = _pendingRequestsKey.currentContext;
+        final BuildContext? panel =
+            _stackedRequestsKey.currentContext ??
+            _columnRequestsKey.currentContext;
         if (!mounted || panel == null) return;
         Scrollable.ensureVisible(
           panel,
@@ -180,7 +203,49 @@ class _SessionPageState extends State<SessionPage> {
       context.go('/history/${widget.sessionId}');
       return;
     }
-    await Future.wait([_connect(), _loadPendingRequests(), _loadBundles()]);
+    await Future.wait([
+      // The feed's history once the page has joined the session (#492): an
+      // event after the join reaches the page live, one before it is in the
+      // history, and one in between is in both, which the feed shows once.
+      _connect().then((_) => _loadHistory()),
+      _loadPendingRequests(),
+      _loadBundles(),
+    ]);
+  }
+
+  /// Loads what happened in the session before the page opened (#492): the
+  /// feed holds only what the page hears live, so it was empty each time the
+  /// teacher came back to the session, or reloaded it. After a reconnect it
+  /// loads it again, for what the page missed while offline (#499); the feed
+  /// puts that in its place in time ([feedTimeline]).
+  Future<void> _loadHistory() async {
+    if (!mounted || _notYours || _ended) return;
+    final int load = ++_historyLoads;
+    try {
+      final stored = await widget.sessions.sessionEvents(
+        widget.sessionId,
+        kinds: feedStoredKinds,
+        limit: feedHistoryLimit,
+      );
+      if (!mounted || load < _historyShown) return;
+      final bool complete = stored.length < feedHistoryLimit;
+      setState(() {
+        _historyShown = load;
+        _history = feedHistoryReloaded(
+          _history,
+          feedHistory(
+            sessionId: widget.sessionId,
+            stored: stored,
+            participants: _detail?.participants ?? const [],
+            complete: complete,
+          ),
+          cutAt: complete ? null : stored.last.occurredAt,
+        );
+      });
+    } catch (e) {
+      if (_isNotYours(e)) _showNotYours();
+      // Otherwise non-fatal: the feed shows what the page hears from now on.
+    }
   }
 
   Set<String> get _selectedBundleIds => {
@@ -419,10 +484,12 @@ class _SessionPageState extends State<SessionPage> {
   /// membership across a reconnect, and every roster signal (participant
   /// state, heartbeat, tamper, unblock request) goes to the session group, so
   /// join it again, then re-fetch the roster and the pending requests the page
-  /// missed while it was offline. Join first: a change after the join reaches
+  /// missed while it was offline, and the feed's history, which has what was
+  /// broadcast meanwhile (#499). Join first: a change after the join reaches
   /// this connection, one before it is in the re-fetch. The hub runs an
   /// invocation only after OnConnectedAsync, so the join can't race the
-  /// reconnect's own setup.
+  /// reconnect's own setup. The history after the roster, whose joins and
+  /// leaves it reads.
   Future<void> _rejoinAfterReconnect() async {
     if (_ended || _notYours) return;
     try {
@@ -433,7 +500,10 @@ class _SessionPageState extends State<SessionPage> {
       // The detail re-fetch below still runs and picks the end up.
     }
     if (!mounted) return;
-    await Future.wait([_loadDetail(), _loadPendingRequests()]);
+    await Future.wait([
+      _loadDetail().then((_) => _loadHistory()),
+      _loadPendingRequests(),
+    ]);
   }
 
   /// Starts a closed hub connection again (#370): when the teacher comes back
@@ -612,104 +682,150 @@ class _SessionPageState extends State<SessionPage> {
         ? _detail!.joinCode
         : null;
 
-    // The instrument panels above the feed — only what applies to the session's
-    // current state. The feed itself is the hero and fills the rest below.
-    final List<Widget> panels = <Widget>[
-      if (!_ended && _pendingRequests.isNotEmpty)
-        _PendingRequestsPanel(
-          key: _pendingRequestsKey,
-          requests: _pendingRequests,
-          approving: _approving,
-          error: _unblockError,
-          onApprove: _approveHost,
-          onApproveClass: _approveHostForClass,
-        ),
-      if (!_ended && (_detail?.participants.isNotEmpty ?? false))
-        _RosterPanel(participants: _detail!.participants),
-      if (!_ended && _availableBundles != null)
-        _LiveBundlePanel(
-          available: _availableBundles!,
-          selectedIds: _selectedBundleIds,
-          busy: _updatingBundles,
-          error: _bundleError,
-          onToggle: (id, selected) {
-            final next = {..._selectedBundleIds};
-            if (selected) {
-              next.add(id);
-            } else {
-              next.remove(id);
-            }
-            _updateBundles(next);
-          },
-        ),
-      if (_ended) const _EndedBanner(),
-      if (_ended && (_detail?.summaries.isNotEmpty ?? false))
-        _SessionSummaryPanel(summaries: _detail!.summaries),
-    ];
+    // The instrument panels — only what applies to the session's current
+    // state. The feed itself is the hero and fills the rest.
+    Widget? pendingPanel(GlobalKey key) =>
+        !_ended && _pendingRequests.isNotEmpty
+        ? _PendingRequestsPanel(
+            key: key,
+            requests: _pendingRequests,
+            approving: _approving,
+            error: _unblockError,
+            onApprove: _approveHost,
+            onApproveClass: _approveHostForClass,
+          )
+        : null;
+    final List<SessionParticipantInfo> participants = !_ended
+        ? _detail?.participants ?? const <SessionParticipantInfo>[]
+        : const <SessionParticipantInfo>[];
+    final Widget? bundles = !_ended && _availableBundles != null
+        ? _LiveBundlePanel(
+            available: _availableBundles!,
+            selectedIds: _selectedBundleIds,
+            busy: _updatingBundles,
+            error: _bundleError,
+            onToggle: (id, selected) {
+              final next = {..._selectedBundleIds};
+              if (selected) {
+                next.add(id);
+              } else {
+                next.remove(id);
+              }
+              _updateBundles(next);
+            },
+          )
+        : null;
+    final Widget feed = _ActivityPanel(
+      events: feedTimeline(_events, _history),
+      settings: _alertServices.settings,
+      nameOf: _participantName,
+    );
 
-    // The page scrolls as a whole (#422). The panels stack to more than a short
-    // window holds; in a plain column they squeezed the feed to nothing and
-    // clipped the last panel, with nothing to scroll it back into view.
-    //
-    // A click anywhere on it lets the browser play the alert sound (#454): a
-    // pointer down for a mouse, a pointer up for a touch screen.
+    // A click anywhere on the page lets the browser play the alert sound
+    // (#454): a pointer down for a mouse, a pointer up for a touch screen.
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => _unlockSound(),
       onPointerUp: (_) => _unlockSound(),
       child: Scaffold(
         backgroundColor: PlinkColors.paper,
-        body: CustomScrollView(
-          slivers: <Widget>[
-            SliverToBoxAdapter(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  _SessionHeader(
-                    headline: headline,
-                    spec: _titleText(AppLocalizations.of(context)),
-                    ended: _ended,
-                    ending: _ending,
-                    joinCode: joinCode,
-                    onLeave: _confirmExit,
-                    onEnd: _endSession,
-                    onCopyCode: _copyJoinCode,
-                    onOpenNotifications: () =>
-                        showLiveAlertSettings(context, _alertServices),
-                    headlineStyle: text.displaySmall,
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            // On a wide window the students get a column of their own on the
+            // left, over the window's height, and the requests, the bundles
+            // and the feed share the right (#494). Below [_columnsMinWidth],
+            // and once the session has ended (the roster and the bundles go,
+            // the summary shows), the panels stack over the feed as before.
+            final bool columns =
+                participants.isNotEmpty &&
+                constraints.maxWidth >= _columnsMinWidth;
+            final Widget? pending = pendingPanel(
+              columns ? _columnRequestsKey : _stackedRequestsKey,
+            );
+            final List<Widget> panels = columns
+                ? const <Widget>[]
+                : <Widget>[
+                    ?pending,
+                    if (participants.isNotEmpty)
+                      _RosterPanel(participants: participants),
+                    ?bundles,
+                    if (_ended) const _EndedBanner(),
+                    if (_ended && (_detail?.summaries.isNotEmpty ?? false))
+                      _SessionSummaryPanel(summaries: _detail!.summaries),
+                  ];
+
+            // The page scrolls as a whole (#422). Stacked, the panels take
+            // more than a short window holds; in a plain column they squeezed
+            // the feed to nothing and clipped the last panel, with nothing to
+            // scroll it back into view. In columns each column scrolls on its
+            // own, and the page only on a window too short for them.
+            return CustomScrollView(
+              slivers: <Widget>[
+                SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      _SessionHeader(
+                        headline: headline,
+                        spec: _titleText(AppLocalizations.of(context)),
+                        ended: _ended,
+                        ending: _ending,
+                        joinCode: joinCode,
+                        onLeave: _confirmExit,
+                        onEnd: _endSession,
+                        onCopyCode: _copyJoinCode,
+                        onOpenNotifications: () =>
+                            showLiveAlertSettings(context, _alertServices),
+                        headlineStyle: text.displaySmall,
+                      ),
+                      const _Hairline(),
+                      if (_connecting)
+                        _StatusLine(
+                          AppLocalizations.of(context).sessionConnecting,
+                        ),
+                      if (!_ended) _SoundBlockedLine(services: _alertServices),
+                      if (!_ended &&
+                          (_link == SessionHubLinkState.reconnecting ||
+                              _link == SessionHubLinkState.disconnected))
+                        _ConnectionLine(
+                          state: _link!,
+                          onReconnect: _restartHub,
+                        ),
+                      if (_joinError != null) _ErrorBanner(_joinError!),
+                      if (_error != null) _ErrorBanner(_error!),
+                      for (final Widget panel in panels) ...<Widget>[
+                        panel,
+                        const _Hairline(),
+                      ],
+                    ],
                   ),
-                  const _Hairline(),
-                  if (_connecting)
-                    _StatusLine(AppLocalizations.of(context).sessionConnecting),
-                  if (!_ended) _SoundBlockedLine(services: _alertServices),
-                  if (!_ended &&
-                      (_link == SessionHubLinkState.reconnecting ||
-                          _link == SessionHubLinkState.disconnected))
-                    _ConnectionLine(state: _link!, onReconnect: _restartHub),
-                  if (_joinError != null) _ErrorBanner(_joinError!),
-                  if (_error != null) _ErrorBanner(_error!),
-                  for (final Widget panel in panels) ...<Widget>[
-                    panel,
-                    const _Hairline(),
-                  ],
-                  _PanelLabel(AppLocalizations.of(context).sessionActivity),
-                ],
-              ),
-            ),
-            // The live feed — the instrument's read-out, filling the rest of the
-            // window, but never shorter than [_feedMinHeight]: on a short window
-            // the page scrolls down to it instead. Without a scroll body the
-            // sliver is the larger of the space left and its child's height,
-            // which the SizedBox states without asking the list (a list can't
-            // measure itself). The feed's list scrolls inside that height.
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: SizedBox(
-                height: _feedMinHeight,
-                child: _Feed(events: _events),
-              ),
-            ),
-          ],
+                ),
+                // The rest of the window: the feed — the instrument's
+                // read-out — or the two columns, but never shorter than their
+                // least height: on a short window the page scrolls down to
+                // them instead. Without a scroll body the sliver is the larger
+                // of the space left and its child's height, which the SizedBox
+                // states without asking the list (a list can't measure
+                // itself). The lists scroll inside that height.
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: SizedBox(
+                    height: columns ? _columnsMinHeight : _feedMinHeight,
+                    child: columns
+                        ? _LiveColumns(
+                            roster: _RosterPanel(
+                              participants: participants,
+                              fillHeight: true,
+                            ),
+                            panels: <Widget>[?pending, ?bundles],
+                            feed: feed,
+                          )
+                        : feed,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -720,9 +836,25 @@ class _SessionPageState extends State<SessionPage> {
 /// flush-left margin as the shell's eyebrow and app-bar (the editorial column).
 const double _gutter = PlinkSpacing.s6; // 32
 
-/// The least height the live feed gets (#422): room for a handful of event
-/// rows when the panels above it already fill a short window.
-const double _feedMinHeight = 320;
+/// The least height the activity feed gets (#422): its header and room for a
+/// handful of event rows when the panels above it already fill a short window.
+const double _feedMinHeight = 368;
+
+/// The least width the live page lays out in two columns (#494): the
+/// students' column and, next to it, room for the bundles' chips and the
+/// feed's sentences. Narrower, the panels stack over the feed.
+const double _columnsMinWidth = 900;
+
+/// The width of the students' column (#494): a name, the tamper flag and the
+/// state label between the page's gutters. Dutch's longest label, "Agent
+/// rapporteert niet meer", takes some 210 px of it; at 400 px it cut a name
+/// as short as "Grace Hopper".
+const double _rosterColumnWidth = 448;
+
+/// The least height the two columns get (#494): a handful of students, and
+/// the feed's header with a few rows. On a shorter window the page scrolls
+/// down to them, as it does to the feed when the panels stack.
+const double _columnsMinHeight = 320;
 
 /// A full-width 1px instrument rule — the system separates with hairlines,
 /// never shadows.
@@ -738,23 +870,68 @@ class _Hairline extends StatelessWidget {
   }
 }
 
-/// A sentence-case mono section label (Space Mono) — the quiet panel headers
-/// that read like specs on an instrument, never shouting.
-class _PanelLabel extends StatelessWidget {
-  const _PanelLabel(this.text);
+/// The live page's two columns on a wide window (#494): the students on the
+/// left over the full height, and on the right the pending requests, the
+/// allowed bundles and then the feed, filling the rest of the column's
+/// height. Each column scrolls on its own: the roster's list in the left
+/// one, and the right one as a whole when the requests and the bundles leave
+/// the feed less than its least height.
+class _LiveColumns extends StatelessWidget {
+  const _LiveColumns({
+    required this.roster,
+    required this.panels,
+    required this.feed,
+  });
 
-  final String text;
+  /// The students, filling the left column.
+  final Widget roster;
+
+  /// What tops the right column: the requests the teacher acts on, then the
+  /// bundles.
+  final List<Widget> panels;
+  final Widget feed;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-        _gutter,
-        PlinkSpacing.s4,
-        _gutter,
-        PlinkSpacing.s2,
-      ),
-      child: Text(text, style: _monoLabel(PlinkColors.ink60)),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        SizedBox(width: _rosterColumnWidth, child: roster),
+        // A 1px rule between the columns, like the rules between panels.
+        const SizedBox(
+          width: PlinkBorders.width,
+          child: ColoredBox(color: PlinkColors.hairline),
+        ),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) => CustomScrollView(
+              slivers: <Widget>[
+                SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      for (final Widget panel in panels) ...<Widget>[
+                        panel,
+                        const _Hairline(),
+                      ],
+                    ],
+                  ),
+                ),
+                // As on the stacked page: the feed fills the rest of the
+                // column, but never gets less than its least height, nor more
+                // than the column holds, so scrolled down to it shows whole.
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: SizedBox(
+                    height: math.min(_feedMinHeight, constraints.maxHeight),
+                    child: feed,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1118,111 +1295,116 @@ class _EndedBanner extends StatelessWidget {
   }
 }
 
-/// The live event feed — the instrument's read-out. Each event is a hairline
-/// row: a mono tabular timestamp, a calm status dot, the raw event kind as a
-/// mono technical label, and a condensed payload. Scannable, not alarming.
-class _Feed extends StatelessWidget {
-  const _Feed({required this.events});
+/// The activity feed (#491) — the instrument's read-out: what happened in the
+/// session, newest first, each event one plain sentence about the student it
+/// concerns. By default it shows only what needs the teacher's attention; the
+/// switch on its header shows everything, and the browser remembers it.
+///
+/// It fills the box it is given — its header on top, the list scrolling in
+/// the rest — wherever the page puts it.
+class _ActivityPanel extends StatelessWidget {
+  const _ActivityPanel({
+    required this.events,
+    required this.settings,
+    required this.nameOf,
+  });
 
+  /// Newest first: what the page heard live, then what happened in the
+  /// session before it opened (#492).
   final List<SessionEvent> events;
+
+  /// Where the switch is kept, with the alert settings.
+  final LiveAlertSettings settings;
+
+  /// A student on the roster, by name, for an event that carries only the
+  /// student's id.
+  final String? Function(String userId) nameOf;
 
   @override
   Widget build(BuildContext context) {
-    if (events.isEmpty) {
-      return Center(
-        child: Text(
-          AppLocalizations.of(context).sessionWaitingEvents,
-          style: _monoLabel(PlinkColors.muted),
-        ),
-      );
-    }
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(
-        _gutter,
-        PlinkSpacing.s1,
-        _gutter,
-        PlinkSpacing.s6,
-      ),
-      itemCount: events.length,
-      separatorBuilder: (_, _) => const _Hairline(),
-      itemBuilder: (context, i) => _EventRow(event: events[i]),
+    final AppLocalizations l10n = AppLocalizations.of(context);
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (context, _) {
+        final bool showAll = settings.showAllActivity;
+        final List<FeedEntry> entries = feedEntries(
+          l10n,
+          events,
+          showAll: showAll,
+          nameOf: nameOf,
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _FeedHeader(
+              showAll: showAll,
+              onShowAll: (on) => settings.showAllActivity = on,
+            ),
+            Expanded(
+              child: entries.isEmpty
+                  // Nothing yet, or nothing that needs the teacher: the feed
+                  // says which, so a quiet feed doesn't read as a broken one.
+                  ? _FeedNotice(
+                      events.isEmpty
+                          ? l10n.sessionWaitingEvents
+                          : l10n.feedNothingNeedsAttention,
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(
+                        _gutter,
+                        PlinkSpacing.s1,
+                        _gutter,
+                        PlinkSpacing.s6,
+                      ),
+                      itemCount: entries.length,
+                      separatorBuilder: (_, _) => const _Hairline(),
+                      itemBuilder: (context, i) => _FeedRow(entry: entries[i]),
+                    ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
 
-/// The event kinds that warrant a stronger (but small, never alarming) marker —
-/// the ones a teacher might act on.
-const Set<String> _attentionKinds = <String>{'HeartbeatLost', 'TamperDetected'};
+/// The feed's header line: its sentence-case mono label (Space Mono), the
+/// quiet panel header that reads like a spec on an instrument, and the
+/// "Show all activity" switch, compact on the label's line like the archived
+/// switch on the Bundles and Classes pages.
+class _FeedHeader extends StatelessWidget {
+  const _FeedHeader({required this.showAll, required this.onShowAll});
 
-/// Whether [event] gets the stronger marker: one of [_attentionKinds], or the
-/// roster state change saying a student's agent never connected (#444).
-bool _needsAttention(SessionEvent event) =>
-    _attentionKinds.contains(event.kind) ||
-    (event.kind == 'ParticipantStateChanged' &&
-        event.payload['state'] == 'AgentMissing');
-
-class _EventRow extends StatelessWidget {
-  const _EventRow({required this.event});
-
-  final SessionEvent event;
-
-  static String _time(DateTime at) {
-    final DateTime t = at.toLocal();
-    return '${t.hour.toString().padLeft(2, '0')}:'
-        '${t.minute.toString().padLeft(2, '0')}:'
-        '${t.second.toString().padLeft(2, '0')}';
-  }
-
-  String _payloadSummary() {
-    if (event.payload.isEmpty) return '';
-    return event.payload.entries.map((e) => '${e.key}=${e.value}').join('  ');
-  }
+  final bool showAll;
+  final ValueChanged<bool> onShowAll;
 
   @override
   Widget build(BuildContext context) {
-    final bool attention = _needsAttention(event);
-    final Color dot = attention
-        ? Theme.of(context).colorScheme.error
-        : PlinkColors.muted;
-    final String payload = _payloadSummary();
-
+    final AppLocalizations l10n = AppLocalizations.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
+      padding: const EdgeInsets.fromLTRB(_gutter, PlinkSpacing.s2, _gutter, 0),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          // Mono tabular timestamp — the columns line up like a log.
-          SizedBox(
-            width: 76,
-            child: Text(
-              _time(event.at),
-              style: _monoSpec(PlinkColors.ink60, 12),
-            ),
-          ),
-          // A small status dot — paired with the label, never colour alone.
-          Padding(
-            padding: const EdgeInsets.only(top: 3),
-            child: Container(
-              width: 7,
-              height: 7,
-              decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
-            ),
-          ),
-          const SizedBox(width: PlinkSpacing.s3),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Text(
+              l10n.sessionActivity,
+              style: _monoLabel(PlinkColors.ink60),
+            ),
+          ),
+          MergeSemantics(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Text(event.kind, style: _monoLabel(PlinkColors.ink)),
-                if (payload.isNotEmpty) ...<Widget>[
-                  const SizedBox(height: 2),
-                  Text(
-                    payload,
-                    style: _monoSpec(PlinkColors.muted, PlinkType.labelSm),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                Text(l10n.feedShowAll, style: _monoLabel(PlinkColors.muted)),
+                const SizedBox(width: PlinkSpacing.s2),
+                Transform.scale(
+                  scale: 0.8,
+                  child: Switch(
+                    key: const Key('feed-show-all'),
+                    value: showAll,
+                    onChanged: onShowAll,
                   ),
-                ],
+                ),
               ],
             ),
           ),
@@ -1232,10 +1414,119 @@ class _EventRow extends StatelessWidget {
   }
 }
 
+/// What an empty feed says, centred in it.
+class _FeedNotice extends StatelessWidget {
+  const _FeedNotice(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _gutter),
+        child: Text(
+          text,
+          style: _monoLabel(PlinkColors.muted),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}
+
+/// One feed row on a hairline: the local time as a mono tabular spec, a calm
+/// status dot — in the error colour where a laptop isn't enforced or was
+/// tampered with — and the sentence. A run of the same sentence shows its
+/// count. Scannable, not alarming.
+class _FeedRow extends StatelessWidget {
+  const _FeedRow({required this.entry});
+
+  final FeedEntry entry;
+
+  static String _time(DateTime at) {
+    final DateTime t = at.toLocal();
+    return '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}:'
+        '${t.second.toString().padLeft(2, '0')}';
+  }
+
+  /// The event as it came, for troubleshooting: on a lingering hover, out of
+  /// the teacher's way.
+  static String _raw(SessionEvent event) => <String>[
+    event.kind,
+    for (final MapEntry<String, dynamic> field in event.payload.entries)
+      '${field.key}: ${field.value}',
+  ].join('\n');
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final Color dot = entry.priority == FeedPriority.warning
+        ? theme.colorScheme.error
+        : PlinkColors.muted;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          // Mono tabular timestamp — the columns line up. The paddings set it
+          // and the dot on the sentence's first line.
+          SizedBox(
+            width: 76,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _time(entry.event.at),
+                style: _monoSpec(PlinkColors.ink60, 12),
+              ),
+            ),
+          ),
+          // A small status dot — paired with the sentence, never colour
+          // alone.
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+            ),
+          ),
+          const SizedBox(width: PlinkSpacing.s3),
+          Expanded(
+            child: Tooltip(
+              message: _raw(entry.event),
+              waitDuration: const Duration(seconds: 1),
+              child: Text(
+                entry.sentence,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: PlinkColors.ink,
+                ),
+              ),
+            ),
+          ),
+          if (entry.count > 1) ...<Widget>[
+            const SizedBox(width: PlinkSpacing.s2),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '×${entry.count}',
+                style: _monoSpec(PlinkColors.muted, 12),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// Visual treatment for one live participant state (#100). The stale state is
 /// the loudest — per design §5.4 it's "agent stopped reporting", the signal
 /// teachers actually act on — together with an agent that never connected
-/// (#444): either way apps aren't being enforced on that laptop.
+/// (#444) and a laptop that never joined the session (#493): either way
+/// nothing is being enforced on that laptop.
 class _RosterStateStyle {
   const _RosterStateStyle(this.icon, this.sortRank);
   final IconData icon;
@@ -1250,27 +1541,30 @@ class _RosterStateStyle {
         return const _RosterStateStyle(Icons.sensors_off, 0);
       case ParticipantLiveState.agentMissing:
         return const _RosterStateStyle(Icons.desktop_access_disabled, 1);
+      case ParticipantLiveState.notConnected:
+        return const _RosterStateStyle(Icons.link_off, 2);
       case ParticipantLiveState.left:
-        return const _RosterStateStyle(Icons.logout, 2);
+        return const _RosterStateStyle(Icons.logout, 3);
       case ParticipantLiveState.declined:
-        return const _RosterStateStyle(Icons.cancel_outlined, 3);
+        return const _RosterStateStyle(Icons.cancel_outlined, 4);
       case ParticipantLiveState.neverJoined:
-        return const _RosterStateStyle(Icons.radio_button_unchecked, 4);
+        return const _RosterStateStyle(Icons.radio_button_unchecked, 5);
       case ParticipantLiveState.joined:
-        return const _RosterStateStyle(Icons.check_circle, 5);
+        return const _RosterStateStyle(Icons.check_circle, 6);
       case ParticipantLiveState.unknown:
-        return const _RosterStateStyle(Icons.help_outline, 6);
+        return const _RosterStateStyle(Icons.help_outline, 7);
     }
   }
 
-  /// Brand-token colours only — no off-palette green/orange. Stale and a
-  /// missing agent are the states painted in the error colour (the signals to
-  /// act on); everyone else is calm ink / muted, leaning on the label, never
-  /// colour alone.
+  /// Brand-token colours only — no off-palette green/orange. Stale, a missing
+  /// agent and a laptop that isn't connected are the states painted in the
+  /// error colour (the signals to act on); everyone else is calm ink / muted,
+  /// leaning on the label, never colour alone.
   Color color(ColorScheme scheme) {
     switch (icon) {
       case Icons.sensors_off:
       case Icons.desktop_access_disabled:
+      case Icons.link_off:
         return scheme.error;
       case Icons.check_circle:
         return PlinkColors.ink60;
@@ -1287,6 +1581,8 @@ String _rosterStateLabel(AppLocalizations l10n, ParticipantLiveState s) {
       return l10n.sessionStateStale;
     case ParticipantLiveState.agentMissing:
       return l10n.sessionStateAgentMissing;
+    case ParticipantLiveState.notConnected:
+      return l10n.sessionStateNotConnected;
     case ParticipantLiveState.left:
       return l10n.sessionStateLeft;
     case ParticipantLiveState.declined:
@@ -1300,10 +1596,24 @@ String _rosterStateLabel(AppLocalizations l10n, ParticipantLiveState s) {
   }
 }
 
+/// What a live participant state means for the class, for the states whose
+/// label alone doesn't say that nothing is enforced on the student's laptop.
+String? _rosterStateTooltip(AppLocalizations l10n, ParticipantLiveState s) =>
+    switch (s) {
+      ParticipantLiveState.agentMissing => l10n.sessionStateAgentMissingTooltip,
+      ParticipantLiveState.notConnected => l10n.sessionStateNotConnectedTooltip,
+      _ => null,
+    };
+
 class _RosterPanel extends StatelessWidget {
-  const _RosterPanel({required this.participants});
+  const _RosterPanel({required this.participants, this.fillHeight = false});
 
   final List<SessionParticipantInfo> participants;
+
+  /// Whether the roster fills the height it is given, its list scrolling in
+  /// it: the students' column on a wide window (#494). Otherwise it is one of
+  /// the stacked panels, its list capped so the feed stays in reach.
+  final bool fillHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -1324,11 +1634,13 @@ class _RosterPanel extends StatelessWidget {
         .length;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(
+      padding: EdgeInsets.fromLTRB(
         _gutter,
         PlinkSpacing.s4,
         _gutter,
-        PlinkSpacing.s4,
+        // In its column the list runs to the window's bottom edge, and keeps
+        // this space under its last row itself.
+        fillHeight ? 0 : PlinkSpacing.s4,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1340,16 +1652,28 @@ class _RosterPanel extends StatelessWidget {
             style: _monoLabel(PlinkColors.ink60),
           ),
           const SizedBox(height: PlinkSpacing.s3),
-          // Bounded so a 30-student class doesn't push the event feed off-screen
-          // (a11y: it scrolls inside the panel, never clips).
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 240),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: sorted.length,
-              itemBuilder: (context, i) => _RosterRow(participant: sorted[i]),
+          if (fillHeight)
+            // The whole class at once on a classroom screen; a longer one
+            // scrolls inside the column (#494).
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.only(bottom: PlinkSpacing.s4),
+                itemCount: sorted.length,
+                itemBuilder: (context, i) =>
+                    _RosterRow(participant: sorted[i], dense: true),
+              ),
+            )
+          else
+            // Bounded so a 30-student class doesn't push the event feed
+            // off-screen (a11y: it scrolls inside the panel, never clips).
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: sorted.length,
+                itemBuilder: (context, i) => _RosterRow(participant: sorted[i]),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -1357,9 +1681,13 @@ class _RosterPanel extends StatelessWidget {
 }
 
 class _RosterRow extends StatelessWidget {
-  const _RosterRow({required this.participant});
+  const _RosterRow({required this.participant, this.dense = false});
 
   final SessionParticipantInfo participant;
+
+  /// Closer rows, for the students' column (#494): at the text's full size,
+  /// a class of 18 fits on a 1080p classroom screen.
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -1372,7 +1700,9 @@ class _RosterRow extends StatelessWidget {
       style: _monoLabel(color),
     );
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s2),
+      padding: EdgeInsets.symmetric(
+        vertical: dense ? PlinkSpacing.s1 : PlinkSpacing.s2,
+      ),
       child: Row(
         children: [
           Icon(style.icon, size: 18, color: color),
@@ -1398,13 +1728,12 @@ class _RosterRow extends StatelessWidget {
             ),
             const SizedBox(width: PlinkSpacing.s2),
           ],
-          // A missing agent (#444) says what it means for the class on hover:
-          // the label alone doesn't tell a teacher that apps go unblocked.
-          if (participant.state == ParticipantLiveState.agentMissing)
-            Tooltip(
-              message: l10n.sessionStateAgentMissingTooltip,
-              child: stateLabel,
-            )
+          // A missing agent (#444) or a laptop that never joined (#493) says
+          // what it means for the class on hover: the label alone doesn't tell
+          // a teacher that nothing is blocked for that student.
+          if (_rosterStateTooltip(l10n, participant.state)
+              case final String tip)
+            Tooltip(message: tip, child: stateLabel)
           else
             stateLabel,
         ],

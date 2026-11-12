@@ -177,6 +177,33 @@ LiveAlertServices _namingAlerts(FakeAlertPopups popups) => LiveAlertServices(
   popups: popups,
 );
 
+/// Alerts as they come, with the activity feed showing all activity, not
+/// only what needs the teacher (#491).
+LiveAlertServices _showingAllActivity() => LiveAlertServices(
+  settings: LiveAlertSettings(store: MemoryAlertSettingsStore())
+    ..showAllActivity = true,
+  sound: _QuietSound(),
+);
+
+/// The sentence the feed shows for each event (#491), with the contract's
+/// placeholder payload: `contract-<field>` under each field. The roster is
+/// empty, so an event that carries only the student's id names no one. An
+/// event the dashboard has no sentence for yet still gets one.
+const _sentences = {
+  'SessionStarted': 'Session started, code contract-joinCode.',
+  'SessionEnded': 'Session ended.',
+  'ParticipantStateChanged': "contract-displayName's status changed.",
+  'UnblockRequested':
+      'contract-userDisplayName asks for access to '
+      'contract-host.',
+  'TamperDetected':
+      "Tampering detected on contract-userDisplayName's "
+      'computer.',
+  'HeartbeatLost': "A student's agent stopped reporting.",
+  'AgentReconnected': 'A student is connected again.',
+};
+const _otherSentence = 'Something happened in the session.';
+
 Future<_LivePage> _pumpLiveSession(
   WidgetTester tester, {
   LiveAlertServices? alertServices,
@@ -234,9 +261,12 @@ void main() {
   for (final event in contract.events) {
     final audience = event.audience.join(', ');
 
-    testWidgets('${event.name} about this session lands in its feed '
-        '(sent to: $audience)', (tester) async {
-      final page = await _pumpLiveSession(tester);
+    testWidgets('${event.name} about this session lands in its feed, as a '
+        'sentence (sent to: $audience)', (tester) async {
+      final page = await _pumpLiveSession(
+        tester,
+        alertServices: _showingAllActivity(),
+      );
       if (!event.canNameAnotherSession) {
         // Only through the session group, which the page has to join.
         expect(page.hub.joined, contains(_sessionId));
@@ -245,7 +275,13 @@ void main() {
       final payload = page.push(event, _sessionId);
       await tester.pumpAndSettle();
 
-      expect(find.text(event.name), findsOneWidget);
+      // A plain sentence (#491), never the raw kind or payload.
+      expect(
+        find.text(_sentences[event.name] ?? _otherSentence),
+        findsOneWidget,
+      );
+      expect(find.text(event.name), findsNothing);
+      expect(find.textContaining(_sessionId), findsNothing);
       _expectReadsOnlyItsFields(event, payload);
     });
 
@@ -279,13 +315,20 @@ void main() {
       testWidgets('${event.name} naming another session leaves the page as '
           "it was (sent to: $audience, the teacher's user group hears about "
           'all their sessions, and those they take part in)', (tester) async {
-        final page = await _pumpLiveSession(tester);
+        // Showing all activity: the feed would show it if it took it.
+        final page = await _pumpLiveSession(
+          tester,
+          alertServices: _showingAllActivity(),
+        );
         final loads = page.sessions.loads;
 
         final payload = page.push(event, _otherSessionId);
         await tester.pumpAndSettle();
 
-        expect(find.text(event.name), findsNothing);
+        expect(
+          find.text(_sentences[event.name] ?? _otherSentence),
+          findsNothing,
+        );
         expect(find.text('Waiting for events…'), findsOneWidget);
         expect(find.text('LIVE'), findsOneWidget);
         expect(
