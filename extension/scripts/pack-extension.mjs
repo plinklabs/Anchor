@@ -65,14 +65,14 @@ function parseArgs(argv) {
 }
 
 /** package.json `version` is the single source of truth (#208). */
-function readSourceVersion() {
+export function readSourceVersion() {
   const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
   if (!pkg.version) throw new Error('extension/package.json declares no "version".');
   return String(pkg.version);
 }
 
 /** Recursively list files under `dir`, returning archive-relative POSIX paths. */
-function listFiles(dir, baseDir = dir) {
+export function listFiles(dir, baseDir = dir) {
   const out = [];
   for (const name of readdirSync(dir)) {
     const full = join(dir, name);

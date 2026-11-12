@@ -510,17 +510,24 @@ The ID is a pure function of that public key:
 
 ### Signing key
 
-The matching **private key signs the packed `.crx`** and must never enter the
-repo (`*.pem` / `*.crx` are gitignored). It is kept in two places:
+The committed `key` is the Edge Add-ons listing's public key: the **store holds
+the matching private key** and signs every store build itself, so there is no
+private key for the store ID to keep.
 
-- **Authoritative copy:** offline in the school's secret store — the source of
-  truth, never on a dev machine.
-- **CI:** a GitHub Actions secret `EDGE_EXTENSION_PRIVATE_KEY` (PEM), consumed by
-  the future `.crx` packaging/signing workflow. Set it with
-  `gh secret set EDGE_EXTENSION_PRIVATE_KEY --body "<pem>"` (pass `--body`; never
-  pipe — PowerShell appends a CRLF that corrupts the secret).
+The only key we hold signs the **self-hosted test-ring build** (#497), whose ID is
+therefore its own: `extensionId` in [`test-ring.json`](test-ring.json), next to
+its public key. [`scripts/test-ring-key.mjs`](scripts/test-ring-key.mjs) makes the
+pair, writes the private key outside the repo and only the public half and ID
+into `test-ring.json`; the private key goes into the `EXTENSION_TEST_RING_KEY`
+repository secret and an offline store, never into the repo (`*.pem` / `*.crx`
+are gitignored). [`scripts/pack-test-ring.mjs`](scripts/pack-test-ring.mjs) signs
+the CRX3 ([`scripts/crx3.mjs`](scripts/crx3.mjs)) and writes its update manifest;
+[`.github/workflows/extension-test-ring.yml`](../.github/workflows/extension-test-ring.yml)
+publishes both. The steps are in
+[`docs/RELEASE.md`](../docs/RELEASE.md#extension-test-ring), the Intune profile in
+[`docs/INTUNE.md`](../docs/INTUNE.md#test-ring-the-self-hosted-extension).
 
-**Regenerating the key changes the ID** and invalidates every deployed policy
+**Regenerating the store key changes the ID** and invalidates every deployed policy
 entry, so treat it as a last resort. If you must, regenerate the keypair, replace
 `manifest.json` `key` with the new base64 SPKI public key, and update the ID in
 this file, `src/manifest.test.ts`, and `e2e/config.ts` together (the tests will
@@ -537,7 +544,7 @@ const key = publicKey.toString('base64');               // → manifest `key`
 const id = createHash('sha256').update(publicKey).digest()
   .subarray(0, 16).toString('hex').split('')
   .map((c) => String.fromCharCode(97 + parseInt(c, 16))).join(''); // → extension ID
-// privateKey → offline store + EDGE_EXTENSION_PRIVATE_KEY (never committed)
+// privateKey → offline store (never committed)
 ```
 
 ## Sideload (production install path)
@@ -554,8 +561,9 @@ HKLM\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist
 
 The ID is the pinned `dnkimhodjfogjibnbbfdjdapgmmiojio` (see **Stable extension
 ID** above), and the update URL is the Edge Add-ons store's: the same entry the
-agent writes itself (below). A self-hosted `.crx` would instead point the update
-URL at an `updates.xml` manifest on a local file share or HTTPS endpoint.
+agent writes itself (below). A self-hosted `.crx` points the update URL at an
+`updates.xml` manifest instead: the Intune test ring does that with its own build
+and ID (#497, [`docs/INTUNE.md`](../docs/INTUNE.md#test-ring-the-self-hosted-extension)).
 
 For unpacked dev installs the simpler shape is:
 

@@ -13,6 +13,9 @@ namespace FocusAgent.Core.Tests;
 public class ExtensionSelfRegistrarTests
 {
     private const string Other = "someotherextensionidaaaaaaaaaaaa;https://example/crx";
+    private const string TestRing = "abcdefghijklmnopabcdefghijklmnop";
+    private const string TestRingEntry =
+        TestRing + ";https://github.com/plinklabs/Anchor/releases/download/extension-test-ring/updates.xml";
     private static readonly TimeSpan Grace = TimeSpan.FromMilliseconds(1);
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(7);
 
@@ -44,6 +47,51 @@ public class ExtensionSelfRegistrarTests
         h.User.Entries["1"] = Other;
 
         Assert.Equal(ExtensionPolicyLocation.None, h.Registrar().FindPolicy());
+    }
+
+    [Theory]
+    [InlineData(ExtensionPolicyLocation.Machine)] // Intune's test-ring profile, device scope
+    [InlineData(ExtensionPolicyLocation.User)]    // the same profile, user scope
+    public async Task A_test_ring_entry_is_a_policy_in_place_so_the_student_is_never_asked(ExtensionPolicyLocation where)
+    {
+        // #497: Intune's test-ring profile force-installs the self-hosted build, whose
+        // ID isn't the store's. That laptop has the extension; nothing to set up.
+        var h = new Harness { ExtensionIds = AnchorExtensionIds.WithTestRing(TestRing), InstalledIn = @"Edge\Default" };
+        (where == ExtensionPolicyLocation.Machine ? h.Machine : h.User).Entries["1"] = TestRingEntry;
+
+        Assert.Equal(where, h.Registrar().FindPolicy());
+        var ok = await h.Registrar().RegisterAndVerifyAsync();
+
+        Assert.True(ok);
+        Assert.Equal(0, h.ConsentAsked);
+        Assert.Empty(h.Elevated.AddCalls);
+        Assert.Equal(0, h.GuidedShown);
+    }
+
+    [Fact]
+    public void Without_a_test_ring_configured_its_entry_is_another_products_as_before()
+    {
+        var h = new Harness { ExtensionIds = AnchorExtensionIds.StoreOnly };
+        h.Machine.Entries["1"] = TestRingEntry;
+
+        Assert.Equal(ExtensionPolicyLocation.None, h.Registrar().FindPolicy());
+    }
+
+    [Fact]
+    public async Task Next_to_a_test_ring_entry_the_agent_writes_the_store_entry_only_when_asked()
+    {
+        // The test-ring ID is only ever accepted, never written: a laptop without a
+        // policy still gets the store build's entry.
+        var h = new Harness
+        {
+            ExtensionIds = AnchorExtensionIds.WithTestRing(TestRing),
+            ConsentAnswer = true,
+            CheckedInAfterGrace = true,
+        };
+
+        await h.Registrar().RegisterAndVerifyAsync();
+
+        Assert.Equal(EdgeExtensionPolicy.ForcelistEntry, Assert.Single(h.Elevated.AddCalls).Entry);
     }
 
     [Fact]
@@ -590,6 +638,9 @@ public class ExtensionSelfRegistrarTests
         /// <summary>Edge starts after this many looks for it.</summary>
         public int? BrowserStartsAfterPolls { get; init; }
 
+        /// <summary>Anchor's extension IDs (#497); the store build's only unless a spec says otherwise.</summary>
+        public AnchorExtensionIds ExtensionIds { get; init; } = AnchorExtensionIds.StoreOnly;
+
         /// <summary>Runs after each wait is recorded.</summary>
         public Action<TimeSpan>? OnDelay { get; set; }
 
@@ -645,7 +696,8 @@ public class ExtensionSelfRegistrarTests
                     return DelayOverride?.Invoke(waitingFor, ct) ?? Task.CompletedTask;
                 },
                 gracePeriod: Grace,
-                browserPollInterval: PollInterval);
+                browserPollInterval: PollInterval,
+                extensionIds: ExtensionIds);
             return registrar;
         }
     }

@@ -265,7 +265,10 @@ public partial class App : Application
                               && !string.IsNullOrWhiteSpace(auth.Scope)
                 ? new WitnessAuthConfig(auth.TenantId, auth.ClientId, auth.Scope)
                 : null;
-            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(backendBaseUrl, witnessAuth));
+            // #497: the host lets each of Anchor's extension IDs connect, the
+            // self-hosted test-ring build's included.
+            var extensionIds = _host.Services.GetRequiredService<ExtensionPolicyParts>().Ids;
+            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(backendBaseUrl, witnessAuth, extensionIds));
             // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
             // SessionLeft subscriptions are wired before the first session — the
             // poll loop starts on join and reports any open Edge InPrivate window.
@@ -1517,6 +1520,8 @@ public partial class App : Application
                 browserRunning: () => BrowserProcess.IsRunningInThisSession(
                     sp.GetRequiredService<IOptions<WitnessSettings>>().Value.BrowserProcessName),
                 gracePeriod: parts.GracePeriod,
+                // #497: a forcelist entry for the self-hosted test-ring build counts too.
+                extensionIds: parts.Ids,
                 log: sp.GetRequiredService<ILogger<ExtensionSelfRegistrar>>());
         });
         builder.Services.AddSingleton(sp => new GuidedInstallLauncher(

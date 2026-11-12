@@ -1,0 +1,193 @@
+name: Extension Test Ring
+
+# Build the extension signed with our own key and publish it, with the update
+# manifest Edge polls, for the Intune test ring (#497).
+#
+# Why: every extension change otherwise waits for the Edge Add-ons review (days)
+# before it reaches a real school laptop. Edge can force-install an extension from
+# our own update URL instead of the store's (`<id>;<update_url>` in
+# ExtensionInstallForcelist). A second Intune profile, assigned to a small test
+# group that is excluded from the store profile, does that with this build; the
+# students stay on the store version. docs/INTUNE.md has the profile,
+# docs/RELEASE.md how to publish.
+#
+# What it publishes, on the GitHub release `extension-test-ring`, next to the
+# agent's update feed (#465):
+#   updates.xml                                  the update manifest (gupdate XML)
+#   anchor-extension-test-ring-<version>.crx     the signed CRX3 it names
+# The release is a PRE-RELEASE on purpose: installed agents read their update feed
+# from the release GitHub marks Latest (<repo>/releases/latest/download/), and
+# GitHub never marks a pre-release Latest. Its tag only names the hosting place;
+# the release notes say which commit the current build is from.
+#
+# The test-ring build differs from the store build only in its manifest: version
+# `<package.json version>.<run number>` (newer on every publish, which Edge needs
+# before it updates), `update_url` pointing at updates.xml, and `key` = the
+# test-ring public key. Its extension ID comes from that key, so it isn't the
+# store's; extension/test-ring.json records it, the agent takes it for Anchor's
+# (AnchorExtensionIds), and scripts/pack-test-ring.mjs refuses a key that doesn't
+# match it. So the agent release that knows the ID must reach the test laptops
+# before the first test-ring build does.
+#
+# Triggers, both explicit, never a branch push or a PR:
+#   * an `extension-v*` tag, the same tag that ships the store release
+#     (extension-release.yml): the test ring gets it at once, while the store
+#     reviews it. The agent-first order (#495) has no review delay to hide behind
+#     here.
+#   * a manual run on any ref, to try a branch on the test laptops before merging:
+#       gh workflow run extension-test-ring.yml --ref <branch>
+#
+# Skips cleanly (a skipped job, not a failure) while the signing key secret
+# EXTENSION_TEST_RING_KEY isn't set: the `check` job looks, since a secret can't
+# gate a job directly. Fails loudly when the key doesn't match
+# extension/test-ring.json, or the build would be older than the published one
+# (Edge never installs an older version, so that publish would change nothing).
+#
+# Gate interaction: no pull_request trigger, so it never produces a PR check and
+# must NOT be added to ci-gate.yml. A PR that edits this file runs Extension CI
+# (scripts/test-ring.test.ts runs actionlint over it and pins the triggers, the
+# skip and the hosting) and Workflows CI.
+
+on:
+  push:
+    tags:
+      - 'extension-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One publish at a time: two would race on updates.xml.
+  group: extension-test-ring
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check the test-ring signing key
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.key.outputs.configured }}
+    steps:
+      - name: Look for EXTENSION_TEST_RING_KEY
+        id: key
+        env:
+          KEY: ${{ secrets.EXTENSION_TEST_RING_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::EXTENSION_TEST_RING_KEY is not set, so there is no test-ring build to publish. See docs/RELEASE.md (Extension test ring)."
+          fi
+
+  publish:
+    name: Publish the test-ring build
+    needs: check
+    if: needs.check.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      # Create and update the extension-test-ring release and its assets.
+      contents: write
+    defaults:
+      run:
+        working-directory: extension
+    env:
+      TAG: extension-test-ring
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # On a tag, cross-check it against package.json like the store release
+      # does; a manual run on a branch takes package.json as it is.
+      - name: Resolve the tag version
+        id: ver
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/extension-v*) echo "version=${GITHUB_REF_NAME#extension-v}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "version=" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # The version the test ring has now, so the pack step can refuse an older
+      # one. None yet on the first publish.
+      - name: Fetch the published update manifest
+        run: |
+          mkdir -p "$RUNNER_TEMP/published"
+          if gh release download "$TAG" --pattern updates.xml --dir "$RUNNER_TEMP/published" --clobber; then
+            echo "Published: $(grep -o "<updatecheck[^>]*>" "$RUNNER_TEMP/published/updates.xml")"
+          else
+            echo "No test-ring build published yet."
+          fi
+
+      - name: Build, sign and package
+        id: pack
+        env:
+          EXTENSION_TEST_RING_KEY: ${{ secrets.EXTENSION_TEST_RING_KEY }}
+          TAG_VERSION: ${{ steps.ver.outputs.version }}
+        run: >-
+          node scripts/pack-test-ring.mjs
+          --repo "$GITHUB_REPOSITORY"
+          --build-number "$GITHUB_RUN_NUMBER"
+          --version "$TAG_VERSION"
+          --published "$RUNNER_TEMP/published/updates.xml"
+
+      - name: Upload the test-ring build (diagnostics)
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-extension-test-ring-${{ steps.pack.outputs.version }}
+          path: |
+            ${{ steps.pack.outputs.crx }}
+            ${{ steps.pack.outputs.updates }}
+          retention-days: 30
+
+      # The CRX goes up before the update manifest that names it, so Edge never
+      # reads a manifest pointing at a file that isn't there yet. Then the CRXs
+      # nothing names any more are removed.
+      - name: Publish next to the agent's update feed
+        env:
+          CRX: ${{ steps.pack.outputs.crx }}
+          UPDATES: ${{ steps.pack.outputs.updates }}
+          VERSION: ${{ steps.pack.outputs.version }}
+          EXTENSION_ID: ${{ steps.pack.outputs.id }}
+          UPDATE_URL: ${{ steps.pack.outputs.update_url }}
+        run: |
+          set -euo pipefail
+          notes="Hosting for the self-hosted test-ring build of the extension (#497), not a release. Edge on the test-ring laptops polls updates.xml here.
+
+          Current build: $VERSION from $GITHUB_SHA ($GITHUB_REF_NAME).
+          Forcelist entry: \`$EXTENSION_ID;$UPDATE_URL\`
+
+          _Published by extension-test-ring.yml._"
+
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Extension test ring" \
+              --notes "$notes" \
+              --prerelease
+          fi
+          gh release upload "$TAG" "$CRX" --clobber
+          gh release upload "$TAG" "$UPDATES" --clobber
+          gh release edit "$TAG" --notes "$notes" --prerelease
+
+          current="$(basename "$CRX")"
+          gh release view "$TAG" --json assets --jq '.assets[].name' |
+            { grep -E '^anchor-extension-test-ring-.*\.crx$' || true; } |
+            while read -r old; do
+              if [ "$old" != "$current" ]; then
+                gh release delete-asset "$TAG" "$old" --yes
+              fi
+            done
+          echo "::notice::Test ring now offers $VERSION ($EXTENSION_ID)."

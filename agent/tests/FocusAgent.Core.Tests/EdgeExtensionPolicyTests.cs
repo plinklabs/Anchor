@@ -88,6 +88,24 @@ public class EdgeExtensionPolicyTests
         Assert.Equal(expected, EdgeExtensionPolicy.IsAnchorEntry(value));
     }
 
+    [Theory]
+    [InlineData("abcdefghijklmnopabcdefghijklmnop;https://example.test/updates.xml", true)]
+    [InlineData(" ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP ", true)]
+    [InlineData("dnkimhodjfogjibnbbfdjdapgmmiojio;https://edge.microsoft.com/extensionwebstorebase/v1/crx", false)]
+    [InlineData(null, false)]
+    public void IsEntryFor_matches_the_given_id_segment(string? value, bool expected)
+    {
+        // #497: the same match, for the self-hosted test-ring build's ID.
+        Assert.Equal(expected, EdgeExtensionPolicy.IsEntryFor(value, "abcdefghijklmnopabcdefghijklmnop"));
+    }
+
+    [Fact]
+    public void IsAnchorEntry_stays_the_store_entry_the_agent_writes_even_with_a_test_ring()
+    {
+        // Writing and removing deal in the store entry only; the test ring is only accepted.
+        Assert.False(EdgeExtensionPolicy.IsAnchorEntry("abcdefghijklmnopabcdefghijklmnop;https://example.test/updates.xml"));
+    }
+
     [Fact]
     public void NextFreeIndex_is_1_when_empty()
     {

@@ -2,6 +2,7 @@ using FocusAgent.App.Extension;
 using FocusAgent.App.Startup;
 using FocusAgent.App.Tamper;
 using FocusAgent.App.Updates;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Logging;
 using FocusAgent.Core.Startup;
 using FocusAgent.Core.Updates;
@@ -305,6 +306,15 @@ public static class Program
     /// backend reaches the file. Defaults to the local dev backend when unset.
     /// </summary>
     public const string WitnessHostBackendUrlEnvVar = "ANCHOR_WITNESS_HOST_BACKEND_URL";
+
+    /// <summary>
+    /// Dev-only env var (#497): the extension ID the <see cref="RegisterWitnessHostArg"/>
+    /// mode lets connect as the self-hosted test-ring build's, in place of the one
+    /// <c>extension/test-ring.json</c> named when the agent was built — the CLI-mode
+    /// twin of the <c>Extension:TestRingExtensionId</c> test knob. Unset: the built-in
+    /// IDs (<c>AnchorExtensionIds.Configured</c>).
+    /// </summary>
+    public const string WitnessHostTestRingIdEnvVar = "ANCHOR_WITNESS_HOST_TEST_RING_ID";
 
     /// <summary>
     /// Dev-only flag (#224): run the real Velopack update <em>check</em> against a
@@ -767,7 +777,10 @@ public static class Program
                 var backendUrl = Environment.GetEnvironmentVariable(WitnessHostBackendUrlEnvVar) is { Length: > 0 } u
                     ? u
                     : "http://localhost:5276";
-                WitnessHostRegistration.EnsureRegistered(keyOverride, hostExePath, backendUrl);
+                var extensionIds = Environment.GetEnvironmentVariable(WitnessHostTestRingIdEnvVar) is { Length: > 0 } t
+                    ? AnchorExtensionIds.WithTestRing(t)
+                    : AnchorExtensionIds.Configured;
+                WitnessHostRegistration.EnsureRegistered(keyOverride, hostExePath, backendUrl, extensionIds);
             }
             else
             {

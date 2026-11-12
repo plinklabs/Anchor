@@ -15,7 +15,7 @@ different places at different cadences:
 | Tier | What ships | Trigger | Mechanism |
 | --- | --- | --- | --- |
 | **Cloud** (continuous) | Backend API → Azure App Service; teacher dashboard → Azure Static Web Apps; public website → GitHub Pages | **push to `main`** (path-filtered) | [`backend-deploy.yml`](../.github/workflows/backend-deploy.yml), [`dashboard-deploy.yml`](../.github/workflows/dashboard-deploy.yml), [`website-deploy.yml`](../.github/workflows/website-deploy.yml) |
-| **Client** (tag-based) | Desktop agent → GitHub Releases via Velopack; Edge extension → Edge Add-ons store | **a version tag** (`agent-v*` / `extension-v*`) | [`agent-release.yml`](../.github/workflows/agent-release.yml) (#209), [`extension-release.yml`](../.github/workflows/extension-release.yml) (#210) |
+| **Client** (tag-based) | Desktop agent → GitHub Releases via Velopack; Edge extension → Edge Add-ons store, and a self-hosted build for the Intune test ring | **a version tag** (`agent-v*` / `extension-v*`); the test ring also by hand | [`agent-release.yml`](../.github/workflows/agent-release.yml) (#209), [`extension-release.yml`](../.github/workflows/extension-release.yml) (#210), [`extension-test-ring.yml`](../.github/workflows/extension-test-ring.yml) (#497) |
 
 The split is intentional:
 
@@ -197,9 +197,11 @@ and the Intune install script below makes sure it runs.
   from the same address — never through the GitHub API, whose 60 anonymous
   requests an hour per IP address every laptop behind a school's address would
   share (#465). So the newest published, non-pre-release release must always be
-  an agent release. It is today: agent releases are the only GitHub Releases the
-  repository publishes. Don't publish another kind of GitHub Release (or mark one
-  Latest by hand) without moving the agent onto a feed of its own first.
+  an agent release. It is today: agent releases are the only full GitHub Releases
+  the repository publishes. The one other release, `extension-test-ring`, which
+  hosts the [extension test ring](#extension-test-ring) (#497), is a pre-release, and GitHub never marks a pre-release Latest. Don't
+  publish another kind of full GitHub Release (or mark one Latest by hand) without
+  moving the agent onto a feed of its own first.
   Agents released before #465 still list the releases through the API until they
   update to a release that has it.
 - Every release also carries `Install-AnchorAgent.ps1` (#457), the install
@@ -250,6 +252,58 @@ Center API.
 - Full detail incl. one-time developer setup:
   [`extension/README.md`](../extension/README.md#publishing-to-the-edge-add-ons-store).
 
+### Edge extension — self-hosted test ring (`extension-test-ring.yml`)
+
+Every store release waits for the Edge Add-ons review (up to seven business days,
+about ten in practice) before it reaches a school laptop. The **test ring** skips
+it for a few laptops: a second Intune profile, assigned to a test group,
+force-installs a build of the extension that we sign and host ourselves
+([`INTUNE.md`](INTUNE.md#test-ring-the-self-hosted-extension)). Students stay on
+the store build (#497).
+
+[`extension-test-ring.yml`](../.github/workflows/extension-test-ring.yml) builds
+that version on an `extension-v*` tag (next to the store release, so the test ring
+has it while the store reviews it) or by hand on any ref, and publishes it on the
+GitHub release `extension-test-ring`, next to the agent's update feed:
+
+- `anchor-extension-test-ring-<version>.crx`, a CRX3 signed with the private key in
+  the `EXTENSION_TEST_RING_KEY` secret, and
+- `updates.xml`, the update manifest Edge polls, at
+  `https://github.com/<owner>/<repo>/releases/download/extension-test-ring/updates.xml`.
+
+The build is the store build with three manifest changes
+([`pack-test-ring.mjs`](../extension/scripts/pack-test-ring.mjs)): version
+`<package.json version>.<run number>`, so every publish is newer than the last
+(Edge only updates to a newer version); `update_url` pointing at `updates.xml`
+(Edge follows it for every update after the first install); and `key`, the
+test-ring public key. Edge derives the extension ID from that key, so the test
+ring's ID isn't the store's. It is recorded in one place,
+[`extension/test-ring.json`](../extension/test-ring.json):
+
+- the agent build embeds it and takes that ID for Anchor's next to the store's
+  (`AnchorExtensionIds`): a forcelist entry for it is a policy in place, an install
+  of it in an Edge profile counts as installed, and the witness host lets it
+  connect. Manual installs keep writing the store entry. Empty, the agent behaves
+  exactly as before.
+- the packaging refuses a key whose ID isn't that one, so a mismatched secret
+  can't publish a build no agent accepts.
+
+So **the agent ships first**: an agent built after `test-ring.json` got its ID has
+to run on the test laptops before the first test-ring build reaches them, or the
+agent there opens the guided install and the extension can't check in (the same
+order as #495).
+
+- The job **skips** (a skipped job, not a failure) while `EXTENSION_TEST_RING_KEY`
+  isn't set. It fails when the key doesn't match `test-ring.json`, when a tag
+  doesn't match `package.json`, or when the build would be older than the one
+  published (a run from a branch that hasn't got the current version).
+- `extension-test-ring` is a **pre-release**, so it never becomes the release
+  GitHub marks Latest, which the agents' update feed is (#465). Its tag only
+  names the hosting place; the release notes say which commit and version it
+  carries. Each publish uploads the CRX, then `updates.xml`, then removes the
+  older CRXs.
+- How to set it up and push a build: [*Extension test ring*](#extension-test-ring).
+
 ## Versioning and tagging
 
 The cloud tier is **unversioned** — the deployed tip of `main` is the release.
@@ -267,7 +321,9 @@ version **independently**.
   package version. The design-system submodule under `external/` versions
   independently by design.
 - **Extension.** `package.json` `version` is the single source; the packed
-  manifest version is stamped from it and a test locks them together.
+  manifest version is stamped from it and a test locks them together. The
+  self-hosted test-ring build adds the workflow's run number as a fourth part
+  (`0.4.4` → `0.4.4.37`), so each publish is newer than the last (#497).
 - **Tag = release.** Each release workflow derives the package version from the tag
   (`agent-v1.2.3` → `1.2.3`) and the pack script fails the build if that doesn't
   match the committed version source — a tag can never ship a surprising number.
@@ -369,9 +425,16 @@ instructions. One-time setup: [`extension/README.md`](../extension/README.md#pub
 | `EDGE_ADDONS_API_KEY` | secret | Edge Add-ons **API key**. Expires 72 days after creation. | As above. |
 | `EDGE_ADDONS_KEY_ROTATED` | variable | Date (`YYYY-MM-DD`) the API credentials were last created, so expiry can be warned about before it bites (#336). | Expiry can't be tracked; the weekly check files an issue saying so. |
 
-> Both client release workflows use the auto-provided `GITHUB_TOKEN`
+#### Extension — test ring (`extension-test-ring.yml`)
+
+| Name | Kind | What it is | If unset |
+| --- | --- | --- | --- |
+| `EXTENSION_TEST_RING_KEY` | secret | The PEM **private key** that signs the self-hosted test-ring build (#497). Its public half and ID are in [`extension/test-ring.json`](../extension/test-ring.json); the packaging refuses a key that doesn't match. Made by `extension/scripts/test-ring-key.mjs`, see [*Extension test ring*](#extension-test-ring). | The publish job is skipped; nothing is built or published. |
+
+> The client release workflows use the auto-provided `GITHUB_TOKEN`
 > (`agent-release.yml` to upload the Velopack release assets and the Intune
-> install script) — no setup needed.
+> install script, `extension-test-ring.yml` to create and update the
+> `extension-test-ring` release) — no setup needed.
 
 #### Rotating the Edge Add-ons API key (every 72 days)
 
@@ -521,6 +584,63 @@ that newer work has landed, **bump the version and cut a fresh tag** rather than
 re-running the old job — republishing a build you would immediately supersede
 helps nobody. (This is what 0.4.1 did after 0.4.0 was stranded behind the 0.3.0
 review.)
+
+### Extension test ring
+
+The self-hosted build for the Intune test ring (#497, [overview above](#edge-extension--self-hosted-test-ring-extension-test-ringyml)).
+
+**One-time setup.** Until these steps are done, `extension/test-ring.json` is
+empty, the agent takes only the store ID, and `extension-test-ring.yml` skips.
+
+1. **Make the signing key**, on a machine you trust, from `extension/`:
+   ```bash
+   node scripts/test-ring-key.mjs                    # key → ~/.anchor/extension-test-ring.pem
+   node scripts/test-ring-key.mjs --out <path>       # or anywhere outside the repo
+   ```
+   It writes the **private key** outside the repository (it refuses a path inside
+   it, and never overwrites a key file), writes only the **ID and public key** into
+   `extension/test-ring.json`, and prints the ID and the Intune forcelist entry.
+   It prints and sets nothing secret.
+2. **Store the private key** as the repository secret, then keep a copy in your
+   offline secret store and delete the local file:
+   ```bash
+   gh secret set EXTENSION_TEST_RING_KEY < ~/.anchor/extension-test-ring.pem     # bash
+   ```
+   ```powershell
+   gh secret set EXTENSION_TEST_RING_KEY --body (Get-Content ~/.anchor/extension-test-ring.pem -Raw)
+   ```
+3. **Ship the agent first.** Commit `extension/test-ring.json`, merge it, and cut
+   an agent release ([*Agent*](#agent-agent-v)). Wait until the test laptops run
+   that version (the agent's `/status` and log show it). An older agent there
+   doesn't know the test-ring ID: it would open the guided install, and Edge would
+   refuse the extension's connection to the witness host.
+4. **Publish the first build** by hand, from the branch that has the current
+   extension version:
+   ```bash
+   gh workflow run extension-test-ring.yml --ref develop
+   gh release view extension-test-ring           # updates.xml + the .crx
+   ```
+5. **Create the Intune test-ring profile** with the forcelist entry the script
+   printed (`<test-ring-id>;https://github.com/<owner>/<repo>/releases/download/extension-test-ring/updates.xml`),
+   and check on one laptop that Edge accepts it: [`INTUNE.md`](INTUNE.md#test-ring-the-self-hosted-extension).
+
+**Pushing a build to the test ring.**
+
+- Every `extension-v*` tag publishes the tagged version to the test ring as well,
+  as soon as the tag is pushed: there is no review between the tag and the test
+  laptops, so mind the agent-first order of a change that spans both (#495).
+- To try a branch before it's merged:
+  `gh workflow run extension-test-ring.yml --ref <branch>`. The branch needs the
+  current `package.json` version (or a newer one): a build older than the
+  published one is refused, since Edge would never install it.
+- Edge looks for updates every few hours. On a test laptop,
+  `edge://extensions` → **Developer mode** → **Update** looks right away; the
+  version shows as `<version> test ring <run number>`.
+
+**Replacing the key** changes the test-ring ID, which the Intune profile and every
+agent build name, so do it only if the key has leaked:
+`node scripts/test-ring-key.mjs --force`, then steps 2–5 again (new agent release
+first, then the secret, a publish, and the profile's new entry).
 
 ## Operator checklist (fork bringing up its own cloud)
 

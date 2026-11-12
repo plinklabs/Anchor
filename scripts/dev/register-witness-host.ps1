@@ -12,6 +12,8 @@
     whose default value points at a host-manifest JSON. The manifest's `path`
     must be the ABSOLUTE path to the host exe, and `allowed_origins` must name the
     pinned extension ID (dnkimhodjfogjibnbbfdjdapgmmiojio, see extension/README.md).
+    Once extension/test-ring.json names the self-hosted test-ring build's ID, its
+    origin is added too, as the agent does (#497).
 
     This script builds the host (unless -SkipBuild), writes the manifest with the
     real exe path next to the exe, and sets the registry key. Re-run it after a
@@ -76,6 +78,12 @@ $ExePath = (Resolve-Path $ExePath).Path
 # next to the exe, where it won't be clobbered by a `git clean` of the repo.
 $Template = Get-Content (Join-Path $RepoRoot 'agent\src\FocusAgent.WitnessHost\net.anchor.witness.template.json') -Raw
 $manifest = $Template -replace 'REPLACED_AT_REGISTRATION_WITH_ABSOLUTE_EXE_PATH', ($ExePath -replace '\\', '\\')
+# #497: let the self-hosted test-ring build connect as well, once
+# extension/test-ring.json (the file the agent build embeds) names its ID.
+$TestRingId = (Get-Content (Join-Path $RepoRoot 'extension\test-ring.json') -Raw | ConvertFrom-Json).extensionId
+if ($TestRingId -cmatch '^[a-p]{32}$') {
+    $manifest = $manifest -replace '("chrome-extension://[a-p]{32}/")', ('$1,' + "`n    `"chrome-extension://$TestRingId/`"")
+}
 $ManifestPath = Join-Path (Split-Path $ExePath -Parent) "$HostName.json"
 Set-Content -Path $ManifestPath -Value $manifest -Encoding utf8
 

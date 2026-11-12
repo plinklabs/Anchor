@@ -213,7 +213,8 @@ The settings catalog has the setting both for the device (written under `HKLM`)
 and for the user (marked "(User)", written under `HKCU`). The agent looks in
 both, so either works; the device setting matches what the agent writes itself
 on other laptops. Assign the profile to the same groups as the app, before the
-app or together with it.
+app or together with it. If you run a [test ring](#test-ring-the-self-hosted-extension),
+exclude its group from this profile.
 
 Why it matters: at every start the agent reads `ExtensionInstallForcelist` under
 `HKLM` and `HKCU`, without elevation. With Anchor's entry in either, it asks the
@@ -249,8 +250,74 @@ sign in, and every laptop behind the school's address would share that budget, s
 a morning of laptops starting up would use it in minutes. Instead the agent reads
 the update feed (`releases.win.json`) and the package it names straight from the
 newest release's download address, which isn't held to that limit. "Newest" is the
-release GitHub marks **Latest**; agent releases are the only releases the
-repository publishes, so that is always the newest agent release.
+release GitHub marks **Latest**; agent releases are the only full releases the
+repository publishes, so that is always the newest agent release. (The
+[test ring](#test-ring-the-self-hosted-extension)'s `extension-test-ring` release
+is a pre-release, which GitHub never marks Latest.)
+
+## Test ring: the self-hosted extension
+
+Optional. A change to the extension reaches students only after the Edge Add-ons
+review, which takes days. The test ring lets a few laptops get it right away: a
+second configuration profile, assigned to a small test group, force-installs a
+build of the extension that the repository signs and hosts itself, instead of the
+store build (#497). Everyone else stays on the store build. If the test ring
+proves reliable, moving the main group over later is a change to these profiles.
+
+**Before you create the profile**, the test ring has to exist on the repository
+side: the signing key, its ID in `extension/test-ring.json`, an **agent release**
+built with that ID running on the test laptops, and a first published build
+([`RELEASE.md`](RELEASE.md#extension-test-ring)). The agent goes first: an agent
+that doesn't know the test-ring ID opens the guided install on those laptops, and
+Edge doesn't let the extension connect to it.
+
+1. **A test group**, with the laptops (or students) of the test ring. Keep it in
+   the agent app's assignment as before.
+2. **Exclude that group from the store profile** of
+   [Step 3](#step-3--force-install-the-edge-extension) (Assignments → Excluded
+   groups), so a laptop never gets both builds. Two Anchor extensions in one Edge
+   would both filter.
+3. **The test-ring profile.** Same as Step 3 (**Settings catalog** →
+   **Microsoft Edge** → **Extensions** → **Control which extensions are installed
+   silently**), with the entry `extension/scripts/test-ring-key.mjs` printed
+   when the key was made:
+   ```
+   <test-ring-id>;https://github.com/<owner>/<repo>/releases/download/extension-test-ring/updates.xml
+   ```
+   `<test-ring-id>` is the `extensionId` in
+   [`extension/test-ring.json`](../extension/test-ring.json). Assign it to the
+   test group only. Edge uses the URL in this entry for the first install only;
+   after that it follows the `update_url` inside the extension, which is the same
+   address.
+
+The agent takes either entry for Anchor's: with the test-ring entry under `HKLM`
+or `HKCU`, it asks the student nothing, finds the test-ring build in the Edge
+profile, and lets it connect to the witness host. The agent never writes the
+test-ring entry itself; on a laptop without any entry it still offers the store
+entry.
+
+**[TO CONFIRM IN THE PILOT]** Microsoft documents off-store force-installs on
+Windows only for devices joined to an Active Directory domain
+([`ExtensionInstallForcelist`](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/extensioninstallforcelist)).
+It says nothing about Entra-joined, Intune-enrolled devices (Chrome documents
+MDM-enrolled devices as qualifying, and Edge shares that code). Check it on one
+test laptop before relying on it:
+
+- `edge://policy` → **Reload policies**: `ExtensionInstallForcelist` lists the
+  test-ring entry with status **OK**. An error or warning on it means Edge
+  ignores the entry; the laptop then has no Anchor extension, and the agent opens
+  the guided install (the store listing).
+- `edge://extensions`: **Anchor** is there, installed by your organization, with
+  the test-ring ID and a version that ends in `test ring <n>`. **Developer mode**
+  → **Update** fetches a newer test-ring build right away instead of within a
+  few hours.
+- The laptop must reach `github.com` and `*.githubusercontent.com`
+  ([Step 4](#step-4--let-laptops-reach-the-update-feed)); the build is served
+  from there.
+
+To take a laptop out of the test ring, move it out of the test group: the
+test-ring profile no longer applies, the store profile does again, and Edge
+swaps the builds.
 
 ## Updates: leave them to the agent
 
@@ -395,3 +462,7 @@ into facts.
       start at once.
 - [ ] **Execution policy.** No PowerShell execution policy set by your tenant
       blocks the unsigned script.
+- [ ] **Test ring, if you run one.** On an Entra-joined, Intune-enrolled test
+      laptop, `edge://policy` shows the test-ring forcelist entry with status OK,
+      and `edge://extensions` has the test-ring build
+      ([Test ring](#test-ring-the-self-hosted-extension)).

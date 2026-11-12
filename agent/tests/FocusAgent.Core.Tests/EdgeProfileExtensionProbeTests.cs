@@ -44,6 +44,31 @@ public sealed class EdgeProfileExtensionProbeTests : IDisposable
     }
 
     [Fact]
+    public void The_self_hosted_test_ring_build_counts_once_its_id_is_configured()
+    {
+        // #497: a test-ring laptop has the self-hosted build, under its own ID.
+        const string testRing = "abcdefghijklmnopabcdefghijklmnop";
+        Unpack(UserData(), "Default", testRing);
+
+        Assert.Equal(
+            @"Edge\Default",
+            new EdgeProfileExtensionProbe([UserData()], AnchorExtensionIds.WithTestRing(testRing).All).FindInstalledProfile());
+        // Without the test ring configured it's just another extension, as before.
+        Assert.Null(new EdgeProfileExtensionProbe([UserData()], AnchorExtensionIds.StoreOnly.All).FindInstalledProfile());
+    }
+
+    [Fact]
+    public void The_store_build_still_counts_with_a_test_ring_configured()
+    {
+        Unpack(UserData(), "Default");
+
+        Assert.Equal(
+            @"Edge\Default",
+            new EdgeProfileExtensionProbe([UserData()], AnchorExtensionIds.WithTestRing("abcdefghijklmnopabcdefghijklmnop").All)
+                .FindInstalledProfile());
+    }
+
+    [Fact]
     public void A_folder_without_an_unpacked_version_is_not_an_install()
     {
         // What a half-finished install or a removal can leave behind.

@@ -12,4 +12,16 @@
     <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0" />
   </ItemGroup>
 
+  <!--
+    The self-hosted test-ring build's extension ID (#497), configured in one place
+    for the whole repo: extension/test-ring.json, which the test-ring packaging reads
+    too. Embedded, so an agent build takes the ID the file names when it was built
+    (AnchorExtensionIds.Configured); empty, it takes only the store build's ID.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\extension\test-ring.json"
+                      LogicalName="FocusAgent.Core.Extension.test-ring.json"
+                      Link="Extension\test-ring.json" />
+  </ItemGroup>
+
 </Project>
