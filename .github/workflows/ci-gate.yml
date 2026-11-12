@@ -63,6 +63,7 @@ jobs:
             agent:
               - 'agent/**'
               - 'backend/**'
+              - 'extension/test-ring.json'
               - '.github/workflows/agent-e2e.yml'
             dashboard_e2e:
               - 'dashboard/**'
@@ -80,6 +81,7 @@ jobs:
               - 'extension/**'
               - '.github/workflows/extension-release.yml'
               - '.github/workflows/edge-key-expiry.yml'
+              - '.github/workflows/extension-test-ring.yml'
               - '.github/actions/install-actionlint/**'
               - '.github/workflows/extension-ci.yml'
             infra:

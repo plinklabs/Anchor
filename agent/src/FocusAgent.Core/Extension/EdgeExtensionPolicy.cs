@@ -31,10 +31,13 @@ namespace FocusAgent.Core.Extension;
 public static class EdgeExtensionPolicy
 {
     /// <summary>
-    /// The pinned stable extension ID (see <c>extension/README.md</c> "Stable
-    /// extension ID"). The committed manifest <c>key</c> fixes this ID across every
-    /// build and machine, which is exactly what lets a per-user policy pin it — a
-    /// policy keys an extension by ID.
+    /// The pinned stable extension ID of the Edge Add-ons store build (see
+    /// <c>extension/README.md</c> "Stable extension ID"). The committed manifest
+    /// <c>key</c> fixes this ID across every build and machine, which is exactly
+    /// what lets a per-user policy pin it — a policy keys an extension by ID. It is
+    /// the one the agent writes and opens the store listing for; the self-hosted
+    /// test-ring build has an ID of its own, which the agent also takes for
+    /// Anchor's (<see cref="AnchorExtensionIds"/>, #497).
     /// </summary>
     public const string ExtensionId = "dnkimhodjfogjibnbbfdjdapgmmiojio";
 
@@ -78,12 +81,24 @@ public static class EdgeExtensionPolicy
     /// writer recognise an existing Anchor entry (and skip re-adding it) even if a
     /// past version wrote a slightly different update URL.
     /// </summary>
-    public static bool IsAnchorEntry(string? value)
+    /// <remarks>
+    /// Only the store build's entry, the one the agent writes and removes. Whether a
+    /// policy force-installs Anchor at all, the self-hosted test-ring build included,
+    /// is <see cref="AnchorExtensionIds.MatchesForcelistEntry"/> (#497).
+    /// </remarks>
+    public static bool IsAnchorEntry(string? value) => IsEntryFor(value, ExtensionId);
+
+    /// <summary>
+    /// True when <paramref name="value"/> is a forcelist entry for the extension
+    /// <paramref name="extensionId"/>: its id segment (before the first <c>;</c>)
+    /// equals it, ignoring case and padding, whatever the update URL.
+    /// </summary>
+    public static bool IsEntryFor(string? value, string extensionId)
     {
         if (string.IsNullOrWhiteSpace(value)) return false;
         var semicolon = value.IndexOf(';');
         var id = semicolon < 0 ? value : value[..semicolon];
-        return string.Equals(id.Trim(), ExtensionId, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(id.Trim(), extensionId, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

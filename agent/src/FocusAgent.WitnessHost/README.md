@@ -59,7 +59,9 @@ unit-tested with `MemoryStream`s.
 
 Names are shared via `FocusAgent.Core.Tamper.WitnessLink`; the extension repeats
 the host name in `witness.ts`, and the host manifest's `allowed_origins` pins the
-extension ID (`dnkimhodjfogjibnbbfdjdapgmmiojio`, see `extension/README.md`).
+extension ID (`dnkimhodjfogjibnbbfdjdapgmmiojio`, see `extension/README.md`), plus
+the self-hosted test-ring build's once `extension/test-ring.json` names it (#497,
+`AnchorExtensionIds`).
 
 ## Dev registration (no admin)
 

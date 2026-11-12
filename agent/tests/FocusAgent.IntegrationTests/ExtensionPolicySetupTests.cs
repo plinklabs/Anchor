@@ -47,6 +47,13 @@ public sealed class ExtensionPolicySetupTests
     private const string WinUiWindowClass = "WinUIDesktop";
     private const string Other = "someotherextensionidaaaaaaaaaaaa;https://example.test/crx";
 
+    // #497: a test-ring ID of the spec's own (the shape Edge derives from a key),
+    // whatever extension/test-ring.json names, and the entry Intune's test-ring
+    // profile writes for it.
+    private const string TestRingId = "abcdefghijklmnopabcdefghijklmnop";
+    private const string TestRingEntry =
+        TestRingId + ";https://github.com/plinklabs/Anchor/releases/download/extension-test-ring/updates.xml";
+
     private static readonly TimeSpan WindowTimeout = TimeSpan.FromSeconds(45);
 
     [Fact]
@@ -183,6 +190,31 @@ public sealed class ExtensionPolicySetupTests
     }
 
     [Fact]
+    public async Task A_test_ring_laptop_whose_policy_force_installs_the_self_hosted_build_needs_no_install()
+    {
+        // #497: Intune's test-ring profile force-installs the self-hosted build of the
+        // extension, whose ID (fixed by our own signing key) isn't the store's. After
+        // a reboot, Edge not open yet: the agent finds that entry under HKLM and the
+        // build installed in an Edge profile, so it neither asks nor opens the
+        // guided install, and doesn't add the store entry next to it.
+        using var env = SetupEnvironment.Create(simulateElevation: "allow", edgeRunning: false);
+        env.Machine.Write("1", TestRingEntry);
+        env.InstallExtensionInEdgeProfile("Default", TestRingId);
+
+        await using var agent = env.Launch(testRingId: TestRingId);
+        var status = await agent.Process.WaitForAsync(
+            s => s.ExtensionPolicy?.Verification == "Installed", WindowTimeout);
+        Assert.Equal("Installed", status?.ExtensionPolicy?.Verification);
+        Assert.Equal("Machine", status?.ExtensionPolicy?.Location);
+
+        // Well past the 2 s grace period: neither the guided install nor the setup window.
+        await agent.MustNotSeeAsync(TimeSpan.FromSeconds(6), GuidedTitle, SetupTitle);
+        Assert.Equal(TestRingEntry, Assert.Single(env.Machine.Read()).Value);
+        Assert.Empty(env.User.Read());
+        Assert.False(File.Exists(env.StatePath));
+    }
+
+    [Fact]
     public async Task With_the_policy_in_place_the_wait_for_the_extension_starts_only_once_Edge_runs()
     {
         // #488: no extension in any profile, Edge not running: the agent waits for
@@ -277,9 +309,9 @@ public sealed class ExtensionPolicySetupTests
         /// Leave the extension unpacked in profile <paramref name="profile"/>, as
         /// Edge does once it has installed it (#488).
         /// </summary>
-        public void InstallExtensionInEdgeProfile(string profile)
+        public void InstallExtensionInEdgeProfile(string profile, string extensionId = EdgeExtensionPolicy.ExtensionId)
         {
-            var version = Path.Combine(EdgeUserData, profile, "Extensions", EdgeExtensionPolicy.ExtensionId, "0.4.3_0");
+            var version = Path.Combine(EdgeUserData, profile, "Extensions", extensionId, "0.4.3_0");
             Directory.CreateDirectory(version);
             File.WriteAllText(Path.Combine(version, "manifest.json"), "{}");
         }
@@ -307,7 +339,11 @@ public sealed class ExtensionPolicySetupTests
             _edge.BeginOutputReadLine();
         }
 
-        public SetupRun Launch() =>
+        /// <param name="testRingId">
+        /// The ID this run takes for the self-hosted test-ring build's (#497); null:
+        /// the ones the agent was built with.
+        /// </param>
+        public SetupRun Launch(string? testRingId = null) =>
             new(AgentProcess.Launch(
                 // Nothing listens here: the agent keeps retrying, which is all
                 // this spec needs from the connection.
@@ -326,6 +362,8 @@ public sealed class ExtensionPolicySetupTests
                     ["Witness__PipeName"] = $"anchor-witness-e2e-{Guid.NewGuid():N}",
                     // #488: Edge is running when, and only when, this run's stand-in is.
                     ["Witness__BrowserProcessName"] = EdgeProcessName,
+                    // #497: empty, the agent's built-in IDs.
+                    ["Extension__TestRingExtensionId"] = testRingId ?? "",
                 }));
 
         public void WriteState(ExtensionPolicyState state) =>

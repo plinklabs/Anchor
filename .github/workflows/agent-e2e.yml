@@ -6,11 +6,13 @@ on:
     paths:
       - 'agent/**'
       - 'backend/**'
+      - 'extension/test-ring.json'
       - '.github/workflows/agent-e2e.yml'
   pull_request:
     paths:
       - 'agent/**'
       - 'backend/**'
+      - 'extension/test-ring.json'
       - '.github/workflows/agent-e2e.yml'
 
 concurrency:

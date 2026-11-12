@@ -4,9 +4,9 @@ dist/
 # Release packaging output (npm run package → anchor-extension-<version>.zip, #210)
 artifacts/
 
-# Extension signing material — the private key signs the packed .crx and must
-# never be committed (kept offline + as the EDGE_EXTENSION_PRIVATE_KEY secret).
-# See README "Stable extension ID → Signing key".
+# Extension signing material — the test-ring private key signs the self-hosted
+# .crx and must never be committed (kept offline + as the EXTENSION_TEST_RING_KEY
+# secret, #497). See README "Stable extension ID → Signing key".
 *.pem
 *.crx
 

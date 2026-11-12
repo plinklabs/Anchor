@@ -1,0 +1,5 @@
+{
+  "$comment": "The self-hosted test-ring build of the extension (#497): its ID and the public half of the key that signs it. Empty until the key exists; scripts/test-ring-key.mjs fills both in. The agent takes this ID for Anchor's next to the store's, and the test-ring packaging refuses a key that doesn't match. See docs/RELEASE.md.",
+  "extensionId": "",
+  "publicKey": ""
+}

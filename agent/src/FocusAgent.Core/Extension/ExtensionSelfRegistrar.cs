@@ -96,6 +96,7 @@ public sealed class ExtensionSelfRegistrar
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly TimeSpan _grace;
     private readonly TimeSpan _browserPoll;
+    private readonly AnchorExtensionIds _ids;
     private readonly ILogger<ExtensionSelfRegistrar> _log;
     private readonly object _verifyGate = new();
     private Task<bool>? _verifying;
@@ -145,6 +146,11 @@ public sealed class ExtensionSelfRegistrar
     /// <param name="browserPollInterval">
     /// How often to look for Edge while it isn't running. Defaults to <see cref="DefaultBrowserPollInterval"/>.
     /// </param>
+    /// <param name="extensionIds">
+    /// The IDs that are Anchor's extension (#497): a forcelist entry for any of them
+    /// is a policy in place. Defaults to <see cref="AnchorExtensionIds.Configured"/>.
+    /// The entry the agent writes is always the store build's.
+    /// </param>
     public ExtensionSelfRegistrar(
         IExtensionPolicyStore machineStore,
         IExtensionPolicyStore userStore,
@@ -158,6 +164,7 @@ public sealed class ExtensionSelfRegistrar
         Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
         TimeSpan? gracePeriod = null,
         TimeSpan? browserPollInterval = null,
+        AnchorExtensionIds? extensionIds = null,
         ILogger<ExtensionSelfRegistrar>? log = null)
     {
         _machine = machineStore;
@@ -172,6 +179,7 @@ public sealed class ExtensionSelfRegistrar
         _delayAsync = delayAsync ?? Task.Delay;
         _grace = gracePeriod ?? DefaultGracePeriod;
         _browserPoll = browserPollInterval ?? DefaultBrowserPollInterval;
+        _ids = extensionIds ?? AnchorExtensionIds.Configured;
         _log = log ?? NullLogger<ExtensionSelfRegistrar>.Instance;
     }
 
@@ -181,7 +189,9 @@ public sealed class ExtensionSelfRegistrar
     /// <summary>
     /// Where an Anchor entry already is, read without elevation: the HKLM
     /// forcelist first, then the HKCU one. A key that can't be read counts as
-    /// having no entry.
+    /// having no entry. An entry for the self-hosted test-ring build counts as
+    /// Anchor's (#497): Intune's test-ring profile force-installs that instead of
+    /// the store build.
     /// </summary>
     public ExtensionPolicyLocation FindPolicy()
     {
@@ -204,8 +214,8 @@ public sealed class ExtensionSelfRegistrar
         if (location != ExtensionPolicyLocation.None)
         {
             _log.LogInformation(
-                "Edge force-install policy for {ExtensionId} already present ({Location}); not asking.",
-                EdgeExtensionPolicy.ExtensionId, location);
+                "Edge force-install policy for {ExtensionIds} already present ({Location}); not asking.",
+                string.Join(" or ", _ids.All), location);
             return await VerifyAsync(ct).ConfigureAwait(false);
         }
 
@@ -550,7 +560,7 @@ public sealed class ExtensionSelfRegistrar
     {
         try
         {
-            return store.GetForcelistEntries().Any(EdgeExtensionPolicy.IsAnchorEntry);
+            return store.GetForcelistEntries().Any(_ids.MatchesForcelistEntry);
         }
         catch (Exception ex)
         {

@@ -14,6 +14,9 @@ namespace FocusAgent.Core.Extension;
 /// "installed" signal and the witness stays the "running" one.
 ///
 /// Reading only, without elevation: the folders are the student's own.
+///
+/// Any of Anchor's extension IDs counts (#497): a laptop of the test ring has the
+/// self-hosted build installed, under its own ID, instead of the store build.
 /// </summary>
 public sealed class EdgeProfileExtensionProbe
 {
@@ -22,18 +25,20 @@ public sealed class EdgeProfileExtensionProbe
     private static readonly string[] Channels = ["Edge", "Edge Beta", "Edge Dev", "Edge SxS"];
 
     private readonly IReadOnlyList<string> _userDataFolders;
-    private readonly string _extensionId;
+    private readonly IReadOnlyList<string> _extensionIds;
     private readonly ILogger<EdgeProfileExtensionProbe> _log;
 
     /// <param name="userDataFolders">The Edge <c>User Data</c> folders to look in.</param>
-    /// <param name="extensionId">The extension to look for; Anchor's by default.</param>
+    /// <param name="extensionIds">
+    /// The extension IDs to look for; Anchor's (<see cref="AnchorExtensionIds.Configured"/>) by default.
+    /// </param>
     public EdgeProfileExtensionProbe(
         IEnumerable<string> userDataFolders,
-        string extensionId = EdgeExtensionPolicy.ExtensionId,
+        IEnumerable<string>? extensionIds = null,
         ILogger<EdgeProfileExtensionProbe>? log = null)
     {
         _userDataFolders = userDataFolders.ToList();
-        _extensionId = extensionId;
+        _extensionIds = (extensionIds ?? AnchorExtensionIds.Configured.All).ToList();
         _log = log ?? NullLogger<EdgeProfileExtensionProbe>.Instance;
     }
 
@@ -60,7 +65,7 @@ public sealed class EdgeProfileExtensionProbe
                 if (!Directory.Exists(userData)) continue;
                 foreach (var profile in Directory.EnumerateDirectories(userData))
                 {
-                    if (HasUnpackedVersion(Path.Combine(profile, "Extensions", _extensionId)))
+                    if (_extensionIds.Any(id => HasUnpackedVersion(Path.Combine(profile, "Extensions", id))))
                         return $@"{Path.GetFileName(Path.GetDirectoryName(userData.TrimEnd('\\', '/')))}\{Path.GetFileName(profile)}";
                 }
             }
