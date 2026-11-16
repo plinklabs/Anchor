@@ -52,9 +52,11 @@ name: Agent Release
 # repo. The one other release, extension-test-ring (extension-test-ring.yml,
 # #497), is a pre-release, which GitHub never marks Latest.
 #
-# Intune (#457): every release also carries Install-AnchorAgent.ps1, the install
-# command of the agent's Intune Win32 app. It installs the agent silently when it
-# isn't installed and starts it right away (agent/scripts/release-assets/).
+# Intune: the agent's Intune Win32 app runs this release's Setup.exe silently,
+# then `Update.exe start` (docs/INTUNE.md). Every release also carries
+# Install-AnchorAgent.ps1 (#457, agent/scripts/release-assets/), an alternative
+# install command that installs the agent only when it isn't installed yet and
+# starts it right away; the live app doesn't use it.
 #
 # Signing: none. The agent ships unsigned, so first install shows one SmartScreen
 # "More info -> Run anyway" prompt (#209 scope decision). Code-signing is a later
@@ -145,9 +147,10 @@ jobs:
           --outputDir agent/artifacts/velopack
           --publish
 
-      # The Intune install script (#457) goes on the same release, next to the
-      # Setup.exe it runs: IT packages the two together as the agent's Intune
-      # Win32 app. pack-release.ps1 copied it into the Velopack output folder,
+      # The alternative Intune install script (#457) goes on the same release,
+      # next to Setup.exe: IT packages the two together as the agent's Intune
+      # Win32 app, with Setup.exe as the install command (docs/INTUNE.md).
+      # pack-release.ps1 copied it into the Velopack output folder,
       # but vpk only uploads its own assets, so it goes up here, once vpk has
       # created the release. --clobber lets a re-run of this step replace it.
       - name: Attach the Intune install script to the release

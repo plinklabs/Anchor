@@ -411,23 +411,26 @@ Logs roll daily into `%LOCALAPPDATA%\Anchor\FocusAgent\logs\focusagent-*.log`
 
 The agent ships **unpackaged**, distributed via **Velopack** on GitHub Releases
 (see [`docs/RELEASE.md`](../docs/RELEASE.md)). There is no MSIX/Store path.
-Every release carries the Velopack `Anchor.Agent-win-Setup.exe` and the Intune
-install script `Install-AnchorAgent.ps1` (#457), and the agent reaches a laptop
-in one of two ways:
+Every release carries the Velopack `Anchor.Agent-win-Setup.exe` and an
+alternative Intune install script, `Install-AnchorAgent.ps1` (#457), and the
+agent reaches a laptop in one of two ways:
 
 - **Through Intune** (most students; about 95% at the school Anchor was built
-  for): IT packages `Setup.exe` and the script as a Win32 app that installs in
-  user context. The script runs `Setup.exe --silent` when the agent isn't
-  installed yet, then starts the agent right away. Packaging, detection rule,
-  return codes, the Edge extension policy and uninstall are in
-  [`docs/INTUNE.md`](../docs/INTUNE.md).
+  for): IT packages `Setup.exe` as a Win32 app that installs in user context.
+  Its install command runs `Setup.exe --silent`, then `Update.exe start` to
+  start the agent right away, and its detection rule asks for a minimum agent
+  version. Packaging, the install command, detection rule, return codes,
+  updates, the Edge extension policy and uninstall are in
+  [`docs/INTUNE.md`](../docs/INTUNE.md), which also covers the script.
 - **By hand** (a student's own laptop with a personal account): the student
   runs `Setup.exe`, which installs the agent and starts it.
 
 Either way the agent installs per user into `%LOCALAPPDATA%\Anchor.Agent`, with
-no admin rights, and updates itself from the release feed; Intune never pushes
-new versions. The agent reads that feed from the newest release's download address
-(`<repo>/releases/latest/download/`), not through the GitHub API, so laptops
+no admin rights, and updates itself from the release feed. Intune only installs a
+newer version over it when IT raises the detection rule's minimum version
+([`docs/INTUNE.md`](../docs/INTUNE.md#raising-the-minimum-version)), which
+restarts a running agent. The agent reads that feed from the newest release's
+download address (`<repo>/releases/latest/download/`), not through the GitHub API, so laptops
 behind one school address don't share the API's 60 anonymous requests an hour
 (#465). Startup at login is handled by a per-user `HKCU\...\Run` entry
 written by the Velopack install hook, not a packaged startup task (see
