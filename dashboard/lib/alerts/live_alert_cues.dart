@@ -107,7 +107,7 @@ const String alertPopupTestTag = 'anchor:test';
   };
   if (!names) return (title: title, body: '');
   final SessionEvent event = alert.event;
-  final String? name = _studentName(event, nameOf);
+  final String? name = liveEventStudentName(event, nameOf);
   if (name == null) return (title: title, body: '');
   final String body = switch (alert.category) {
     LiveAlertCategory.accessRequest => switch (event.payload['host']) {
@@ -125,23 +125,6 @@ const String alertPopupTestTag = 'anchor:test';
     LiveAlertCategory.tamper => l10n.alertsPopupTamperOf(name),
   };
   return (title: title, body: body);
-}
-
-/// The student [event] is about, by name: from the field its kind carries
-/// in the hub contract, or else [nameOf] its `userId`.
-String? _studentName(
-  SessionEvent event,
-  String? Function(String userId)? nameOf,
-) {
-  final Object? name = switch (event.kind) {
-    'UnblockRequested' || 'TamperDetected' => event.payload['userDisplayName'],
-    'ParticipantStateChanged' => event.payload['displayName'],
-    _ => null,
-  };
-  if (name is String && name.isNotEmpty) return name;
-  final Object? id = event.payload['userId'];
-  final String? looked = id == null ? null : nameOf?.call('$id');
-  return looked == null || looked.isEmpty ? null : looked;
 }
 
 /// Shows a system pop-up for live-session alerts while the teacher can't see

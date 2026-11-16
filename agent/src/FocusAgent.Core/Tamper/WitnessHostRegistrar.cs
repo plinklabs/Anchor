@@ -1,3 +1,4 @@
+using FocusAgent.Core.Extension;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -31,13 +32,22 @@ namespace FocusAgent.Core.Tamper;
 public sealed class WitnessHostRegistrar
 {
     private readonly IWitnessHostStore _store;
+    private readonly AnchorExtensionIds _extensionIds;
     private readonly ILogger<WitnessHostRegistrar> _log;
 
+    /// <param name="store">The registry + file writes.</param>
+    /// <param name="log">Logger.</param>
+    /// <param name="extensionIds">
+    /// The extensions the host manifest lets connect (#497); defaults to
+    /// <see cref="AnchorExtensionIds.Configured"/>.
+    /// </param>
     public WitnessHostRegistrar(
         IWitnessHostStore store,
-        ILogger<WitnessHostRegistrar>? log = null)
+        ILogger<WitnessHostRegistrar>? log = null,
+        AnchorExtensionIds? extensionIds = null)
     {
         _store = store;
+        _extensionIds = extensionIds ?? AnchorExtensionIds.Configured;
         _log = log ?? NullLogger<WitnessHostRegistrar>.Instance;
     }
 
@@ -65,7 +75,7 @@ public sealed class WitnessHostRegistrar
         var manifestPath = WitnessHostManifest.ManifestPathFor(hostDir);
         var backendUrlPath = WitnessHostManifest.BackendUrlPathFor(hostDir);
 
-        var wroteManifest = EnsureFile(manifestPath, WitnessHostManifest.BuildManifest(hostExePath), "host manifest");
+        var wroteManifest = EnsureFile(manifestPath, WitnessHostManifest.BuildManifest(hostExePath, _extensionIds), "host manifest");
         var wroteBackend = EnsureFile(backendUrlPath, WitnessHostManifest.BuildBackendUrlFile(backendUrl), "backend-url file");
 
         var wroteAuth = false;

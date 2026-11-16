@@ -50,6 +50,7 @@ class LiveAlertSettings extends ChangeNotifier {
   static const String _categoriesKey = 'categories';
   static const String _popupsKey = 'popups';
   static const String _popupNamesKey = 'popupNames';
+  static const String _showAllActivityKey = 'showAllActivity';
 
   final AlertSettingsStore _store;
   Map<String, Object?> _values = {};
@@ -67,6 +68,15 @@ class LiveAlertSettings extends ChangeNotifier {
   /// says what happened: the screen may be projected.
   bool get popupNames => _values[_popupNamesKey] == true;
   set popupNames(bool on) => _set(_popupNamesKey, on, popupNames);
+
+  /// Whether the live page's activity feed shows everything that happens,
+  /// joins included, rather than only what needs the teacher's attention
+  /// (#491). Off until they turn it on. Not an alert setting: it decides what
+  /// the feed shows, never what alerts. It is kept here, with them, so the
+  /// browser remembers it the same way.
+  bool get showAllActivity => _values[_showAllActivityKey] == true;
+  set showAllActivity(bool on) =>
+      _set(_showAllActivityKey, on, showAllActivity);
 
   void _set(String key, bool on, bool current) {
     if (on == current) return;

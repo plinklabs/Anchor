@@ -477,7 +477,16 @@ internal sealed class FakeAgentInstall : IDisposable
     public string CurrentDir => Path.Combine(Root, "current");
     public string PackagesDir => Path.Combine(Root, "packages");
     public string AgentExe => Path.Combine(CurrentDir, Path.GetFileName(TestConfig.AgentExe));
-    private string UpdateExe => Path.Combine(Root, "Update.exe");
+    public string UpdateExe => Path.Combine(Root, "Update.exe");
+
+    /// <summary>
+    /// A log folder of this install's own (#487), for agents that must not share the
+    /// run's folder with every other spec's agents.
+    /// </summary>
+    public string LogDir => Path.Combine(Root, "logs");
+
+    // Beside the install, not in it: Setup.exe runs from wherever it was downloaded.
+    private string SetupDir => Root + "-setup";
     private readonly string _packId;
 
     private FakeAgentInstall(string root, string packId)
@@ -535,6 +544,88 @@ internal sealed class FakeAgentInstall : IDisposable
         // One more moment, so a second start racing the first is counted too.
         await Task.Delay(500);
         return ReadUpdaterInvocations();
+    }
+
+    /// <summary>
+    /// Make the install's Update.exe apply the way Velopack's does around the new
+    /// version's hook (#487): stop the install folder, run <c>--veloapp-updated</c>,
+    /// stop the install folder again, restart the agent unless <c>--norestart</c>.
+    /// See FocusAgent.FakeUpdater.
+    /// </summary>
+    public void RunHooksOnApply() => File.WriteAllText(Path.Combine(Root, "apply-runs-hooks"), string.Empty);
+
+    /// <summary>
+    /// The recording Update.exe copied beside the install as Velopack's Setup.exe
+    /// (#487), which it then plays: stop the install named by <c>--installto</c>, run
+    /// <c>--veloapp-install</c>, stop it again, start the agent unless silent.
+    /// </summary>
+    public string CreateSetupExe()
+    {
+        Directory.CreateDirectory(SetupDir);
+        var setupExe = Path.Combine(SetupDir, "Anchor.Agent-win-Setup.exe");
+        foreach (var file in Directory.EnumerateFiles(FakeUpdaterDir(), "Update.*"))
+        {
+            var name = Path.GetFileName(file);
+            File.Copy(file, string.Equals(name, "Update.exe", StringComparison.OrdinalIgnoreCase)
+                ? setupExe
+                : Path.Combine(SetupDir, name));
+        }
+        return setupExe;
+    }
+
+    /// <summary>
+    /// Each line of one of the recorder's JSON-lines files in the install root (#487:
+    /// <c>update-hooks.jsonl</c>, <c>update-starts.jsonl</c>, <c>update-stops.jsonl</c>).
+    /// </summary>
+    public IReadOnlyList<JsonElement> ReadRecords(string fileName)
+    {
+        var path = Path.Combine(Root, fileName);
+        if (!File.Exists(path)) return [];
+        return File.ReadAllLines(path)
+            .Where(line => line.Length > 0)
+            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+            .ToList();
+    }
+
+    /// <summary>Every agent process running from this install's <c>current\</c> right now.</summary>
+    public IReadOnlyList<Process> RunningAgents()
+    {
+        var running = new List<Process>();
+        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(AgentExe)))
+        {
+            string? path;
+            try { path = process.MainModule?.FileName; }
+            catch { path = null; }
+            if (string.Equals(path, AgentExe, StringComparison.OrdinalIgnoreCase))
+                running.Add(process);
+            else
+                process.Dispose();
+        }
+        return running;
+    }
+
+    /// <summary>
+    /// The lines of this install's own agent logs (<see cref="LogDir"/>) so far,
+    /// read while the agents may still be writing them.
+    /// </summary>
+    public IReadOnlyList<string> ReadAgentLogLines()
+    {
+        if (!Directory.Exists(LogDir)) return [];
+        var lines = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(LogDir, "focusagent-*.log"))
+        {
+            try
+            {
+                using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream);
+                lines.AddRange(reader.ReadToEnd().Split('\n'));
+            }
+            catch (IOException)
+            {
+                // Being rolled over; the next read gets it.
+            }
+        }
+        return lines;
     }
 
     /// <summary>
@@ -668,10 +759,13 @@ internal sealed class FakeAgentInstall : IDisposable
         }
 
         // A just-exited agent can hold its files for a moment.
-        for (var attempt = 0; attempt < 10 && Directory.Exists(Root); attempt++)
+        foreach (var folder in new[] { Root, SetupDir })
         {
-            try { Directory.Delete(Root, recursive: true); }
-            catch { Thread.Sleep(500); }
+            for (var attempt = 0; attempt < 10 && Directory.Exists(folder); attempt++)
+            {
+                try { Directory.Delete(folder, recursive: true); }
+                catch { Thread.Sleep(500); }
+            }
         }
 
         try

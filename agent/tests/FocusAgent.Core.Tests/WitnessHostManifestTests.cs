@@ -48,7 +48,7 @@ public class WitnessHostManifestTests
     [Fact]
     public void BuildManifest_emits_the_shape_edge_consumes()
     {
-        var json = WitnessHostManifest.BuildManifest(ExePath);
+        var json = WitnessHostManifest.BuildManifest(ExePath, AnchorExtensionIds.StoreOnly);
 
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -62,6 +62,31 @@ public class WitnessHostManifestTests
         var origin = Assert.Single(origins.EnumerateArray());
         // Only the pinned extension may connect.
         Assert.Equal($"chrome-extension://{EdgeExtensionPolicy.ExtensionId}/", origin.GetString());
+    }
+
+    [Fact]
+    public void BuildManifest_lets_the_test_ring_build_connect_next_to_the_store_build()
+    {
+        // #497: Edge refuses connectNative to an origin the manifest doesn't name, so
+        // without its origin here a test-ring laptop's extension could never check in.
+        const string testRing = "abcdefghijklmnopabcdefghijklmnop";
+
+        var json = WitnessHostManifest.BuildManifest(ExePath, AnchorExtensionIds.WithTestRing(testRing));
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(
+            [$"chrome-extension://{EdgeExtensionPolicy.ExtensionId}/", $"chrome-extension://{testRing}/"],
+            doc.RootElement.GetProperty("allowed_origins").EnumerateArray().Select(o => o.GetString()));
+    }
+
+    [Fact]
+    public void BuildManifest_defaults_to_the_ids_this_agent_was_built_with()
+    {
+        using var doc = JsonDocument.Parse(WitnessHostManifest.BuildManifest(ExePath));
+
+        Assert.Equal(
+            AnchorExtensionIds.Configured.All.Select(id => $"chrome-extension://{id}/"),
+            doc.RootElement.GetProperty("allowed_origins").EnumerateArray().Select(o => o.GetString()));
     }
 
     [Fact]

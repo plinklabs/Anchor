@@ -1,14 +1,15 @@
 // Shared constants for the Edge-extension end-to-end harness (#124).
 //
-// The harness drives the *real* extension in Edge against a *real* backend,
-// with session lifecycle pushed over REST + SignalR — no mocks, no stubbed
-// hub. These values pin the seeded dev identities / class / bundle the backend
-// creates (see backend/src/Anchor.Infrastructure/Persistence/DevDataSeeder.cs)
-// and the loopback hosts the specs navigate to.
+// The harness drives the *real* extension in Edge, connected through the *real*
+// native-messaging host to a stand-in for the on-box agent (fake-agent.ts): the
+// agent is the extension's only source of the session (#489), so the specs hand
+// sessions down the way the agent does, and read back what the extension
+// reports. These values pin the loopback hosts the specs navigate to and the
+// allowlists they hand down.
 
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Domain } from './fake-agent.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,24 +19,6 @@ export const EXTENSION_ROOT = path.resolve(here, '..');
 export const DIST_PATH = path.join(EXTENSION_ROOT, 'dist');
 /** Repository root (one level above `extension/`). */
 export const REPO_ROOT = path.resolve(EXTENSION_ROOT, '..');
-/** The backend project the harness boots. */
-export const BACKEND_PROJECT = path.join(REPO_ROOT, 'backend', 'src', 'Anchor.Api');
-
-/**
- * Dedicated e2e backend port — deliberately *not* the dev default (5276) so a
- * running dev backend (and its real `anchor.dev.db`) is never reused or
- * polluted by a test run. Override with E2E_BACKEND_PORT.
- */
-export const BACKEND_PORT = Number(process.env.E2E_BACKEND_PORT ?? 5281);
-export const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
-
-/**
- * Throwaway SQLite file for the e2e backend, under the OS temp dir so it never
- * lands in the repo. run-backend.ts deletes it (+ -wal/-shm) before each boot
- * so every run starts from a freshly-seeded schema — sidesteps the dev-DB
- * schema-drift footgun (EnsureCreatedAsync doesn't migrate).
- */
-export const E2E_DB_PATH = path.join(os.tmpdir(), 'anchor-e2e.db');
 
 // --- Stable extension identity --------------------------------------------
 /**
@@ -47,48 +30,44 @@ export const E2E_DB_PATH = path.join(os.tmpdir(), 'anchor-e2e.db');
  */
 export const STABLE_EXTENSION_ID = 'dnkimhodjfogjibnbbfdjdapgmmiojio';
 
-// --- Seeded dev identities (mirror DevDataSeeder) -------------------------
-export const TEACHER_OID = '11111111-1111-1111-1111-111111111111';
-export const STUDENT_OID = '22222222-2222-2222-2222-222222222222';
-/** The seeded student's name, as the teacher's roster lists them. */
-export const STUDENT_DISPLAY_NAME = 'Dev Student';
-export const CLASS_NAME = '3A';
-/** Bundle whose entries include *.sharepoint.com (see BUNDLE_ONLY_HOST). */
-export const MS365_BUNDLE_NAME = 'Microsoft 365';
-
 // --- Loopback test hosts --------------------------------------------------
 // All of them resolve to the harness's local static server (see static-server.ts)
 // via Edge's --host-resolver-rules, so the specs never touch the public
-// internet. What differs is whether the *hostname* lands on the allowlist:
+// internet. What differs is whether the *hostname* lands on the allowlist the
+// spec hands down:
 //
-//   BASELINE_ONLIST_HOST  127.0.0.1 — always allowed in a Development build
-//                          via the #125 dev carve-out (SessionAllowlist).
-//   BUNDLE_ONLY_HOST       *.sharepoint.com is in the Microsoft 365 bundle but
-//                          NOT the baseline, so it's on-list only while that
-//                          bundle is attached — the lever the #93 amend spec
-//                          pulls to make an open tab go off-list mid-session.
+//   BASELINE_ONLIST_HOST  127.0.0.1 — on every allowlist below (BASELINE).
+//   BUNDLE_ONLY_HOST       covered by the Microsoft 365 bundle's
+//                          `*.sharepoint.com` wildcard only, so it is on-list
+//                          only while that bundle is in the allowlist — the
+//                          lever the #93 amend spec pulls to make an open tab
+//                          go off-list mid-session.
 //   OFFLIST_HOST           never on any allowlist → always blocked once a
 //                          session is active.
-//   DASHBOARD_HOST         the dashboard's host in a deployment: run-backend.ts
-//                          lists DASHBOARD_ORIGIN in the backend's CORS origins,
-//                          which puts it on every session's allowlist (#409).
+//   DASHBOARD_HOST         the dashboard's host, which the backend puts on
+//                          every session's allowlist (#409).
 export const BASELINE_ONLIST_HOST = '127.0.0.1';
 export const BUNDLE_ONLY_HOST = 'team.sharepoint.com';
 export const OFFLIST_HOST = 'offlist.test';
 export const DASHBOARD_HOST = 'dashboard.test';
-/** The origin the e2e backend is told the dashboard is served from. */
-export const DASHBOARD_ORIGIN = `https://${DASHBOARD_HOST}`;
-
-/**
- * The Entra sign-in authority the extension's token flow targets. Mapped to
- * loopback like the test hosts so no spec can ever reach the real Entra — with
- * nothing listening on :443 an auth attempt fails fast and deterministically,
- * which is what the #331 sign-in-failure spec drives.
- */
-export const ENTRA_AUTHORITY_HOST = 'login.microsoftonline.com';
+/** A host a spec grants mid-session, the way an approved unblock request does. */
+export const GRANTED_HOST = 'granted.test';
 
 /** Hosts Edge must resolve to the local static server (host → 127.0.0.1). */
-export const MAPPED_HOSTS = [OFFLIST_HOST, BUNDLE_ONLY_HOST, DASHBOARD_HOST, ENTRA_AUTHORITY_HOST];
+export const MAPPED_HOSTS = [OFFLIST_HOST, BUNDLE_ONLY_HOST, DASHBOARD_HOST, GRANTED_HOST];
+
+// --- Allowlists the specs hand down ----------------------------------------
+// Shaped as the backend expands them (SessionAllowlist): the baseline the
+// backend always adds, plus whatever bundles the teacher attached.
+
+/** What every session allows: the dev baseline and the dashboard (#409). */
+export const BASELINE: Domain[] = [
+  { matchType: 'Exact', value: BASELINE_ONLIST_HOST },
+  { matchType: 'Exact', value: DASHBOARD_HOST },
+];
+
+/** The baseline plus the seeded Microsoft 365 bundle's SharePoint entry. */
+export const WITH_MS365: Domain[] = [...BASELINE, { matchType: 'Wildcard', value: '*.sharepoint.com' }];
 
 // --- Browser launch knobs -------------------------------------------------
 /** Edge by default; override (e.g. `chromium`) with E2E_BROWSER_CHANNEL. */

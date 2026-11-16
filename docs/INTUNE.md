@@ -58,16 +58,20 @@ unpacked the `.intunewin` into, with `Setup.exe` beside it. In order, it:
 2. **Leaves an installed agent alone.** When
    `%LOCALAPPDATA%\Anchor.Agent\current\FocusAgent.App.exe` exists, it never runs
    `Setup.exe`: a silent `Setup.exe` over an installed agent stops it, also in the
-   middle of a lesson, and doesn't start it again. With the detection rule below
-   Intune doesn't run the script in that case anyway; this is the safety net.
+   middle of a lesson. (Since #487 the agent comes back once `Setup.exe` has
+   finished; before that it stayed off until the next sign-in.) With the
+   detection rule below Intune doesn't run the script in that case anyway; this
+   is the safety net.
 3. **Otherwise installs silently:** runs
    `Anchor.Agent-win-Setup.exe --silent --log "<log folder>\intune-setup.log"`
    and waits for it. When `Setup.exe` fails, the script copies the last 20 lines
    of Setup's log into its own log and exits with Setup's exit code.
 4. **Starts the agent**, unless it is already running, with the command Windows
    runs at sign-in: the `AnchorFocusAgent` Run value. A silent `Setup.exe`
-   doesn't start the agent, and the next sign-in can be weeks away on a laptop
-   that sleeps instead of restarting. The start goes through WMI
+   doesn't start the agent itself, and the next sign-in can be weeks away on a
+   laptop that sleeps instead of restarting. (Since #487 the agent's install
+   hook also starts it once `Setup.exe` has exited; whichever start comes second
+   finds the agent running and quietly exits.) The start goes through WMI
    (`Win32_Process.Create`), so the agent is not a child of the script: it shares
    no job object and no handles with whatever runs the install command. That is
    meant to keep the Intune Management Extension from waiting on the agent, or
@@ -209,7 +213,8 @@ The settings catalog has the setting both for the device (written under `HKLM`)
 and for the user (marked "(User)", written under `HKCU`). The agent looks in
 both, so either works; the device setting matches what the agent writes itself
 on other laptops. Assign the profile to the same groups as the app, before the
-app or together with it.
+app or together with it. If you run a [test ring](#test-ring-the-self-hosted-extension),
+exclude its group from this profile.
 
 Why it matters: at every start the agent reads `ExtensionInstallForcelist` under
 `HKLM` and `HKCU`, without elevation. With Anchor's entry in either, it asks the
@@ -245,8 +250,74 @@ sign in, and every laptop behind the school's address would share that budget, s
 a morning of laptops starting up would use it in minutes. Instead the agent reads
 the update feed (`releases.win.json`) and the package it names straight from the
 newest release's download address, which isn't held to that limit. "Newest" is the
-release GitHub marks **Latest**; agent releases are the only releases the
-repository publishes, so that is always the newest agent release.
+release GitHub marks **Latest**; agent releases are the only full releases the
+repository publishes, so that is always the newest agent release. (The
+[test ring](#test-ring-the-self-hosted-extension)'s `extension-test-ring` release
+is a pre-release, which GitHub never marks Latest.)
+
+## Test ring: the self-hosted extension
+
+Optional. A change to the extension reaches students only after the Edge Add-ons
+review, which takes days. The test ring lets a few laptops get it right away: a
+second configuration profile, assigned to a small test group, force-installs a
+build of the extension that the repository signs and hosts itself, instead of the
+store build (#497). Everyone else stays on the store build. If the test ring
+proves reliable, moving the main group over later is a change to these profiles.
+
+**Before you create the profile**, the test ring has to exist on the repository
+side: the signing key, its ID in `extension/test-ring.json`, an **agent release**
+built with that ID running on the test laptops, and a first published build
+([`RELEASE.md`](RELEASE.md#extension-test-ring)). The agent goes first: an agent
+that doesn't know the test-ring ID opens the guided install on those laptops, and
+Edge doesn't let the extension connect to it.
+
+1. **A test group**, with the laptops (or students) of the test ring. Keep it in
+   the agent app's assignment as before.
+2. **Exclude that group from the store profile** of
+   [Step 3](#step-3--force-install-the-edge-extension) (Assignments → Excluded
+   groups), so a laptop never gets both builds. Two Anchor extensions in one Edge
+   would both filter.
+3. **The test-ring profile.** Same as Step 3 (**Settings catalog** →
+   **Microsoft Edge** → **Extensions** → **Control which extensions are installed
+   silently**), with the entry `extension/scripts/test-ring-key.mjs` printed
+   when the key was made:
+   ```
+   <test-ring-id>;https://github.com/<owner>/<repo>/releases/download/extension-test-ring/updates.xml
+   ```
+   `<test-ring-id>` is the `extensionId` in
+   [`extension/test-ring.json`](../extension/test-ring.json). Assign it to the
+   test group only. Edge uses the URL in this entry for the first install only;
+   after that it follows the `update_url` inside the extension, which is the same
+   address.
+
+The agent takes either entry for Anchor's: with the test-ring entry under `HKLM`
+or `HKCU`, it asks the student nothing, finds the test-ring build in the Edge
+profile, and lets it connect to the witness host. The agent never writes the
+test-ring entry itself; on a laptop without any entry it still offers the store
+entry.
+
+**[TO CONFIRM IN THE PILOT]** Microsoft documents off-store force-installs on
+Windows only for devices joined to an Active Directory domain
+([`ExtensionInstallForcelist`](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/extensioninstallforcelist)).
+It says nothing about Entra-joined, Intune-enrolled devices (Chrome documents
+MDM-enrolled devices as qualifying, and Edge shares that code). Check it on one
+test laptop before relying on it:
+
+- `edge://policy` → **Reload policies**: `ExtensionInstallForcelist` lists the
+  test-ring entry with status **OK**. An error or warning on it means Edge
+  ignores the entry; the laptop then has no Anchor extension, and the agent opens
+  the guided install (the store listing).
+- `edge://extensions`: **Anchor** is there, installed by your organization, with
+  the test-ring ID and a version that ends in `test ring <n>`. **Developer mode**
+  → **Update** fetches a newer test-ring build right away instead of within a
+  few hours.
+- The laptop must reach `github.com` and `*.githubusercontent.com`
+  ([Step 4](#step-4--let-laptops-reach-the-update-feed)); the build is served
+  from there.
+
+To take a laptop out of the test ring, move it out of the test group: the
+test-ring profile no longer applies, the store profile does again, and Edge
+swaps the builds.
 
 ## Updates: leave them to the agent
 
@@ -262,8 +333,9 @@ stopped mid-session for an update (#449). So:
   before the new app installs it again. Without it, the new app finds the agent
   installed and has nothing to do, so supersedence buys nothing.
 - **Don't trigger reinstalls.** The script skips `Setup.exe` over an installed
-  agent, but `Setup.exe` itself, run silently over an installed agent, stops it
-  and doesn't start it again.
+  agent, but `Setup.exe` itself, run silently over an installed agent, stops it,
+  mid-lesson or not. Since #487 the agent comes back once `Setup.exe` has
+  finished; older versions stay off until the next sign-in.
 
 What you can do is upload a newer `.intunewin` (`Setup.exe` and script from a
 newer release) to the **same** app, with the same detection rule: in the app's
@@ -390,3 +462,7 @@ into facts.
       start at once.
 - [ ] **Execution policy.** No PowerShell execution policy set by your tenant
       blocks the unsigned script.
+- [ ] **Test ring, if you run one.** On an Entra-joined, Intune-enrolled test
+      laptop, `edge://policy` shows the test-ring forcelist entry with status OK,
+      and `edge://extensions` has the test-ring build
+      ([Test ring](#test-ring-the-self-hosted-extension)).

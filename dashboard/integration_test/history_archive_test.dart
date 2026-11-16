@@ -5,6 +5,7 @@ import 'package:anchor_dashboard/api/classes_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/main.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
@@ -23,10 +24,17 @@ import 'support/e2e_binding.dart';
 // miss: a real-font overflow, a broken composition under the shell chrome, and
 // the actual /history → /history/:id navigation. The archive must read in the
 // muted register — a calm "Ended" outline badge, never the magenta LIVE spark.
+// And, like the live feed (#491), it reads in plain sentences (#498): its
+// event log and activity summary never show an event's raw kind or payload,
+// which wait in a tooltip for troubleshooting.
 
 final _startedAt = DateTime(2026, 6, 12, 9, 15);
 final _endedAt = DateTime(2026, 6, 12, 10, 5);
 const _sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const _blockedPayload =
+    '{"url":"https://chat.example.com/c/1","host":"chat.example.com"}';
+const _blockedSentence =
+    "Ada Lovelace tried to open chat.example.com, which isn't allowed.";
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -99,14 +107,37 @@ class _FakeSessions extends SessionsApi {
         firstAt: _startedAt,
         lastAt: _endedAt,
       ),
+      SessionEventSummary(
+        userId: 'u1',
+        kind: 'BlockedUrl',
+        count: 3,
+        firstAt: _startedAt,
+        lastAt: _endedAt,
+      ),
     ],
     recentEvents: [
       SessionRecentEvent(
         id: 'e1',
         userId: 'u1',
         kind: 'BlockedUrl',
-        payloadJson: '{"host":"chat.example.com"}',
+        payloadJson: _blockedPayload,
         occurredAt: DateTime(2026, 6, 12, 9, 30, 5),
+      ),
+      SessionRecentEvent(
+        id: 'e2',
+        userId: 'u1',
+        kind: 'ForegroundChange',
+        payloadJson:
+            '{"processName":"ms-teams","publisher":"Microsoft Corporation",'
+            '"blocked":true}',
+        occurredAt: DateTime(2026, 6, 12, 9, 28, 40),
+      ),
+      SessionRecentEvent(
+        id: 'e3',
+        userId: 'u1',
+        kind: 'UnblockRequest',
+        payloadJson: '{"url":"https://youtube.com/watch","host":"youtube.com"}',
+        occurredAt: DateTime(2026, 6, 12, 9, 20, 12),
       ),
     ],
     participants: [
@@ -195,11 +226,44 @@ void main() {
       await tester.pumpAndSettle();
 
       // The review reads as the archived instrument panel: the audit-trail
-      // sections render, and the pushed-through event lands in the log read-out.
+      // sections render, and the pushed-through events land in the log
+      // read-out, each as a plain sentence about the student (#498).
       expect(find.text('Event log'), findsOneWidget);
       expect(find.text('Participants'), findsOneWidget);
-      expect(find.text('BlockedUrl'), findsOneWidget);
       expect(find.text('Ada Lovelace'), findsWidgets);
+      expect(find.text(_blockedSentence), findsOneWidget);
+      expect(
+        find.text("Ada Lovelace tried to open ms-teams, which isn't allowed."),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Ada Lovelace asks for access to youtube.com.'),
+        findsOneWidget,
+      );
+      // The summary says what she did in words, not in event kinds.
+      expect(find.text('3 blocked websites, 12 app switches'), findsOneWidget);
+      // Nowhere on the page the raw event: no kind, no payload.
+      for (final raw in const [
+        'BlockedUrl',
+        'ForegroundChange',
+        'UnblockRequest',
+        'processName',
+        '"host"',
+      ]) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+
+      // The raw event waits on a lingering hover, for troubleshooting.
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(find.text(_blockedSentence)));
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(find.text('BlockedUrl\n$_blockedPayload'), findsOneWidget);
+      await mouse.moveTo(Offset.zero);
+      await tester.pumpAndSettle();
+
       // Still muted: the review leads with "Ended", never the magenta spark.
       expect(find.widgetWithText(PlinkBadge, 'ENDED'), findsOneWidget);
       expect(find.widgetWithText(PlinkBadge, 'LIVE'), findsNothing);

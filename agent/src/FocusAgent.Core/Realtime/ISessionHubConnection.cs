@@ -10,6 +10,11 @@ public interface ISessionHubConnection : IAsyncDisposable
     event EventHandler<SessionStartedPayload>? SessionStarted;
     event EventHandler<Guid>? SessionEnded;
     event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
+    /// <summary>
+    /// The teacher approved one of this student's unblock requests (#73). The
+    /// agent relays it to the extension, which filters URLs (#489).
+    /// </summary>
+    event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
 
     Task StartAsync(CancellationToken ct = default);
     Task StopAsync(CancellationToken ct = default);
@@ -26,6 +31,13 @@ public interface ISessionHubConnection : IAsyncDisposable
     /// same as a thrown exception — the ping did not happen.
     /// </summary>
     Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default);
+    /// <summary>
+    /// Sends the Edge extension's liveness ping for the session (#149), on the
+    /// extension's behalf: the extension has no backend connection of its own
+    /// (#489), so the agent pings for it while its witness link is up. Same
+    /// contract as <see cref="HeartbeatAsync"/>: <c>false</c> when nothing was sent.
+    /// </summary>
+    Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default);
     /// <summary>
     /// Asks the backend whether the student is still in the session: it hasn't
     /// ended and they haven't left it (#354). Throws when the backend can't be

@@ -66,6 +66,15 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
                 payload.SessionId, payload.Apps.Count, payload.Domains.Count);
             SessionBundlesUpdated?.Invoke(this, payload);
         });
+        // #489: the extension has no hub connection of its own; the agent hears
+        // the student's unblock grants (#73) and hands them down to it.
+        _connection.On<AllowlistAmendedPayload>("AllowlistAmended", payload =>
+        {
+            _log.LogInformation(
+                "Hub received AllowlistAmended for session {SessionId} ({DomainCount} domains added)",
+                payload.SessionId, payload.AddedDomains.Count);
+            AllowlistAmended?.Invoke(this, payload);
+        });
 
         _connection.Reconnecting += _ =>
         {
@@ -93,6 +102,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     public event EventHandler<SessionStartedPayload>? SessionStarted;
     public event EventHandler<Guid>? SessionEnded;
     public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
+    public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
 
     public async Task StartAsync(CancellationToken ct = default)
     {
@@ -141,6 +151,14 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
         if (_connection.State != HubConnectionState.Connected)
             return false;
         await _connection.InvokeAsync("Heartbeat", sessionId, ct).ConfigureAwait(false);
+        return true;
+    }
+
+    public async Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        if (_connection.State != HubConnectionState.Connected)
+            return false;
+        await _connection.InvokeAsync("ExtensionHeartbeat", sessionId, ct).ConfigureAwait(false);
         return true;
     }
 

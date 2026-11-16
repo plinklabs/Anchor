@@ -1,76 +1,69 @@
-// #354 — the session ending still releases the student's tabs after the
-// extension's hub connection was replaced.
+// #354 / #489 — the session ending still releases the student's tabs when the
+// extension wasn't listening as it ended.
 //
-// SignalR keeps no group membership across a new connection, and the extension
-// subscribes to its session's group once, on SessionStarted. SessionEnded used
-// to go only to that group, so once the MV3 service worker had been torn down
-// and revived — which Chrome does routinely, and every revival opens a new hub
-// connection — the end of the session never reached the extension: it kept
-// blocking against the ended session's allowlist until the browser restarted.
+// The MV3 service worker is torn down and revived routinely, and Edge restarts;
+// each time, the native-messaging link to the agent is down until the worker
+// is back. The agent hands the current state to every connection — the session
+// the student is in, or `no_session` — so an end the extension missed while
+// away still reaches it, instead of it blocking against the ended session's
+// allowlist until the browser restarts.
 //
 // Both cases are driven with a service-worker restart:
-//   - the session ends after the new connection is up;
-//   - the session ends while no worker runs, so no broadcast can reach the
-//     extension at all, and it has to find out once it is back.
+//   - the session ends after the link is back up;
+//   - the session ends while no worker runs, so nothing can tell the extension
+//     at the time, and it has to find out from the agent once it is back.
 
 import { test, expect } from '../fixtures.ts';
 import { expectRedirectedToBlockPage } from '../asserts.ts';
-import { OFFLIST_HOST } from '../config.ts';
-import type { BackendClient, StartedSession } from '../backend.ts';
+import { OFFLIST_HOST, WITH_MS365 } from '../config.ts';
+import type { FakeAgent } from '../fake-agent.ts';
 import type { LoadedExtension } from '../extension.ts';
 import type { StaticServer } from '../static-server.ts';
 import type { Page } from '@playwright/test';
 
-const HUB_CONNECTED = 'hub connection established';
-
 test('a redirected tab is restored when the session ends after the service worker restarted', async ({
   ext,
-  backend,
+  agent,
   staticServer,
 }) => {
-  const { page, session } = await startSessionWithARedirectedTab(ext, backend, staticServer);
+  const page = await startSessionWithARedirectedTab(ext, agent, staticServer);
 
-  const connections = ext.countLogs(HUB_CONNECTED);
+  const connections = agent.connections;
   await ext.restartServiceWorker();
-  await ext.waitForLogCount(HUB_CONNECTED, connections + 1, 20_000);
+  await agent.waitForConnection(connections + 1);
 
-  // The very moment the connection is up, which can be before the backend has
-  // added it to the student's user group (#356).
-  await backend.endSession(session.id);
+  agent.endSession();
 
   await expectRestored(page, ext);
 });
 
 test('a redirected tab is restored once the extension is back, when the session ended while its service worker was stopped', async ({
   ext,
-  backend,
+  agent,
   staticServer,
 }) => {
-  const { page, session } = await startSessionWithARedirectedTab(ext, backend, staticServer);
+  const page = await startSessionWithARedirectedTab(ext, agent, staticServer);
 
-  // The SessionEnded broadcast goes out while no worker, and so no hub
-  // connection, exists to receive it.
-  await ext.restartServiceWorker(() => backend.endSession(session.id));
+  // The session ends while no worker, and so no link, exists to hear it.
+  await ext.restartServiceWorker(async () => {
+    agent.endSession({ send: false });
+  });
 
   await expectRestored(page, ext);
 });
 
 async function startSessionWithARedirectedTab(
   ext: LoadedExtension,
-  backend: BackendClient,
+  agent: FakeAgent,
   staticServer: StaticServer,
-): Promise<{ page: Page; session: StartedSession }> {
-  await ext.configure();
-
+): Promise<Page> {
   const page = await ext.context.newPage();
   await page.goto(staticServer.url(OFFLIST_HOST, '/before-session'));
 
   // A session that doesn't cover the off-list tab, so it gets redirected.
-  const classId = await backend.findClassId();
-  const bundleId = await backend.findBundleId();
-  const session = await backend.startSession(classId, [bundleId]);
+  agent.startSession(WITH_MS365);
   await expectRedirectedToBlockPage(page, ext, OFFLIST_HOST);
-  return { page, session };
+  return page;
 }
 
 async function expectRestored(page: Page, ext: LoadedExtension): Promise<void> {

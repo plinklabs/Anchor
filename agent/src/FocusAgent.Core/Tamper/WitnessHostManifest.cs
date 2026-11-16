@@ -14,8 +14,8 @@ namespace FocusAgent.Core.Tamper;
 /// <c>chrome.runtime.connectNative(<see cref="WitnessLink.NativeHostName"/>)</c>. It
 /// finds the host through a per-user registry key
 /// (<see cref="RegistryKeyPath"/>) whose <c>(default)</c> value is the absolute path
-/// to a host-manifest JSON; that manifest names the absolute exe path and the pinned
-/// extension ID in <c>allowed_origins</c>. The host in turn reads a
+/// to a host-manifest JSON; that manifest names the absolute exe path and Anchor's
+/// extension IDs in <c>allowed_origins</c> (<see cref="AnchorExtensionIds"/>). The host in turn reads a
 /// <c>backend-url.json</c> next to itself to learn which backend to hand the
 /// extension (#204).
 ///
@@ -84,11 +84,15 @@ public static class WitnessHostManifest
 
     /// <summary>
     /// The host-manifest JSON Edge consumes: the absolute exe path Edge launches plus
-    /// the single pinned extension origin allowed to connect. Built with the JSON
-    /// serializer so a Windows path's backslashes are escaped correctly (the dev
-    /// script does the same by hand).
+    /// the extension origins allowed to connect, one per ID in
+    /// <paramref name="extensionIds"/> (default
+    /// <see cref="AnchorExtensionIds.Configured"/>): the store build's, and the
+    /// self-hosted test-ring build's once one is configured (#497). Edge refuses
+    /// <c>connectNative</c> to any other extension. Built with the JSON serializer
+    /// so a Windows path's backslashes are escaped correctly (the dev script does
+    /// the same by hand).
     /// </summary>
-    public static string BuildManifest(string hostExePath)
+    public static string BuildManifest(string hostExePath, AnchorExtensionIds? extensionIds = null)
     {
         if (string.IsNullOrWhiteSpace(hostExePath))
             throw new ArgumentException("Host exe path must be provided.", nameof(hostExePath));
@@ -98,7 +102,9 @@ public static class WitnessHostManifest
             Description: Description,
             Path: hostExePath.Trim(),
             Type: "stdio",
-            AllowedOrigins: new[] { $"chrome-extension://{EdgeExtensionPolicy.ExtensionId}/" });
+            AllowedOrigins: (extensionIds ?? AnchorExtensionIds.Configured).All
+                .Select(id => $"chrome-extension://{id}/")
+                .ToArray());
 
         return JsonSerializer.Serialize(manifest, Indented);
     }

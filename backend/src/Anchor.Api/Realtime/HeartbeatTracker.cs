@@ -21,10 +21,20 @@ namespace Anchor.Api.Realtime;
 /// part; an entry that only ever waits for its first ping is how the
 /// <see cref="HeartbeatMonitor"/> notices an agent that never showed up.
 /// </para>
+///
+/// <para>
+/// One step before that, it keeps the class members a session that just
+/// started is waiting on to join at all (#493), from <see cref="ExpectJoins"/>
+/// until the <see cref="HeartbeatMonitor"/> has looked at them once the join
+/// grace has passed. The participant rows say who joined; this only says whom
+/// to look at, and when, so the monitor never has to poll the database for
+/// sessions that are waiting on no one.
+/// </para>
 /// </summary>
 public sealed class HeartbeatTracker
 {
     private readonly ConcurrentDictionary<ParticipantKey, Entry> _entries = new();
+    private readonly ConcurrentDictionary<(Guid SessionId, Guid UserId), DateTimeOffset> _awaitedJoins = new();
 
     public void Record(Guid sessionId, Guid userId, DateTimeOffset at, WitnessSource source = WitnessSource.Agent)
     {
@@ -51,6 +61,33 @@ public sealed class HeartbeatTracker
         _entries.TryAdd(
             new ParticipantKey(sessionId, userId, WitnessSource.Agent),
             new Entry(since, Reported: false, AwaitingFirstPing: true));
+    }
+
+    /// <summary>
+    /// Starts waiting for the class members of a session that just started to
+    /// join it, from <paramref name="since"/>, the session's start (#493).
+    /// </summary>
+    public void ExpectJoins(Guid sessionId, IEnumerable<Guid> userIds, DateTimeOffset since)
+    {
+        foreach (var userId in userIds)
+            _awaitedJoins.TryAdd((sessionId, userId), since);
+    }
+
+    /// <summary>The joins still awaited, each with when it was first expected (#493).</summary>
+    public IReadOnlyList<AwaitedJoin> AwaitedJoins()
+    {
+        return _awaitedJoins
+            .Select(kv => new AwaitedJoin(kv.Key.SessionId, kv.Key.UserId, kv.Value))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Stops waiting for the participant to join (#493), once the monitor has
+    /// looked at them.
+    /// </summary>
+    public void StopAwaitingJoin(Guid sessionId, Guid userId)
+    {
+        _awaitedJoins.TryRemove((sessionId, userId), out _);
     }
 
     public bool TryGet(Guid sessionId, Guid userId, out Entry entry, WitnessSource source = WitnessSource.Agent)
@@ -87,8 +124,9 @@ public sealed class HeartbeatTracker
     }
 
     /// <summary>
-    /// Drops every witness source for a single participant. Used when a
-    /// participant stops taking part: <c>LeaveSession</c>, <c>DeclineSession</c>
+    /// Drops every witness source for a single participant, and the wait for
+    /// them to join. Used when a participant stops taking part:
+    /// <c>LeaveSession</c>, <c>DeclineSession</c>
     /// and the #110 AgentKilled event (#448). Once they're gone their agent's
     /// and extension's last pings must not age into a spurious
     /// <c>HeartbeatLost</c> or <c>extension_silent</c>. A still-running
@@ -105,16 +143,23 @@ public sealed class HeartbeatTracker
         {
             _entries.TryRemove(key, out _);
         }
+
+        _awaitedJoins.TryRemove((sessionId, userId), out _);
     }
 
     public void ClearSession(Guid sessionId)
     {
         // Drops every witness source for the session — the key includes Source,
         // so filtering on SessionId alone sweeps both the agent and extension
-        // entries.
+        // entries — and the joins it still waits on.
         foreach (var key in _entries.Keys.Where(k => k.SessionId == sessionId).ToArray())
         {
             _entries.TryRemove(key, out _);
+        }
+
+        foreach (var key in _awaitedJoins.Keys.Where(k => k.SessionId == sessionId).ToArray())
+        {
+            _awaitedJoins.TryRemove(key, out _);
         }
     }
 
@@ -139,3 +184,10 @@ public sealed record TrackedParticipant(
     DateTimeOffset LastSeenAt,
     bool Reported,
     bool AwaitingFirstPing = false);
+
+/// <summary>
+/// A class member a session waits on to join, as
+/// <see cref="HeartbeatTracker.AwaitedJoins"/> returns it (#493).
+/// <see cref="Since"/> is the session's start.
+/// </summary>
+public sealed record AwaitedJoin(Guid SessionId, Guid UserId, DateTimeOffset Since);

@@ -1133,6 +1133,9 @@ public class FocusSessionControllerTests
         public event EventHandler<SessionStartedPayload>? SessionStarted;
         public event EventHandler<Guid>? SessionEnded;
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
+#pragma warning disable CS0067 // Not raised by these tests.
+        public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+#pragma warning restore CS0067
         public List<(Guid SessionId, string Kind, string PayloadJson, DateTimeOffset? At)> Reports { get; } = new();
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
@@ -1145,6 +1148,7 @@ public class FocusSessionControllerTests
             Reports.Add((sessionId, kind, payloadJson, occurredAt));
             return Task.CompletedTask;
         }
+        public Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default) => Task.FromResult<SessionStartedPayload?>(null);

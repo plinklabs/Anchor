@@ -6,13 +6,19 @@ using Microsoft.Win32;
 
 namespace FocusAgent.App.Extension;
 
-/// <summary>The registry, elevation and state parts the extension setup runs on (#405).</summary>
+/// <summary>
+/// The registry, elevation and state parts the extension setup runs on (#405), the
+/// Edge profiles it looks for the installed extension in (#488), and the extension
+/// IDs that are Anchor's (#497), which the witness host registration lets connect.
+/// </summary>
 internal sealed record ExtensionPolicyParts(
     IExtensionPolicyStore Machine,
     IExtensionPolicyStore User,
     IElevatedPolicyWriter ElevatedWriter,
     IExtensionPolicyStateStore State,
-    TimeSpan GracePeriod);
+    TimeSpan GracePeriod,
+    EdgeProfileExtensionProbe Profiles,
+    AnchorExtensionIds Ids);
 
 /// <summary>
 /// Picks the parts of the Edge extension setup for this launch (#405), and is the
@@ -29,15 +35,22 @@ internal static class ExtensionPolicyComposition
         ExtensionSettings settings, bool allowRealElevation, ILoggerFactory loggers)
     {
         var storeLog = loggers.CreateLogger<RegistryExtensionPolicyStore>();
+        var probeLog = loggers.CreateLogger<EdgeProfileExtensionProbe>();
+        var edgeUserData = EdgeProfileExtensionProbe.UserDataFolders(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
 
         if (allowRealElevation)
         {
+            // #497: the IDs extension/test-ring.json named when this agent was built.
+            var ids = AnchorExtensionIds.Configured;
             return new ExtensionPolicyParts(
                 RegistryExtensionPolicyStore.ForMachine(storeLog),
                 RegistryExtensionPolicyStore.ForUser(log: storeLog),
                 new ShellElevatedPolicyWriter(loggers.CreateLogger<ShellElevatedPolicyWriter>()),
                 new FileExtensionPolicyStateStore(),
-                ExtensionSelfRegistrar.DefaultGracePeriod);
+                ExtensionSelfRegistrar.DefaultGracePeriod,
+                new EdgeProfileExtensionProbe(edgeUserData, ids.All, probeLog),
+                ids);
         }
 
         // A dev or test run: never a real UAC prompt.
@@ -64,6 +77,20 @@ internal static class ExtensionPolicyComposition
             ? TimeSpan.FromSeconds(seconds)
             : ExtensionSelfRegistrar.DefaultGracePeriod;
 
-        return new ExtensionPolicyParts(machine, user, writer, state, grace);
+        // #497: the e2e plays a test-ring laptop with a test-ring ID of its own.
+        var testIds = string.IsNullOrWhiteSpace(settings.TestRingExtensionId)
+            ? AnchorExtensionIds.Configured
+            : AnchorExtensionIds.WithTestRing(settings.TestRingExtensionId);
+
+        // Reading the real profiles is harmless, but the e2e points at a folder of
+        // its own, so whether this box's Edge has the extension can't decide a spec.
+        var profiles = new EdgeProfileExtensionProbe(
+            string.IsNullOrWhiteSpace(settings.TestEdgeUserDataPath)
+                ? edgeUserData
+                : [settings.TestEdgeUserDataPath.Trim()],
+            testIds.All,
+            probeLog);
+
+        return new ExtensionPolicyParts(machine, user, writer, state, grace, profiles, testIds);
     }
 }

@@ -8,7 +8,8 @@ namespace Anchor.Api.Realtime;
 /// Single home for the heartbeat-stale threshold so the GET roster snapshot and
 /// the <see cref="HeartbeatMonitor"/>'s live transitions stay in lockstep — both
 /// read <see cref="HeartbeatOptions.Timeout"/>, and, for an agent that hasn't
-/// pinged yet, <see cref="HeartbeatOptions.AgentJoinGrace"/> (#444).
+/// pinged yet, <see cref="HeartbeatOptions.AgentJoinGrace"/> (#444), the same
+/// grace a class member has to join at all (#493).
 /// </summary>
 public sealed class ParticipantLiveStateResolver
 {
@@ -26,12 +27,20 @@ public sealed class ParticipantLiveStateResolver
         _clock = clock;
     }
 
+    /// <param name="expectedSince">
+    /// When the participant's laptop was expected to join: the session's start
+    /// for a class member of a running session (#493). Null for anyone else,
+    /// such as someone who took part by code, and in a session that has ended:
+    /// they read as <see cref="ParticipantLiveState.NeverJoined"/> until they
+    /// join.
+    /// </param>
     public ParticipantLiveState Resolve(
         Guid sessionId,
         Guid userId,
         DateTimeOffset? joinedAt,
         DateTimeOffset? declinedAt,
-        DateTimeOffset? leftAt)
+        DateTimeOffset? leftAt,
+        DateTimeOffset? expectedSince = null)
     {
         // A Left row wins over the JoinedAt that preceded it.
         if (leftAt is not null)
@@ -72,6 +81,16 @@ public sealed class ParticipantLiveStateResolver
             }
 
             return ParticipantLiveState.Joined;
+        }
+
+        // Mirrors the monitor's report of a class member who never joined
+        // (#493): their agent got SessionStarted at the start and joins after
+        // its toast, well within the grace. Read from the session's start, not
+        // the monitor's memory, so it holds after a backend restart too.
+        if (expectedSince is { } since &&
+            _clock.GetUtcNow() - since > _options.CurrentValue.AgentJoinGrace)
+        {
+            return ParticipantLiveState.NotConnected;
         }
 
         return ParticipantLiveState.NeverJoined;

@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Tamper;
 
 namespace FocusAgent.App.Tamper;
@@ -15,8 +16,8 @@ namespace FocusAgent.App.Tamper;
 [SupportedOSPlatform("windows")]
 internal static class WitnessHostRegistration
 {
-    private static WitnessHostRegistrar Build(string? keyOverride) =>
-        new(new RegistryWitnessHostStore(keyOverride));
+    private static WitnessHostRegistrar Build(string? keyOverride, AnchorExtensionIds? extensionIds = null) =>
+        new(new RegistryWitnessHostStore(keyOverride), extensionIds: extensionIds);
 
     /// <summary>
     /// The host exe the release publish lands next to the agent (pack-release.ps1
@@ -30,9 +31,12 @@ internal static class WitnessHostRegistration
     /// explicit throwaway key + host exe path so the test never touches the live Edge
     /// key. Returns whether a write happened. Auth config is dev-omitted here — the dev
     /// CLI path registers for the dev impersonation flow, not real student auth (#289).
+    /// <paramref name="extensionIds"/> are the extensions the host lets connect (#497);
+    /// null: <see cref="AnchorExtensionIds.Configured"/>.
     /// </summary>
-    public static bool EnsureRegistered(string? keyOverride, string hostExePath, string backendUrl) =>
-        Build(keyOverride).EnsureRegistered(hostExePath, backendUrl);
+    public static bool EnsureRegistered(
+        string? keyOverride, string hostExePath, string backendUrl, AnchorExtensionIds? extensionIds = null) =>
+        Build(keyOverride, extensionIds).EnsureRegistered(hostExePath, backendUrl);
 
     /// <summary>Remove the host registration. Used by the dev CLI mode.</summary>
     public static void RemoveRegistration(string? keyOverride) =>
@@ -56,7 +60,13 @@ internal static class WitnessHostRegistration
     /// acquire a real student token in release. Null in dev (the extension then uses
     /// the dev impersonation shortcut).
     /// </param>
-    public static void RegisterForStartup(string backendUrl, WitnessAuthConfig? auth = null)
+    /// <param name="extensionIds">
+    /// The extensions the host lets connect (#497): the store build's, plus the
+    /// self-hosted test-ring build's once one is configured. Null:
+    /// <see cref="AnchorExtensionIds.Configured"/>.
+    /// </param>
+    public static void RegisterForStartup(
+        string backendUrl, WitnessAuthConfig? auth = null, AnchorExtensionIds? extensionIds = null)
     {
         try
         {
@@ -69,7 +79,7 @@ internal static class WitnessHostRegistration
                 return;
             }
 
-            Build(keyOverride: null).EnsureRegistered(hostExePath, backendUrl, auth);
+            Build(keyOverride: null, extensionIds).EnsureRegistered(hostExePath, backendUrl, auth);
         }
         catch
         {

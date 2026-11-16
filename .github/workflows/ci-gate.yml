@@ -63,6 +63,7 @@ jobs:
             agent:
               - 'agent/**'
               - 'backend/**'
+              - 'extension/test-ring.json'
               - '.github/workflows/agent-e2e.yml'
             dashboard_e2e:
               - 'dashboard/**'
@@ -73,12 +74,14 @@ jobs:
               - '.github/workflows/dashboard-deploy.yml'
             extension:
               - 'extension/**'
-              - 'backend/**'
+              - 'agent/src/FocusAgent.WitnessHost/**'
+              - 'agent/src/FocusAgent.Core/**'
               - '.github/workflows/extension-e2e.yml'
             extension_unit:
               - 'extension/**'
               - '.github/workflows/extension-release.yml'
               - '.github/workflows/edge-key-expiry.yml'
+              - '.github/workflows/extension-test-ring.yml'
               - '.github/actions/install-actionlint/**'
               - '.github/workflows/extension-ci.yml'
             infra:

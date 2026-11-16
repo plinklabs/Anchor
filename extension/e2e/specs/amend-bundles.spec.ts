@@ -1,32 +1,34 @@
 // #93 — switching a session's bundles mid-session re-scans open tabs, so a tab
 // that was on-list a moment ago gets blocked retroactively when the bundle
-// that allowed it is removed (handleSessionBundlesUpdated → scanAndBlockOpenTabs).
+// that allowed it is removed (handleAllowlistReplaced → scanAndBlockOpenTabs).
 //
 // #426 — the other direction. A session starts with no bundles, so the
 // start-of-session scan blocks tabs on hosts the teacher is about to allow.
 // Adding the bundle must send those block pages back to their page, as an
 // approved unblock request does; the bundle covers the host only through a
 // `*.sharepoint.com` wildcard entry. Without the allowlist-amended broadcast
-// from handleSessionBundlesUpdated the tab stays on the block page and the
-// second spec times out.
+// from handleAllowlistReplaced the tab stays on the block page and the second
+// spec times out.
+//
+// #73 — an approved unblock request adds its host for this student; the block
+// page parked on it goes back.
+//
+// #489 — each change reaches the extension from the on-box agent
+// (`allowlist_replaced`, `allowlist_amended`), which hears it from the backend.
 
 import { test, expect } from '../fixtures.ts';
 import { expectRedirectedToBlockPage } from '../asserts.ts';
-import { BUNDLE_ONLY_HOST, OFFLIST_HOST } from '../config.ts';
+import { BASELINE, BUNDLE_ONLY_HOST, GRANTED_HOST, OFFLIST_HOST, WITH_MS365 } from '../config.ts';
 
 test('removing the bundle that allowed an open tab blocks it mid-session', async ({
   ext,
-  backend,
+  agent,
   staticServer,
 }) => {
-  await ext.configure();
-
   // Start with the Microsoft 365 bundle. *.sharepoint.com is in that bundle
   // but NOT the baseline, so this host is on-list only while the bundle stays
   // attached — the cleanest lever for "turn an open tab off-list".
-  const classId = await backend.findClassId();
-  const bundleId = await backend.findBundleId();
-  const session = await backend.startSession(classId, [bundleId]);
+  agent.startSession(WITH_MS365);
   await ext.waitForLog('active session cached');
 
   const bundleHostUrl = staticServer.url(BUNDLE_ONLY_HOST, '/sharepoint');
@@ -37,20 +39,18 @@ test('removing the bundle that allowed an open tab blocks it mid-session', async
   await expect(page.locator('#ok')).toHaveText('anchor-e2e');
   expect(page.url()).not.toContain('block-page.html');
 
-  // Drop all bundles. The backend pushes SessionBundlesUpdated to the joined
-  // student; the extension re-scans and finds this tab now off-list.
-  await backend.updateBundles(session.id, []);
+  // Drop all bundles. The agent hands down the new allowlist; the extension
+  // re-scans and finds this tab now off-list.
+  agent.replaceAllowlist(BASELINE);
 
   await expectRedirectedToBlockPage(page, ext, BUNDLE_ONLY_HOST);
 });
 
 test('adding the bundle that covers a tab blocked at session start sends it back to its page', async ({
   ext,
-  backend,
+  agent,
   staticServer,
 }) => {
-  await ext.configure();
-
   // Both tabs are open before the session exists, the way a student's tabs
   // are when the teacher starts the lesson.
   const bundleHostUrl = staticServer.url(BUNDLE_ONLY_HOST, '/before-session');
@@ -61,15 +61,13 @@ test('adding the bundle that covers a tab blocked at session start sends it back
 
   // No bundles yet: the baseline covers neither host, so the start-of-session
   // scan sends both tabs to the block page.
-  const classId = await backend.findClassId();
-  const bundleId = await backend.findBundleId();
-  const session = await backend.startSession(classId, []);
+  agent.startSession(BASELINE);
   await expectRedirectedToBlockPage(covered, ext, BUNDLE_ONLY_HOST);
   await expectRedirectedToBlockPage(uncovered, ext, OFFLIST_HOST);
 
   // The teacher adds the Microsoft 365 bundle, whose `*.sharepoint.com` entry
   // covers the first tab's host.
-  await backend.updateBundles(session.id, [bundleId]);
+  agent.replaceAllowlist(WITH_MS365);
 
   // Poll on *leaving* the block page: its URL carries the blocked host in its
   // `blocked` param, so asserting the host alone would pass too early. The
@@ -85,6 +83,25 @@ test('adding the bundle that covers a tab blocked at session start sends it back
   await expect(uncovered.locator('[data-blocked-url]')).toContainText(OFFLIST_HOST);
 
   // Removing the bundle again still blocks the released tab, as before.
-  await backend.updateBundles(session.id, []);
+  agent.replaceAllowlist(BASELINE);
   await expectRedirectedToBlockPage(covered, ext, BUNDLE_ONLY_HOST);
+});
+
+test('an approved unblock request sends the tab blocked on its host back to its page', async ({
+  ext,
+  agent,
+  staticServer,
+}) => {
+  const grantedUrl = staticServer.url(GRANTED_HOST, '/asked-for');
+  const page = await ext.context.newPage();
+  await page.goto(grantedUrl);
+  agent.startSession(BASELINE);
+  await expectRedirectedToBlockPage(page, ext, GRANTED_HOST);
+
+  // The teacher approves it: the agent hands the grant down.
+  agent.amendAllowlist([{ matchType: 'Suffix', value: GRANTED_HOST }]);
+
+  await expect.poll(() => page.url(), { timeout: 15_000 }).not.toContain('block-page.html');
+  expect(page.url()).toBe(grantedUrl);
+  await expect(page.locator('#ok')).toHaveText('anchor-e2e');
 });

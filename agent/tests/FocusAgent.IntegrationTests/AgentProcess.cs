@@ -60,7 +60,9 @@ internal sealed record ExtensionGuardSnapshot(
 /// </summary>
 internal sealed record ExtensionPolicySnapshot(
     [property: JsonPropertyName("location")] string? Location,
-    [property: JsonPropertyName("consentOpen")] bool ConsentOpen);
+    [property: JsonPropertyName("consentOpen")] bool ConsentOpen,
+    // #488: how far the startup check for the extension got.
+    [property: JsonPropertyName("verification")] string? Verification = null);
 
 /// <summary>
 /// The agent's session-start sweep result (#104) as exposed on /status: how many
@@ -193,6 +195,14 @@ internal sealed class AgentProcess : IAsyncDisposable
             ?? throw new InvalidOperationException("Failed to start the agent process.");
         return new AgentProcess(process, statusPort, psi.ArgumentList.ToList()) { StatusPort = statusPort };
     }
+
+    /// <summary>
+    /// Take over an agent the spec didn't launch itself but knows the status port of
+    /// (#487: one the updater restarted, or one the update relaunch started), so it
+    /// can be watched like a launched one and is killed when disposed.
+    /// </summary>
+    public static AgentProcess Attach(Process process, int statusPort, IReadOnlyList<string> arguments) =>
+        new(process, statusPort, arguments) { StatusPort = statusPort };
 
     public async Task<StatusSnapshot?> TryGetStatusAsync(CancellationToken ct = default)
     {

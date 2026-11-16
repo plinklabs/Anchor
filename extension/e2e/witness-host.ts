@@ -1,15 +1,15 @@
 // Builds and registers the REAL Anchor witness native-messaging host
-// (anchor-witness-host.exe) so the e2e can prove the extension learns its
-// backend URL from the on-box agent at runtime (#204) — the same path a real
-// deployment uses, not a stub.
+// (anchor-witness-host.exe), the link the extension learns its session over
+// from the on-box agent (#489) — the same path a real deployment uses, not a
+// stub.
 //
 // Edge finds a native-messaging host via an HKCU registry key pointing at a
 // manifest JSON whose `allowed_origins` names the extension id. We build the
 // host from the agent solution, write a manifest with the absolute exe path and
-// the id of the extension under test, set the registry key, and inject the backend URL
-// the host should hand down via the host's ANCHOR_WITNESS_BACKEND_URL env var
-// (the per-deployment source). connectNative inherits the launching browser's
-// environment, so the env var the harness sets is what the host reads.
+// the id of the extension under test, and set the registry key. The host
+// connects to the pipe named in its ANCHOR_WITNESS_PIPE env var — the harness's
+// fake agent; connectNative inherits the launching browser's environment, so
+// the env var the harness sets is what the host reads.
 //
 // Windows-only (native messaging + HKCU): callers gate on process.platform.
 
@@ -66,8 +66,8 @@ export function readWitnessHostRegistration(): string | null {
 /**
  * Build the witness host (Debug), write its manifest allowing `extensionId`, and
  * register it in HKCU. The browser must be launched AFTER this so Edge picks up
- * the host, and with ANCHOR_WITNESS_BACKEND_URL in its environment so the host
- * hands that URL to the extension. Pass the extension under test's id
+ * the host, and with ANCHOR_WITNESS_PIPE in its environment so the host connects
+ * to the harness's fake agent. Pass the extension under test's id
  * (EXTENSION_ID in extension.ts): the pinned one, or the key-less copy's on a box
  * whose Edge policy force-installs Anchor (#429). Edge connects only an
  * extension whose origin the manifest names.
@@ -77,7 +77,7 @@ export function registerWitnessHost(extensionId: string): RegisteredWitnessHost 
 
   const manifest = {
     name: HOST_NAME,
-    description: 'Anchor witness host (e2e #204)',
+    description: 'Anchor witness host (e2e)',
     path: exePath,
     type: 'stdio',
     allowed_origins: [`chrome-extension://${extensionId}/`],
@@ -100,12 +100,11 @@ export interface SuppressedWitnessHost {
  * extension under test.
  *
  * This matters on a developer machine, where the installed Anchor agent
- * registers this key permanently: its host hands the extension that box's
- * *production* backend URL and auth config, which silently overwrites whatever
- * settings a spec just seeded (and, since the config *changed*, restarts the
- * hub). loadExtension() therefore suppresses the link for every spec that
- * doesn't explicitly ask for a witness host (#332), so each one tests what it
- * thinks it is testing.
+ * registers this key permanently: its host would connect the extension under
+ * test to that box's real agent, which hands it the real student's session (or
+ * the lack of one) over whatever the spec drives. loadExtension() therefore
+ * suppresses the link for every spec that doesn't bring its own agent (#332),
+ * so each one tests what it thinks it is testing.
  *
  * No-op off Windows, where there is no HKCU to begin with.
  */

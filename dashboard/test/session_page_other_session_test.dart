@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:anchor_dashboard/alerts/alert_platform.dart';
+import 'package:anchor_dashboard/alerts/live_alert_services.dart';
+import 'package:anchor_dashboard/alerts/live_alert_settings.dart';
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
@@ -15,6 +18,8 @@ import 'package:flutter_test/flutter_test.dart';
 // session they take part in themselves, by code (#410), so the live page's
 // connection also hears about the teacher's other sessions. The page shows
 // one session: those events must neither end it nor show up in its feed.
+// The feed shows all activity here (#491), so it would show them if it took
+// them.
 
 const _sessionId = 'aaaaaaaa-0000-0000-0000-000000000001';
 const _otherSessionId = 'bbbbbbbb-0000-0000-0000-000000000002';
@@ -95,6 +100,11 @@ Future<_StubHub> _pumpLiveSession(WidgetTester tester) async {
         apiBaseUrl: Uri.parse('http://localhost'),
         hubClientFactory: ({required apiBaseUrl, required tokenProvider}) =>
             hub,
+        alertServices: LiveAlertServices(
+          settings: LiveAlertSettings(store: MemoryAlertSettingsStore())
+            ..showAllActivity = true,
+          sound: createAlertSound(),
+        ),
       ),
     ),
   );
@@ -113,7 +123,7 @@ void main() {
 
       expect(find.text('Session ended — event stream stopped.'), findsNothing);
       expect(find.text('LIVE'), findsOneWidget);
-      expect(find.text('SessionEnded'), findsNothing);
+      expect(find.text('Session ended.'), findsNothing);
       expect(find.text('Waiting for events…'), findsOneWidget);
 
       // Its own end still ends it.
@@ -125,7 +135,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('LIVE'), findsNothing);
-      expect(find.text('SessionEnded'), findsOneWidget);
+      expect(find.text('Session ended.'), findsOneWidget);
     },
   );
 
@@ -137,7 +147,7 @@ void main() {
     hub.emit('SessionStarted', {'sessionId': _otherSessionId});
     await tester.pumpAndSettle();
 
-    expect(find.text('SessionStarted'), findsNothing);
+    expect(find.textContaining('Session started'), findsNothing);
     expect(find.text('Waiting for events…'), findsOneWidget);
   });
 }

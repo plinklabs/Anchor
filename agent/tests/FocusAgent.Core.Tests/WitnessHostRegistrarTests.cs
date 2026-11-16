@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Tamper;
 
 namespace FocusAgent.Core.Tests;
@@ -45,6 +46,22 @@ public class WitnessHostRegistrarTests
         // The backend file carries the configured URL.
         var backend = JsonDocument.Parse(store.Files[BackendPathFor(ExeA)]);
         Assert.Equal(Backend, backend.RootElement.GetProperty("backendUrl").GetString());
+    }
+
+    [Fact]
+    public void EnsureRegistered_writes_a_manifest_that_lets_each_of_its_extension_ids_connect()
+    {
+        // #497: the registrar's IDs reach the manifest Edge reads.
+        const string testRing = "abcdefghijklmnopabcdefghijklmnop";
+        var store = new FakeWitnessHostStore();
+
+        new WitnessHostRegistrar(store, extensionIds: AnchorExtensionIds.WithTestRing(testRing))
+            .EnsureRegistered(ExeA, Backend);
+
+        var manifest = JsonDocument.Parse(store.Files[ManifestPathFor(ExeA)]);
+        Assert.Equal(
+            [$"chrome-extension://{EdgeExtensionPolicy.ExtensionId}/", $"chrome-extension://{testRing}/"],
+            manifest.RootElement.GetProperty("allowed_origins").EnumerateArray().Select(o => o.GetString()));
     }
 
     [Fact]

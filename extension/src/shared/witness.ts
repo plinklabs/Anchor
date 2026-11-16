@@ -1,27 +1,30 @@
-// Native-messaging witness link to the on-box FocusAgent (#146 part 1).
-//
-// Soft-enforcement posture (design §5.4): the extension cannot witness its own
-// disablement/removal, and the agent cannot witness an InPrivate window it has
-// no incognito access to. So the two on-box components witness *each other*.
-// This module is the extension half of that link:
+// The native-messaging link to the on-box FocusAgent (#146 part 1, #489).
 //
 //   extension --connectNative--> [browser launches] anchor-witness-host.exe
 //                                            |  (named pipe)
 //                                            v
-//                                       FocusAgent  (the on-box witness)
+//                                       FocusAgent
 //
-// While the native port is open the agent sees a live pipe; when the extension
-// is disabled/removed the browser tears the host down, the pipe drops, and the
-// agent reports `extension_disabled`. Conversely, the host relays an
-// `agent_unavailable` message when *its* pipe to the agent drops (the agent
-// died), which we turn into an `agent_unavailable` tamper report here.
+// Two jobs ride on it:
 //
-// Same split as tamper.ts / host-matcher.ts: the pure classification + backoff
-// helpers live here and are unit-tested; the chrome.runtime wiring is injected
-// so the WitnessClient can be driven with a fake port in tests.
+// - The agent witnesses the extension (#146). While the native port is open the
+//   agent sees a live pipe; when the extension is disabled or removed the browser
+//   tears the host down, the pipe drops, and the agent reports
+//   `extension_disabled` and pauses Edge (#427).
+// - The agent is the extension's only identity (#489). The extension has no
+//   sign-in and no backend connection: the agent, signed in with the Windows
+//   account, hands the session it joined down this link (`session_started`, the
+//   allowlist changes, `session_ended`, and the current state on every connect),
+//   and the extension hands back what it reports (blocked URLs, unblock requests,
+//   its in-browser tamper signals), which the agent sends with its own connection.
+//
+// Same split as tamper.ts / host-matcher.ts: the pure parsing + backoff helpers
+// live here and are unit-tested; the chrome.runtime wiring is injected so the
+// WitnessClient can be driven with a fake port in tests. The message names match
+// FocusAgent.Core.Extension.ExtensionMessages on the agent side.
 
 import { logger } from './logger';
-import type { AuthConfig } from './settings';
+import type { AllowedDomainDto, SessionStartedPayload } from './types';
 
 const log = logger('witness');
 
@@ -40,61 +43,127 @@ export const WITNESS_HOST_NAME = 'net.anchor.witness';
  */
 export const WITNESS_PING_INTERVAL_MS = 15_000;
 
-/** A message relayed by the native host to the extension. */
-export interface WitnessHostMessage {
-  type?: string;
-  /** Present on a `backend_url` message: the agent's backend base URL. */
-  url?: string;
-  /** Present on an `auth_config` message (#289): the deployment's Entra config. */
-  tenantId?: string;
-  clientId?: string;
-  scope?: string;
+/** How long the block page's "Request access" waits for the agent's answer. */
+export const UNBLOCK_REQUEST_TIMEOUT_MS = 10_000;
+
+/** What the agent tells the extension about the session (#489). */
+export type AgentMessage =
+  | ({ type: 'session_started' } & SessionStartedPayload)
+  | { type: 'no_session' }
+  | { type: 'session_ended'; sessionId: string }
+  | { type: 'allowlist_replaced'; sessionId: string; domains: AllowedDomainDto[] }
+  | { type: 'allowlist_amended'; sessionId: string; addedDomains: AllowedDomainDto[] };
+
+/** The agent's answer to an unblock request, matched by its request id. */
+export interface UnblockRequestResult {
+  ok: boolean;
+  error?: string;
 }
 
-/**
- * What a host message means. The liveness signals drive tamper reporting; the
- * `backend_url` signal carries the agent's runtime config (#204) — the agent is
- * the source of truth for which backend a deployment targets, handed to the
- * extension over this same native-messaging link so one published extension
- * serves every fork.
- */
-export type WitnessHostSignal =
-  | 'agent_unavailable'
-  | 'agent_available'
-  | 'backend_url'
-  | 'auth_config'
-  | 'ignore';
+/** What the extension sends the agent to report (#489). */
+export type ExtensionReport =
+  | { type: 'blocked_url'; sessionId: string; url: string; host: string; tabId: number; occurredAt: string }
+  | { type: 'tamper'; sessionId: string; kind: string };
+
+/** An unblock request, before the client gives it a request id. */
+export interface UnblockRequest {
+  sessionId: string;
+  url: string;
+  host: string;
+  reason?: string;
+}
+
+/** What a message from the native host means. */
+export type HostSignal =
+  | { kind: 'agent_available' }
+  | { kind: 'agent_unavailable' }
+  | { kind: 'agent'; message: AgentMessage }
+  | { kind: 'unblock_result'; requestId: string; result: UnblockRequestResult }
+  | { kind: 'ignore' };
 
 /**
- * Classify a message the native host relays. The host emits `agent_unavailable`
- * when its pipe to the running FocusAgent drops (the agent died or hasn't
- * started), `agent_available` when it (re)connects, and `backend_url` (carrying
- * a non-empty `url`) to tell the extension which backend to target (#204).
- * Everything else — including a malformed/typeless message, or a `backend_url`
- * with no usable url — is ignored rather than treated as a signal, so a noisy
- * host can't spam tamper reports or wipe a good backend URL.
+ * Parse a message the native host relays. The host itself emits
+ * `agent_available` / `agent_unavailable` as its pipe to the agent comes and
+ * goes; everything else is the agent's. A message that is malformed — a missing
+ * session id, domains that aren't a list — is ignored rather than half-applied,
+ * so a noisy host can't wipe a working allowlist. So are the `backend_url` and
+ * `auth_config` the host still sends for extensions from before #489, which
+ * signed in and connected to the backend themselves.
  */
-export function classifyHostMessage(msg: WitnessHostMessage | null | undefined): WitnessHostSignal {
-  switch (msg?.type) {
-    case 'agent_unavailable':
-      return 'agent_unavailable';
+export function parseHostMessage(raw: unknown): HostSignal {
+  if (typeof raw !== 'object' || raw === null) return { kind: 'ignore' };
+  const msg = raw as Record<string, unknown>;
+  switch (msg.type) {
     case 'agent_available':
-      return 'agent_available';
-    case 'backend_url':
-      return typeof msg.url === 'string' && msg.url.trim().length > 0 ? 'backend_url' : 'ignore';
-    case 'auth_config':
-      // All three fields must be present and non-blank — a half-filled config
-      // can't drive a valid sign-in and must not overwrite a working one (#289).
-      return isNonBlank(msg.tenantId) && isNonBlank(msg.clientId) && isNonBlank(msg.scope)
-        ? 'auth_config'
-        : 'ignore';
+      return { kind: 'agent_available' };
+    case 'agent_unavailable':
+      return { kind: 'agent_unavailable' };
+    case 'session_started': {
+      if (!isNonBlank(msg.sessionId) || !isDomainList(msg.domains)) return { kind: 'ignore' };
+      return {
+        kind: 'agent',
+        message: {
+          type: 'session_started',
+          sessionId: msg.sessionId,
+          classId: stringOr(msg.classId, ''),
+          joinCode: stringOr(msg.joinCode, ''),
+          startedAt: stringOr(msg.startedAt, ''),
+          domains: msg.domains,
+        },
+      };
+    }
+    case 'no_session':
+      return { kind: 'agent', message: { type: 'no_session' } };
+    case 'session_ended':
+      return isNonBlank(msg.sessionId)
+        ? { kind: 'agent', message: { type: 'session_ended', sessionId: msg.sessionId } }
+        : { kind: 'ignore' };
+    case 'allowlist_replaced':
+      return isNonBlank(msg.sessionId) && isDomainList(msg.domains)
+        ? { kind: 'agent', message: { type: 'allowlist_replaced', sessionId: msg.sessionId, domains: msg.domains } }
+        : { kind: 'ignore' };
+    case 'allowlist_amended':
+      return isNonBlank(msg.sessionId) && isDomainList(msg.addedDomains)
+        ? {
+            kind: 'agent',
+            message: { type: 'allowlist_amended', sessionId: msg.sessionId, addedDomains: msg.addedDomains },
+          }
+        : { kind: 'ignore' };
+    case 'unblock_request_result':
+      return isNonBlank(msg.requestId)
+        ? {
+            kind: 'unblock_result',
+            requestId: msg.requestId,
+            result: {
+              ok: msg.ok === true,
+              ...(typeof msg.error === 'string' ? { error: msg.error } : {}),
+            },
+          }
+        : { kind: 'ignore' };
     default:
-      return 'ignore';
+      return { kind: 'ignore' };
   }
 }
 
-function isNonBlank(value: string | undefined): boolean {
+function isNonBlank(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function stringOr(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function isDomainList(value: unknown): value is AllowedDomainDto[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (d) =>
+        typeof d === 'object' &&
+        d !== null &&
+        typeof (d as AllowedDomainDto).matchType === 'string' &&
+        typeof (d as AllowedDomainDto).value === 'string',
+    )
+  );
 }
 
 /**
@@ -121,44 +190,47 @@ export interface RuntimePort {
 export interface WitnessClientDeps {
   /** Opens the native port, e.g. `() => chrome.runtime.connectNative(WITNESS_HOST_NAME)`. */
   connect: () => RuntimePort;
-  /** Invoked when the host reports the agent went away (caller decides whether to report tamper). */
-  onAgentUnavailable: () => void;
+  /**
+   * Invoked for each message the agent sends about the session (#489), in the
+   * order it arrives. Only the registered native host can reach this path, so
+   * an arbitrary web page can't start or end a session.
+   */
+  onAgentMessage: (message: AgentMessage) => void;
+  /** Invoked when the host reports the agent went away. */
+  onAgentUnavailable?: () => void;
   /** Invoked when the host reports the agent came back. */
   onAgentAvailable?: () => void;
-  /**
-   * Invoked when the host hands down the agent's backend URL (#204). The caller
-   * persists it and (re)connects the hub. Only the registered native host can
-   * reach this path, so the URL can't be set by an arbitrary web page.
-   */
-  onBackendUrl?: (url: string) => void;
-  /**
-   * Invoked when the host hands down the deployment's Entra auth config (#289).
-   * The caller persists it and (re)connects the hub so the extension can mint a
-   * real student token. Same trust boundary as onBackendUrl — only the registered
-   * native host can reach it.
-   */
-  onAuthConfig?: (config: AuthConfig) => void;
-  /** Injected for tests; defaults to the globals. */
+  /** Injected for tests; default to the globals. */
   setTimeoutFn?: (callback: () => void, ms: number) => number;
   clearTimeoutFn?: (handle: number) => void;
+  newRequestId?: () => string;
   pingIntervalMs?: number;
+  unblockTimeoutMs?: number;
+}
+
+interface PendingRequest {
+  resolve: (result: UnblockRequestResult) => void;
+  reject: (err: Error) => void;
+  timer: number;
 }
 
 /**
- * Maintains the extension→agent native-messaging link: opens the port, keeps it
- * alive with periodic pings, classifies host messages, and reconnects with
- * backoff when the port drops. Stateful and chrome-coupled at the edges, but
- * every chrome dependency is injected so it runs headless in tests.
+ * Maintains the extension↔agent native-messaging link: opens the port, keeps it
+ * alive with periodic pings, parses the agent's messages, posts the extension's
+ * reports, and reconnects with backoff when the port drops. Stateful and
+ * chrome-coupled at the edges, but every chrome dependency is injected so it
+ * runs headless in tests.
  */
 export class WitnessClient {
   private readonly connect: () => RuntimePort;
-  private readonly onAgentUnavailable: () => void;
+  private readonly onAgentMessage: (message: AgentMessage) => void;
+  private readonly onAgentUnavailable?: () => void;
   private readonly onAgentAvailable?: () => void;
-  private readonly onBackendUrl?: (url: string) => void;
-  private readonly onAuthConfig?: (config: AuthConfig) => void;
   private readonly setTimeoutFn: (callback: () => void, ms: number) => number;
   private readonly clearTimeoutFn: (handle: number) => void;
+  private readonly newRequestId: () => string;
   private readonly pingIntervalMs: number;
+  private readonly unblockTimeoutMs: number;
 
   private port: RuntimePort | null = null;
   /**
@@ -168,20 +240,24 @@ export class WitnessClient {
    * of a connection. Only a received message resets the reconnect backoff.
    */
   private established = false;
+  /** Whether the host last said the agent behind it is up. */
+  private agentUp = false;
   private reconnectAttempt = 0;
   private pingTimer: number | null = null;
   private reconnectTimer: number | null = null;
   private stopped = false;
+  private readonly pending = new Map<string, PendingRequest>();
 
   constructor(deps: WitnessClientDeps) {
     this.connect = deps.connect;
+    this.onAgentMessage = deps.onAgentMessage;
     this.onAgentUnavailable = deps.onAgentUnavailable;
     this.onAgentAvailable = deps.onAgentAvailable;
-    this.onBackendUrl = deps.onBackendUrl;
-    this.onAuthConfig = deps.onAuthConfig;
     this.setTimeoutFn = deps.setTimeoutFn ?? ((cb, ms) => setTimeout(cb, ms) as unknown as number);
     this.clearTimeoutFn = deps.clearTimeoutFn ?? ((h) => clearTimeout(h));
+    this.newRequestId = deps.newRequestId ?? (() => crypto.randomUUID());
     this.pingIntervalMs = deps.pingIntervalMs ?? WITNESS_PING_INTERVAL_MS;
+    this.unblockTimeoutMs = deps.unblockTimeoutMs ?? UNBLOCK_REQUEST_TIMEOUT_MS;
   }
 
   /** Opens the link. Idempotent: a second call while connected is a no-op. */
@@ -190,16 +266,68 @@ export class WitnessClient {
     this.open();
   }
 
-  /** Tears the link down for good (e.g. on session end / SW shutdown). */
+  /** Tears the link down for good (e.g. on SW shutdown). */
   stop(): void {
     this.stopped = true;
     this.clearTimers();
     const port = this.port;
     this.port = null;
+    this.failPending('The Anchor app link was closed.');
     try {
       port?.disconnect();
     } catch (err) {
       log.debug('port disconnect threw on stop', err);
+    }
+  }
+
+  /**
+   * Hands a report to the agent, which sends it with its own connection.
+   * Best-effort like the reports always were: returns false, and drops the
+   * report, when no agent is connected — a block re-reported later would be
+   * noisier than useful, and a tamper signal only matters live.
+   */
+  report(message: ExtensionReport): boolean {
+    // A port the host hasn't spoken on yet is still worth posting to: a worker
+    // revived by a navigation blocks that navigation before the host's first
+    // message, and the browser hands the post over once the host is up.
+    if (!this.port) {
+      log.warn('report dropped — the Anchor app is not connected', { type: message.type });
+      return false;
+    }
+    return this.post(message);
+  }
+
+  /**
+   * Asks the agent to send an unblock request to the teacher, and resolves with
+   * its answer. Rejects when the agent isn't connected or doesn't answer in
+   * time, so the block page can tell the student the request didn't go out
+   * instead of letting it vanish.
+   */
+  requestUnblock(request: UnblockRequest): Promise<UnblockRequestResult> {
+    if (!this.port || !this.established || !this.agentUp) {
+      return Promise.reject(new Error('The Anchor app is not connected.'));
+    }
+    const requestId = this.newRequestId();
+    return new Promise<UnblockRequestResult>((resolve, reject) => {
+      const timer = this.setTimeoutFn(() => {
+        this.pending.delete(requestId);
+        reject(new Error('The Anchor app did not answer.'));
+      }, this.unblockTimeoutMs);
+      this.pending.set(requestId, { resolve, reject, timer });
+      if (!this.post({ type: 'unblock_request', requestId, ...request })) {
+        this.settle(requestId, null, new Error('The Anchor app is not connected.'));
+      }
+    });
+  }
+
+  private post(message: unknown): boolean {
+    try {
+      this.port?.postMessage(message);
+      return this.port !== null;
+    } catch (err) {
+      // A throw here means the port is already gone; onDisconnect will follow.
+      log.debug('posting to the agent failed', err);
+      return false;
     }
   }
 
@@ -235,28 +363,44 @@ export class WitnessClient {
       this.reconnectAttempt = 0;
       log.info('witness port connected to agent host');
     }
-    const msg = message as WitnessHostMessage;
-    const signal = classifyHostMessage(msg);
-    if (signal === 'agent_unavailable') {
-      log.warn('agent witness reported unavailable');
-      this.onAgentUnavailable();
-    } else if (signal === 'agent_available') {
-      log.info('agent witness reported available');
-      this.onAgentAvailable?.();
-    } else if (signal === 'backend_url') {
-      // classifyHostMessage already validated url is a non-empty string.
-      const url = msg.url!.trim();
-      log.info('agent handed down backend url', { url });
-      this.onBackendUrl?.(url);
-    } else if (signal === 'auth_config') {
-      // classifyHostMessage already validated all three fields are non-blank.
-      const config: AuthConfig = {
-        tenantId: msg.tenantId!.trim(),
-        clientId: msg.clientId!.trim(),
-        scope: msg.scope!.trim(),
-      };
-      log.info('agent handed down auth config', { tenantId: config.tenantId, clientId: config.clientId });
-      this.onAuthConfig?.(config);
+    const signal = parseHostMessage(message);
+    switch (signal.kind) {
+      case 'agent_unavailable':
+        log.warn('agent witness reported unavailable');
+        this.agentUp = false;
+        this.failPending('The Anchor app went away.');
+        this.onAgentUnavailable?.();
+        return;
+      case 'agent_available':
+        log.info('agent witness reported available');
+        this.agentUp = true;
+        this.onAgentAvailable?.();
+        return;
+      case 'agent':
+        this.agentUp = true;
+        log.info(`agent message: ${signal.message.type}`);
+        this.onAgentMessage(signal.message);
+        return;
+      case 'unblock_result':
+        this.settle(signal.requestId, signal.result, null);
+        return;
+      case 'ignore':
+        return;
+    }
+  }
+
+  private settle(requestId: string, result: UnblockRequestResult | null, error: Error | null): void {
+    const pending = this.pending.get(requestId);
+    if (!pending) return;
+    this.pending.delete(requestId);
+    this.clearTimeoutFn(pending.timer);
+    if (error) pending.reject(error);
+    else pending.resolve(result!);
+  }
+
+  private failPending(reason: string): void {
+    for (const requestId of [...this.pending.keys()]) {
+      this.settle(requestId, null, new Error(reason));
     }
   }
 
@@ -270,8 +414,10 @@ export class WitnessClient {
       log.debug('witness port dropped before any host message (agent likely absent)');
     }
     this.established = false;
+    this.agentUp = false;
     this.port = null;
     this.clearPing();
+    this.failPending('The Anchor app link dropped.');
     this.scheduleReconnect();
   }
 

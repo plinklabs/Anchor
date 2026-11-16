@@ -25,6 +25,12 @@ public sealed class HeartbeatOptions
     /// first expected: the participant's join, or, after a backend restart, the
     /// extension's first ping. It has to cover the agent's 5-second join toast
     /// and its first ping one <see cref="IntervalSeconds"/> after it joins.
+    ///
+    /// <para>
+    /// It is also how long a class member has to join once the session starts,
+    /// before the roster shows them as not connected (#493): their agent gets
+    /// <c>SessionStarted</c> at the start and joins after its join toast.
+    /// </para>
     /// </summary>
     public int AgentJoinGraceSeconds { get; set; } = 30;
 

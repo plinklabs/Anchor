@@ -9,7 +9,8 @@ name: Extension CI
 # check of its own: scripts/pack-extension.test.ts runs actionlint over
 # extension-release.yml and edge-key-expiry.yml and pins their failure
 # reporting, and scripts/release-diagnostics.test.ts reads extension-release.yml.
-# So both workflows are in the path filter below (an edit to either runs the
+# scripts/test-ring.test.ts likewise lints and pins extension-test-ring.yml (#497).
+# So those workflows are in the path filter below (an edit to any of them runs the
 # tests that check it), and this job installs a pinned actionlint with the
 # install-actionlint action it shares with Workflows CI (#418), which is in the
 # path filter too because scripts/extension-ci.test.ts pins it. In CI the
@@ -31,6 +32,7 @@ on:
       - 'extension/**'
       - '.github/workflows/extension-release.yml'
       - '.github/workflows/edge-key-expiry.yml'
+      - '.github/workflows/extension-test-ring.yml'
       - '.github/actions/install-actionlint/**'
       - '.github/workflows/extension-ci.yml'
   push:
@@ -39,6 +41,7 @@ on:
       - 'extension/**'
       - '.github/workflows/extension-release.yml'
       - '.github/workflows/edge-key-expiry.yml'
+      - '.github/workflows/extension-test-ring.yml'
       - '.github/actions/install-actionlint/**'
       - '.github/workflows/extension-ci.yml'
 

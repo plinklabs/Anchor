@@ -1,50 +1,39 @@
-// #332: a spec that seeds its own settings must be hermetic — no on-box agent
-// may push config into it.
+// #332: every spec must be hermetic — no on-box agent but the one the spec
+// brings may reach the extension under test.
 //
 // On a developer machine the installed Anchor agent registers the witness
 // native-messaging host permanently (HKCU\…\Edge\NativeMessagingHosts\
-// net.anchor.witness). Every spec used to launch Edge with that key in place, so
-// the extension under test connected to the REAL installed host, which handed it
-// that box's *production* backend URL and Entra auth config over the witness link
-// (#204/#289) — straight over whatever the harness had just seeded, hub restart
-// included. CI never saw it (no agent on the runner), which is the worst shape a
+// net.anchor.witness). Since #489 that link is where the extension gets its
+// session from, so a spec that let the installed host through would enforce
+// whatever session that box's real student is in, over whatever the spec
+// drives. CI never sees it (no agent on the runner), which is the worst shape a
 // harness bug can take: "the e2e suite doesn't pass on my machine".
 //
 // This drives that exact situation deliberately, so it reproduces everywhere:
-// register the REAL host ourselves — standing in for the developer's installed
-// agent — and hand it a backend URL that is NOT the e2e one, then load the
-// extension the way every ordinary spec does and prove none of it reached the
-// extension. It also proves the harness leaves the registry the way it found it,
-// which is what keeps a developer's agent link working after a run.
+// stand up an "installed" agent of our own, in a session, and register the REAL
+// host for it the way the agent does — then load the extension the way the
+// specs do and prove the installed agent never hears from it. It also proves the
+// harness leaves the registry the way it found it, which is what keeps a
+// developer's agent link working after a run.
 //
 // The stand-in allows EXTENSION_ID, the id of the extension under test, so the
 // link would work if the harness didn't cut it. That is the pinned id, except on
 // a box whose Edge policy force-installs Anchor, where it is the key-less copy's
 // path-derived id (#429).
-//
-// Windows-only: native messaging + the host build/registration need Edge + .NET
-// on a Windows runner, which is exactly what the Extension E2E CI job uses.
 
 import { test, expect } from '../fixtures.ts';
-import { BACKEND_URL } from '../config.ts';
+import { WITH_MS365 } from '../config.ts';
 import { EXTENSION_ID, loadExtension, type LoadedExtension } from '../extension.ts';
+import { FakeAgent } from '../fake-agent.ts';
 import {
   readWitnessHostRegistration,
   registerWitnessHost,
   witnessHostSupported,
 } from '../witness-host.ts';
 
-/** What the stand-in "installed agent" hands down: deliberately not the e2e
- *  backend, so a push is unmistakable in storage and in the logs. */
-const AGENT_BACKEND_URL = 'http://agent-pushed.test:9';
-
-/** The witness line the extension logs when the host is handing config down —
- *  the exact symptom #332 is about (WitnessClient.handleMessage). */
-const HANDED_DOWN = 'agent handed down backend url';
-
 /** Either line the extension logs when connectNative finds no host: the port is
  *  dropped before any message (a manifest that isn't there, #243) or the connect
- *  throws outright. Waiting for one of them makes "nothing was pushed" a
+ *  throws outright. Waiting for one of them makes "nothing got through" a
  *  positive assertion about a *dead* link rather than a sleep. */
 const DEAD_LINK_LINES = [
   'witness port dropped before any host message',
@@ -64,30 +53,38 @@ async function waitForDeadWitnessLink(ext: LoadedExtension, timeout = 20_000): P
   );
 }
 
+/** Stand in for the developer box: an agent in a session, with the real host
+ *  registered for it in HKCU. */
+async function installAgent(): Promise<{ agent: FakeAgent; manifestPath: string; uninstall(): Promise<void> }> {
+  const agent = await FakeAgent.start();
+  agent.startSession(WITH_MS365, { send: false });
+  process.env.ANCHOR_WITNESS_PIPE = agent.pipeName;
+  const registration = registerWitnessHost(EXTENSION_ID);
+  return {
+    agent,
+    manifestPath: registration.manifestPath,
+    async uninstall() {
+      registration.unregister();
+      delete process.env.ANCHOR_WITNESS_PIPE;
+      await agent.close();
+    },
+  };
+}
+
 test.describe('the suite is hermetic against an installed agent (#332)', () => {
   test.skip(!witnessHostSupported(), 'native witness host registration is Windows-only');
 
-  test('an on-box witness host cannot push its config into an ordinary spec', async () => {
+  test('an installed agent cannot reach a spec that brings no agent of its own', async () => {
     const beforeRun = readWitnessHostRegistration();
-
-    // Stand in for the developer box: the real host registered in HKCU, with the
-    // backend URL it should hand down in the environment the browser inherits.
-    process.env.ANCHOR_WITNESS_BACKEND_URL = AGENT_BACKEND_URL;
-    const installed = registerWitnessHost(EXTENSION_ID);
+    const installed = await installAgent();
     try {
       expect(readWitnessHostRegistration()).toBe(installed.manifestPath);
 
-      // An ordinary spec: no witness options, settings seeded by the harness.
       const ext = await loadExtension();
       try {
-        await ext.configure();
-
-        // The extension found no host at all, so it never learned the agent's
-        // backend URL — and the seeded one is still what the hub runs on.
         await waitForDeadWitnessLink(ext);
-        expect(ext.countLogs(HANDED_DOWN)).toBe(0);
-        const stored = await ext.getStorage('backendUrl');
-        expect(stored.backendUrl).toBe(BACKEND_URL);
+        expect(installed.agent.connections).toBe(0);
+        expect(ext.countLogs('active session cached')).toBe(0);
       } finally {
         await ext.close();
       }
@@ -96,12 +93,33 @@ test.describe('the suite is hermetic against an installed agent (#332)', () => {
       // leaving it pointed at the harness's missing manifest.
       expect(readWitnessHostRegistration()).toBe(installed.manifestPath);
     } finally {
-      installed.unregister();
-      delete process.env.ANCHOR_WITNESS_BACKEND_URL;
+      await installed.uninstall();
     }
+    expect(readWitnessHostRegistration()).toBe(beforeRun);
+  });
 
-    // And the witness specs' own registration restores what it found too, so a
-    // run never unregisters a developer's installed agent from Edge.
+  test("a spec's own agent is the only one the extension talks to", async () => {
+    const beforeRun = readWitnessHostRegistration();
+    const installed = await installAgent();
+    const own = await FakeAgent.start();
+    try {
+      const ext = await loadExtension({ agent: own });
+      try {
+        await own.waitForConnection();
+        await ext.waitForLog('agent message: no_session');
+        expect(installed.agent.connections).toBe(0);
+        expect(ext.countLogs('active session cached')).toBe(0);
+      } finally {
+        await ext.close();
+      }
+
+      expect(readWitnessHostRegistration()).toBe(installed.manifestPath);
+      // The spec's pipe doesn't outlive it: the installed agent's is back.
+      expect(process.env.ANCHOR_WITNESS_PIPE).toBe(installed.agent.pipeName);
+    } finally {
+      await own.close();
+      await installed.uninstall();
+    }
     expect(readWitnessHostRegistration()).toBe(beforeRun);
   });
 });

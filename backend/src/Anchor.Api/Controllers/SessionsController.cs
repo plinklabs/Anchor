@@ -20,6 +20,12 @@ public sealed class SessionsController : ControllerBase
     private const int JoinCodeGenerationAttempts = 10;
     private const int RecentEventsLimit = 50;
 
+    /// <summary>How many events <see cref="Events"/> returns when not asked for a number (#492).</summary>
+    public const int EventsDefaultLimit = 200;
+
+    /// <summary>The most events <see cref="Events"/> returns at once (#492).</summary>
+    public const int EventsMaxLimit = 500;
+
     /// <summary>
     /// A typed join code stops being honoured once the session is this old,
     /// even if it has not been ended. Prevents a leaked code from a stale
@@ -38,6 +44,7 @@ public sealed class SessionsController : ControllerBase
     private readonly SessionEnder _sessionEnder;
     private readonly SessionEndPlanner _endPlanner;
     private readonly SessionEndSchedule _endSchedule;
+    private readonly HeartbeatTracker _heartbeats;
 
     public SessionsController(
         AnchorDbContext db,
@@ -50,7 +57,8 @@ public sealed class SessionsController : ControllerBase
         ActiveParticipantCache activeParticipants,
         SessionEnder sessionEnder,
         SessionEndPlanner endPlanner,
-        SessionEndSchedule endSchedule)
+        SessionEndSchedule endSchedule,
+        HeartbeatTracker heartbeats)
     {
         _db = db;
         _users = users;
@@ -63,6 +71,7 @@ public sealed class SessionsController : ControllerBase
         _sessionEnder = sessionEnder;
         _endPlanner = endPlanner;
         _endSchedule = endSchedule;
+        _heartbeats = heartbeats;
     }
 
     [HttpPost]
@@ -177,6 +186,10 @@ public sealed class SessionsController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
         if (endsAt is { } plannedEnd)
             _endSchedule.Schedule(session.Id, plannedEnd);
+        // Every running agent of the class joins after its join toast. The
+        // heartbeat monitor reports each member still out once the join grace
+        // has passed: their laptop isn't enforcing anything (#493).
+        _heartbeats.ExpectJoins(session.Id, memberIds, now);
 
         var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
         await _broadcaster.SessionStartedAsync(
@@ -468,6 +481,17 @@ public sealed class SessionsController : ControllerBase
                 .ToListAsync(cancellationToken))
             .ToHashSet();
 
+        // A class member of a running session was expected to join from its
+        // start: still out past the join grace, they read as not connected
+        // (#493). Anyone else took part by code, and is waited on by no one.
+        var classMemberIds = session.EndedAt is null
+            ? (await _db.ClassMemberships.AsNoTracking()
+                .Where(m => m.ClassId == session.ClassId && m.Role == ClassMembershipRole.Member)
+                .Select(m => m.UserId)
+                .ToListAsync(cancellationToken))
+                .ToHashSet()
+            : new HashSet<Guid>();
+
         var participants = participantRows
             .Select(p => new SessionParticipantSummary(
                 p.UserId,
@@ -475,7 +499,9 @@ public sealed class SessionsController : ControllerBase
                 p.JoinedAt,
                 p.DeclinedAt,
                 p.LeftAt,
-                _liveState.Resolve(id, p.UserId, p.JoinedAt, p.DeclinedAt, p.LeftAt).ToString(),
+                _liveState.Resolve(
+                    id, p.UserId, p.JoinedAt, p.DeclinedAt, p.LeftAt,
+                    expectedSince: classMemberIds.Contains(p.UserId) ? session.StartedAt : null).ToString(),
                 tamperedUserIds.Contains(p.UserId)))
             .ToList();
 
@@ -542,6 +568,66 @@ public sealed class SessionsController : ControllerBase
             summaries,
             bundles,
             grants));
+    }
+
+    /// <summary>
+    /// The session's stored events, newest first (#492). The live page's
+    /// activity feed holds only what it heard since it opened, so it loads what
+    /// happened before from these when the teacher opens the session again, or
+    /// reloads it, and reads them the way it reads the hub's broadcasts.
+    /// <para>
+    /// <paramref name="kinds"/> narrows them to those kinds, every kind when none
+    /// is given: the feed reads a few of them, and the agent's foreground changes
+    /// alone would fill any page of them. At most <paramref name="limit"/> (1 to
+    /// <see cref="EventsMaxLimit"/>, <see cref="EventsDefaultLimit"/> when not
+    /// given). Only the owning teacher, as for the detail (#369): they name each
+    /// student and what they asked to open.
+    /// </para>
+    /// </summary>
+    [HttpGet("{id:guid}/events")]
+    [ProducesResponseType(typeof(IReadOnlyList<SessionRecentEvent>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<SessionRecentEvent>>> Events(
+        Guid id,
+        [FromQuery(Name = "kind")] EventKind[]? kinds,
+        [FromQuery] int? limit,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var take = limit ?? EventsDefaultLimit;
+        if (take < 1 || take > EventsMaxLimit)
+            return ValidationProblem($"limit must be between 1 and {EventsMaxLimit}.");
+
+        var session = await _db.Sessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (session is null)
+            return NotFound();
+        if (session.TeacherId != caller.Id)
+            return Forbid();
+
+        var events = _db.Events.AsNoTracking().Where(e => e.SessionId == id);
+        if (kinds is { Length: > 0 })
+            events = events.Where(e => kinds.Contains(e.Kind));
+
+        // SQLite (dev + tests) can't ORDER BY a DateTimeOffset: materialise,
+        // then sort and cut in memory, as the detail's recent events do. The
+        // kinds keep that to the rows asked for.
+        var rows = await events
+            .Select(e => new { e.Id, e.UserId, e.Kind, e.PayloadJson, e.OccurredAt })
+            .ToListAsync(cancellationToken);
+        return Ok(rows
+            .OrderByDescending(e => e.OccurredAt)
+            .Take(take)
+            .Select(e => new SessionRecentEvent(e.Id, e.UserId, e.Kind, e.PayloadJson, e.OccurredAt))
+            .ToList());
     }
 
     [HttpGet("active")]
@@ -1180,6 +1266,10 @@ public sealed record SessionParticipantSummary(
     string State,
     bool Tampered);
 
+/// <summary>
+/// One stored <see cref="Event"/>: the detail's most recent ones, and those
+/// <c>GET /sessions/{id}/events</c> returns (#492).
+/// </summary>
 public sealed record SessionRecentEvent(
     Guid Id,
     Guid UserId,

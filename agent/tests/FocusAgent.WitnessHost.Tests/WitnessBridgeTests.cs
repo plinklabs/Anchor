@@ -84,6 +84,50 @@ public class WitnessBridgeTests
             frames);
     }
 
+    [Fact]
+    public async Task Forwards_the_agents_messages_to_the_browser_after_it_comes_up()
+    {
+        // #489: the agent hands the extension its session over the link; the host
+        // passes each line on as a native message, in order, after the
+        // agent_available it raised on connecting.
+        using var input = new MemoryStream(); // immediate EOF
+        using var output = new MemoryStream();
+        const string started = "{\"type\":\"session_started\",\"sessionId\":\"s1\",\"domains\":[]}";
+        const string ended = "{\"type\":\"session_ended\",\"sessionId\":\"s1\"}";
+        var agent = new FakeAgentLink
+        {
+            OnStart = link =>
+            {
+                link.RaiseConnected();
+                link.RaiseMessage(started);
+                link.RaiseMessage(ended);
+            },
+        };
+
+        await new WitnessBridge(input, output, agent).RunAsync();
+
+        output.Position = 0;
+        Assert.Equal(new[] { "{\"type\":\"agent_available\"}", started, ended }, ReadAllFrames(output));
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("[1,2]")]
+    [InlineData("\"just a string\"")]
+    public async Task Drops_an_agent_line_that_is_not_a_json_object(string line)
+    {
+        // Edge closes the whole port on a message that isn't JSON, which would look
+        // like the extension being switched off; such a line must never reach it.
+        using var input = new MemoryStream(); // immediate EOF
+        using var output = new MemoryStream();
+        var agent = new FakeAgentLink { OnStart = link => link.RaiseMessage(line) };
+
+        await new WitnessBridge(input, output, agent).RunAsync();
+
+        output.Position = 0;
+        Assert.Empty(ReadAllFrames(output));
+    }
+
     private static byte[] Frame(string json)
     {
         var payload = Encoding.UTF8.GetBytes(json);
@@ -114,9 +158,11 @@ public class WitnessBridgeTests
 
         public event Action? Connected;
         public event Action? Disconnected;
+        public event Action<string>? MessageReceived;
 
         public void RaiseConnected() => Connected?.Invoke();
         public void RaiseDisconnected() => Disconnected?.Invoke();
+        public void RaiseMessage(string line) => MessageReceived?.Invoke(line);
 
         public Task StartAsync(CancellationToken ct = default)
         {

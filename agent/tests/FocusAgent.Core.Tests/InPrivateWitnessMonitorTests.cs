@@ -277,6 +277,7 @@ public class InPrivateWitnessMonitorTests
         public event EventHandler<SessionStartedPayload>? SessionStarted;
         public event EventHandler<Guid>? SessionEnded;
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
+        public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
 #pragma warning restore CS0067
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
@@ -285,6 +286,7 @@ public class InPrivateWitnessMonitorTests
         public Task LeaveSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.CompletedTask;
         public Task DeclineSessionAsync(Guid sessionId, string reason, CancellationToken ct = default) => Task.CompletedTask;
         public Task ReportEventAsync(Guid sessionId, string kind, string payloadJson, DateTimeOffset? occurredAt = null, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default) => Task.FromResult<SessionStartedPayload?>(null);

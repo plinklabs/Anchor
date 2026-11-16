@@ -1,16 +1,21 @@
 name: Extension E2E
 
+# The harness runs the extension against the real native-messaging host
+# (agent/src/FocusAgent.WitnessHost, which builds against FocusAgent.Core) and a
+# stand-in for the agent; no backend (#489). So those are the paths it watches.
 on:
   push:
     branches: [main]
     paths:
       - 'extension/**'
-      - 'backend/**'
+      - 'agent/src/FocusAgent.WitnessHost/**'
+      - 'agent/src/FocusAgent.Core/**'
       - '.github/workflows/extension-e2e.yml'
   pull_request:
     paths:
       - 'extension/**'
-      - 'backend/**'
+      - 'agent/src/FocusAgent.WitnessHost/**'
+      - 'agent/src/FocusAgent.Core/**'
       - '.github/workflows/extension-e2e.yml'
 
 concurrency:
@@ -21,9 +26,9 @@ jobs:
   e2e:
     name: Extension E2E
     # Windows runner: Edge is preinstalled (so `channel: 'msedge'` needs no
-    # browser download), and it has a desktop session for the headed browser
-    # an MV3 extension load requires. The harness boots the real backend itself
-    # via Playwright's webServer (node e2e/run-backend.ts → dotnet run).
+    # browser download), it has a desktop session for the headed browser an MV3
+    # extension load requires, and native messaging needs its HKCU host
+    # registration. The harness builds the witness host itself (dotnet build).
     runs-on: windows-latest
     defaults:
       run:
@@ -46,11 +51,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Warm the backend build once so the webServer's 180s readiness window
-      # isn't spent on a cold restore+build inside the Playwright run.
-      - name: Build backend
-        working-directory: backend
-        run: dotnet build Anchor.sln --configuration Debug
+      # Warm the witness host build once, so the first spec isn't spent on a
+      # cold restore+build when the harness registers the host.
+      - name: Build witness host
+        working-directory: agent
+        run: dotnet build src/FocusAgent.WitnessHost/FocusAgent.WitnessHost.csproj --configuration Debug
 
       - name: Run e2e suite
         run: npm run e2e

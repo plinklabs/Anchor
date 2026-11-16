@@ -15,9 +15,6 @@
     "e2e:report": "playwright show-report",
     "dev:extension": "npm run build && node e2e/dev-launcher.ts"
   },
-  "dependencies": {
-    "@microsoft/signalr": "^8.0.7"
-  },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@rollup/plugin-node-resolve": "^15.3.0",

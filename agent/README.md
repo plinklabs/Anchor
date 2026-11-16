@@ -317,20 +317,29 @@ To smoke-test the Production layer locally, fill the placeholders in a copy of
 `appsettings.Production.json` next to the built exe and launch with
 `DOTNET_ENVIRONMENT=Production`.
 
+#### The session handed to the extension (#489)
+
+The browser extension has no sign-in and no backend connection: the agent is
+its only identity. Over the native-messaging witness link
+(`anchor-witness-host.exe` ↔ the agent's pipe) the agent hands it the session it
+joined, every allowlist change and the session's end, and the current state on
+every connect; the extension hands back blocked URLs, unblock requests and its
+tamper signals, which the agent reports with its own connection
+(`ExtensionSessionRelay`). Only the registered host can reach the extension's
+port, so an arbitrary web page can't start or end a session. Protocol: see
+[`src/FocusAgent.WitnessHost/README.md`](src/FocusAgent.WitnessHost/README.md).
+
 #### Backend URL handed to the extension (#204)
 
-The browser extension is **backend-agnostic**: one published Edge listing serves
-every fork, so it learns which backend to target from the on-box agent at
-runtime rather than baking the URL in. The agent's native-messaging witness host
-(`anchor-witness-host.exe`) hands the URL to the extension over the existing
-witness channel as soon as the link opens — and only the registered host can
-reach the extension's port, so an arbitrary web page can't repoint it.
+Extensions from before #489 connected to the backend themselves, so the host
+still hands them the backend URL (and the deployment's Entra config, #289) as
+soon as the link opens, until the store has updated them. A current extension
+ignores both.
 
 The host resolves which URL to send, in order:
 
 1. `ANCHOR_WITNESS_BACKEND_URL` env var — the per-deployment source the agent
-   installer sets (and the extension e2e harness sets to point at its throwaway
-   backend).
+   installer sets.
 2. a `backend-url.json` file (`{"backendUrl":"https://…"}`) next to the host exe.
 3. the dev fallback `http://localhost:5276` so a plain dev loop works before any
    deployment config exists.

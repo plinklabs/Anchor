@@ -1,14 +1,15 @@
 import { defineConfig } from '@playwright/test';
-import { BACKEND_PORT, HEADLESS } from './e2e/config.ts';
+import { HEADLESS } from './e2e/config.ts';
 
 // Loading an MV3 extension requires a headed (or new-headless) browser, so
-// workers run serially headed by default. The backend is booted once for the
-// whole run via webServer (Playwright waits for the port to listen, which the
-// backend opens only after seeding completes).
+// workers run serially headed by default. No backend: the extension learns its
+// session only from the on-box agent (#489), which each spec stands in for with
+// a fake agent behind the real native-messaging host (e2e/fake-agent.ts).
 export default defineConfig({
   testDir: './e2e/specs',
-  // Extension service workers + a single shared backend make cross-test
-  // isolation easier with one worker; keep it simple and deterministic.
+  // Extension service workers + the per-user native-host registration make
+  // cross-test isolation easier with one worker; keep it simple and
+  // deterministic.
   workers: 1,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
@@ -19,15 +20,5 @@ export default defineConfig({
   use: {
     headless: HEADLESS,
     trace: 'retain-on-failure',
-  },
-  webServer: {
-    command: 'node e2e/run-backend.ts',
-    port: BACKEND_PORT,
-    // Always boot a fresh, dedicated backend in CI; locally reuse one already
-    // listening on the e2e port for faster iteration.
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-    stdout: 'pipe',
-    stderr: 'pipe',
   },
 });

@@ -44,17 +44,44 @@ public sealed class WitnessHostRegisterTests
         var expectedManifestPath = Path.Combine(dir.Path, "net.anchor.witness.json");
         Assert.Equal(expectedManifestPath, key.ReadManifestPath());
 
-        // The manifest Edge consumes: the absolute exe path + the pinned extension origin.
+        // The manifest Edge consumes: the absolute exe path + the pinned extension
+        // origins: the store build's first, then the test ring's if this build has
+        // one configured (#497).
         using var manifest = JsonDocument.Parse(File.ReadAllText(expectedManifestPath));
         Assert.Equal("net.anchor.witness", manifest.RootElement.GetProperty("name").GetString());
         Assert.Equal(dir.HostExePath, manifest.RootElement.GetProperty("path").GetString());
-        var origin = Assert.Single(manifest.RootElement.GetProperty("allowed_origins").EnumerateArray());
-        Assert.Equal($"chrome-extension://{EdgeExtensionPolicy.ExtensionId}/", origin.GetString());
+        Assert.Equal(
+            AnchorExtensionIds.Configured.All.Select(id => $"chrome-extension://{id}/"),
+            manifest.RootElement.GetProperty("allowed_origins").EnumerateArray().Select(o => o.GetString()));
+        Assert.Equal(
+            $"chrome-extension://{EdgeExtensionPolicy.ExtensionId}/",
+            manifest.RootElement.GetProperty("allowed_origins")[0].GetString());
 
         // The backend-url.json the host reads carries the configured backend.
         var backendFile = Path.Combine(dir.Path, "backend-url.json");
         using var backend = JsonDocument.Parse(File.ReadAllText(backendFile));
         Assert.Equal(BackendUrl, backend.RootElement.GetProperty("backendUrl").GetString());
+    }
+
+    [Fact]
+    public async Task RegisterMode_lets_the_test_ring_build_connect_next_to_the_store_build()
+    {
+        // #497: Edge refuses connectNative to an extension whose origin the host
+        // manifest doesn't name, so a test-ring laptop's self-hosted build can only
+        // check in once the agent writes its origin there. The spec plays a test-ring
+        // ID of its own, whatever extension/test-ring.json names.
+        const string testRingId = "abcdefghijklmnopabcdefghijklmnop";
+        using var key = ThrowawayHostKey.Create();
+        using var dir = ThrowawayHostDir.Create();
+
+        var exit = await RunAgentWitnessModeAsync("--register-witness-host", key, dir, testRingId);
+        Assert.Equal(0, exit);
+
+        using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir.Path, "net.anchor.witness.json")));
+        Assert.Equal(
+            [$"chrome-extension://{EdgeExtensionPolicy.ExtensionId}/", $"chrome-extension://{testRingId}/"],
+            manifest.RootElement.GetProperty("allowed_origins").EnumerateArray().Select(o => o.GetString()));
+        Assert.Equal(Path.Combine(dir.Path, "net.anchor.witness.json"), key.ReadManifestPath());
     }
 
     [Fact]
@@ -110,7 +137,8 @@ public sealed class WitnessHostRegisterTests
     /// (no console attached), so the work runs and the process exits without blocking on
     /// UI; we wait on the process itself.
     /// </summary>
-    private static async Task<int> RunAgentWitnessModeAsync(string modeFlag, ThrowawayHostKey key, ThrowawayHostDir dir)
+    private static async Task<int> RunAgentWitnessModeAsync(
+        string modeFlag, ThrowawayHostKey key, ThrowawayHostDir dir, string? testRingId = null)
     {
         if (!File.Exists(TestConfig.AgentExe))
             throw new FileNotFoundException(
@@ -123,6 +151,8 @@ public sealed class WitnessHostRegisterTests
         psi.Environment["ANCHOR_WITNESS_HOST_KEY"] = key.WitnessKeyPath;
         psi.Environment["ANCHOR_WITNESS_HOST_EXE_PATH"] = dir.HostExePath;
         psi.Environment["ANCHOR_WITNESS_HOST_BACKEND_URL"] = BackendUrl;
+        // #497: empty, the agent's built-in extension IDs.
+        psi.Environment["ANCHOR_WITNESS_HOST_TEST_RING_ID"] = testRingId ?? "";
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the agent process.");

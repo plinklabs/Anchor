@@ -18,9 +18,11 @@ namespace FocusAgent.Core.Updates;
 ///
 /// <para>
 /// "Latest" is the release GitHub marks as such: the newest published release that
-/// isn't a pre-release or a draft. Agent releases are the only releases the
+/// isn't a pre-release or a draft. Agent releases are the only full releases the
 /// repository publishes (the extension ships to the Edge Add-ons store, the cloud
-/// tier on a push to main), so that is always the newest agent release.
+/// tier on a push to main, and the extension test ring's hosting release,
+/// <c>extension-test-ring</c>, is a pre-release, #497), so that is always the
+/// newest agent release.
 /// </para>
 /// </summary>
 public static class GithubReleaseFeed

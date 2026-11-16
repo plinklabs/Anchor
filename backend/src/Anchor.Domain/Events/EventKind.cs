@@ -43,5 +43,15 @@ public enum EventKind
     /// <c>{"expectedSince":"…"}</c>, when the agent was first expected. An agent
     /// that turns up later is recorded as <see cref="AgentReconnected"/>.
     /// </summary>
-    AgentMissing
+    AgentMissing,
+
+    /// <summary>
+    /// A class member hadn't joined the session once the join grace had passed
+    /// since it started, so nothing was being enforced for them (#493): their
+    /// laptop has no working Anchor, or they weren't there. Recorded by the
+    /// backend's heartbeat monitor, at most once per student and session. The
+    /// payload is <c>{"expectedSince":"…"}</c>, the session's start. A student
+    /// who joins later is recorded only by their participant row's join.
+    /// </summary>
+    NotConnected
 }

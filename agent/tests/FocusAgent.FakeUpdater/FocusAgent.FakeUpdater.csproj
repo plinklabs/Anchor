@@ -11,6 +11,13 @@
     kill it, without a real updater replacing files, creating shortcuts or writing
     an uninstall entry on the machine running the tests.
 
+    #487 (UpdateRelaunchTests): in an install with an "apply-runs-hooks" file, an
+    apply also does what Velopack's does around the new version's hook: stop the
+    install folder, run the hook, stop the install folder again, and restart the
+    agent unless told not to (norestart). Copied under another name, it plays
+    Setup.exe over an existing install instead (stop, install hook, stop, start
+    unless silent).
+
     Built through the integration test project's ProjectReference; like that
     project, deliberately NOT in FocusAgent.sln.
   -->

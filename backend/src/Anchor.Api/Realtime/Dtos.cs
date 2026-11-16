@@ -52,7 +52,12 @@ public sealed record SessionBundlesUpdatedPayload(
 /// </summary>
 public enum ParticipantLiveState
 {
-    /// <summary>In the class roster but no join recorded for this session.</summary>
+    /// <summary>
+    /// No join recorded for this session (yet): a class member while the
+    /// session is younger than the join grace, after which they are
+    /// <see cref="NotConnected"/>; someone who took part by code until their
+    /// agent joins; anyone in a session that has ended.
+    /// </summary>
     NeverJoined,
 
     /// <summary>Joined and heartbeat fresh.</summary>
@@ -70,6 +75,18 @@ public enum ParticipantLiveState
     /// </summary>
     AgentMissing,
 
+    /// <summary>
+    /// A class member of a running session who still hasn't joined once the
+    /// join grace (<see cref="HeartbeatOptions.AgentJoinGrace"/>) has passed
+    /// since the session started (#493). Every running agent gets
+    /// <c>SessionStarted</c> and joins after its join toast, so their laptop
+    /// has no working Anchor, or they aren't there: either way nothing is
+    /// enforced for them. Turns <see cref="Joined"/> as soon as they join.
+    /// Someone who took part by code isn't a class member, and never reads as
+    /// this.
+    /// </summary>
+    NotConnected,
+
     /// <summary>Cancelled during the join-confirmation toast.</summary>
     Declined,
 
@@ -81,7 +98,9 @@ public enum ParticipantLiveState
 /// Live notification that a class member's lifecycle state changed
 /// (joined / declined / left) so the teacher's roster updates without polling
 /// (#100). It also carries <see cref="ParticipantLiveState.AgentMissing"/>, the
-/// <see cref="HeartbeatMonitor"/>'s report of an agent that never pinged (#444).
+/// <see cref="HeartbeatMonitor"/>'s report of an agent that never pinged (#444),
+/// and <see cref="ParticipantLiveState.NotConnected"/>, its report of a class
+/// member who never joined (#493).
 /// Other heartbeat-driven transitions are carried by the existing
 /// <see cref="HeartbeatLostPayload"/> / <see cref="AgentReconnectedPayload"/>
 /// instead, and a late agent's arrival by the latter. Pushed to the session

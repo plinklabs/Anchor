@@ -6,21 +6,27 @@ namespace FocusAgent.WitnessHost;
 /// <summary>
 /// Connects to the agent's named pipe and keeps the connection alive, raising
 /// <see cref="Connected"/>/<see cref="Disconnected"/> as it comes and goes
-/// (#146 part 1). Write-only from the host's side: the host forwards the
-/// extension's pings and emits its own keepalives so it can notice the agent
-/// dying (the next write throws) without needing a read channel.
+/// (#146 part 1). The host forwards the extension's messages to the agent and
+/// emits its own keepalives, so it notices the agent dying (the next write
+/// throws); since #489 it also reads the agent's lines — the session it hands the
+/// extension — and raises each as <see cref="MessageReceived"/>. Whichever side
+/// of the connection ends first (a failed write, or the agent closing its end)
+/// counts as the agent going away.
 /// </summary>
 public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
 {
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(5);
+    // Messages the extension sent before the pipe was up, kept for when it is.
+    private const int MaxPending = 64;
 
     private readonly string _pipeName;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private CancellationTokenSource? _cts;
     private Task? _loop;
     private NamedPipeClientStream? _pipe;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _pending = new();
 
     public NamedPipeAgentLink(string pipeName)
     {
@@ -29,6 +35,7 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
 
     public event Action? Connected;
     public event Action? Disconnected;
+    public event Action<string>? MessageReceived;
 
     public Task StartAsync(CancellationToken ct = default)
     {
@@ -41,7 +48,7 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
     {
         while (!ct.IsCancellationRequested)
         {
-            var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+            var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             try
             {
                 using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -63,30 +70,23 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
 
             _pipe = pipe;
             Connected?.Invoke();
-            try
+            using (var linkCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                await WriteLineAsync("{\"type\":\"hello\"}", ct).ConfigureAwait(false);
-                // Keepalives let us notice the agent dying: the write throws when
-                // the pipe breaks, which drops us into the reconnect path below.
-                while (!ct.IsCancellationRequested)
+                var reading = ReadLinesAsync(pipe, linkCts.Token);
+                var keeping = KeepAliveAsync(linkCts.Token);
+                try
                 {
-                    await DelayQuietly(KeepaliveInterval, ct).ConfigureAwait(false);
-                    if (ct.IsCancellationRequested) break;
-                    await WriteLineAsync("{\"type\":\"ping\"}", ct).ConfigureAwait(false);
+                    // Either side ending means the agent is gone: a keepalive write
+                    // threw (the pipe broke), or the agent closed its end (EOF).
+                    await Task.WhenAny(reading, keeping).ConfigureAwait(false);
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                // shutting down
-            }
-            catch (Exception)
-            {
-                // Pipe broke — the agent stopped. Fall through to signal + retry.
-            }
-            finally
-            {
-                _pipe = null;
-                await pipe.DisposeAsync().ConfigureAwait(false);
+                finally
+                {
+                    linkCts.Cancel();
+                    try { await Task.WhenAll(reading, keeping).ConfigureAwait(false); } catch { }
+                    _pipe = null;
+                    await pipe.DisposeAsync().ConfigureAwait(false);
+                }
             }
 
             if (!ct.IsCancellationRequested)
@@ -97,7 +97,48 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
         }
     }
 
-    public Task SendAsync(string line, CancellationToken ct = default) => WriteLineAsync(line, ct, bestEffort: true);
+    private async Task KeepAliveAsync(CancellationToken ct)
+    {
+        await WriteLineAsync("{\"type\":\"hello\"}", ct).ConfigureAwait(false);
+        // What the extension sent while the pipe was still coming up: a service
+        // worker woken by a navigation reports blocking it before the host has
+        // reached the agent.
+        while (_pending.TryDequeue(out var pending))
+            await WriteLineAsync(pending, ct).ConfigureAwait(false);
+        // Keepalives let us notice the agent dying: the write throws when the
+        // pipe breaks, which ends this task and the connection with it.
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(KeepaliveInterval, ct).ConfigureAwait(false);
+            await WriteLineAsync("{\"type\":\"ping\"}", ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task ReadLinesAsync(Stream pipe, CancellationToken ct)
+    {
+        using var reader = new StreamReader(pipe, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+        while (!ct.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
+            if (line is null) return; // the agent closed its end
+            if (line.Length > 0)
+                MessageReceived?.Invoke(line);
+        }
+    }
+
+    public Task SendAsync(string line, CancellationToken ct = default)
+    {
+        var pipe = _pipe;
+        if (pipe is null || !pipe.IsConnected)
+        {
+            // Not connected (yet): keep it for the next connection, the newest
+            // MaxPending only. The agent drops one about a session that is over.
+            _pending.Enqueue(line);
+            while (_pending.Count > MaxPending && _pending.TryDequeue(out _)) { }
+            return Task.CompletedTask;
+        }
+        return WriteLineAsync(line, ct, bestEffort: true);
+    }
 
     private async Task WriteLineAsync(string line, CancellationToken ct, bool bestEffort = false)
     {
@@ -117,7 +158,7 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
         }
         catch when (bestEffort)
         {
-            // Drop the forwarded ping; the keepalive loop owns drop detection.
+            // Drop the forwarded message; the keepalive loop owns drop detection.
         }
         finally
         {

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import '../api/sessions_api.dart';
+import '../feed/feed_history.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/api_error_text.dart';
 import 'past_session_shared.dart';
@@ -162,6 +163,7 @@ class _PastSessionPageState extends State<PastSessionPage> {
             ],
             _PanelLabel(AppLocalizations.of(context).pastEventLog),
             _EventLog(
+              sessionId: detail.id,
               events: detail.recentEvents,
               participants: detail.participants,
             ),
@@ -359,6 +361,10 @@ class _ParticipantsList extends StatelessWidget {
   }
 }
 
+/// What each student did, one row per student: their name and, in plain
+/// words, how often each kind of thing happened ("12 app switches, 3 blocked
+/// websites", #498). The counts per event kind stay out of the way, in a
+/// tooltip, for troubleshooting.
 class _SummaryList extends StatelessWidget {
   const _SummaryList({required this.summaries, required this.participants});
   final List<SessionEventSummary> summaries;
@@ -367,9 +373,11 @@ class _SummaryList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final nameById = {for (final p in participants) p.userId: p.displayName};
-    // Group per student so a row reads "Alice — 12 ForegroundChange, 3 BlockedUrl"
-    // rather than one row per (student, kind). Easier to scan at a glance.
+    // Group per student so a row reads "Alice — 12 app switches, 3 blocked
+    // websites" rather than one row per (student, kind). Easier to scan at a
+    // glance.
     final byUser = <String, List<SessionEventSummary>>{};
     for (final s in summaries) {
       byUser.putIfAbsent(s.userId, () => []).add(s);
@@ -383,7 +391,9 @@ class _SummaryList extends StatelessWidget {
               Expanded(
                 flex: 3,
                 child: Text(
-                  nameById[entry.key] ?? entry.key,
+                  // Someone off the roster (the teacher, whose approvals for
+                  // the whole class are theirs) has no name here; never an id.
+                  nameById[entry.key] ?? '—',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: PlinkColors.ink,
                   ),
@@ -391,9 +401,17 @@ class _SummaryList extends StatelessWidget {
               ),
               Expanded(
                 flex: 5,
-                child: Text(
-                  entry.value.map((s) => '${s.count} ${s.kind}').join(', '),
-                  style: pastMonoSpec(PlinkColors.ink60, PlinkType.labelSm),
+                child: Tooltip(
+                  message: entry.value
+                      .map((s) => '${s.kind}: ${s.count}')
+                      .join('\n'),
+                  waitDuration: const Duration(seconds: 1),
+                  child: Text(
+                    storedSummaryPhrases(l10n, entry.value).join(', '),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: PlinkColors.ink60,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -484,10 +502,17 @@ class _UnapprovedList extends StatelessWidget {
 }
 
 /// The event log — the archive's read-out, the muted counterpart of the live
-/// feed. Each event is a hairline row: a mono tabular timestamp, the student
-/// name, the raw event kind as a mono technical label, and a condensed payload.
+/// feed. Each event is a hairline row: a mono tabular timestamp and the event
+/// as one plain sentence about the student it concerns, the way the live feed
+/// reads it (#491, #498). The raw event stays out of the way, in a tooltip,
+/// for troubleshooting.
 class _EventLog extends StatelessWidget {
-  const _EventLog({required this.events, required this.participants});
+  const _EventLog({
+    required this.sessionId,
+    required this.events,
+    required this.participants,
+  });
+  final String sessionId;
   final List<SessionRecentEvent> events;
   final List<SessionParticipantInfo> participants;
 
@@ -507,6 +532,7 @@ class _EventLog extends StatelessWidget {
         ),
       );
     }
+    final l10n = AppLocalizations.of(context);
     final nameById = {for (final p in participants) p.userId: p.displayName};
     return Padding(
       padding: const EdgeInsets.fromLTRB(
@@ -524,7 +550,12 @@ class _EventLog extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
               child: _EventRow(
                 event: events[i],
-                name: nameById[events[i].userId],
+                sentence: storedEventSentence(
+                  l10n,
+                  events[i],
+                  sessionId: sessionId,
+                  name: nameById[events[i].userId],
+                ),
               ),
             ),
           ],
@@ -535,9 +566,15 @@ class _EventLog extends StatelessWidget {
 }
 
 class _EventRow extends StatelessWidget {
-  const _EventRow({required this.event, required this.name});
+  const _EventRow({required this.event, required this.sentence});
   final SessionRecentEvent event;
-  final String? name;
+  final String sentence;
+
+  /// The event as the backend stored it, for troubleshooting: on a lingering
+  /// hover, out of the teacher's way.
+  String get _raw => event.payloadJson.isEmpty
+      ? event.kind
+      : '${event.kind}\n${event.payloadJson}';
 
   @override
   Widget build(BuildContext context) {
@@ -545,48 +582,29 @@ class _EventRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        // Mono tabular timestamp — the columns line up like a log.
+        // Mono tabular timestamp — the columns line up. The padding sets it on
+        // the sentence's first line.
         SizedBox(
           width: 84,
-          child: Text(
-            pastFormatTimeWithSeconds(event.occurredAt.toLocal()),
-            style: pastMonoSpec(PlinkColors.ink60, 12),
+          child: Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              pastFormatTimeWithSeconds(event.occurredAt.toLocal()),
+              style: pastMonoSpec(PlinkColors.ink60, 12),
+            ),
           ),
         ),
         const SizedBox(width: PlinkSpacing.s3),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Row(
-                children: <Widget>[
-                  SizedBox(
-                    width: 140,
-                    child: Text(
-                      name ?? '—',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: PlinkColors.ink60,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  const SizedBox(width: PlinkSpacing.s2),
-                  Expanded(
-                    child: Text(
-                      event.kind,
-                      style: pastMonoLabel(PlinkColors.ink),
-                    ),
-                  ),
-                ],
+          child: Tooltip(
+            message: _raw,
+            waitDuration: const Duration(seconds: 1),
+            child: Text(
+              sentence,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: PlinkColors.ink,
               ),
-              if (event.payloadJson.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 2),
-                SelectableText(
-                  event.payloadJson,
-                  style: pastMonoSpec(PlinkColors.muted, PlinkType.labelSm),
-                ),
-              ],
-            ],
+            ),
           ),
         ),
       ],

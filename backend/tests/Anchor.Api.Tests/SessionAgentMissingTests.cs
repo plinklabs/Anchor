@@ -86,9 +86,10 @@ public sealed class SessionAgentMissingTests : IClassFixture<SessionAgentMissing
         var missing = await RosterRowAsync(teacher, sessionId, student.Id);
         Assert.Equal(nameof(ParticipantLiveState.AgentMissing), missing.State);
         Assert.False(missing.Tampered);
-        // Nothing joined for this classmate: still not joined, never missing.
-        Assert.Equal(nameof(ParticipantLiveState.NeverJoined), (await RosterRowAsync(teacher, sessionId, absent.Id)).State);
-        Assert.Empty(PushedStates(sessionId, absent.Id));
+        // Nothing joined for this classmate: their laptop isn't connected at
+        // all (#493), which is not a missing agent.
+        Assert.Equal(nameof(ParticipantLiveState.NotConnected), (await RosterRowAsync(teacher, sessionId, absent.Id)).State);
+        Assert.Equal(new[] { nameof(ParticipantLiveState.NotConnected) }, PushedStates(sessionId, absent.Id));
 
         // The agent starts after all: it joins, and pings an interval later.
         await using var agent = Connect(student, "Student");

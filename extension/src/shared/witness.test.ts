@@ -1,46 +1,94 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  classifyHostMessage,
+  parseHostMessage,
   nextReconnectDelayMs,
   WitnessClient,
   type RuntimePort,
 } from './witness';
 
-describe('classifyHostMessage', () => {
+const DOMAINS = [{ matchType: 'Wildcard', value: '*.sharepoint.com' }];
+
+describe('parseHostMessage', () => {
   it('maps agent_unavailable / agent_available to their signals', () => {
-    expect(classifyHostMessage({ type: 'agent_unavailable' })).toBe('agent_unavailable');
-    expect(classifyHostMessage({ type: 'agent_available' })).toBe('agent_available');
+    expect(parseHostMessage({ type: 'agent_unavailable' })).toEqual({ kind: 'agent_unavailable' });
+    expect(parseHostMessage({ type: 'agent_available' })).toEqual({ kind: 'agent_available' });
   });
 
   it('ignores unknown, missing, or malformed messages', () => {
-    expect(classifyHostMessage({ type: 'ping' })).toBe('ignore');
-    expect(classifyHostMessage({})).toBe('ignore');
-    expect(classifyHostMessage(null)).toBe('ignore');
-    expect(classifyHostMessage(undefined)).toBe('ignore');
+    expect(parseHostMessage({ type: 'ping' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({})).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage(null)).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage(undefined)).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage('session_started')).toEqual({ kind: 'ignore' });
   });
 
-  it('maps a backend_url message carrying a usable url to its signal (#204)', () => {
-    expect(classifyHostMessage({ type: 'backend_url', url: 'https://anchor.example' }))
-      .toBe('backend_url');
+  it('ignores the backend_url / auth_config the host still sends for older extensions (#489)', () => {
+    // The extension no longer signs in or connects to the backend itself.
+    expect(parseHostMessage({ type: 'backend_url', url: 'https://anchor.example' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'auth_config', tenantId: 't', clientId: 'c', scope: 's' })).toEqual({
+      kind: 'ignore',
+    });
   });
 
-  it('ignores a backend_url message with no usable url', () => {
-    // A blank or missing url must not register as a signal — otherwise it could
-    // wipe a working backend URL.
-    expect(classifyHostMessage({ type: 'backend_url' })).toBe('ignore');
-    expect(classifyHostMessage({ type: 'backend_url', url: '' })).toBe('ignore');
-    expect(classifyHostMessage({ type: 'backend_url', url: '   ' })).toBe('ignore');
+  it('parses the session the agent hands down (#489)', () => {
+    expect(
+      parseHostMessage({
+        type: 'session_started',
+        sessionId: 's1',
+        classId: 'c1',
+        joinCode: 'ABC123',
+        startedAt: '2026-11-11T08:00:00Z',
+        domains: DOMAINS,
+      }),
+    ).toEqual({
+      kind: 'agent',
+      message: {
+        type: 'session_started',
+        sessionId: 's1',
+        classId: 'c1',
+        joinCode: 'ABC123',
+        startedAt: '2026-11-11T08:00:00Z',
+        domains: DOMAINS,
+      },
+    });
+    expect(parseHostMessage({ type: 'no_session' })).toEqual({ kind: 'agent', message: { type: 'no_session' } });
+    expect(parseHostMessage({ type: 'session_ended', sessionId: 's1' })).toEqual({
+      kind: 'agent',
+      message: { type: 'session_ended', sessionId: 's1' },
+    });
+    expect(parseHostMessage({ type: 'allowlist_replaced', sessionId: 's1', domains: [] })).toEqual({
+      kind: 'agent',
+      message: { type: 'allowlist_replaced', sessionId: 's1', domains: [] },
+    });
+    expect(parseHostMessage({ type: 'allowlist_amended', sessionId: 's1', addedDomains: DOMAINS })).toEqual({
+      kind: 'agent',
+      message: { type: 'allowlist_amended', sessionId: 's1', addedDomains: DOMAINS },
+    });
   });
 
-  it('maps a complete auth_config message to its signal (#289)', () => {
-    expect(classifyHostMessage({ type: 'auth_config', tenantId: 't', clientId: 'c', scope: 's' }))
-      .toBe('auth_config');
+  it('ignores a session message it cannot apply whole, so it never wipes a working allowlist', () => {
+    expect(parseHostMessage({ type: 'session_started', domains: DOMAINS })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'session_started', sessionId: 's1' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'session_started', sessionId: 's1', domains: [{ value: 'x' }] })).toEqual({
+      kind: 'ignore',
+    });
+    expect(parseHostMessage({ type: 'session_ended', sessionId: '  ' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'allowlist_replaced', sessionId: 's1', domains: 'x' })).toEqual({
+      kind: 'ignore',
+    });
+    expect(parseHostMessage({ type: 'allowlist_amended', sessionId: 's1' })).toEqual({ kind: 'ignore' });
   });
 
-  it('ignores a partial auth_config — a half-filled config cannot drive sign-in', () => {
-    expect(classifyHostMessage({ type: 'auth_config', tenantId: 't', clientId: 'c' })).toBe('ignore');
-    expect(classifyHostMessage({ type: 'auth_config', tenantId: 't', clientId: '', scope: 's' })).toBe('ignore');
-    expect(classifyHostMessage({ type: 'auth_config', tenantId: '  ', clientId: 'c', scope: 's' })).toBe('ignore');
+  it('parses the answer to an unblock request', () => {
+    expect(parseHostMessage({ type: 'unblock_request_result', requestId: 'r1', ok: true })).toEqual({
+      kind: 'unblock_result',
+      requestId: 'r1',
+      result: { ok: true },
+    });
+    expect(
+      parseHostMessage({ type: 'unblock_request_result', requestId: 'r1', ok: false, error: 'hub down' }),
+    ).toEqual({ kind: 'unblock_result', requestId: 'r1', result: { ok: false, error: 'hub down' } });
+    expect(parseHostMessage({ type: 'unblock_request_result', ok: true })).toEqual({ kind: 'ignore' });
   });
 });
 
@@ -114,7 +162,7 @@ describe('WitnessClient', () => {
     const port = new h.FakePort();
     const client = new WitnessClient({
       connect: () => port,
-      onAgentUnavailable: vi.fn(),
+      onAgentMessage: vi.fn(),
       setTimeoutFn: h.setTimeoutFn,
       clearTimeoutFn: h.clearTimeoutFn,
       pingIntervalMs: 15_000,
@@ -134,6 +182,7 @@ describe('WitnessClient', () => {
     const onAgentAvailable = vi.fn();
     const client = new WitnessClient({
       connect: () => port,
+      onAgentMessage: vi.fn(),
       onAgentUnavailable,
       onAgentAvailable,
       setTimeoutFn: h.setTimeoutFn,
@@ -152,49 +201,113 @@ describe('WitnessClient', () => {
     expect(onAgentUnavailable).toHaveBeenCalledTimes(1);
   });
 
-  it('hands a backend_url the host relays to onBackendUrl (#204)', () => {
+  it("hands the agent's session messages to onAgentMessage, in order (#489)", () => {
     const h = makeHarness();
     const port = new h.FakePort();
-    const onBackendUrl = vi.fn();
+    const onAgentMessage = vi.fn();
     const client = new WitnessClient({
       connect: () => port,
-      onAgentUnavailable: vi.fn(),
-      onBackendUrl,
+      onAgentMessage,
       setTimeoutFn: h.setTimeoutFn,
       clearTimeoutFn: h.clearTimeoutFn,
     });
 
     client.start();
-    port.emit({ type: 'backend_url', url: 'https://anchor.example' });
-    expect(onBackendUrl).toHaveBeenCalledTimes(1);
-    expect(onBackendUrl).toHaveBeenCalledWith('https://anchor.example');
+    port.emit({ type: 'agent_available' });
+    port.emit({ type: 'session_started', sessionId: 's1', domains: DOMAINS });
+    port.emit({ type: 'session_ended', sessionId: 's1' });
+    // A malformed one never reaches the handler.
+    port.emit({ type: 'session_started' });
 
-    // A blank url is not delivered — it can't wipe a good configuration.
-    port.emit({ type: 'backend_url', url: '   ' });
-    expect(onBackendUrl).toHaveBeenCalledTimes(1);
+    expect(onAgentMessage.mock.calls.map(([m]) => m.type)).toEqual(['session_started', 'session_ended']);
   });
 
-  it('hands a complete auth_config the host relays to onAuthConfig (#289)', () => {
+  it('posts a report to the agent while the port is open, and drops it when there is none', () => {
     const h = makeHarness();
     const port = new h.FakePort();
-    const onAuthConfig = vi.fn();
     const client = new WitnessClient({
       connect: () => port,
-      onAgentUnavailable: vi.fn(),
-      onAuthConfig,
+      onAgentMessage: vi.fn(),
       setTimeoutFn: h.setTimeoutFn,
       clearTimeoutFn: h.clearTimeoutFn,
     });
+    const report = {
+      type: 'blocked_url' as const,
+      sessionId: 's1',
+      url: 'https://offlist.test/',
+      host: 'offlist.test',
+      tabId: 4,
+      occurredAt: '2026-11-11T08:00:00Z',
+    };
+
+    expect(client.report(report)).toBe(false);
+    client.start();
+    // Even before the host's first message: a worker woken by a navigation
+    // reports blocking it before the host has spoken.
+    expect(client.report(report)).toBe(true);
+    expect(port.posted).toEqual([report]);
+
+    port.drop();
+    expect(client.report(report)).toBe(false);
+  });
+
+  it("resolves an unblock request with the agent's answer to it", async () => {
+    const h = makeHarness();
+    const port = new h.FakePort();
+    const client = new WitnessClient({
+      connect: () => port,
+      onAgentMessage: vi.fn(),
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+      newRequestId: () => 'r1',
+    });
+    client.start();
+    port.emit({ type: 'agent_available' });
+
+    const answer = client.requestUnblock({ sessionId: 's1', url: 'https://docs.test/', host: 'docs.test' });
+    expect(port.posted).toEqual([
+      { type: 'unblock_request', requestId: 'r1', sessionId: 's1', url: 'https://docs.test/', host: 'docs.test' },
+    ]);
+    // An answer to another request is not this one's.
+    port.emit({ type: 'unblock_request_result', requestId: 'other', ok: false });
+    port.emit({ type: 'unblock_request_result', requestId: 'r1', ok: false, error: 'hub down' });
+
+    await expect(answer).resolves.toEqual({ ok: false, error: 'hub down' });
+  });
+
+  it('rejects an unblock request when no agent is connected, answers late, or the link drops', async () => {
+    const h = makeHarness();
+    const port = new h.FakePort();
+    let n = 0;
+    const client = new WitnessClient({
+      connect: () => port,
+      onAgentMessage: vi.fn(),
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+      newRequestId: () => `r${++n}`,
+      unblockTimeoutMs: 10_000,
+    });
 
     client.start();
-    port.emit({ type: 'auth_config', tenantId: '  t  ', clientId: '  c  ', scope: '  s  ' });
-    expect(onAuthConfig).toHaveBeenCalledTimes(1);
-    // Fields are trimmed before delivery.
-    expect(onAuthConfig).toHaveBeenCalledWith({ tenantId: 't', clientId: 'c', scope: 's' });
+    // The host never spoke: there is no agent to send it.
+    await expect(client.requestUnblock({ sessionId: 's1', url: 'u', host: 'h' })).rejects.toThrow(/not connected/);
 
-    // A partial config is not delivered — it can't half-configure a working auth.
-    port.emit({ type: 'auth_config', tenantId: 't', clientId: '', scope: 's' });
-    expect(onAuthConfig).toHaveBeenCalledTimes(1);
+    port.emit({ type: 'agent_available' });
+    const late = client.requestUnblock({ sessionId: 's1', url: 'u', host: 'h' });
+    expect(h.runDue(10_000)).toBe(1);
+    await expect(late).rejects.toThrow(/did not answer/);
+
+    // The agent behind the host goes away: a request waiting on it fails at
+    // once, and so does the next one, until the agent is back.
+    const waiting = client.requestUnblock({ sessionId: 's1', url: 'u', host: 'h' });
+    port.emit({ type: 'agent_unavailable' });
+    await expect(waiting).rejects.toThrow(/went away/);
+    await expect(client.requestUnblock({ sessionId: 's1', url: 'u', host: 'h' })).rejects.toThrow(/not connected/);
+
+    port.emit({ type: 'agent_available' });
+    const dropped = client.requestUnblock({ sessionId: 's1', url: 'u', host: 'h' });
+    port.drop();
+    await expect(dropped).rejects.toThrow(/dropped/);
   });
 
   it('reconnects with backoff after the port drops', () => {
@@ -203,7 +316,7 @@ describe('WitnessClient', () => {
     let i = 0;
     const client = new WitnessClient({
       connect: () => ports[i++],
-      onAgentUnavailable: vi.fn(),
+      onAgentMessage: vi.fn(),
       setTimeoutFn: h.setTimeoutFn,
       clearTimeoutFn: h.clearTimeoutFn,
     });
@@ -229,7 +342,7 @@ describe('WitnessClient', () => {
     let i = 0;
     const client = new WitnessClient({
       connect: () => ports[i++],
-      onAgentUnavailable: vi.fn(),
+      onAgentMessage: vi.fn(),
       setTimeoutFn: h.setTimeoutFn,
       clearTimeoutFn: h.clearTimeoutFn,
     });
@@ -253,7 +366,7 @@ describe('WitnessClient', () => {
     let i = 0;
     const client = new WitnessClient({
       connect: () => ports[i++],
-      onAgentUnavailable: vi.fn(),
+      onAgentMessage: vi.fn(),
       onAgentAvailable: vi.fn(),
       setTimeoutFn: h.setTimeoutFn,
       clearTimeoutFn: h.clearTimeoutFn,
@@ -280,7 +393,7 @@ describe('WitnessClient', () => {
       connect: () => {
         throw new Error('Specified native messaging host not found.');
       },
-      onAgentUnavailable: vi.fn(),
+      onAgentMessage: vi.fn(),
       setTimeoutFn: h.setTimeoutFn,
       clearTimeoutFn: h.clearTimeoutFn,
     });
@@ -294,7 +407,7 @@ describe('WitnessClient', () => {
     const port = new h.FakePort();
     const client = new WitnessClient({
       connect: () => port,
-      onAgentUnavailable: vi.fn(),
+      onAgentMessage: vi.fn(),
       setTimeoutFn: h.setTimeoutFn,
       clearTimeoutFn: h.clearTimeoutFn,
     });

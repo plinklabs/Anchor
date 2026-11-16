@@ -49,12 +49,22 @@ internal static class StartupRegistration
     /// on every update — a Velopack update lands in a new versioned install dir, so
     /// the command must be re-pointed (idempotently) to the new path. Best-effort:
     /// a failure here must not block the install/update.
+    ///
+    /// <para>
+    /// Honours <see cref="Program.StartupRunKeyEnvVar"/> like the dev CLI mode, so the
+    /// update e2e that runs this hook in a stand-in install (#487) writes to a throwaway
+    /// key instead of pointing the developer's own Run entry at a temporary folder. A
+    /// student who sets it only moves their own Run entry, which they can delete anyway.
+    /// </para>
     /// </summary>
     public static void RegisterForInstall()
     {
         try
         {
-            Build(keyOverride: null).EnsureRegistered(CurrentExePath());
+            var keyOverride = Environment.GetEnvironmentVariable(Program.StartupRunKeyEnvVar) is { Length: > 0 } key
+                ? key
+                : null;
+            Build(keyOverride).EnsureRegistered(CurrentExePath());
         }
         catch
         {

@@ -121,6 +121,15 @@ class _DemoSessions extends SessionsApi {
   Future<List<UnblockRequestSummary>> unblockRequests(String sessionId) async =>
       sessionId == demoPastSessionId ? const [] : demoPendingRequests();
 
+  // The demo hub replays the live feed; the joins the page rebuilds from the
+  // roster (#492) are the same events, so it shows them once.
+  @override
+  Future<List<SessionRecentEvent>> sessionEvents(
+    String sessionId, {
+    Iterable<String> kinds = const <String>[],
+    int limit = 200,
+  }) async => const [];
+
   @override
   Future<List<SessionBundleInfo>> updateBundles(
     String sessionId,

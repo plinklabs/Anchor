@@ -22,7 +22,8 @@
       "JoinDeclined",
       "UnblockApproved",
       "TamperDetected",
-      "AgentMissing"
+      "AgentMissing",
+      "NotConnected"
     ],
     "ClassMembershipRole": ["Member", "Teacher"],
     "ClassMembershipImportStatus": ["Added", "AlreadyMember", "NotFoundInEntra", "WrongSchool"],
@@ -131,6 +132,18 @@
     "PUT sessions/{id}/bundles": {
       "request": { "bundleIds": ["string"] },
       "response": { "bundles": [{ "id": "string", "name": "string" }] }
+    },
+    "GET sessions/{id}/events": {
+      "query": ["kind", "limit"],
+      "response": [
+        {
+          "id": "string",
+          "userId": "string",
+          "kind": "EventKind",
+          "payloadJson": "string",
+          "occurredAt": "date-time"
+        }
+      ]
     },
     "GET sessions/{id}/unblock-requests": {
       "response": [

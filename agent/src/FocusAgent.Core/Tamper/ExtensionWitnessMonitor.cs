@@ -56,8 +56,9 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
     /// True while the extension's witness host is connected — i.e. the extension
     /// is installed and running. <see cref="FocusAgent.Core.Extension.ExtensionSelfRegistrar"/>
     /// reads this as the success signal for the force-install policy (#211): if it
-    /// stays false past the grace period, the policy didn't take and the guided
-    /// install is shown.
+    /// stays false past the grace period (which starts once Edge runs) and the
+    /// extension isn't installed in an Edge profile either (#488), the policy
+    /// didn't take and the guided install is shown.
     /// </summary>
     public bool IsConnected
     {
