@@ -901,6 +901,9 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
         return IntPtr.Zero;
     }
 
+    /// <summary>The student closes the browser altogether: no window of it is left (#518).</summary>
+    public static void CloseBrowser() => KillNotepad();
+
     private static void KillNotepad()
     {
         foreach (var p in Process.GetProcessesByName("notepad"))

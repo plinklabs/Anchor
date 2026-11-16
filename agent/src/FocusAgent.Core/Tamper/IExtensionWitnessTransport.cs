@@ -12,9 +12,9 @@ namespace FocusAgent.Core.Tamper;
 /// be raised from different threads for different connections; for one
 /// connection, connected always comes before disconnected.
 ///
-/// Split out as an interface so the monitor's decision logic (drop during an
-/// active session → report) is unit-testable with a fake transport, the same
-/// way <c>ISessionHubConnection</c> lets the heartbeat pump be tested headless.
+/// Split out as an interface so what the monitor and the guard make of a drop
+/// is unit-testable with a fake transport, the same way
+/// <c>ISessionHubConnection</c> lets the heartbeat pump be tested headless.
 /// </summary>
 public interface IExtensionWitnessTransport
 {
@@ -23,8 +23,9 @@ public interface IExtensionWitnessTransport
 
     /// <summary>
     /// Raised when a link drops: the host process exited because the browser
-    /// closed its stdin, which happens when the extension is disabled, removed,
-    /// or the profile's last window (or the whole browser) closes. This is the
+    /// closed its stdin, which happens when the extension is disabled, removed
+    /// or restarted (an option changed on its page, an update, a reload), or
+    /// the profile's last window (or the whole browser) closes. This is the
     /// signal the extension cannot send about itself.
     /// </summary>
     event EventHandler<WitnessConnection>? WitnessDisconnected;

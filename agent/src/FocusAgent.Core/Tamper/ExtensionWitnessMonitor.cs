@@ -4,33 +4,29 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FocusAgent.Core.Tamper;
 
 /// <summary>
-/// Turns the extension witness link's drop into a tamper report (#146 part 1).
-/// The extension cannot witness its own disablement/removal, so the agent acts
-/// as the on-box witness: when the native-messaging link drops while a session
-/// is joined, the student disabled/removed the extension (or closed the browser)
-/// mid-lesson, which we surface as <see cref="TamperKinds.ExtensionDisabled"/>.
+/// Keeps track of the extension witness links (#146 part 1). The extension
+/// cannot witness its own disablement or removal, so the agent is the on-box
+/// witness: the native-messaging link of an extension that goes away drops.
 ///
-/// Reporting is gated on an active <em>joined</em> session — the hub rejects
-/// events from a non-participant, and a drop outside a session is just the
-/// student closing their browser, not tampering. The report makes the drop
-/// visible to the teacher; <see cref="ExtensionGuard"/> listens to
-/// <see cref="ConnectionChanged"/> and pauses Edge while the extension stays
-/// gone (#427).
+/// A drop alone says little, though. The link drops the same way when the
+/// extension is restarted (an option changed on its page, an update, a reload),
+/// when Edge is closed, and when one profile's last window is closed (#518). So
+/// the monitor only reports what the links do, and <see cref="ExtensionGuard"/>
+/// decides what a drop means: it waits a grace period, looks whether Edge is
+/// still on screen, and only then pauses Edge (#427) and tells the teacher.
 ///
 /// Every Edge profile has its own copy of the extension and its own link (#517),
 /// so the monitor keeps the set of open <see cref="Connections"/> and raises
 /// <see cref="ConnectionOpened"/> / <see cref="ConnectionClosed"/> for each one.
 /// "The extension is there" (<see cref="IsConnected"/>,
-/// <see cref="ConnectionChanged"/>) means at least one of them is connected, and
-/// for now only the last one dropping is reported: one profile's link closing
-/// while another is still up is usually that profile's last window being closed,
-/// which the pipe alone can't tell from the extension being switched off there.
+/// <see cref="ConnectionChanged"/>) means at least one of them is connected. One
+/// profile's link closing while another is still up is usually that profile's
+/// last window being closed; the extension being switched off there instead is
+/// found by <see cref="OpenProfileExtensionWatch"/>, which the links can't show.
 /// </summary>
 public sealed class ExtensionWitnessMonitor : IAsyncDisposable
 {
     private readonly IExtensionWitnessTransport _transport;
-    private readonly ITamperReporter _reporter;
-    private readonly Func<Guid?> _activeSession;
     private readonly ILogger<ExtensionWitnessMonitor> _log;
     private readonly object _gate = new();
 
@@ -43,21 +39,11 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
     private bool _hasConnected;
 
     /// <param name="transport">The witness link surfacing connect/disconnect.</param>
-    /// <param name="reporter">Sends the TamperDetected event.</param>
-    /// <param name="activeSession">
-    /// Returns the joined session id, or null when not in a session. Wire to
-    /// <c>SessionCoordinator.JoinedSessionId</c>: only a joined session can carry
-    /// a participant-scoped event, and only then is a drop tampering.
-    /// </param>
     public ExtensionWitnessMonitor(
         IExtensionWitnessTransport transport,
-        ITamperReporter reporter,
-        Func<Guid?> activeSession,
         ILogger<ExtensionWitnessMonitor>? log = null)
     {
         _transport = transport;
-        _reporter = reporter;
-        _activeSession = activeSession;
         _log = log ?? NullLogger<ExtensionWitnessMonitor>.Instance;
 
         _transport.WitnessConnected += OnConnected;
@@ -161,28 +147,15 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
 
             if (open > 0)
             {
-                // Another profile's extension is still connected (#517). Most
-                // often this is a profile's last window being closed.
+                // Another profile's extension is still connected (#517).
                 _log.LogInformation(
-                    "Extension witness connection {Connection} dropped; {Open} still open — not reporting.",
-                    connection, open);
+                    "Extension witness connection {Connection} dropped; {Open} still open.", connection, open);
                 return;
             }
 
+            _log.LogInformation("Extension witness connection {Connection} dropped; none left.", connection);
             RaiseConnectionChanged(false);
         }
-
-        var sessionId = _activeSession();
-        if (sessionId is null)
-        {
-            _log.LogDebug("Extension witness dropped outside a session — not reporting.");
-            return;
-        }
-
-        _log.LogWarning(
-            "Extension witness dropped during session {SessionId} — reporting {Kind}.",
-            sessionId, TamperKinds.ExtensionDisabled);
-        _ = ReportAsync(sessionId.Value);
     }
 
     private void Raise(EventHandler<WitnessConnection>? handlers, WitnessConnection connection, string name)
@@ -205,25 +178,8 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            // A subscriber's failure must not break the witness loop or skip the
-            // tamper report below.
+            // A subscriber's failure must not break the witness loop.
             _log.LogWarning(ex, "A witness ConnectionChanged subscriber threw (connected={Connected})", connected);
-        }
-    }
-
-    private async Task ReportAsync(Guid sessionId)
-    {
-        try
-        {
-            await _reporter.ReportAsync(sessionId, TamperKinds.ExtensionDisabled).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            // Best-effort like every other tamper report: a failed send must not
-            // crash the witness loop. The dashboard still surfaces it on reload
-            // if the event reached the backend before the transport hiccup.
-            _log.LogWarning(ex, "Reporting {Kind} failed for session {SessionId}",
-                TamperKinds.ExtensionDisabled, sessionId);
         }
     }
 

@@ -220,9 +220,7 @@ public partial class App : Application
             // SessionStarted broadcast can possibly arrive.
             _heartbeat = _host.Services.GetRequiredService<SessionHeartbeatService>();
             // Resolve + start the extension witness eagerly (#146 part 1) so the
-            // named-pipe server is listening before the native host can connect,
-            // and so its SessionCoordinator-backed gate is wired before the first
-            // session. Reports only fire on a drop during a joined session.
+            // named-pipe server is listening before the native host can connect.
             var witnessMonitor = _host.Services.GetRequiredService<ExtensionWitnessMonitor>();
             _witnessMonitor = witnessMonitor;
             // #489: the session relay is the extension's only source of the session
@@ -234,6 +232,8 @@ public partial class App : Application
             // session — resolved now so its SessionJoined / ConnectionChanged
             // subscriptions are in place before the first session or witness change.
             var extensionGuard = _host.Services.GetRequiredService<ExtensionGuard>();
+            // #518: what the guard reads the open Edge profiles through.
+            var openProfiles = _host.Services.GetRequiredService<OpenProfileExtensionWatch>();
             // #211 + #405: self-register the Edge extension. With no force-install
             // policy under HKLM or HKCU (and no earlier "not now"), explain the step
             // and add the HKLM entry through one UAC prompt; then (the witness pipe
@@ -361,6 +361,8 @@ public partial class App : Application
                         // #517: one per Edge profile with the extension running.
                         witnessConnections = witnessMonitor.Connections.Count,
                         state = extensionGuard.State.ToString(),
+                        // #518: open Edge profiles with the extension switched off.
+                        profilesWithExtensionOff = openProfiles.Profiles,
                     },
                     onTurnExtensionBackOn: _focus.TurnExtensionBackOn,
                     // #452: which overlay the student is on, if any.
@@ -1438,10 +1440,9 @@ public partial class App : Application
 
         // #146 part 1 -- agent-as-witness tamper detection. The named-pipe
         // transport hosts the link the browser's native messaging host connects
-        // to; the monitor turns a drop during a joined session into a
-        // TamperDetected{extension_disabled} report. JoinedSessionId (not
-        // ActiveSessionId) gates it: the hub only accepts events from a joined
-        // participant, and a drop outside a session is just a closed browser.
+        // to, and the monitor keeps track of the links. What a drop means is the
+        // guard's call (below): the TamperDetected{extension_disabled} report goes
+        // out when it pauses Edge, never for a drop alone (#518).
         builder.Services.AddSingleton<ITamperReporter, SignalRTamperReporter>();
         builder.Services.AddOptions<WitnessSettings>()
             .Bind(builder.Configuration.GetSection(WitnessSettings.SectionName));
@@ -1452,14 +1453,37 @@ public partial class App : Application
         builder.Services.AddSingleton<IExtensionWitnessChannel>(sp => sp.GetRequiredService<NamedPipeWitnessTransport>());
         builder.Services.AddSingleton(sp => new ExtensionWitnessMonitor(
             sp.GetRequiredService<IExtensionWitnessTransport>(),
-            sp.GetRequiredService<ITamperReporter>(),
-            () => sp.GetRequiredService<SessionCoordinator>().JoinedSessionId,
             sp.GetRequiredService<ILogger<ExtensionWitnessMonitor>>()));
+        // #518 -- with several Edge profiles the links can't show the extension
+        // being switched off in one of them: another profile's is still connected,
+        // and a link that drops is as often a profile being closed. The watch reads
+        // it from Edge itself: which profiles have a window open (their windows'
+        // AppUserModelIDs) and whether the extension is on there (the profile's
+        // preferences).
+        builder.Services.AddSingleton<IBrowserWindowAppIds, BrowserWindowAppIds>();
+        builder.Services.AddSingleton<IOpenProfileExtensionProbe>(sp =>
+        {
+            var witness = sp.GetRequiredService<IOptions<WitnessSettings>>().Value;
+            var userData = string.IsNullOrWhiteSpace(witness.BrowserUserDataFolder)
+                ? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Microsoft", "Edge", "User Data")
+                : witness.BrowserUserDataFolder.Trim();
+            return new EdgeOpenProfileExtensionProbe(
+                userData,
+                sp.GetRequiredService<IBrowserWindowAppIds>(),
+                witness.BrowserProcessName,
+                sp.GetRequiredService<ExtensionPolicyParts>().Ids.All,
+                sp.GetRequiredService<ILogger<EdgeOpenProfileExtensionProbe>>());
+        });
+        builder.Services.AddSingleton<OpenProfileExtensionWatch>();
         // #427 -- the report alone left Edge an unfiltered browser while the
         // extension was off. The guard pauses Edge once the witness has stayed down
-        // past a short grace period during a joined session, and the focus
-        // controller (which takes it as an optional dependency) enforces the pause
-        // like an off-list app until the witness reconnects.
+        // past a short grace period during a joined session with Edge on screen, or
+        // an open profile has the extension switched off, and the focus controller
+        // (which takes it as an optional dependency) enforces the pause like an
+        // off-list app until the extension is back. #518 -- it tells the teacher at
+        // that moment, not on every drop of a link.
         builder.Services.AddSingleton<ExtensionGuard>();
         // #489 -- the agent is the extension's only identity: it hands the joined
         // session down over the same link and reports blocked URLs, unblock

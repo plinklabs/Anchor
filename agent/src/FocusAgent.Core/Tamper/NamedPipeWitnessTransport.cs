@@ -27,8 +27,8 @@ namespace FocusAgent.Core.Tamper;
 /// current session down on every connect.
 ///
 /// Not unit-tested — it's thin OS plumbing, like <c>StatusEndpoint</c>; the
-/// connect→disconnect→report logic it drives lives in the unit-tested monitor
-/// and relay, and the real pipe is driven by <c>WitnessHostIntegrationTests</c>
+/// logic it drives lives in the unit-tested monitor, guard and relay, and the
+/// real pipe is driven by <c>WitnessHostIntegrationTests</c>
 /// and the agent e2e.
 /// </summary>
 public sealed class NamedPipeWitnessTransport : IExtensionWitnessChannel

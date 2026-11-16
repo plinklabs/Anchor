@@ -11,8 +11,10 @@ namespace FocusAgent.Core.Tamper;
 /// <see cref="IExtensionWitnessChannel.TrySend"/> addresses.
 ///
 /// A class rather than a bare id so that what the agent learns about a
-/// connection later (which profile or install it belongs to) has a place to
-/// live.
+/// connection later has a place to live. It does not know which profile a
+/// connection belongs to, and doesn't need to: whether a profile is open with
+/// the extension off is read from Edge itself (#518,
+/// <see cref="EdgeOpenProfileExtensionProbe"/>).
 /// </summary>
 public sealed class WitnessConnection
 {

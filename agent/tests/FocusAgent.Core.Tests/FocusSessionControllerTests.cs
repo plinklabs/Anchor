@@ -1075,19 +1075,19 @@ public class FocusSessionControllerTests
         ExtensionGuard? guard = null;
         if (fixtures.WithGuard)
         {
-            var witness = new ExtensionWitnessMonitor(
-                fixtures.Transport, new NoopTamperReporter(), () => coordinator.JoinedSessionId);
+            var witness = new ExtensionWitnessMonitor(fixtures.Transport);
             guard = new ExtensionGuard(
                 coordinator,
                 witness,
                 fixtures.Windows,
+                new NoopTamperReporter(),
                 Options.Create(new SessionSettings
                 {
                     ExtensionGraceSeconds = (int)ExtensionGrace.TotalSeconds,
                     ExtensionRepairSeconds = (int)ExtensionRepair.TotalSeconds,
                 }),
                 Options.Create(new WitnessSettings()),
-                fixtures.Clock);
+                clock: fixtures.Clock);
             fixtures.Guard = guard;
         }
         var controller = new FocusSessionController(

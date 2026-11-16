@@ -39,4 +39,11 @@ public sealed record SessionSettings
     /// returns when this window runs out without it.
     /// </summary>
     public int ExtensionRepairSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// How often, during a session, the agent looks for an Edge profile that is
+    /// open with the extension switched off or removed (#518): the case the
+    /// witness link can't show while another profile's extension is connected.
+    /// </summary>
+    public int ExtensionProfileScanSeconds { get; init; } = 5;
 }
