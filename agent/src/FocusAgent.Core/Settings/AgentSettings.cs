@@ -187,6 +187,13 @@ public sealed record WitnessSettings
     /// pauses while the extension is gone during a session.
     /// </summary>
     public string BrowserProcessName { get; init; } = "msedge";
+
+    /// <summary>
+    /// The browser's <c>User Data</c> folder, whose profiles the agent reads to
+    /// find one that is open with the extension switched off (#518). Empty: Edge's
+    /// own, under <c>%LOCALAPPDATA%\Microsoft\Edge</c>.
+    /// </summary>
+    public string BrowserUserDataFolder { get; init; } = "";
 }
 
 /// <summary>

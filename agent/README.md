@@ -323,7 +323,12 @@ The browser extension has no sign-in and no backend connection: the agent is
 its only identity. Over the native-messaging witness link
 (`anchor-witness-host.exe` ↔ the agent's pipe) the agent hands it the session it
 joined, every allowlist change and the session's end, and the current state on
-every connect; the extension hands back blocked URLs, unblock requests and its
+every connect. Each Edge profile's extension has its own connection, and all of
+them are served at once (#517). The same link is how the agent notices the
+extension going away; the teacher is told ("switched off or removed") only once
+it has stayed gone past the grace period with Edge open, or is switched off in a
+profile that is still open, not when it restarts or Edge or a profile is closed
+(#518, `ExtensionGuard`). The extension hands back blocked URLs, unblock requests and its
 tamper signals, which the agent reports with its own connection
 (`ExtensionSessionRelay`). Only the registered host can reach the extension's
 port, so an arbitrary web page can't start or end a session. Protocol: see

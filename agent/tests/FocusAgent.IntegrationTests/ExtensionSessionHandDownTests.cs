@@ -140,6 +140,122 @@ public sealed class ExtensionSessionHandDownTests
         }
     }
 
+    /// <summary>
+    /// #517: every Edge profile runs its own copy of the extension, each with its
+    /// own host. A second profile opened during the lesson used to get no session
+    /// (the agent's pipe served one host at a time) and browsed unfiltered.
+    /// </summary>
+    [Fact]
+    public async Task ASecondEdgeProfile_OpenedMidSession_IsHandedTheSessionToo()
+    {
+        var api = new BackendClient(_backend.Url);
+        var stale = await api.GetRejoinableSessionIdsAsync();
+        Assert.True(
+            stale.Count == 0,
+            $"The student is still in running session(s) {string.Join(", ", stale)} that an earlier spec left " +
+            "behind; this agent would rejoin them on connect. End every session a spec starts.");
+
+        var pipeName = "anchor-witness-e2e-" + Guid.NewGuid().ToString("N");
+        await using var agent = AgentProcess.Launch(
+            _backend.Url,
+            TestConfig.StudentOid,
+            autoJoin: true,
+            extraEnvironment: new Dictionary<string, string> { ["Witness__PipeName"] = pipeName });
+        await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+
+        var firstProfile = WitnessHostProcess.Start(pipeName);
+        WitnessHostProcess? secondProfile = null;
+        try
+        {
+            await firstProfile.WaitForAsync(m => Type(m) == "no_session", Wait, "the agent to hand down 'no session'");
+
+            var classId = await api.FindClassIdAsync();
+            var ms365 = await api.FindBundleIdAsync("Microsoft 365");
+            var session = await api.StartSessionAsync(classId, new[] { ms365 });
+            var ended = false;
+            try
+            {
+                await firstProfile.WaitForAsync(
+                    m => Type(m) == "session_started" && SessionOf(m) == session.Id, Wait,
+                    "the agent to hand the session to the first profile");
+
+                // 1. The student switches to another Edge profile: its extension
+                //    connects next to the first one and gets the session as it stands.
+                secondProfile = WitnessHostProcess.Start(pipeName);
+                var started = await secondProfile.WaitForAsync(
+                    m => Type(m) == "session_started" && SessionOf(m) == session.Id, Wait,
+                    "the agent to hand the session to the second profile");
+                Assert.Contains(Domains(started, "domains"), d => d.Contains("sharepoint.com"));
+                await WaitForGuardAsync(agent, g => g.WitnessConnections == 2, "both profiles to be connected");
+
+                // 2. A block page in the second profile asks for a site: the answer
+                //    comes back to that profile, and the teacher's approval reaches both.
+                secondProfile.Send(new
+                {
+                    type = "unblock_request",
+                    requestId = "e2e-second",
+                    sessionId = session.Id,
+                    url = "https://docs.test/notes",
+                    host = "docs.test",
+                });
+                var answer = await secondProfile.WaitForAsync(
+                    m => Type(m) == "unblock_request_result" && m.GetProperty("requestId").GetString() == "e2e-second", Wait,
+                    "the agent to answer the second profile's unblock request");
+                Assert.True(answer.GetProperty("ok").GetBoolean(), $"The unblock request was refused: {answer}");
+                var pending = await WaitForUnblockRequestAsync(api, session.Id, "docs.test");
+                await api.UnblockAsync(session.Id, Assert.Single(pending.RequesterIds), "docs.test");
+                foreach (var profile in new[] { firstProfile, secondProfile })
+                {
+                    var amended = await profile.WaitForAsync(
+                        m => Type(m) == "allowlist_amended" && SessionOf(m) == session.Id, Wait,
+                        "the approved host to be handed down to both profiles");
+                    Assert.Contains("docs.test", Domains(amended, "addedDomains"));
+                }
+
+                // 3. The second profile's last window closes while the first is still
+                //    open: Edge is still filtered there, so the teacher is not told
+                //    the extension was switched off and nothing is paused.
+                await secondProfile.DisposeAsync();
+                secondProfile = null;
+                await WaitForGuardAsync(agent, g => g.WitnessConnections == 1, "the second profile's link to drop");
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                var guard = (await agent.TryGetStatusAsync())?.ExtensionGuard;
+                Assert.True(guard is { WitnessConnected: true, State: "Present" }, $"The guard left Present: {guard}");
+                Assert.DoesNotContain(await api.GetSessionEventsAsync(session.Id), e => e.Kind == "TamperDetected");
+
+                // 4. The end of the session still reaches the profile that is open.
+                await api.EndSessionAsync(session.Id);
+                ended = true;
+                await firstProfile.WaitForAsync(
+                    m => Type(m) == "session_ended" && SessionOf(m) == session.Id, Wait,
+                    "the end of the session to be handed down");
+
+                // The answer to the second profile's request never went to the first.
+                Assert.False(firstProfile.Received(m => Type(m) == "unblock_request_result"));
+            }
+            finally
+            {
+                if (!ended)
+                {
+                    try { await api.EndSessionAsync(session.Id); } catch { /* best-effort */ }
+                }
+            }
+        }
+        finally
+        {
+            if (secondProfile is not null) await secondProfile.DisposeAsync();
+            await firstProfile.DisposeAsync();
+        }
+    }
+
+    private static async Task WaitForGuardAsync(AgentProcess agent, Func<ExtensionGuardSnapshot, bool> predicate, string what)
+    {
+        var last = await agent.WaitForAsync(s => s.ExtensionGuard is { } g && predicate(g), Wait);
+        Assert.True(
+            last?.ExtensionGuard is { } guard && predicate(guard),
+            $"Timed out after {Wait.TotalSeconds:N0}s waiting for {what} (guard: {last?.ExtensionGuard}).");
+    }
+
     private static string? Type(JsonElement message) =>
         message.TryGetProperty("type", out var type) ? type.GetString() : null;
 
@@ -241,6 +357,12 @@ internal sealed class WitnessHostProcess : IAsyncDisposable
         lock (_received) seen = string.Join("\n", _received.Select(m => m.GetRawText()));
         throw new Xunit.Sdk.XunitException(
             $"Timed out after {timeout.TotalSeconds:N0}s waiting for {what}. The host wrote:\n{seen}");
+    }
+
+    /// <summary>Whether the host has written a matching message so far.</summary>
+    public bool Received(Func<JsonElement, bool> predicate)
+    {
+        lock (_received) return _received.Any(predicate);
     }
 
     private async Task ReadLoopAsync()

@@ -12,10 +12,13 @@ public static class TamperKinds
 {
     /// <summary>
     /// The extension was disabled or removed during an active session (#146
-    /// part 1). The agent is the on-box witness: it observes the native-messaging
-    /// link drop (the browser tears the host down when the extension goes away)
-    /// and reports this kind, because the extension cannot witness its own
-    /// disablement.
+    /// part 1). The agent is the on-box witness, because the extension cannot
+    /// witness its own disablement: it observes the native-messaging link drop
+    /// (the browser tears the host down when the extension goes away). The link
+    /// drops just the same when the extension restarts or the browser or a
+    /// profile is closed, so this kind is reported only once the extension has
+    /// stayed gone past the grace period with the browser open, or is switched
+    /// off in a profile that is still open (#518, <see cref="ExtensionGuard"/>).
     /// </summary>
     public const string ExtensionDisabled = "extension_disabled";
 
