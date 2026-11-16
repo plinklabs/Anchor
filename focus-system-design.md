@@ -87,7 +87,7 @@ session it joined and reports what the extension sees (#489; §6, §10).
 
 ### 5.1 Lifecycle
 
-- Installs per user from a Velopack package on GitHub Releases (no admin rights, no code-signing cert): pushed by Intune through the release's install script on managed laptops, which also starts the agent right away (#457), or run by the student on their own laptop. Updates itself via Velopack deltas; Intune never pushes new versions. The one step that asks for elevation is the Edge extension policy (§6), with a single UAC prompt, and only where no Intune profile already sets that policy.
+- Installs per user from a Velopack package on GitHub Releases (no admin rights, no code-signing cert): pushed by Intune on managed laptops as a Win32 app that runs the release's `Setup.exe` silently and then starts the agent, or run by the student on their own laptop. Updates itself via Velopack deltas. Intune only pushes a new version when its detection rule's minimum version is raised on purpose, which restarts an older running agent (see [docs/INTUNE.md](docs/INTUNE.md)). The one step that asks for elevation is the Edge extension policy (§6), with a single UAC prompt, and only where no Intune profile already sets that policy.
 - Runs at user login as a tray app.
 - Authenticates silently to the backend via Entra (WAM).
 - Maintains a persistent SignalR connection.

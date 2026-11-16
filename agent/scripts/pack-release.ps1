@@ -36,13 +36,15 @@
          (#247). Run by hand, Setup.exe starts the freshly installed agent
          itself: that is Velopack's default post-install behaviour, so no
          extra flag is needed for the "launch after install" acceptance
-         criterion. A silent install (Setup.exe --silent, as Intune runs it)
-         shows no pages and doesn't start the agent; Install-AnchorAgent.ps1
-         (step 7) starts it instead (#457, #458).
-      7. Copy the Intune install script (release-assets/Install-AnchorAgent.ps1,
-         #457) into ./artifacts/velopack next to Setup.exe. IT packages the two
-         together as the agent's Intune Win32 app; agent-release.yml uploads
-         the script to the same GitHub Release.
+         criterion. A silent install (Setup.exe --silent, as the Intune Win32
+         app runs it) shows no pages and doesn't start the agent; the app's
+         install command follows it with `Update.exe start` (docs/INTUNE.md).
+      7. Copy the alternative Intune install script
+         (release-assets/Install-AnchorAgent.ps1, #457) into ./artifacts/velopack
+         next to Setup.exe. IT packages the two together as the .intunewin, with
+         Setup.exe as the setup file; the script is an alternative install
+         command (docs/INTUNE.md, "Alternative: the install script").
+         agent-release.yml uploads it to the same GitHub Release.
 
     Release artifacts (#247): the output is a Setup.exe, the RELEASES feed, and
     the full/delta nupkg. The nupkg + RELEASES are deliberately KEPT — they are
@@ -178,7 +180,8 @@ if ($SkipPack) {
 # --instConclusion gives Setup a final success page so the install isn't a silent
 #              no-op (#247). After an interactive install Velopack starts the
 #              agent itself; after a silent one (--silent) it shows no page and
-#              doesn't start it, so Install-AnchorAgent.ps1 does (#457).
+#              doesn't start it, so the Intune app's install command runs
+#              `Update.exe start` after Setup.exe (docs/INTUNE.md).
 $mainExe = 'FocusAgent.App.exe'
 $iconPath = Join-Path $agentDir 'src/FocusAgent.App/Assets/TrayIcon.ico'
 $conclusionPath = Join-Path $scriptDir 'release-assets/install-conclusion.txt'
@@ -207,9 +210,10 @@ vpk pack `
     --outputDir $velopackDir
 if ($LASTEXITCODE -ne 0) { throw "vpk pack failed ($LASTEXITCODE)." }
 
-# The Intune install script (#457) is an asset of every release, next to
-# Setup.exe, which it runs: IT packages the two together as the .intunewin.
-# vpk only uploads its own assets, so agent-release.yml uploads this copy.
+# The alternative Intune install script (#457) is an asset of every release,
+# next to Setup.exe: IT packages the two together as the .intunewin, with
+# Setup.exe as the setup file and install command (docs/INTUNE.md). vpk only
+# uploads its own assets, so agent-release.yml uploads this copy.
 Copy-Item -LiteralPath $intuneScriptPath -Destination $velopackDir -Force
 
 Write-Host "== Velopack release written to $velopackDir =="
