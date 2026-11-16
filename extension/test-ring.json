@@ -1,5 +1,5 @@
 {
   "$comment": "The self-hosted test-ring build of the extension (#497): its ID and the public half of the key that signs it. Empty until the key exists; scripts/test-ring-key.mjs fills both in. The agent takes this ID for Anchor's next to the store's, and the test-ring packaging refuses a key that doesn't match. See docs/RELEASE.md.",
-  "extensionId": "",
-  "publicKey": ""
+  "extensionId": "fgnfeccjliecdbflngplpfhakgpjcckh",
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuji70dr3smACb8t2QgT5v3E0BG3e0NKCz+TGwhq3e7P67F7fAnUElfCGFmPnPTb6V0tl74Q5idqMTNuarapZ54HRAl6oAT8eJgWNVDO8BrW+AGMWiStt+7lBxaPNJDwyqH+V88+TTKOnESSg1GKsMBQlGsx/6UCtXNk0jV690z38MNuyvylOTYG4pd9bCcqrc9QJ6vqYl6eiNBTXN4h5JtgMMyu97LcWHi9XBR0AHtnKtymWjlholphVrBSQLVZWHTjCrTw0rDLQxUwacN7/nyLaa6YSlRNlLaHQYSvKv6Xe+GNqix+pbUbKqulad39kSgfzPTty67G7uD2m+9t0ywIDAQAB"
 }
