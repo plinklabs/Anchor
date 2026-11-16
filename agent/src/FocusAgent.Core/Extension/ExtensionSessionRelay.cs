@@ -26,17 +26,21 @@ namespace FocusAgent.Core.Extension;
 /// <see cref="ExtensionMessages.AllowlistAmended"/> on an approved unblock
 /// request, <see cref="ExtensionMessages.SessionEnded"/> when the session ends or
 /// the student leaves it, and on every witness (re)connect the current session
-/// again, or <see cref="ExtensionMessages.NoSession"/>.</item>
+/// again, or <see cref="ExtensionMessages.NoSession"/>. Every Edge profile runs
+/// its own copy of the extension over its own connection (#517): each gets the
+/// state when it connects, and every change goes to all of them.</item>
 /// <item>extension → agent: blocked URLs, unblock requests (answered with
-/// <see cref="ExtensionMessages.UnblockRequestResult"/>) and the extension's own
+/// <see cref="ExtensionMessages.UnblockRequestResult"/>, to the connection that
+/// asked) and the extension's own
 /// tamper signals, sent on as <c>ReportEvent</c> calls for the joined session.</item>
 /// <item>The extension's liveness ping (<c>ExtensionHeartbeat</c>, #149), sent
-/// for it while its witness link is up, so <c>extension_silent</c> keeps working.</item>
+/// for it while at least one witness link is up, so <c>extension_silent</c> keeps
+/// working.</item>
 /// </list>
 ///
 /// Every state change and the message it causes happen under one lock, and the
-/// channel queues messages in order, so the extension can't see a stale session
-/// after a newer one (a reconnect snapshot racing a join, say).
+/// channel queues each connection's messages in order, so no extension can see a
+/// stale session after a newer one (a connect snapshot racing a join, say).
 /// </summary>
 public sealed class ExtensionSessionRelay : IAsyncDisposable
 {
@@ -66,7 +70,8 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
 
     private SessionStartedPayload? _session;
     private List<AllowedDomainDto> _domains = new();
-    private bool _witnessConnected;
+    // Ids of the open witness connections, one per Edge profile.
+    private readonly HashSet<long> _connections = new();
     private ITimer? _heartbeat;
 
     public ExtensionSessionRelay(
@@ -111,7 +116,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     {
         var interval = TimeSpan.FromSeconds(Math.Max(1, _settings.HeartbeatIntervalSeconds));
         ITimer? previous;
-        bool sent;
+        int sent;
         lock (_gate)
         {
             _session = payload;
@@ -119,18 +124,19 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
             previous = _heartbeat;
             var sessionId = payload.SessionId;
             _heartbeat = _clock.CreateTimer(_ => OnHeartbeatDue(sessionId), null, interval, interval);
-            sent = _witness.TrySend(SessionStartedMessage());
+            sent = _witness.Broadcast(SessionStartedMessage());
         }
         previous?.Dispose();
         _log.LogInformation(
             "Handing session {SessionId} ({DomainCount} domains) to the extension: {Outcome}.",
-            payload.SessionId, payload.Domains.Count, sent ? "sent" : "no extension connected, sent when it connects");
+            payload.SessionId, payload.Domains.Count,
+            sent > 0 ? $"sent to {sent}" : "no extension connected, sent when one connects");
     }
 
     private void OnSessionLeft(object? sender, Guid sessionId)
     {
         ITimer? heartbeat;
-        bool sent;
+        int sent;
         lock (_gate)
         {
             if (_session?.SessionId != sessionId) return;
@@ -138,12 +144,12 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
             _domains = new List<AllowedDomainDto>();
             heartbeat = _heartbeat;
             _heartbeat = null;
-            sent = _witness.TrySend(Serialize(new { type = ExtensionMessages.SessionEnded, sessionId }));
+            sent = _witness.Broadcast(Serialize(new { type = ExtensionMessages.SessionEnded, sessionId }));
         }
         heartbeat?.Dispose();
         _log.LogInformation(
             "Telling the extension session {SessionId} is over: {Outcome}.",
-            sessionId, sent ? "sent" : "no extension connected");
+            sessionId, sent > 0 ? $"sent to {sent}" : "no extension connected");
     }
 
     private void OnAllowlistUpdated(object? sender, SessionBundlesUpdatedPayload payload)
@@ -152,7 +158,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         {
             if (_session?.SessionId != payload.SessionId) return;
             _domains = payload.Domains.ToList();
-            _witness.TrySend(Serialize(new
+            _witness.Broadcast(Serialize(new
             {
                 type = ExtensionMessages.AllowlistReplaced,
                 sessionId = payload.SessionId,
@@ -180,7 +186,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
                 if (seen.Add(DomainKey(domain)))
                     _domains.Add(domain);
             }
-            _witness.TrySend(Serialize(new
+            _witness.Broadcast(Serialize(new
             {
                 type = ExtensionMessages.AllowlistAmended,
                 sessionId = payload.SessionId,
@@ -192,28 +198,30 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
             payload.AddedDomains.Count, payload.SessionId);
     }
 
-    private void OnWitnessConnected(object? sender, EventArgs e)
+    private void OnWitnessConnected(object? sender, WitnessConnection connection)
     {
         Guid? sessionId;
         lock (_gate)
         {
-            _witnessConnected = true;
+            _connections.Add(connection.Id);
             sessionId = _session?.SessionId;
             // The extension may have missed anything sent while its link was down
             // (a revived service worker, Edge restarted, the extension switched
-            // back on), so it gets the whole state on every connect.
-            _witness.TrySend(_session is null
+            // back on), or never had one (a second profile opened mid-session), so
+            // it gets the whole state on every connect. Only this connection: the
+            // others already have it.
+            _witness.TrySend(connection, _session is null
                 ? Serialize(new { type = ExtensionMessages.NoSession })
                 : SessionStartedMessage());
         }
         _log.LogInformation(
-            "Extension connected; handed it {State}.",
-            sessionId is { } id ? $"session {id}" : "no session");
+            "Extension connected (connection {Connection}); handed it {State}.",
+            connection, sessionId is { } id ? $"session {id}" : "no session");
     }
 
-    private void OnWitnessDisconnected(object? sender, EventArgs e)
+    private void OnWitnessDisconnected(object? sender, WitnessConnection connection)
     {
-        lock (_gate) _witnessConnected = false;
+        lock (_gate) _connections.Remove(connection.Id);
     }
 
     // Call under _gate.
@@ -237,7 +245,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     {
         lock (_gate)
         {
-            if (_session?.SessionId != sessionId || !_witnessConnected) return;
+            if (_session?.SessionId != sessionId || _connections.Count == 0) return;
         }
         _ = PingForExtensionAsync(sessionId);
     }
@@ -258,8 +266,9 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
 
     // ---- extension → agent ---------------------------------------------------
 
-    private void OnMessageReceived(object? sender, string line)
+    private void OnMessageReceived(object? sender, WitnessMessage received)
     {
+        var line = received.Line;
         JsonElement message;
         string? type;
         try
@@ -281,7 +290,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
                 _ = ReportBlockedUrlAsync(message);
                 break;
             case ExtensionMessages.UnblockRequest:
-                _ = RelayUnblockRequestAsync(message);
+                _ = RelayUnblockRequestAsync(received.Connection, message);
                 break;
             case ExtensionMessages.Tamper:
                 _ = ReportTamperAsync(message);
@@ -318,14 +327,14 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         }
     }
 
-    private async Task RelayUnblockRequestAsync(JsonElement message)
+    private async Task RelayUnblockRequestAsync(WitnessConnection from, JsonElement message)
     {
         var requestId = GetString(message, "requestId");
         var url = GetString(message, "url");
         var sessionId = JoinedSessionFor(message, ExtensionMessages.UnblockRequest);
         if (sessionId is null || string.IsNullOrWhiteSpace(url))
         {
-            Answer(requestId, error: sessionId is null ? "Not in this session any more." : "No address to ask for.");
+            Answer(from, requestId, error: sessionId is null ? "Not in this session any more." : "No address to ask for.");
             return;
         }
 
@@ -334,21 +343,23 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         {
             await _hub.ReportEventAsync(sessionId.Value, UnblockRequestKind, payload, _clock.GetUtcNow()).ConfigureAwait(false);
             _log.LogInformation("Forwarded an unblock request in session {SessionId}.", sessionId);
-            Answer(requestId, error: null);
+            Answer(from, requestId, error: null);
         }
         catch (Exception ex)
         {
             // The student is waiting on this one: say so on the block page rather
             // than let the request vanish.
             _log.LogWarning(ex, "Reporting UnblockRequest failed for session {SessionId}", sessionId);
-            Answer(requestId, error: ex.Message);
+            Answer(from, requestId, error: ex.Message);
         }
     }
 
-    private void Answer(string? requestId, string? error)
+    // The answer goes to the profile that asked: request ids are only unique
+    // within one extension, and the others have no block page waiting on it.
+    private void Answer(WitnessConnection to, string? requestId, string? error)
     {
         if (requestId is null) return;
-        _witness.TrySend(Serialize(new
+        _witness.TrySend(to, Serialize(new
         {
             type = ExtensionMessages.UnblockRequestResult,
             requestId,

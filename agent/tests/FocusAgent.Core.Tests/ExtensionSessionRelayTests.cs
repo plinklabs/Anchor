@@ -308,6 +308,120 @@ public class ExtensionSessionRelayTests
         Assert.Equal(2, h.Hub.ExtensionPings.Count);
     }
 
+    [Fact]
+    public async Task A_second_profile_connecting_mid_session_is_handed_the_session_and_the_first_hears_nothing_new()
+    {
+        // #517: the second Edge profile's extension used to get no session at all
+        // and filtered nothing.
+        var h = new Harness();
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+        h.Channel.RaiseConnected(first);
+        var sessionId = await h.JoinAsync(Office);
+        h.Channel.ClearSent();
+
+        h.Channel.RaiseConnected(second);
+
+        var snapshot = Assert.Single(h.Channel.Messages(second));
+        Assert.Equal("session_started", Type(snapshot));
+        Assert.Equal(sessionId, snapshot.GetProperty("sessionId").GetGuid());
+        Assert.Equal("office.com", Assert.Single(snapshot.GetProperty("domains").EnumerateArray()).GetProperty("value").GetString());
+        Assert.Empty(h.Channel.Messages(first));
+    }
+
+    [Fact]
+    public async Task Each_profile_is_told_no_session_when_it_connects_outside_one()
+    {
+        var h = new Harness();
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+
+        h.Channel.RaiseConnected(first);
+        h.Channel.RaiseConnected(second);
+
+        Assert.Equal("no_session", Type(Assert.Single(h.Channel.Messages(first))));
+        Assert.Equal("no_session", Type(Assert.Single(h.Channel.Messages(second))));
+    }
+
+    [Fact]
+    public async Task The_session_its_allowlist_changes_grants_and_end_reach_every_connected_profile()
+    {
+        var h = new Harness();
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+        h.Channel.RaiseConnected(first);
+        h.Channel.RaiseConnected(second);
+        h.Channel.ClearSent();
+
+        var sessionId = await h.JoinAsync(Office);
+        h.Hub.RaiseBundlesUpdated(new SessionBundlesUpdatedPayload(sessionId, [], [Wiki]));
+        h.Hub.RaiseAllowlistAmended(new AllowlistAmendedPayload(sessionId, Guid.NewGuid(), [Office]));
+        h.Hub.RaiseSessionEnded(sessionId);
+
+        var expected = new[] { "session_started", "allowlist_replaced", "allowlist_amended", "session_ended" };
+        Assert.Equal(expected, h.Channel.Messages(first).Select(Type));
+        Assert.Equal(expected, h.Channel.Messages(second).Select(Type));
+    }
+
+    [Fact]
+    public async Task A_profile_that_closed_is_no_longer_sent_anything_while_the_other_still_is()
+    {
+        var h = new Harness();
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+        h.Channel.RaiseConnected(first);
+        h.Channel.RaiseConnected(second);
+        var sessionId = await h.JoinAsync(Office);
+        h.Channel.RaiseDisconnected(first);
+        h.Channel.ClearSent();
+
+        h.Hub.RaiseSessionEnded(sessionId);
+
+        Assert.Empty(h.Channel.Messages(first));
+        Assert.Equal("session_ended", Type(Assert.Single(h.Channel.Messages(second))));
+    }
+
+    [Fact]
+    public async Task An_unblock_request_is_answered_only_on_the_connection_that_asked()
+    {
+        var h = new Harness();
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+        h.Channel.RaiseConnected(first);
+        h.Channel.RaiseConnected(second);
+        var sessionId = await h.JoinAsync(Office);
+        h.Channel.ClearSent();
+
+        h.Channel.Receive(
+            new { type = "unblock_request", requestId = "r1", sessionId, url = "https://docs.example/a" },
+            from: second);
+
+        var answer = await h.Channel.NextMessageAsync();
+        Assert.Equal("unblock_request_result", Type(answer));
+        Assert.Equal("r1", Assert.Single(h.Channel.Messages(second)).GetProperty("requestId").GetString());
+        Assert.Empty(h.Channel.Messages(first));
+    }
+
+    [Fact]
+    public async Task The_agent_keeps_pinging_for_the_extension_while_any_profile_is_connected()
+    {
+        var h = new Harness();
+        var interval = TimeSpan.FromSeconds(10);
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+        h.Channel.RaiseConnected(first);
+        h.Channel.RaiseConnected(second);
+        await h.JoinAsync(Office);
+
+        h.Channel.RaiseDisconnected(first);
+        h.Clock.Advance(interval);
+        Assert.Single(h.Hub.ExtensionPings);
+
+        h.Channel.RaiseDisconnected(second);
+        h.Clock.Advance(interval * 3);
+        Assert.Single(h.Hub.ExtensionPings);
+    }
+
     private static string? Type(JsonElement message) => message.GetProperty("type").GetString();
 
     private sealed class Harness
@@ -351,43 +465,69 @@ public class ExtensionSessionRelayTests
 
     private sealed class FakeChannel : IExtensionWitnessChannel
     {
+        // One Edge profile's extension, unless a test names another.
+        private static readonly WitnessConnection Only = new(1);
+
         private readonly object _gate = new();
-        private bool _connected;
+        private readonly List<WitnessConnection> _connected = new();
         private int _read;
 
-        private readonly List<string> _sent = new();
-        public event EventHandler? WitnessConnected;
-        public event EventHandler? WitnessDisconnected;
-        public event EventHandler<string>? MessageReceived;
+        // Everything sent, in order, with the connection it went to.
+        private readonly List<(long To, string Line)> _sent = new();
+        public event EventHandler<WitnessConnection>? WitnessConnected;
+        public event EventHandler<WitnessConnection>? WitnessDisconnected;
+        public event EventHandler<WitnessMessage>? MessageReceived;
 
-        public void RaiseConnected()
+        public void RaiseConnected(WitnessConnection? connection = null)
         {
-            lock (_gate) _connected = true;
-            WitnessConnected?.Invoke(this, EventArgs.Empty);
+            connection ??= Only;
+            lock (_gate) _connected.Add(connection);
+            WitnessConnected?.Invoke(this, connection);
         }
 
-        public void RaiseDisconnected()
+        public void RaiseDisconnected(WitnessConnection? connection = null)
         {
-            lock (_gate) _connected = false;
-            WitnessDisconnected?.Invoke(this, EventArgs.Empty);
+            connection ??= Only;
+            lock (_gate) _connected.Remove(connection);
+            WitnessDisconnected?.Invoke(this, connection);
         }
 
-        public void Receive(object message) => ReceiveLine(JsonSerializer.Serialize(message));
-        public void ReceiveLine(string line) => MessageReceived?.Invoke(this, line);
+        public void Receive(object message, WitnessConnection? from = null) =>
+            ReceiveLine(JsonSerializer.Serialize(message), from);
 
-        public bool TrySend(string line)
+        public void ReceiveLine(string line, WitnessConnection? from = null) =>
+            MessageReceived?.Invoke(this, new WitnessMessage(from ?? Only, line));
+
+        public bool TrySend(WitnessConnection connection, string line)
         {
             lock (_gate)
             {
-                if (!_connected) return false;
-                _sent.Add(line);
+                if (!_connected.Contains(connection)) return false;
+                _sent.Add((connection.Id, line));
                 return true;
             }
         }
 
+        public int Broadcast(string line)
+        {
+            lock (_gate)
+            {
+                foreach (var connection in _connected)
+                    _sent.Add((connection.Id, line));
+                return _connected.Count;
+            }
+        }
+
+        /// <summary>Everything sent, to whichever connection.</summary>
         public List<JsonElement> Messages()
         {
-            lock (_gate) return _sent.Select(Parse).ToList();
+            lock (_gate) return _sent.Select(s => Parse(s.Line)).ToList();
+        }
+
+        /// <summary>What was sent to one connection.</summary>
+        public List<JsonElement> Messages(WitnessConnection to)
+        {
+            lock (_gate) return _sent.Where(s => s.To == to.Id).Select(s => Parse(s.Line)).ToList();
         }
 
         public void ClearSent()
@@ -407,7 +547,7 @@ public class ExtensionSessionRelayTests
             {
                 lock (_gate)
                 {
-                    if (_read < _sent.Count) return Parse(_sent[_read++]);
+                    if (_read < _sent.Count) return Parse(_sent[_read++].Line);
                 }
                 await Task.Delay(10);
             }

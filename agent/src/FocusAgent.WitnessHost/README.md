@@ -19,9 +19,44 @@ extension  --connectNative("net.anchor.witness")-->  Edge
    host  --NamedPipeClient("anchor-witness")-->  FocusAgent  (pipe server)
 ```
 
+Every Edge profile runs its own copy of the extension, and each copy launches
+its own host, so the agent serves **several hosts at once** (#517): one pipe
+connection per profile that has Edge open with the extension on. Each connection
+has an identity in the agent (`WitnessConnection`), which the transport, the
+monitor and the relay use to tell them apart.
+
 - **Extension disabled/removed** → Edge tears down the host process → its stdin
-  hits EOF → the host exits → the agent's pipe read returns EOF → the agent
-  reports `TamperDetected{kind:"extension_disabled"}` (if a session is joined).
+  hits EOF → the host exits → the agent's pipe read returns EOF. That is all the
+  pipe says, and it says the same when the extension restarts (an option changed
+  on its page, an update, a reload), when Edge is closed and when one profile's
+  last window is closed. So a drop alone reports nothing (#518). During a joined
+  session the agent (`ExtensionGuard`) reports
+  `TamperDetected{kind:"extension_disabled"}`, and pauses Edge (#427), when:
+  - **no extension is connected any more** and that lasts past the grace period
+    (10 s) with an Edge window on screen. A restart reconnects within it; a
+    closed Edge has no window.
+  - **another profile's extension is still connected, but a profile that is
+    open has the extension switched off or removed.** The pipe can't show which
+    profile a dropped connection belonged to, or whether that profile is still
+    open, so the agent reads both from Edge (`EdgeOpenProfileExtensionProbe`,
+    polled every 5 s during a session):
+    - each Edge browser window carries its profile's AppUserModelID
+      (`MSEdge.UserData.Profile1`; plain `MSEdge` for the Default profile), so
+      the agent knows which profiles have a window open;
+    - each profile's `Secure Preferences` (or `Preferences`) has the extension
+      under `extensions.settings.<id>`, with a non-empty `disable_reasons` while
+      it is switched off and no entry once it is removed.
+
+    A profile that was merely closed has no window left, so it reports nothing.
+    Edge writes the preferences 10 s after a change (measured on Edge 157), which
+    is this case's grace period: a restart never reaches the file.
+
+  One outage is reported once, however often the student opens Edge to repair it.
+
+  Checked on Edge 157 (2026-11): closing a profile's last window while another
+  profile stays open ends that profile's extension within about 2 s; a profile
+  can also keep its extension (and host) running with no window at all, which is
+  why counting connections against windows is not enough.
 - **Agent died** → the host's pipe drops → the host sends `agent_unavailable`
   to the extension, which keeps enforcing the session it has until the agent is
   back and hands it the current one. The teacher sees the agent go through its
@@ -55,7 +90,8 @@ unit-tested with `MemoryStream`s.
   `allowlist_replaced`, `allowlist_amended`, `session_ended`,
   `unblock_request_result`; extension → agent `ping`, `blocked_url`,
   `unblock_request`, `tamper`. The agent sends the current session (or
-  `no_session`) on every connect.
+  `no_session`) to each connection when it connects, sends every change to all
+  of them, and answers an `unblock_request` on the connection that asked.
 
 Names are shared via `FocusAgent.Core.Tamper.WitnessLink`; the extension repeats
 the host name in `witness.ts`, and the host manifest's `allowed_origins` pins the

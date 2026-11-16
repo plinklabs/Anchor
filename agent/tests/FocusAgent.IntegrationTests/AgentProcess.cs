@@ -46,12 +46,16 @@ internal sealed record LogUploadSnapshot(
 
 /// <summary>
 /// The Edge pause as exposed on /status (#427): whether the extension's witness
-/// pipe is connected, and the guard's state (<c>Off</c> / <c>Present</c> /
-/// <c>Waiting</c> / <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>).
+/// pipe is connected, how many extensions are (one per Edge profile, #517), the
+/// guard's state (<c>Off</c> / <c>Present</c> / <c>Waiting</c> /
+/// <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>), and the open Edge profiles
+/// that have the extension switched off or removed (#518).
 /// </summary>
 internal sealed record ExtensionGuardSnapshot(
     [property: JsonPropertyName("witnessConnected")] bool WitnessConnected,
-    [property: JsonPropertyName("state")] string? State);
+    [property: JsonPropertyName("state")] string? State,
+    [property: JsonPropertyName("witnessConnections")] int WitnessConnections = 0,
+    [property: JsonPropertyName("profilesWithExtensionOff")] string[]? ProfilesWithExtensionOff = null);
 
 /// <summary>
 /// The Edge extension setup as exposed on /status (#405): where an Anchor
@@ -185,6 +189,12 @@ internal sealed class AgentProcess : IAsyncDisposable
         // the backend doesn't wait out a long retry delay.
         if (reconnectMaxBackoff is { } backoff)
             psi.Environment["Realtime__ReconnectMaxBackoff"] = backoff.ToString("c");
+        // #518: the agent reads Edge's profiles to find one that is open with the
+        // extension switched off. Point it at a folder that isn't there, so the
+        // state of this box's own Edge can't decide a spec; one that plays Edge's
+        // profiles passes its own folder.
+        psi.Environment["Witness__BrowserUserDataFolder"] =
+            Path.Combine(Path.GetTempPath(), "anchor-e2e-no-edge-profiles", "User Data");
         // Any other per-spec flags / config (e.g. the #405 Extension__* test knobs).
         foreach (var arg in extraArgs ?? [])
             psi.ArgumentList.Add(arg);

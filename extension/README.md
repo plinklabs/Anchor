@@ -465,9 +465,15 @@ and the [`nativeMessaging`](src/manifest.json) permission). Two things ride on i
 
 - **The agent witnesses the extension.** While the link is up the agent has a
   live witness; when the extension is disabled or removed the browser tears the
-  host down, the agent reports `extension_disabled`, and it pauses Edge while the
-  extension stays off during a session (#427). That is the signal the extension
-  cannot witness about itself.
+  host down, and once it has stayed off past a short grace period with Edge
+  open during a session, the agent pauses Edge (#427) and reports
+  `extension_disabled`. That is the signal the extension cannot witness about
+  itself. The browser tears the host down just the same when the extension
+  restarts (an option changed on its page, an update, a reload) and when Edge
+  or the profile is closed; those reconnect within the grace period or leave no
+  Edge window, and report nothing (#518). The extension sends nothing for this:
+  with several profiles, the agent reads which profile is open with the
+  extension off from Edge's windows and the profiles' preferences.
 - **The agent hands down the session (#489).** `session_started` when the agent
   has joined a session (a declined one never arrives), `allowlist_replaced` and
   `allowlist_amended` as the teacher changes it, `session_ended` when it ends or
