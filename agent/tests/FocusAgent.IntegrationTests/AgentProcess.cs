@@ -46,12 +46,14 @@ internal sealed record LogUploadSnapshot(
 
 /// <summary>
 /// The Edge pause as exposed on /status (#427): whether the extension's witness
-/// pipe is connected, and the guard's state (<c>Off</c> / <c>Present</c> /
-/// <c>Waiting</c> / <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>).
+/// pipe is connected, how many extensions are (one per Edge profile, #517), and
+/// the guard's state (<c>Off</c> / <c>Present</c> / <c>Waiting</c> /
+/// <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>).
 /// </summary>
 internal sealed record ExtensionGuardSnapshot(
     [property: JsonPropertyName("witnessConnected")] bool WitnessConnected,
-    [property: JsonPropertyName("state")] string? State);
+    [property: JsonPropertyName("state")] string? State,
+    [property: JsonPropertyName("witnessConnections")] int WitnessConnections = 0);
 
 /// <summary>
 /// The Edge extension setup as exposed on /status (#405): where an Anchor

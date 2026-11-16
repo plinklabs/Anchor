@@ -19,9 +19,18 @@ extension  --connectNative("net.anchor.witness")-->  Edge
    host  --NamedPipeClient("anchor-witness")-->  FocusAgent  (pipe server)
 ```
 
+Every Edge profile runs its own copy of the extension, and each copy launches
+its own host, so the agent serves **several hosts at once** (#517): one pipe
+connection per profile that has Edge open with the extension on. Each connection
+has an identity in the agent (`WitnessConnection`), which the transport, the
+monitor and the relay use to tell them apart.
+
 - **Extension disabled/removed** → Edge tears down the host process → its stdin
   hits EOF → the host exits → the agent's pipe read returns EOF → the agent
-  reports `TamperDetected{kind:"extension_disabled"}` (if a session is joined).
+  reports `TamperDetected{kind:"extension_disabled"}` (if a session is joined
+  and no other profile's extension is still connected: a connection also drops
+  when its profile's last window closes, and the pipe alone can't tell the two
+  apart).
 - **Agent died** → the host's pipe drops → the host sends `agent_unavailable`
   to the extension, which keeps enforcing the session it has until the agent is
   back and hands it the current one. The teacher sees the agent go through its
@@ -55,7 +64,8 @@ unit-tested with `MemoryStream`s.
   `allowlist_replaced`, `allowlist_amended`, `session_ended`,
   `unblock_request_result`; extension → agent `ping`, `blocked_url`,
   `unblock_request`, `tamper`. The agent sends the current session (or
-  `no_session`) on every connect.
+  `no_session`) to each connection when it connects, sends every change to all
+  of them, and answers an `unblock_request` on the connection that asked.
 
 Names are shared via `FocusAgent.Core.Tamper.WitnessLink`; the extension repeats
 the host name in `witness.ts`, and the host manifest's `allowed_origins` pins the

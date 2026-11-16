@@ -93,6 +93,89 @@ public class WitnessHostIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task Two_hosts_are_served_at_once_each_on_its_own_connection()
+    {
+        // #517: every Edge profile runs its own copy of the extension, and each
+        // launches its own host. The pipe used to serve one host at a time, so a
+        // second profile's host retried forever and its extension never heard of
+        // the session.
+        var pipeName = "anchor-witness-test-" + Guid.NewGuid().ToString("N");
+
+        var connections = System.Threading.Channels.Channel.CreateUnbounded<WitnessConnection>();
+        var drops = System.Threading.Channels.Channel.CreateUnbounded<WitnessConnection>();
+        var transport = new NamedPipeWitnessTransport(pipeName: pipeName);
+        transport.WitnessConnected += (_, connection) =>
+        {
+            // What the session relay does on a connect: hand this one extension the state.
+            transport.TrySend(connection, $"{{\"type\":\"welcome\",\"connection\":{connection.Id}}}");
+            connections.Writer.TryWrite(connection);
+        };
+        transport.WitnessDisconnected += (_, connection) => drops.Writer.TryWrite(connection);
+        await transport.StartAsync();
+
+        var firstHost = StartHostProcess(pipeName);
+        var secondHost = StartHostProcess(pipeName);
+        try
+        {
+            using var cts = new CancellationTokenSource(Timeout);
+            var a = await connections.Reader.ReadAsync(cts.Token);
+            var b = await connections.Reader.ReadAsync(cts.Token);
+            Assert.NotEqual(a.Id, b.Id);
+
+            // Each host got the message addressed to its own connection, and only that one.
+            var firstWelcome = await ReadUntilAsync(firstHost, "welcome");
+            var secondWelcome = await ReadUntilAsync(secondHost, "welcome");
+            var firstId = firstWelcome.GetProperty("connection").GetInt64();
+            var secondId = secondWelcome.GetProperty("connection").GetInt64();
+            Assert.Equal(new[] { a.Id, b.Id }.Order(), new[] { firstId, secondId }.Order());
+
+            // What goes to everyone (the session, its allowlist, its end) reaches both.
+            Assert.Equal(2, transport.Broadcast("{\"type\":\"session_started\",\"n\":1}"));
+            Assert.Equal(1, (await ReadUntilAsync(firstHost, "session_started")).GetProperty("n").GetInt32());
+            Assert.Equal(1, (await ReadUntilAsync(secondHost, "session_started")).GetProperty("n").GetInt32());
+
+            // One profile closes: only its connection drops, the other is still served.
+            firstHost.StandardInput.Close();
+            var dropped = await drops.Reader.ReadAsync(cts.Token);
+            Assert.Equal(firstId, dropped.Id);
+            Assert.False(drops.Reader.TryRead(out _));
+
+            Assert.Equal(1, transport.Broadcast("{\"type\":\"session_ended\"}"));
+            await ReadUntilAsync(secondHost, "session_ended");
+            Assert.False(transport.TrySend(dropped, "{\"type\":\"late\"}"));
+        }
+        finally
+        {
+            await transport.StopAsync();
+            foreach (var host in new[] { firstHost, secondHost })
+            {
+                try { host.StandardInput.Close(); } catch { }
+                if (!host.WaitForExit(5000))
+                {
+                    host.Kill(entireProcessTree: true);
+                    host.WaitForExit(2000);
+                }
+                host.Dispose();
+            }
+        }
+    }
+
+    /// <summary>Reads the host's native messages until one of the given type arrives.</summary>
+    private static async Task<System.Text.Json.JsonElement> ReadUntilAsync(Process host, string type)
+    {
+        var deadline = DateTime.UtcNow + Timeout;
+        while (true)
+        {
+            var remaining = deadline - DateTime.UtcNow;
+            Assert.True(remaining > TimeSpan.Zero, $"the host never wrote a '{type}' message");
+            var json = await ReadFramedMessageAsync(host.StandardOutput.BaseStream, remaining);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.GetProperty("type").GetString() == type)
+                return doc.RootElement.Clone();
+        }
+    }
+
     /// <summary>Reads one 4-byte-length-prefixed UTF-8 native message, bounded by a timeout.</summary>
     private static async Task<string> ReadFramedMessageAsync(Stream stream, TimeSpan timeout)
     {

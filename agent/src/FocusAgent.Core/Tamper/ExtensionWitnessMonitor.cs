@@ -16,6 +16,15 @@ namespace FocusAgent.Core.Tamper;
 /// visible to the teacher; <see cref="ExtensionGuard"/> listens to
 /// <see cref="ConnectionChanged"/> and pauses Edge while the extension stays
 /// gone (#427).
+///
+/// Every Edge profile has its own copy of the extension and its own link (#517),
+/// so the monitor keeps the set of open <see cref="Connections"/> and raises
+/// <see cref="ConnectionOpened"/> / <see cref="ConnectionClosed"/> for each one.
+/// "The extension is there" (<see cref="IsConnected"/>,
+/// <see cref="ConnectionChanged"/>) means at least one of them is connected, and
+/// for now only the last one dropping is reported: one profile's link closing
+/// while another is still up is usually that profile's last window being closed,
+/// which the pipe alone can't tell from the extension being switched off there.
 /// </summary>
 public sealed class ExtensionWitnessMonitor : IAsyncDisposable
 {
@@ -25,7 +34,12 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
     private readonly ILogger<ExtensionWitnessMonitor> _log;
     private readonly object _gate = new();
 
-    private bool _connected;
+    // Held while a connect or drop is applied and announced, so two connections
+    // changing at once (each on its own transport thread) can't deliver their
+    // ConnectionChanged out of order — a stale "false" after the "true" would
+    // have the guard pause Edge with an extension connected.
+    private readonly object _announceGate = new();
+    private readonly Dictionary<long, WitnessConnection> _connections = new();
     private bool _hasConnected;
 
     /// <param name="transport">The witness link surfacing connect/disconnect.</param>
@@ -53,8 +67,9 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
     public Task StartAsync(CancellationToken ct = default) => _transport.StartAsync(ct);
 
     /// <summary>
-    /// True while the extension's witness host is connected — i.e. the extension
-    /// is installed and running. <see cref="FocusAgent.Core.Extension.ExtensionSelfRegistrar"/>
+    /// True while at least one extension's witness host is connected — i.e. the
+    /// extension is installed and running in some Edge profile.
+    /// <see cref="FocusAgent.Core.Extension.ExtensionSelfRegistrar"/>
     /// reads this as the success signal for the force-install policy (#211): if it
     /// stays false past the grace period (which starts once Edge runs) and the
     /// extension isn't installed in an Edge profile either (#488), the policy
@@ -62,7 +77,7 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
     /// </summary>
     public bool IsConnected
     {
-        get { lock (_gate) return _connected; }
+        get { lock (_gate) return _connections.Count > 0; }
     }
 
     /// <summary>
@@ -79,37 +94,83 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
 
     /// <summary>
     /// Raised after each genuine transition of <see cref="IsConnected"/>: true when
-    /// the witness comes up, false when it drops. Raised on the transport's thread,
-    /// in or out of a session.
+    /// the first witness comes up, false when the last one drops. Raised on a
+    /// transport thread, in or out of a session, never two at once and always in
+    /// the order the transitions happened.
     /// </summary>
     public event EventHandler<bool>? ConnectionChanged;
 
-    private void OnConnected(object? sender, EventArgs e)
+    /// <summary>The connections open right now: one per Edge profile with the extension running.</summary>
+    public IReadOnlyList<WitnessConnection> Connections
     {
-        bool changed;
-        lock (_gate)
-        {
-            changed = !_connected;
-            _connected = true;
-            _hasConnected = true;
-        }
-        _log.LogInformation("Extension witness connected.");
-        if (changed)
-            RaiseConnectionChanged(true);
+        get { lock (_gate) return _connections.Values.ToArray(); }
     }
 
-    private void OnDisconnected(object? sender, EventArgs e)
-    {
-        lock (_gate)
-        {
-            // Only a genuine connected→disconnected transition is a drop. A
-            // disconnect we never saw connect (a failed accept, a stop) is not
-            // the student disabling the extension.
-            if (!_connected) return;
-            _connected = false;
-        }
+    /// <summary>
+    /// Raised when one extension's link comes up, before any
+    /// <see cref="ConnectionChanged"/> it causes, with the same threading.
+    /// </summary>
+    public event EventHandler<WitnessConnection>? ConnectionOpened;
 
-        RaiseConnectionChanged(false);
+    /// <summary>
+    /// Raised when one extension's link drops, whether or not others are still
+    /// connected, before any <see cref="ConnectionChanged"/> it causes, with the
+    /// same threading.
+    /// </summary>
+    public event EventHandler<WitnessConnection>? ConnectionClosed;
+
+    private void OnConnected(object? sender, WitnessConnection connection)
+    {
+        lock (_announceGate)
+        {
+            bool added, first;
+            int open;
+            lock (_gate)
+            {
+                first = _connections.Count == 0;
+                added = _connections.TryAdd(connection.Id, connection);
+                open = _connections.Count;
+                _hasConnected = true;
+            }
+            // The same connection announced twice is not a new one.
+            if (!added) return;
+
+            _log.LogInformation(
+                "Extension witness connected (connection {Connection}, {Open} open).", connection, open);
+            Raise(ConnectionOpened, connection, nameof(ConnectionOpened));
+            if (first)
+                RaiseConnectionChanged(true);
+        }
+    }
+
+    private void OnDisconnected(object? sender, WitnessConnection connection)
+    {
+        lock (_announceGate)
+        {
+            int open;
+            lock (_gate)
+            {
+                // Only a genuine connected→disconnected transition is a drop. A
+                // disconnect we never saw connect (a failed accept, a stop) is not
+                // the student disabling the extension.
+                if (!_connections.Remove(connection.Id)) return;
+                open = _connections.Count;
+            }
+
+            Raise(ConnectionClosed, connection, nameof(ConnectionClosed));
+
+            if (open > 0)
+            {
+                // Another profile's extension is still connected (#517). Most
+                // often this is a profile's last window being closed.
+                _log.LogInformation(
+                    "Extension witness connection {Connection} dropped; {Open} still open — not reporting.",
+                    connection, open);
+                return;
+            }
+
+            RaiseConnectionChanged(false);
+        }
 
         var sessionId = _activeSession();
         if (sessionId is null)
@@ -122,6 +183,18 @@ public sealed class ExtensionWitnessMonitor : IAsyncDisposable
             "Extension witness dropped during session {SessionId} — reporting {Kind}.",
             sessionId, TamperKinds.ExtensionDisabled);
         _ = ReportAsync(sessionId.Value);
+    }
+
+    private void Raise(EventHandler<WitnessConnection>? handlers, WitnessConnection connection, string name)
+    {
+        try
+        {
+            handlers?.Invoke(this, connection);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "A witness {Event} subscriber threw (connection {Connection})", name, connection);
+        }
     }
 
     private void RaiseConnectionChanged(bool connected)

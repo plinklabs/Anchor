@@ -334,10 +334,12 @@ public class ExtensionGuardTests
 
     private sealed class FakeWitnessTransport : IExtensionWitnessTransport
     {
-        public event EventHandler? WitnessConnected;
-        public event EventHandler? WitnessDisconnected;
-        public void RaiseConnected() => WitnessConnected?.Invoke(this, EventArgs.Empty);
-        public void RaiseDisconnected() => WitnessDisconnected?.Invoke(this, EventArgs.Empty);
+        // One Edge profile's extension, unless a test names another.
+        private static readonly WitnessConnection Only = new(1);
+        public event EventHandler<WitnessConnection>? WitnessConnected;
+        public event EventHandler<WitnessConnection>? WitnessDisconnected;
+        public void RaiseConnected(WitnessConnection? connection = null) => WitnessConnected?.Invoke(this, connection ?? Only);
+        public void RaiseDisconnected(WitnessConnection? connection = null) => WitnessDisconnected?.Invoke(this, connection ?? Only);
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
     }

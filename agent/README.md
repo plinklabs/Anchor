@@ -323,7 +323,8 @@ The browser extension has no sign-in and no backend connection: the agent is
 its only identity. Over the native-messaging witness link
 (`anchor-witness-host.exe` ↔ the agent's pipe) the agent hands it the session it
 joined, every allowlist change and the session's end, and the current state on
-every connect; the extension hands back blocked URLs, unblock requests and its
+every connect. Each Edge profile's extension has its own connection, and all of
+them are served at once (#517). The extension hands back blocked URLs, unblock requests and its
 tamper signals, which the agent reports with its own connection
 (`ExtensionSessionRelay`). Only the registered host can reach the extension's
 port, so an arbitrary web page can't start or end a session. Protocol: see

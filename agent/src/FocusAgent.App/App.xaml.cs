@@ -358,6 +358,8 @@ public partial class App : Application
                     extensionGuard: () => new
                     {
                         witnessConnected = witnessMonitor.IsConnected,
+                        // #517: one per Edge profile with the extension running.
+                        witnessConnections = witnessMonitor.Connections.Count,
                         state = extensionGuard.State.ToString(),
                     },
                     onTurnExtensionBackOn: _focus.TurnExtensionBackOn,

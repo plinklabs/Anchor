@@ -119,6 +119,80 @@ public class ExtensionWitnessMonitorTests
     }
 
     [Fact]
+    public async Task One_of_two_profiles_dropping_is_not_reported_and_the_extension_stays_connected()
+    {
+        // #517: every Edge profile has its own link. Closing one profile's last
+        // window drops its link while the other profile is still filtered; that
+        // must not alarm the teacher or start the Edge pause.
+        var transport = new FakeWitnessTransport();
+        var reporter = new RecordingReporter();
+        var sessionId = Guid.NewGuid();
+        await using var monitor = new ExtensionWitnessMonitor(transport, reporter, () => sessionId);
+        var changes = new List<bool>();
+        monitor.ConnectionChanged += (_, connected) => changes.Add(connected);
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+
+        transport.RaiseConnected(first);
+        transport.RaiseConnected(second);
+        transport.RaiseDisconnected(first);
+
+        Assert.True(monitor.IsConnected);
+        Assert.Equal(new[] { second }, monitor.Connections);
+        Assert.Equal(new[] { true }, changes);
+        Assert.Empty(reporter.Calls);
+    }
+
+    [Fact]
+    public async Task The_last_of_two_profiles_dropping_reports_extension_disabled_once()
+    {
+        var transport = new FakeWitnessTransport();
+        var reporter = new RecordingReporter();
+        var sessionId = Guid.NewGuid();
+        await using var monitor = new ExtensionWitnessMonitor(transport, reporter, () => sessionId);
+        var changes = new List<bool>();
+        monitor.ConnectionChanged += (_, connected) => changes.Add(connected);
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+
+        transport.RaiseConnected(first);
+        transport.RaiseConnected(second);
+        transport.RaiseDisconnected(second);
+        transport.RaiseDisconnected(first);
+
+        Assert.False(monitor.IsConnected);
+        Assert.True(monitor.HasConnected);
+        Assert.Empty(monitor.Connections);
+        Assert.Equal(new[] { true, false }, changes);
+        var call = Assert.Single(reporter.Calls);
+        Assert.Equal((sessionId, TamperKinds.ExtensionDisabled), call);
+    }
+
+    [Fact]
+    public async Task Every_connection_opening_and_closing_is_announced_by_its_identity()
+    {
+        var transport = new FakeWitnessTransport();
+        await using var monitor = new ExtensionWitnessMonitor(transport, new RecordingReporter(), () => null);
+        var events = new List<string>();
+        monitor.ConnectionOpened += (_, c) => events.Add($"opened {c.Id}");
+        monitor.ConnectionClosed += (_, c) => events.Add($"closed {c.Id}");
+        monitor.ConnectionChanged += (_, connected) => events.Add($"connected={connected}");
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+
+        transport.RaiseConnected(first);
+        transport.RaiseConnected(second);
+        transport.RaiseConnected(second);       // announced twice: still one connection
+        transport.RaiseDisconnected(first);
+        transport.RaiseDisconnected(first);     // already gone
+        transport.RaiseDisconnected(second);
+
+        Assert.Equal(
+            new[] { "opened 1", "connected=True", "opened 2", "closed 1", "closed 2", "connected=False" },
+            events);
+    }
+
+    [Fact]
     public async Task StartAsync_delegates_to_the_transport()
     {
         var transport = new FakeWitnessTransport();
@@ -147,14 +221,16 @@ public class ExtensionWitnessMonitorTests
 
     private sealed class FakeWitnessTransport : IExtensionWitnessTransport
     {
-        public event EventHandler? WitnessConnected;
-        public event EventHandler? WitnessDisconnected;
+        // One Edge profile's extension, unless a test names another.
+        private static readonly WitnessConnection Only = new(1);
+        public event EventHandler<WitnessConnection>? WitnessConnected;
+        public event EventHandler<WitnessConnection>? WitnessDisconnected;
 
         public int StartCalls { get; private set; }
         public int StopCalls { get; private set; }
 
-        public void RaiseConnected() => WitnessConnected?.Invoke(this, EventArgs.Empty);
-        public void RaiseDisconnected() => WitnessDisconnected?.Invoke(this, EventArgs.Empty);
+        public void RaiseConnected(WitnessConnection? connection = null) => WitnessConnected?.Invoke(this, connection ?? Only);
+        public void RaiseDisconnected(WitnessConnection? connection = null) => WitnessDisconnected?.Invoke(this, connection ?? Only);
 
         public Task StartAsync(CancellationToken ct = default)
         {
