@@ -2,16 +2,23 @@
 
 <#
 .SYNOPSIS
-    Intune install command for the Anchor agent: install it silently if it
-    isn't installed yet, then start it right away (#457).
+    An alternative Intune install command for the Anchor agent: install it
+    silently if it isn't installed yet, then start it right away (#457).
 
 .DESCRIPTION
-    Intune runs this script as the install command of the agent's Win32 app,
-    in user context, from the folder it unpacked the .intunewin into. That
-    package holds this script and Anchor.Agent-win-Setup.exe side by side;
-    both are assets of every agent release. Install command:
+    Written as the install command of the agent's Intune Win32 app: Intune
+    runs it in user context, from the folder it unpacked the .intunewin into.
+    That package holds this script and Anchor.Agent-win-Setup.exe side by
+    side; both are assets of every agent release. Install command:
 
         powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-AnchorAgent.ps1
+
+    The app that docs/INTUNE.md describes doesn't use it: its install command
+    runs Setup.exe --silent and then Update.exe start. This script skips
+    Setup.exe when the agent is already installed (step 2), so it can't bring
+    an agent up to a detection rule's raised minimum version; Intune would
+    find the old version after every attempt. Use it only with a detection
+    rule whose minimum version you don't raise.
 
     What it does, in order:
 
@@ -89,7 +96,7 @@
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-AnchorAgent.ps1
 
-    The Intune install command: installs the agent if needed and starts it.
+    As an Intune install command: installs the agent if needed and starts it.
 #>
 [CmdletBinding()]
 param(

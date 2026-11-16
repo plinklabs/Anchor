@@ -171,7 +171,8 @@ auto-update channel. Setup carries the Anchor icon and a success page, and, run
 by hand, launches the agent automatically once installed. A silent install
 (`--silent`, as Intune runs it) shows no success page and doesn't start the
 agent itself; the agent's install hook starts it once Setup has exited (#487),
-and the Intune install script below makes sure it runs.
+and the Intune app's install command starts it as well (`Update.exe start`,
+[`INTUNE.md`](INTUNE.md#program)).
 
 - The packaged `appsettings.Production.json` ships as a template with `#{...}#`
   placeholders (#203); pack time substitutes them from per-deployment repo
@@ -204,15 +205,18 @@ and the Intune install script below makes sure it runs.
   moving the agent onto a feed of its own first.
   Agents released before #465 still list the releases through the API until they
   update to a release that has it.
-- Every release also carries `Install-AnchorAgent.ps1` (#457), the install
-  command of the agent's Intune Win32 app, packaged with `Setup.exe` in the
-  `.intunewin`. It runs `Setup.exe --silent` only when the agent isn't installed
-  yet (a silent reinstall stops a running agent and doesn't start it again), and
-  then starts the agent right away, which a silent Setup doesn't.
-  `pack-release.ps1` puts it next to `Setup.exe`, and the workflow attaches it to
-  the release once `vpk` has created it. Its parameters, exit codes and log
-  location are in its help: `Get-Help .\Install-AnchorAgent.ps1 -Full`. How to
-  roll the agent out with it (packaging, detection rule, return codes, the Edge
+- Every release also carries `Install-AnchorAgent.ps1` (#457), an alternative
+  install command for the agent's Intune Win32 app. The live app doesn't use it:
+  its install command runs `Setup.exe --silent` and then `Update.exe start`, so
+  that raising the detection rule's minimum version brings installed agents up
+  to date (the script still rides along in the `.intunewin`). The script runs
+  `Setup.exe --silent` only when the agent isn't installed yet (a silent
+  reinstall stops a running agent), and then starts the agent right away, which
+  a silent Setup doesn't. `pack-release.ps1` puts it next to `Setup.exe`, and
+  the workflow attaches it to the release once `vpk` has created it. Its
+  parameters, exit codes and log location are in its help:
+  `Get-Help .\Install-AnchorAgent.ps1 -Full`. How to roll the agent out
+  (packaging, the install command, detection rule, return codes, the Edge
   extension policy, updates and uninstall) is in [`INTUNE.md`](INTUNE.md).
 - `pack-release.ps1` cross-checks the tag version against the committed
   `<VersionPrefix>` and fails on drift.
