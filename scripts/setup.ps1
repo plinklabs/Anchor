@@ -234,6 +234,7 @@
         Invoke-ScriptAnalyzer scripts/setup.ps1
         pwsh -NoProfile -Command "[void][ScriptBlock]::Create((Get-Content -Raw scripts/setup.ps1))"
         ./scripts/setup.ps1 -UniqueSuffix test -WhatIf -NonInteractive
+        ./scripts/ci/test-setup-dry-run.ps1
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 # This is an interactive operator script: coloured, host-facing progress output
@@ -818,6 +819,52 @@ function Set-DeployRole {
             -Target $ResourceName -Action "assign $RoleName to the deploy SP"
     }
     finally { Remove-Item -LiteralPath $bodyTmp -Force -ErrorAction SilentlyContinue }
+}
+
+# Ensure the deploy app has the federated credential backend-deploy.yml logs in
+# with over OIDC (#274): issuer GitHub Actions, subject
+# repo:<owner>/<repo>:environment:production, matching the workflow's
+# `environment: production`. Idempotent: skips when a credential with that
+# subject exists. Parameters go through a temp file so the Windows az.cmd
+# re-parse can't mangle the JSON.
+function Add-DeployFederatedCredential {
+    # SupportsShouldProcess so -WhatIf flows through: the lookup still runs, the
+    # create doesn't (see the dry-run check below).
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$AppId, [string]$Repo)
+    if (-not $AppId -or $AppId -match '<') { return }
+    $subject = "repo:${Repo}:environment:production"
+
+    $ficJson = Invoke-AzRead @('ad', 'app', 'federated-credential', 'list', '--id', $AppId, '-o', 'json')
+    if ($ficJson) {
+        foreach ($fc in ($ficJson | ConvertFrom-Json)) {
+            if (Test-Prop $fc 'subject' $subject) {
+                Write-Host "    Federated credential for '$subject' already exists — skipping."
+                return
+            }
+        }
+    }
+
+    # Under -WhatIf, New-TemporaryFile creates nothing and returns $null, so the
+    # dry run stops here rather than at Set-Content (#528).
+    if (-not $PSCmdlet.ShouldProcess($AppId, "add federated credential ($subject)")) {
+        Write-Host "    DRYRUN  az ad app federated-credential create --id $AppId (subject $subject)" -ForegroundColor DarkGray
+        return
+    }
+    $fic = @{
+        name        = 'github-anchor-production'
+        issuer      = 'https://token.actions.githubusercontent.com'
+        subject     = $subject
+        audiences   = @('api://AzureADTokenExchange')
+        description = 'GitHub Actions backend-deploy (production) OIDC'
+    } | ConvertTo-Json -Depth 4 -Compress
+    $ficTmp = New-TemporaryFile
+    try {
+        Set-Content -LiteralPath $ficTmp -Value $fic -Encoding UTF8
+        Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'federated-credential', 'create', '--id', $AppId, '--parameters', "@$ficTmp", '-o', 'none') `
+            -Target $AppId -Action "add federated credential ($subject)"
+    }
+    finally { Remove-Item -LiteralPath $ficTmp -Force -ErrorAction SilentlyContinue }
 }
 
 # Ensure the API app registration defines the Entra app roles that drive
@@ -1719,33 +1766,7 @@ if (-not $SkipEntra) {
         # Federated credential for the GitHub environment. The subject needs the
         # repo, which is only resolved when GitHub wiring is in play.
         if (-not $SkipGitHub -and $Repo) {
-            $ficSubject = "repo:${Repo}:environment:production"
-            $haveFic = $false
-            $ficJson = Invoke-AzRead @('ad', 'app', 'federated-credential', 'list', '--id', $deployClientId, '-o', 'json')
-            if ($ficJson) {
-                foreach ($fc in ($ficJson | ConvertFrom-Json)) {
-                    if (Test-Prop $fc 'subject' $ficSubject) { $haveFic = $true; break }
-                }
-            }
-            if ($haveFic) {
-                Write-Host "    Federated credential for '$ficSubject' already exists — skipping."
-            }
-            else {
-                $fic = @{
-                    name        = 'github-anchor-production'
-                    issuer      = 'https://token.actions.githubusercontent.com'
-                    subject     = $ficSubject
-                    audiences   = @('api://AzureADTokenExchange')
-                    description = 'GitHub Actions backend-deploy (production) OIDC'
-                } | ConvertTo-Json -Depth 4 -Compress
-                $ficTmp = New-TemporaryFile
-                try {
-                    Set-Content -LiteralPath $ficTmp -Value $fic -Encoding UTF8
-                    Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'federated-credential', 'create', '--id', $deployClientId, '--parameters', "@$ficTmp", '-o', 'none') `
-                        -Target $deployClientId -Action "add federated credential ($ficSubject)"
-                }
-                finally { Remove-Item -LiteralPath $ficTmp -Force -ErrorAction SilentlyContinue }
-            }
+            Add-DeployFederatedCredential -AppId $deployClientId -Repo $Repo
         }
         else {
             Write-Manual 'Repo not resolved (-SkipGitHub) — federated credential not created. Add one with subject repo:<owner>/<repo>:environment:production on the deploy app, or the OIDC deploy cannot authenticate.'
