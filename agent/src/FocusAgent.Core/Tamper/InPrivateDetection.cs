@@ -32,12 +32,16 @@ public static class InPrivateDetection
     /// non-Edge window can't trip it; the in-Edge case is accepted because the
     /// student would have to be reading about InPrivate *inside* Edge for that
     /// false positive, which is vanishingly rare and still a benign over-report.
+    /// <paramref name="edgeProcessName"/> is Edge's process name, the configured
+    /// browser (<c>Witness:BrowserProcessName</c>), which an e2e points at a
+    /// stand-in of its own.
     /// </summary>
-    public static bool IsInPrivateEdgeWindow(string? processName, string? windowTitle)
+    public static bool IsInPrivateEdgeWindow(
+        string? processName, string? windowTitle, string edgeProcessName = EdgeProcessName)
     {
         if (string.IsNullOrWhiteSpace(processName) || string.IsNullOrWhiteSpace(windowTitle))
             return false;
-        if (!string.Equals(processName, EdgeProcessName, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(processName, edgeProcessName, StringComparison.OrdinalIgnoreCase))
             return false;
         return windowTitle.Contains(InPrivateMarker, StringComparison.OrdinalIgnoreCase);
     }

@@ -18,8 +18,9 @@ public sealed record SessionSettings
     /// Interval at which the agent's InPrivate witness (#148) re-scans the open
     /// Edge windows while in a joined session. A few seconds is responsive enough
     /// for a teacher's live roster without polling the window list tightly; the
-    /// scan only reports each InPrivate window once, so a short interval doesn't
-    /// produce repeat events.
+    /// scan reports each InPrivate window once, and only when it is still open
+    /// <see cref="SchoolProfileReportSeconds"/> after it opened (#535), so a short
+    /// interval doesn't produce repeat events.
     /// </summary>
     public int InPrivateScanIntervalSeconds { get; init; } = 5;
 
@@ -66,8 +67,9 @@ public sealed record SessionSettings
     /// <summary>
     /// How long a window outside the school profile may stay open, or Edge may lack
     /// a profile signed in with the school account, before the teacher is told
-    /// (#525). The pause says what to do; a student who does it in time isn't
-    /// reported.
+    /// (#525). An InPrivate window too, which the agent's InPrivate witness reports
+    /// as <c>inprivate_opened</c> (#535). The pause says what to do; a student who
+    /// does it in time isn't reported.
     /// </summary>
     public int SchoolProfileReportSeconds { get; init; } = 60;
 

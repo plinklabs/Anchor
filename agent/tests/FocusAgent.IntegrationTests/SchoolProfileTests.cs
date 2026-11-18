@@ -72,12 +72,16 @@ public sealed class SchoolProfileTests
             "The Guest window stayed up after the student brought it back.");
 
         // 3. Left open past the report time: the teacher is told once, as a window
-        //    outside the school profile (the InPrivate one has its own report, #148,
-        //    which only sees Edge's own windows), and never as "switched off".
+        //    outside the school profile, and of the InPrivate one by its own report
+        //    (#148, #535), once; never as "switched off".
         Assert.True(
             await TamperReports.WaitForAsync(
                 api, run.SessionId, "outside_school_profile", 1, SchoolProfileRun.Report + TimeSpan.FromSeconds(10)),
             "Windows outside the school profile stayed open past the report time, but the teacher was not told (once).");
+        Assert.True(
+            await TamperReports.WaitForAsync(
+                api, run.SessionId, "inprivate_opened", 1, SchoolProfileRun.Report + TimeSpan.FromSeconds(10)),
+            "The InPrivate window stayed open past the report time, but the teacher was not told (once).");
         Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "extension_disabled"));
         Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "school_profile_missing"));
 
@@ -100,6 +104,60 @@ public sealed class SchoolProfileTests
         await Task.Delay(TimeSpan.FromSeconds(3));
         Assert.False(WindowCapture.IsIconic(guest.Handle), "The Guest window was paused after the session ended.");
         Assert.False(WindowCapture.IsIconic(inPrivate.Handle), "The InPrivate window was paused after the session ended.");
+    }
+
+    [Fact]
+    public async Task AnInPrivateWindowClosedInTime_TellsTheTeacherNothing_AndOneLeftOpenIsReportedOnce()
+    {
+        // #535: an InPrivate window is paused at once (#525), and the teacher hears
+        // of it only when the student leaves it open past the report time, as of a
+        // window of another profile. Long enough for the checks in between.
+        var report = TimeSpan.FromSeconds(15);
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(_backend.Url, api, signedIn: true, report: report);
+        await run.WaitForAsync(
+            s => s.SchoolProfile is { Status: "Found", Profile: "Default" }, TimeSpan.FromSeconds(10),
+            "the agent to find the school profile (Default)");
+        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge");
+
+        // 1. The student opens an InPrivate window. The extension, allowed in
+        //    InPrivate, says so the moment it opens. The window is paused, and the
+        //    teacher isn't told.
+        var first = await run.OpenWindowAsync("Anchor e2e - [InPrivate] - Microsoft Edge", "MSEdge");
+        await run.Extension.SendAsync(new { type = "tamper", sessionId = run.SessionId, kind = "inprivate_opened" });
+        Assert.True(
+            await BrowserPauseRun.WaitForIconicAsync(first.Handle, expected: true, TimeSpan.FromSeconds(6)),
+            "The InPrivate window was not paused (minimized) within a few seconds of opening.");
+        await run.WaitForAsync(s => s.InPrivateOpen == 1, TimeSpan.FromSeconds(5), "the agent to see the InPrivate window");
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "inprivate_opened"));
+
+        // 2. The overlay's button closes it within the report time: the teacher
+        //    hears nothing of it, not even after.
+        Assert.True(await run.Agent.GoToSchoolProfileAsync(first.Handle), "The agent refused to go to the school profile.");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (WindowCapture.IsWindow(first.Handle) && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        Assert.False(WindowCapture.IsWindow(first.Handle), "The button did not close the InPrivate window.");
+        await run.WaitForAsync(s => s.InPrivateOpen == 0, TimeSpan.FromSeconds(5), "the agent to see the InPrivate window gone");
+        await Task.Delay(report + TimeSpan.FromSeconds(3));
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "inprivate_opened"));
+
+        // 3. Another one, left open: the teacher is told once, as InPrivate, never as
+        //    a window outside the school profile, and the extension's word for it
+        //    adds nothing.
+        var second = await run.OpenWindowAsync("Anchor e2e - [InPrivate] - Microsoft Edge", "MSEdge");
+        await run.Extension.SendAsync(new { type = "tamper", sessionId = run.SessionId, kind = "inprivate_opened" });
+        Assert.True(
+            await BrowserPauseRun.WaitForIconicAsync(second.Handle, expected: true, TimeSpan.FromSeconds(6)),
+            "The second InPrivate window was not paused (minimized) within a few seconds of opening.");
+        Assert.True(
+            await TamperReports.WaitForAsync(api, run.SessionId, "inprivate_opened", 1, report + TimeSpan.FromSeconds(10)),
+            "The InPrivate window stayed open past the report time, but the teacher was not told (once).");
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        Assert.Equal(1, await TamperReports.CountAsync(api, run.SessionId, "inprivate_opened"));
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "outside_school_profile"));
+        Assert.Equal(1, (await run.Agent.TryGetStatusAsync())?.InPrivateDetections);
+        Assert.True(WindowCapture.IsWindow(school.Handle), "The school profile's window was closed.");
     }
 
     [Fact]
@@ -383,6 +441,8 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     }
 
     public AgentProcess Agent => _agent ?? throw new InvalidOperationException("Agent not launched.");
+    /// <summary>The extension's end of the witness pipe, to say what the extension says.</summary>
+    public FakeExtensionWitness Extension => _extension ?? throw new InvalidOperationException("Extension not connected.");
     public Guid SessionId => _sessionId ?? throw new InvalidOperationException("No session started.");
     private string UserData => Path.Combine(_root, "User Data");
 
@@ -426,6 +486,9 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
                     ["Dev__ImpersonateUsername"] = SchoolAddress,
                     ["Session__SchoolProfileScanSeconds"] = "1",
                     ["Session__SchoolProfileReportSeconds"] = ((int)(report ?? Report).TotalSeconds).ToString(),
+                    // The InPrivate witness (#148) looks as often, and reports an
+                    // InPrivate window after the same report time (#535).
+                    ["Session__InPrivateScanIntervalSeconds"] = "1",
                     ["Session__ExtensionRepairSeconds"] = ((int)Repair.TotalSeconds).ToString(),
                 });
             await run.Agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));

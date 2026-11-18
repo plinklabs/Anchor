@@ -1630,9 +1630,10 @@ public partial class App : Application
 
         // #148 -- agent-side robust InPrivate detection. The scanner enumerates
         // live Edge windows; the monitor polls it while in a joined session and
-        // reports TamperDetected{inprivate_opened} for each newly-seen InPrivate
-        // window. --simulate-inprivate (dev only) swaps a synthetic scanner so the
-        // headless e2e can drive the path without a real InPrivate window.
+        // reports TamperDetected{inprivate_opened} for each InPrivate window still
+        // open after Session:SchoolProfileReportSeconds (#535). --simulate-inprivate
+        // (dev only) swaps a synthetic scanner so the headless e2e can drive the
+        // path without a real InPrivate window.
         if (Program.SimulateInPrivate)
             builder.Services.AddSingleton<IBrowserWindowScanner, SimulatedInPrivateScanner>();
         else

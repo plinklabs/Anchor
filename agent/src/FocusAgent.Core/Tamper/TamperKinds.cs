@@ -23,14 +23,19 @@ public static class TamperKinds
     public const string ExtensionDisabled = "extension_disabled";
 
     /// <summary>
-    /// An Edge InPrivate window was open during an active session (#148). The
-    /// extension only ever sees InPrivate windows once it has been allowed in
-    /// InPrivate — which is also the case where it still filters them — so the
-    /// reliable signal is the agent's: it enumerates Edge windows and recognises
-    /// an InPrivate one by its title even when the extension has no incognito
-    /// access (see <c>classifyCreatedWindow</c> in extension/src/shared/tamper.ts).
-    /// Shares the extension's existing in-browser kind string so one dashboard
-    /// flag covers both witnesses.
+    /// An Edge InPrivate window was still open
+    /// <see cref="Settings.SessionSettings.SchoolProfileReportSeconds"/> after it
+    /// opened during an active session (#148, #535). The extension only ever sees
+    /// InPrivate windows once it has been allowed in InPrivate — which is also the
+    /// case where it still filters them — so the reliable signal is the agent's:
+    /// it enumerates Edge windows and recognises an InPrivate one by its title even
+    /// when the extension has no incognito access
+    /// (<see cref="InPrivateWitnessMonitor"/>). Since #525 such a window is paused
+    /// at once and its overlay offers to close it, so, as for
+    /// <see cref="OutsideSchoolProfile"/>, the teacher hears of it only when the
+    /// student leaves it open. The extension still sends this string itself
+    /// (<c>classifyCreatedWindow</c> in extension/src/shared/tamper.ts) the moment
+    /// it sees one, but the agent doesn't pass that on (#535).
     /// </summary>
     public const string InPrivateOpened = "inprivate_opened";
 

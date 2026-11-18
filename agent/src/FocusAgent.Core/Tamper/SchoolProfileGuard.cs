@@ -44,8 +44,9 @@ namespace FocusAgent.Core.Tamper;
 /// (<see cref="TamperKinds.SchoolProfileMissing"/>), or still no extension in the
 /// one that is (<see cref="TamperKinds.SchoolProfileWithoutExtension"/>). Signing
 /// in and adding the extension are two steps, and each gets the report time of
-/// its own. An InPrivate window is left out of the first: it has its own report
-/// (#148).
+/// its own. An InPrivate window is left out of the first: it has its own report,
+/// <see cref="TamperKinds.InPrivateOpened"/>, which waits as long
+/// (<see cref="InPrivateWitnessMonitor"/>, #148, #535).
 ///
 /// Like the extension pause, the rule leaves a device alone where the extension
 /// never connected since the agent started: there Edge isn't filtered in any

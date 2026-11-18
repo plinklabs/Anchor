@@ -323,12 +323,31 @@ public class ExtensionSessionRelayTests
         var sessionId = await h.JoinAsync(Office);
 
         h.Channel.Receive(new { type = "tamper", sessionId, kind = "made_up" });
-        h.Channel.Receive(new { type = "tamper", sessionId, kind = "inprivate_opened" });
+        // An extension older than #524 still reports its site access itself.
+        h.Channel.Receive(new { type = "tamper", sessionId, kind = "host_permission_revoked" });
 
         var report = await h.Hub.NextReportAsync();
         Assert.Equal("TamperDetected", report.Kind);
-        Assert.Equal("{\"kind\":\"inprivate_opened\"}", report.PayloadJson);
+        Assert.Equal("{\"kind\":\"host_permission_revoked\"}", report.PayloadJson);
+        await Task.Delay(50);
         Assert.Single(h.Hub.Reports);
+    }
+
+    [Fact]
+    public async Task The_extensions_own_inprivate_signal_goes_no_further()
+    {
+        // #535: the agent's own InPrivate witness reports an InPrivate window only
+        // when the student leaves it open; the extension (where it is allowed in
+        // InPrivate) says so the moment the window opens. Passing that on would
+        // tell the teacher of a window closed in time, and twice of one left open.
+        var h = new Harness();
+        h.Channel.RaiseConnected();
+        var sessionId = await h.JoinAsync(Office);
+
+        h.Channel.Receive(new { type = "tamper", sessionId, kind = "inprivate_opened" });
+
+        await Task.Delay(100);
+        Assert.Empty(h.Hub.Reports);
     }
 
     [Fact]

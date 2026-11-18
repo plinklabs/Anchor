@@ -27,7 +27,8 @@ namespace FocusAgent.App.Connectivity;
 ///       activeSessionId,   // non-null while the toast is up or the user has joined
 ///       joinedSessionId,   // non-null after user confirmed
 ///       allowedApps,       // current matcher app rules, or null when not in a session (#93)
-///       inPrivateDetections // count of Edge InPrivate windows the agent-side witness has reported (#148)
+///       inPrivateDetections, // count of Edge InPrivate windows the agent-side witness has reported (#148)
+///       inPrivateOpen      // InPrivate windows it sees open now, reported or not yet (#535)
 ///   }
 ///
 /// Poll <c>activeSessionId</c> to know whether SessionStarted reached the
@@ -354,8 +355,11 @@ public sealed class StatusEndpoint : IAsyncDisposable
                     },
                 // #148: how many Edge InPrivate windows the agent-side witness has
                 // reported this process, so the headless e2e can assert detection
-                // fired without screenshotting a real InPrivate window.
+                // fired without screenshotting a real InPrivate window. #535: and
+                // how many it sees open now, so it can tell one it closes in time
+                // (never reported) was seen.
                 inPrivateDetections = _inPrivate.DetectionCount,
+                inPrivateOpen = _inPrivate.OpenCount,
                 // #405: where the Edge force-install entry is, and whether the
                 // setup window is up, so the headless e2e can follow the flow.
                 extensionPolicy = _extensionPolicy?.Invoke(),

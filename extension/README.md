@@ -451,7 +451,10 @@ What the extension itself can witness while running:
 InPrivate detection is **best-effort**: the extension only sees incognito windows
 once it's been allowed in InPrivate — which is also the case where it still
 filters them — so the *reliable* InPrivate signal comes from the agent acting as
-an on-box witness (#148).
+an on-box witness (#148). Since #535 the agent doesn't pass the extension's
+`inprivate_opened` on: an InPrivate window is paused at once during a session
+(#525), and the teacher hears of it only when it is still open after
+`Session:SchoolProfileReportSeconds` (60 s), from the agent's own witness.
 
 ### Its own settings (#524)
 

@@ -35,7 +35,10 @@ internal sealed record StatusSnapshot(
     // #525: where the Edge profile signed in with the school account stands.
     [property: JsonPropertyName("schoolProfile")] SchoolProfileSnapshot? SchoolProfile = null,
     // #526: whether the agent reads Edge's address bar, and what it reported.
-    [property: JsonPropertyName("addressBar")] AddressBarSnapshot? AddressBar = null);
+    [property: JsonPropertyName("addressBar")] AddressBarSnapshot? AddressBar = null,
+    // #535: the InPrivate windows the agent's InPrivate witness sees open now,
+    // reported or not yet.
+    [property: JsonPropertyName("inPrivateOpen")] int InPrivateOpen = 0);
 
 /// <summary>
 /// The address-bar witness as exposed on /status (#526, test phase only): whether
