@@ -684,6 +684,24 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String feedTamperOutsideSchoolProfile(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name kept an Edge window open outside the school profile.',
+      'other': 'A student kept an Edge window open outside the school profile.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperSchoolProfileMissing(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name is not signed in to Edge with their school account.',
+      'other': 'A student is not signed in to Edge with their school account.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String feedTamperOther(String who, String name) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named': 'Tampering detected on $name\'s computer.',

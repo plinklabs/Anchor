@@ -1,3 +1,4 @@
+using FocusAgent.Core.Auth;
 using System.Text.Json;
 using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Focus;
@@ -24,6 +25,10 @@ public class ExtensionGuardTests
     private static readonly TimeSpan Repair = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan Scan = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SiteAccessReport = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan SchoolScan = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan SchoolReport = TimeSpan.FromSeconds(60);
+    private const string SchoolAddress = "ada.lovelace@student.school.be";
+    private const string SchoolOid = "28c4a3c2-1f0e-4f55-9a7c-6d3f0a1b2c3d";
 
     [Fact]
     public async Task Switching_the_extension_off_with_edge_open_pauses_edge_after_the_grace_period()
@@ -788,6 +793,128 @@ public class ExtensionGuardTests
         Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
     }
 
+    // ---- the school profile (#525) --------------------------------------------
+
+    [Fact]
+    public async Task Without_a_school_profile_edge_is_paused_at_once_without_telling_the_teacher_yet()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+
+        h.FirstSchoolScan();
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+        // Not "switched off or removed": the extension is on.
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Signing_in_during_the_repair_window_lifts_the_pause_and_nothing_reaches_the_teacher()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+
+        // The overlay's button: Edge opens so the student can sign in.
+        Assert.True(h.Guard.BeginRepair());
+        Assert.Equal(ExtensionGuardState.Repairing, h.Guard.State);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+
+        h.Clock.Advance(TimeSpan.FromSeconds(20));
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+        h.Clock.Advance(SchoolScan);
+
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        h.Clock.Advance(Repair + SchoolReport);
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task No_school_profile_in_time_is_told_as_such_and_a_repair_window_that_runs_out_pauses_edge_again()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.True(h.Guard.BeginRepair());
+
+        h.Run(Repair);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(new[] { (session, TamperKinds.SchoolProfileMissing) }, h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task No_school_profile_comes_before_site_access_and_site_access_shows_again_once_there_is_one()
+    {
+        using var h = new Harness(selfCheck: true, schoolProfile: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.FirstSchoolScan();
+        h.Transport.Check(session, allSites: false);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+
+        // The student signs out of Edge: which profile is the school profile decides
+        // which extension matters, so that is what the pause says now.
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.Clock.Advance(SchoolScan);
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+        h.Clock.Advance(SchoolScan);
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+    }
+
+    [Fact]
+    public async Task A_device_where_the_extension_never_connected_is_not_paused_for_a_school_profile()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        await h.JoinAsync();
+
+        h.FirstSchoolScan();
+        h.Clock.Advance(SchoolReport * 2);
+
+        Assert.Equal(ExtensionGuardState.Off, h.Guard.State);
+        Assert.Equal(0, h.PausedEvents);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task A_link_back_up_without_a_school_profile_is_paused_for_it()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.Transport.RaiseDisconnected();
+        h.FirstSchoolScan();
+        // The link is down: that is handled first, after its grace period.
+        Assert.Equal(ExtensionGuardState.Waiting, h.Guard.State);
+
+        h.Transport.RaiseConnected();
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+    }
+
     [Fact]
     public async Task Leaving_the_session_while_paused_for_site_access_lifts_the_pause()
     {
@@ -817,6 +944,7 @@ public class ExtensionGuardTests
         public FakeAppIds AppIds { get; } = new();
         public FakeEdgeProfiles Profiles { get; } = new();
         public ExtensionSelfCheckWatch? SelfCheck { get; }
+        public SchoolProfileGuard? SchoolProfile { get; }
         public int PausedEvents { get; private set; }
 
         /// <param name="profiles">
@@ -828,7 +956,14 @@ public class ExtensionGuardTests
         /// With the watch on what the extension says about its own settings (#524),
         /// reporting through <see cref="Reporter"/> after <see cref="SiteAccessReport"/>.
         /// </param>
-        public Harness(bool profiles = false, bool selfCheck = false)
+        /// <param name="schoolProfile">
+        /// With the guard on the school profile (#525), over the same user data
+        /// folder: a Default profile with the extension on, signed in with the
+        /// school account (rewrite its Local State to sign it out), scanned every
+        /// <see cref="SchoolScan"/> and reporting through <see cref="Reporter"/>
+        /// after <see cref="SchoolReport"/>.
+        /// </param>
+        public Harness(bool profiles = false, bool selfCheck = false, bool schoolProfile = false)
         {
             Coordinator = new SessionCoordinator(
                 Hub,
@@ -842,6 +977,8 @@ public class ExtensionGuardTests
                 ExtensionRepairSeconds = (int)Repair.TotalSeconds,
                 ExtensionProfileScanSeconds = (int)Scan.TotalSeconds,
                 ExtensionSiteAccessReportSeconds = (int)SiteAccessReport.TotalSeconds,
+                SchoolProfileScanSeconds = (int)SchoolScan.TotalSeconds,
+                SchoolProfileReportSeconds = (int)SchoolReport.TotalSeconds,
             });
             OpenProfileExtensionWatch? watch = null;
             if (profiles)
@@ -859,6 +996,23 @@ public class ExtensionGuardTests
             }
             if (selfCheck)
                 SelfCheck = new ExtensionSelfCheckWatch(Transport, Coordinator, Reporter, settings, Clock);
+            if (schoolProfile)
+            {
+                Profiles.SwitchOn("Default");
+                Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+                SchoolProfile = new SchoolProfileGuard(
+                    Coordinator,
+                    Witness,
+                    new EdgeSchoolProfileProbe(
+                        Profiles.UserData,
+                        new EdgeOpenProfileExtensionProbe(Profiles.UserData, AppIds, "msedge", new[] { FakeEdgeProfiles.ExtensionId })),
+                    new SchoolProfileGuardTests.FakeWindowReader(),
+                    new SignedInAccount { Current = new SchoolAccount(SchoolAddress, SchoolOid) },
+                    Reporter,
+                    settings,
+                    Options.Create(new WitnessSettings()),
+                    Clock);
+            }
             Guard = new ExtensionGuard(
                 Coordinator,
                 Witness,
@@ -868,7 +1022,8 @@ public class ExtensionGuardTests
                 Options.Create(new WitnessSettings()),
                 watch,
                 Clock,
-                selfCheck: SelfCheck);
+                selfCheck: SelfCheck,
+                schoolProfile: SchoolProfile);
             Guard.BrowserPaused += (_, _) => PausedEvents++;
         }
 
@@ -889,7 +1044,24 @@ public class ExtensionGuardTests
             return (first, second);
         }
 
-        public void Dispose() => Profiles.Dispose();
+        public void Dispose()
+        {
+            SchoolProfile?.Dispose();
+            Profiles.Dispose();
+        }
+
+        /// <summary>The first school-profile scan, one interval after the join (#525).</summary>
+        public void FirstSchoolScan() => Clock.Advance(SchoolScan);
+
+        /// <summary>
+        /// Lets <paramref name="duration"/> pass a second at a time: each scan reads
+        /// the clock, and one long advance would hand them all its end.
+        /// </summary>
+        public void Run(TimeSpan duration)
+        {
+            for (var left = duration; left > TimeSpan.Zero; left -= TimeSpan.FromSeconds(1))
+                Clock.Advance(left < TimeSpan.FromSeconds(1) ? left : TimeSpan.FromSeconds(1));
+        }
 
         public void EdgeOnScreen() =>
             Windows.Windows = new[]

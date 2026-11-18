@@ -71,10 +71,20 @@ public interface IFocusOverlay
 /// </param>
 /// <param name="Reason">
 /// Why the browser is paused: what the overlay tells the student and what its
-/// action is for — the extension switched off, or its site access taken away (#524).
+/// action is for — the extension switched off, its site access taken away (#524),
+/// no Edge profile signed in with the school account, or (for one window) a window
+/// outside the school profile (#525). For
+/// <see cref="ExtensionPauseReason.OutsideSchoolProfile"/>, <paramref name="TurnBackOn"/>
+/// closes that window and takes the student to the school profile itself, so the
+/// overlay brings no Edge window forward after it.
+/// </param>
+/// <param name="Account">
+/// The school account Edge must be signed in with, which the pause for
+/// <see cref="ExtensionPauseReason.NoSchoolProfile"/> names (#525).
 /// </param>
 public sealed record BrowserPausedPrompt(
     AllowedAppRule Browser,
     TimeSpan RepairWindow,
     Func<bool> TurnBackOn,
-    ExtensionPauseReason Reason = ExtensionPauseReason.ExtensionOff);
+    ExtensionPauseReason Reason = ExtensionPauseReason.ExtensionOff,
+    string? Account = null);

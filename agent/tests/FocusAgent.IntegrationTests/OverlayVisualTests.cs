@@ -79,6 +79,25 @@ public sealed class OverlayVisualTests
         AssertOverlayRendersAndTearsDownAsync(
             extraArgs: [AgentSelfTestProcess.OverlaySiteAccessArg], artifactPrefix: "overlay-site-access");
 
+    /// <summary>
+    /// #525: the variant for an Edge paused because no profile is signed in with
+    /// the school account: a message with the account on its own line, its own
+    /// action and hint, on the same full-monitor ink surface, torn down the same way.
+    /// </summary>
+    [Fact]
+    public Task SchoolAccountPausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlaySchoolAccountArg], artifactPrefix: "overlay-school-account");
+
+    /// <summary>
+    /// #525: the variant for one Edge window paused because it is outside the
+    /// school profile, with its "go to my school profile" action.
+    /// </summary>
+    [Fact]
+    public Task SchoolProfilePausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlaySchoolProfileArg], artifactPrefix: "overlay-school-profile");
+
     private static async Task AssertOverlayRendersAndTearsDownAsync(string[] extraArgs, string artifactPrefix)
     {
         await using var agent = AgentSelfTestProcess.Launch(AgentSelfTestProcess.ShowTestOverlayArg, extraArgs: extraArgs);

@@ -1076,6 +1076,18 @@ abstract class AppLocalizations {
   /// **'{who, select, named{{name}\'s Anchor app stopped running.} other{A student\'s Anchor app stopped running.}}'**
   String feedTamperAgentUnavailable(String who, String name);
 
+  /// Tamper report outside_school_profile (#525): during a session a window of another Edge profile or a Guest window stayed open, paused, after the student was asked to close it.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} kept an Edge window open outside the school profile.} other{A student kept an Edge window open outside the school profile.}}'**
+  String feedTamperOutsideSchoolProfile(String who, String name);
+
+  /// Tamper report school_profile_missing (#525): during a session no Edge profile was signed in with the student's school account (Edge stays paused), and the student did not sign in in time.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} is not signed in to Edge with their school account.} other{A student is not signed in to Edge with their school account.}}'**
+  String feedTamperSchoolProfileMissing(String who, String name);
+
   /// A tamper report of a kind the dashboard has no sentence for.
   ///
   /// In en, this message translates to:

@@ -104,6 +104,44 @@ public sealed class I18nTests
     }
 
     [Fact]
+    public async Task The_school_profile_pauses_read_in_English_and_Dutch()
+    {
+        // #525: the copy a student reads on the real overlay window when no Edge
+        // profile is signed in with the school account (naming it, with a 60-second
+        // repair window), and when one Edge window is outside the school profile.
+        // The message's line break reads " | " here.
+        var en = await RunVerifyI18nAsync("en-US");
+        Assert.Equal("Sign in to Edge with your school account", en["window.overlay_schoolaccount_headline"]);
+        Assert.Equal(
+            "You need to sign in to Edge with your school account: ada.lovelace@student.school.example | " +
+            "Until then Edge can't be used in this session. You can carry on with one of these apps in the meantime.",
+            en["window.overlay_schoolaccount_message"]);
+        Assert.Equal("Open Edge to sign in", en["window.overlay_schoolaccount_action"]);
+        Assert.Equal(
+            "Edge opens for 60 seconds. Click your profile picture at the top of Edge and sign in with that account.",
+            en["window.overlay_schoolaccount_hint"]);
+        Assert.Equal("Work in your school profile", en["window.overlay_schoolprofile_headline"]);
+        Assert.StartsWith("During the lesson you work in your school profile.", en["window.overlay_schoolprofile_message"]);
+        Assert.Equal("Go to my school profile", en["window.overlay_schoolprofile_action"]);
+        Assert.Equal("This window closes and Edge opens in your school profile.", en["window.overlay_schoolprofile_hint"]);
+
+        var nl = await RunVerifyI18nAsync("nl-NL");
+        Assert.Equal("Meld je in Edge aan met je schoolaccount", nl["window.overlay_schoolaccount_headline"]);
+        Assert.Equal(
+            "Je moet je in Edge aanmelden met je schoolaccount: ada.lovelace@student.school.example | " +
+            "Tot dan kun je Edge in deze sessie niet gebruiken. Ga intussen verder met een van deze apps.",
+            nl["window.overlay_schoolaccount_message"]);
+        Assert.Equal("Open Edge om je aan te melden", nl["window.overlay_schoolaccount_action"]);
+        Assert.Equal(
+            "Edge gaat 60 seconden open. Klik bovenaan in Edge op je profielfoto en meld je aan met dat account.",
+            nl["window.overlay_schoolaccount_hint"]);
+        Assert.Equal("Werk in je schoolprofiel", nl["window.overlay_schoolprofile_headline"]);
+        Assert.StartsWith("Tijdens de les werk je in je schoolprofiel.", nl["window.overlay_schoolprofile_message"]);
+        Assert.Equal("Naar mijn schoolprofiel", nl["window.overlay_schoolprofile_action"]);
+        Assert.Equal("Dit venster sluit en Edge opent in je schoolprofiel.", nl["window.overlay_schoolprofile_hint"]);
+    }
+
+    [Fact]
     public async Task Unsupported_language_falls_back_to_English()
     {
         // fr-FR ships no catalogue, so MRT resolves the en-US default — never a

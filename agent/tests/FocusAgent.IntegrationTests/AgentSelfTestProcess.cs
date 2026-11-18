@@ -24,6 +24,10 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     public const string OverlayPausedArg = "--overlay-paused";
     /// <summary>With <see cref="ShowTestOverlayArg"/>: show the variant for the extension's site access (#524).</summary>
     public const string OverlaySiteAccessArg = "--overlay-site-access";
+    /// <summary>With <see cref="ShowTestOverlayArg"/>: show the variant for no Edge profile signed in with the school account (#525).</summary>
+    public const string OverlaySchoolAccountArg = "--overlay-school-account";
+    /// <summary>With <see cref="ShowTestOverlayArg"/>: show the variant for a window outside the school profile (#525).</summary>
+    public const string OverlaySchoolProfileArg = "--overlay-school-profile";
     public const string ShowTestToastArg = "--show-test-toast";
     public const string ShowTestMainWindowArg = "--show-test-mainwindow";
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";

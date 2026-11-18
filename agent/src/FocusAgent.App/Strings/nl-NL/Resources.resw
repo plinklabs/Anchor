@@ -293,6 +293,31 @@
   <data name="Overlay_SiteAccess_Hint" xml:space="preserve">
     <value>Edge gaat {0} seconden open op de pagina van Anchor. Zet Sitetoegang op "Op alle sites".</value>
   </data>
+  <data name="Overlay_SchoolAccount_Headline" xml:space="preserve">
+    <value>Meld je in Edge aan met je schoolaccount</value>
+  </data>
+  <data name="Overlay_SchoolAccount_Message" xml:space="preserve">
+    <value>Je moet je in Edge aanmelden met je schoolaccount: {0}
+Tot dan kun je Edge in deze sessie niet gebruiken. Ga intussen verder met een van deze apps.</value>
+  </data>
+  <data name="Overlay_SchoolAccount_TurnBackOn" xml:space="preserve">
+    <value>Open Edge om je aan te melden</value>
+  </data>
+  <data name="Overlay_SchoolAccount_Hint" xml:space="preserve">
+    <value>Edge gaat {0} seconden open. Klik bovenaan in Edge op je profielfoto en meld je aan met dat account.</value>
+  </data>
+  <data name="Overlay_SchoolProfile_Headline" xml:space="preserve">
+    <value>Werk in je schoolprofiel</value>
+  </data>
+  <data name="Overlay_SchoolProfile_Message" xml:space="preserve">
+    <value>Tijdens de les werk je in je schoolprofiel. Dit Edge-venster hoort daar niet bij (een ander profiel, een gastvenster of een InPrivate-venster), dus het blijft gepauzeerd tot de sessie voorbij is.</value>
+  </data>
+  <data name="Overlay_SchoolProfile_TurnBackOn" xml:space="preserve">
+    <value>Naar mijn schoolprofiel</value>
+  </data>
+  <data name="Overlay_SchoolProfile_Hint" xml:space="preserve">
+    <value>Dit venster sluit en Edge opent in je schoolprofiel.</value>
+  </data>
   <data name="Join_Button_Join" xml:space="preserve">
     <value>DEELNEMEN</value>
   </data>

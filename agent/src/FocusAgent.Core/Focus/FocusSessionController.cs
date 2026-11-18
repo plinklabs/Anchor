@@ -15,7 +15,10 @@ namespace FocusAgent.Core.Focus;
 /// change against the allowlist, drives the enforcer, and reports. While the
 /// <see cref="ExtensionGuard"/> has Edge paused (its extension is off, #427),
 /// Edge is handled like an off-list app on top of the allowlist, and no window of
-/// it is fallen back to after a block (#452).
+/// it is fallen back to after a block (#452). And while it guards Edge, only the
+/// profile signed in with the school account may be used (#525): a window of
+/// another profile, a Guest window and an InPrivate window are each paused the same
+/// way, one by one, while the school profile's windows keep working.
 /// </summary>
 public sealed class FocusSessionController : IAsyncDisposable
 {
@@ -29,6 +32,8 @@ public sealed class FocusSessionController : IAsyncDisposable
     private readonly TimeProvider _clock;
     private readonly ILogger<FocusSessionController> _log;
     private readonly ExtensionGuard? _guard;
+    private readonly SchoolProfileGuard? _schoolProfile;
+    private readonly IBrowserProfileLauncher? _browserLauncher;
     private readonly object _gate = new();
 
     private Guid? _activeSessionId;
@@ -40,6 +45,9 @@ public sealed class FocusSessionController : IAsyncDisposable
     // when it has none: a window of the browser is no fallback while the guard
     // has it paused (#452).
     private AppInfo? _fallbackApp;
+    // The window outside the school profile the overlay was last shown for (#525),
+    // which the overlay's button closes; 0 when there is none.
+    private nint _outsideWindow;
 
     public FocusSessionController(
         SessionCoordinator sessions,
@@ -51,7 +59,9 @@ public sealed class FocusSessionController : IAsyncDisposable
         IOptions<SessionSettings> settings,
         TimeProvider? clock = null,
         ILogger<FocusSessionController>? log = null,
-        ExtensionGuard? guard = null)
+        ExtensionGuard? guard = null,
+        SchoolProfileGuard? schoolProfile = null,
+        IBrowserProfileLauncher? browserLauncher = null)
     {
         _sessions = sessions;
         _watcher = watcher;
@@ -63,6 +73,8 @@ public sealed class FocusSessionController : IAsyncDisposable
         _clock = clock ?? TimeProvider.System;
         _log = log ?? NullLogger<FocusSessionController>.Instance;
         _guard = guard;
+        _schoolProfile = schoolProfile;
+        _browserLauncher = browserLauncher;
 
         _sessions.SessionJoined += OnSessionJoined;
         _sessions.SessionLeft += OnSessionLeft;
@@ -70,6 +82,8 @@ public sealed class FocusSessionController : IAsyncDisposable
         _watcher.Changed += OnForegroundChanged;
         if (_guard is not null)
             _guard.BrowserPaused += OnBrowserPaused;
+        if (_schoolProfile is not null)
+            _schoolProfile.WindowsOutside += OnWindowsOutside;
     }
 
     /// <summary>
@@ -80,6 +94,52 @@ public sealed class FocusSessionController : IAsyncDisposable
     /// headless e2e can take the action without clicking the overlay.
     /// </summary>
     public bool TurnExtensionBackOn() => _guard?.BeginRepair() ?? false;
+
+    /// <summary>
+    /// The student's "go to my school profile" action on the overlay of a window
+    /// outside the school profile (#525): closes <paramref name="outsideWindow"/>
+    /// (0: the window the overlay was last shown for) and brings a window of the
+    /// school profile forward, or opens Edge in it when none is open. Returns false
+    /// when there is no school profile to go to. Also driven by the dev status
+    /// endpoint, so the headless e2e can take the action without clicking.
+    /// </summary>
+    public bool GoToSchoolProfile(nint outsideWindow = 0)
+    {
+        if (_schoolProfile is null || ActiveSessionId is null) return false;
+        var profile = _schoolProfile.Profile;
+        if (profile is null) return false;
+
+        if (outsideWindow == IntPtr.Zero)
+        {
+            lock (_gate) outsideWindow = _outsideWindow;
+        }
+        try
+        {
+            // Never a window of the school profile itself, whatever asked.
+            if (outsideWindow != IntPtr.Zero && _schoolProfile.IsOutsideSchoolProfile(outsideWindow))
+            {
+                _log.LogInformation("Closing 0x{Window:X}, a window outside the school profile", outsideWindow);
+                _browserLauncher?.CloseWindow(outsideWindow);
+            }
+            var school = _schoolProfile.FindSchoolProfileWindow();
+            if (school != IntPtr.Zero)
+            {
+                _log.LogInformation("Bringing school profile {Profile}'s window 0x{Window:X} forward", profile, school);
+                _enforcer.BringForward(school);
+            }
+            else
+            {
+                _log.LogInformation("No window of school profile {Profile} is open; opening the browser in it", profile);
+                _browserLauncher?.OpenProfile(profile);
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Taking the student to school profile {Profile} failed", profile);
+            return false;
+        }
+    }
 
     public Guid? ActiveSessionId
     {
@@ -127,6 +187,7 @@ public sealed class FocusSessionController : IAsyncDisposable
                 _lastReportedProcessName = null;
                 _lastReportedAt = DateTimeOffset.MinValue;
                 _fallbackApp = null;
+                _outsideWindow = IntPtr.Zero;
             }
             _enforcer.Reset();
             _watcher.Start();
@@ -235,6 +296,7 @@ public sealed class FocusSessionController : IAsyncDisposable
                 _activeSessionId = null;
                 _matcher = null;
                 _fallbackApp = null;
+                _outsideWindow = IntPtr.Zero;
             }
             _watcher.Stop();
             _enforcer.Reset();
@@ -330,7 +392,9 @@ public sealed class FocusSessionController : IAsyncDisposable
         // Why it is paused (the extension off, or its site access taken away, #524)
         // decides what the overlay says and what its action does.
         var prompt = new BrowserPausedPrompt(
-            guard.BrowserRule, guard.RepairWindow, TurnExtensionBackOn, guard.PauseReason);
+            guard.BrowserRule, guard.RepairWindow, TurnExtensionBackOn, guard.PauseReason,
+            // #525: the pause for a missing school profile names the account.
+            Account: _schoolProfile?.AccountName);
         // Edge goes down only while the pause lasts. The overlay gets to this show,
         // and to taking the window down, a moment later, behind the shows asked for
         // before it: by then the extension may be back, or the repair window open,
@@ -343,6 +407,93 @@ public sealed class FocusSessionController : IAsyncDisposable
             _log.LogWarning(ex, "Overlay.ShowBrowserPaused threw; minimizing the window without it");
             if (pausedWindow != IntPtr.Zero)
                 _enforcer.Minimize(pausedWindow);
+        }
+    }
+
+    /// <summary>
+    /// The school-profile guard found windows outside the school profile on screen
+    /// (#525): a window of another profile, a Guest window or an InPrivate window,
+    /// open at the join or opened since. Take each down, like the pause takes Edge's
+    /// windows down (#427): the one with the foreground goes to the overlay, which
+    /// says why and takes the keyboard over from it (#450); the others are minimized.
+    /// </summary>
+    private void OnWindowsOutside(object? sender, IReadOnlyList<nint> windows)
+    {
+        Guid? sessionId;
+        AllowlistMatcher? matcher;
+        lock (_gate)
+        {
+            sessionId = _activeSessionId;
+            matcher = _matcher;
+        }
+        if (sessionId is null || matcher is null || _guard is not { } guard || !SchoolProfileRuleApplies(guard))
+            return;
+
+        var handedOver = IntPtr.Zero;
+        foreach (var window in windows)
+        {
+            try
+            {
+                var foreground = handedOver == IntPtr.Zero ? _enforcer.ForegroundWindowOf(window) : IntPtr.Zero;
+                if (foreground != IntPtr.Zero)
+                {
+                    handedOver = foreground;
+                    ShowOutsideSchoolProfileOverlay(guard, matcher, window, foreground);
+                }
+                else
+                    _enforcer.Minimize(window);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to pause window 0x{Window:X} outside the school profile", window);
+            }
+        }
+        _log.LogWarning(
+            "Paused {Count} window(s) outside the school profile in session {SessionId}", windows.Count, sessionId);
+    }
+
+    /// <summary>
+    /// Whether the school-profile rule is in force (#525): while the extension
+    /// pause guards Edge and Edge as a whole is neither paused (that pause covers
+    /// every window) nor open for its repair window (the repair may need a window of
+    /// another profile, the one whose extension is off). Where the extension never
+    /// connected, the guard is off and so is the rule.
+    /// </summary>
+    private static bool SchoolProfileRuleApplies(ExtensionGuard guard) =>
+        guard.State is ExtensionGuardState.Present or ExtensionGuardState.Waiting or ExtensionGuardState.Dormant;
+
+    /// <summary>
+    /// Tells the student <paramref name="outsideWindow"/> is paused because it is
+    /// outside their school profile (#525), and offers to take them there.
+    /// <paramref name="handOver"/>, the window that has the foreground (the outside
+    /// window or a dialog it owns), goes to the overlay, which takes it down and the
+    /// keyboard over from it; 0 when there is none.
+    /// </summary>
+    private void ShowOutsideSchoolProfileOverlay(
+        ExtensionGuard guard, AllowlistMatcher matcher, nint outsideWindow, nint handOver)
+    {
+        lock (_gate)
+            _outsideWindow = outsideWindow;
+        // The school profile is the way back, not Edge as a whole, so Edge is left
+        // out of the rows like a paused Edge is.
+        var others = matcher.UserRules.Where(r => !guard.IsBrowserRule(r)).ToArray();
+        var prompt = new BrowserPausedPrompt(
+            guard.BrowserRule,
+            TimeSpan.Zero,
+            () => GoToSchoolProfile(outsideWindow),
+            ExtensionPauseReason.OutsideSchoolProfile);
+        // The window goes down only while the rule still holds: the session may have
+        // ended, or Edge been opened for repair, by the time the overlay gets to it.
+        try
+        {
+            _overlay.ShowBrowserPaused(
+                others, prompt, handOver, () => ActiveSessionId is not null && SchoolProfileRuleApplies(guard));
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Overlay.ShowBrowserPaused threw; minimizing the window outside the school profile without it");
+            if (handOver != IntPtr.Zero)
+                _enforcer.Minimize(handOver);
         }
     }
 
@@ -394,16 +545,27 @@ public sealed class FocusSessionController : IAsyncDisposable
         // coming forward tells a guard that's waiting for Edge to relaunch that the
         // extension's grace period can start now.
         ExtensionGuard? pausedBy = null;
+        // #525: while Edge isn't paused as a whole, a window of it outside the school
+        // profile (another profile, Guest, InPrivate) is, on its own. A dialog is
+        // judged by the Edge window that owns it.
+        var outsideWindow = IntPtr.Zero;
         if (_guard is { } guard && guard.IsBrowser(app))
         {
             if (guard.IsBrowserPaused)
                 pausedBy = guard;
             else
+            {
                 guard.NoteBrowserForeground();
+                var browserWindow = change.Owner?.WindowHandle ?? change.WindowHandle;
+                if (_schoolProfile is { } schoolProfile && SchoolProfileRuleApplies(guard)
+                    && schoolProfile.IsOutsideSchoolProfile(browserWindow))
+                    outsideWindow = browserWindow;
+            }
         }
         var browserPaused = pausedBy is not null;
+        var outsideSchoolProfile = outsideWindow != IntPtr.Zero;
 
-        var allowed = !browserPaused && matcher.IsAllowed(app);
+        var allowed = !browserPaused && !outsideSchoolProfile && matcher.IsAllowed(app);
 
         // Enforcement runs on EVERY foreground event, including repeats of the
         // same app inside the coalesce window. Design §5.2 requires re-checking
@@ -438,6 +600,16 @@ public sealed class FocusSessionController : IAsyncDisposable
                     "Pausing {ProcessName} (pid={Pid}) in session {SessionId}: its extension is off",
                     app.ProcessName, change.ProcessId, id);
                 ShowBrowserPausedOverlay(pausing, matcher, change.WindowHandle, browserWindow: true);
+            }
+            else if (outsideSchoolProfile && _guard is { } outsideGuard)
+            {
+                // #525: the overlay says this window is outside the school profile and
+                // offers to take the student there; it takes the window down and the
+                // keyboard over from it, as for a paused Edge (#450).
+                _log.LogWarning(
+                    "Pausing {ProcessName} window 0x{Window:X} (pid={Pid}) in session {SessionId}: it is outside the school profile",
+                    app.ProcessName, outsideWindow, change.ProcessId, id);
+                ShowOutsideSchoolProfileOverlay(outsideGuard, matcher, outsideWindow, change.WindowHandle);
             }
             else
             {
@@ -551,6 +723,8 @@ public sealed class FocusSessionController : IAsyncDisposable
         _watcher.Changed -= OnForegroundChanged;
         if (_guard is not null)
             _guard.BrowserPaused -= OnBrowserPaused;
+        if (_schoolProfile is not null)
+            _schoolProfile.WindowsOutside -= OnWindowsOutside;
         try { _watcher.Stop(); } catch { /* best-effort */ }
         _watcher.Dispose();
         await Task.CompletedTask;

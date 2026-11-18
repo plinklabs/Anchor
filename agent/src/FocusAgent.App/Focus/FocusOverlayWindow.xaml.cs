@@ -61,18 +61,20 @@ public sealed partial class FocusOverlayWindow : Window
     }
 
     /// <summary>
-    /// The overlay for an Edge paused because its extension is off (#427), or
-    /// because it may no longer work on all sites (#524): why Edge went away, the
-    /// one action that opens it to put that right, and the other allowed apps to
-    /// carry on with.
+    /// The overlay for an Edge paused because its extension is off (#427), because
+    /// it may no longer work on all sites (#524), or because no Edge profile is
+    /// signed in with the school account (#525), and for one Edge window paused
+    /// because it is outside the school profile (#525): why it went away, the one
+    /// action that puts that right, and the other allowed apps to carry on with.
     /// </summary>
     public void UpdateBrowserPausedContent(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
     {
         _browserPrompt = prompt;
-        // The site-access copy names the setting and has the button open it.
-        var copy = prompt.Reason == ExtensionPauseReason.NoSiteAccess ? "Overlay_SiteAccess" : "Overlay_BrowserPaused";
+        // Each reason has its own copy: the site-access copy names the setting and
+        // has the button open it, the school-account copy names the account.
+        var copy = CopyFor(prompt.Reason);
         HeadlineText.Text = Loc.Get($"{copy}_Headline");
-        MessageText.Text = Loc.Get($"{copy}_Message");
+        MessageText.Text = Loc.Format($"{copy}_Message", prompt.Account ?? "");
         BrowserRepairButton.Content = Loc.Get($"{copy}_TurnBackOn");
         BrowserRepairHintText.Text = Loc.Format(
             $"{copy}_Hint", (int)Math.Round(prompt.RepairWindow.TotalSeconds));
@@ -81,6 +83,15 @@ public sealed partial class FocusOverlayWindow : Window
 
         FillAllowedApps(allowedRules);
     }
+
+    /// <summary>The resource prefix of the copy for a pause of <paramref name="reason"/>.</summary>
+    internal static string CopyFor(ExtensionPauseReason reason) => reason switch
+    {
+        ExtensionPauseReason.NoSiteAccess => "Overlay_SiteAccess",
+        ExtensionPauseReason.NoSchoolProfile => "Overlay_SchoolAccount",
+        ExtensionPauseReason.OutsideSchoolProfile => "Overlay_SchoolProfile",
+        _ => "Overlay_BrowserPaused",
+    };
 
     private void FillAllowedApps(IReadOnlyList<AllowedAppRule> allowedRules)
     {
@@ -164,6 +175,15 @@ public sealed partial class FocusOverlayWindow : Window
     {
         if (_browserPrompt is not { } prompt)
             return;
+        if (prompt.Reason == ExtensionPauseReason.OutsideSchoolProfile)
+        {
+            // #525: the action closes the paused window and brings the school
+            // profile forward itself; bringing "Edge" forward could pick the
+            // paused window's profile.
+            prompt.TurnBackOn();
+            _onLaunched(prompt.Browser);
+            return;
+        }
         // Open the repair window first, so the foreground change Edge makes when
         // it comes forward already finds it allowed.
         prompt.TurnBackOn();

@@ -172,4 +172,11 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern int GetMessageW(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    /// <summary>Asks a window to close, as its close button does (#525).</summary>
+    public const uint WM_CLOSE = 0x0010;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessageW(nint hWnd, uint msg, nint wParam, nint lParam);
 }

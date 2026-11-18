@@ -61,6 +61,9 @@ import 'support/e2e_binding.dart';
 //     class at once, and the requests, the bundles and the feed share the
 //     right, each column scrolling on its own; a narrower window stacks the
 //     panels as before (#494).
+//   - the agent's reports that a student left an Edge window outside the
+//     school profile open, or isn't signed in to Edge with the school account,
+//     read as sentences in the feed (#525).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -616,6 +619,53 @@ void main() {
     // Ada is still "in session" — tampering is orthogonal to live state.
     expect(find.text('In session'), findsOneWidget);
   });
+
+  testWidgets(
+    'the school-profile reports read as sentences in the feed and flag the '
+    'student (#525)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [_participant('Ada', ParticipantLiveState.joined)],
+      );
+
+      // During a session only the Edge profile signed in with the school
+      // account may be used. The agent tells the teacher only what the student
+      // leaves unresolved: a paused window of another profile still open, or
+      // no profile signed in with the school account at all.
+      h.sessions.roster = [
+        _participant('Ada', ParticipantLiveState.joined, tampered: true),
+      ];
+      for (final (kind, minute) in [
+        ('outside_school_profile', 22),
+        ('school_profile_missing', 23),
+      ]) {
+        h.hub.emit('TamperDetected', {
+          'sessionId': _sessionId,
+          'userId': 'Ada',
+          'userDisplayName': 'Ada',
+          'kind': kind,
+          'detectedAt': '2026-06-12T07:$minute:00+00:00',
+        });
+      }
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Ada kept an Edge window open outside the school profile.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Ada is not signed in to Edge with their school account.'),
+        findsOneWidget,
+      );
+      // Never the kind itself, and the roster flags her like any tampering.
+      for (final raw in ['outside_school_profile', 'school_profile_missing']) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+      expect(find.byTooltip('Tampering detected'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'a student whose agent never connects shows on the live roster until it '

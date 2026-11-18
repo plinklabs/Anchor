@@ -202,6 +202,15 @@ void main() {
           "Ada's Anchor app stopped running.",
           'De Anchor-app van Ada draait niet meer.',
         ),
+        // #525: only told when the student doesn't resolve it.
+        'outside_school_profile': (
+          'Ada kept an Edge window open outside the school profile.',
+          'Ada hield een Edge-venster buiten het schoolprofiel open.',
+        ),
+        'school_profile_missing': (
+          'Ada is not signed in to Edge with their school account.',
+          'Ada is in Edge niet aangemeld met het schoolaccount.',
+        ),
         // A kind this dashboard doesn't know yet: a sentence, not the code.
         'clock_tampered': (
           "Tampering detected on Ada's computer.",

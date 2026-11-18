@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Realtime;
@@ -10,8 +11,17 @@ using Microsoft.Extensions.Time.Testing;
 
 namespace FocusAgent.Core.Tests;
 
-public class FocusSessionControllerTests
+public class FocusSessionControllerTests : IDisposable
 {
+    // The Edge profile folders the school-profile specs wrote (#525).
+    private readonly List<IDisposable> _cleanup = new();
+
+    public void Dispose()
+    {
+        foreach (var item in _cleanup)
+            item.Dispose();
+    }
+
     [Fact]
     public async Task Watcher_starts_on_join_and_stops_on_leave()
     {
@@ -470,6 +480,202 @@ public class FocusSessionControllerTests
     /// A joined session with Edge and Word allowed (or <paramref name="apps"/>) and
     /// both on screen, the extension connected, then switched off.
     /// </summary>
+    // ---- the school profile (#525) --------------------------------------------
+
+    private const string SchoolAddress = "ada.lovelace@student.school.be";
+    private const string SchoolOid = "28c4a3c2-1f0e-4f55-9a7c-6d3f0a1b2c3d";
+    // Edge's windows: the school profile's (Profile 1), a personal profile's
+    // (Default) and a Guest window, as Edge 157 names and titles them.
+    private static readonly BrowserWindowInfo SchoolWindow = new(0x10, "MSEdge.UserData.Profile1", "Lesson - School - Microsoft\u200b Edge", false);
+    private static readonly BrowserWindowInfo PersonalWindow = new(0x20, "MSEdge", "News - Personal - Microsoft\u200b Edge", false);
+    private static readonly BrowserWindowInfo GuestWindow = new(0x30, "MSEdge.UserData.GuestProfile", "about:blank - [Guest] - Microsoft\u200b Edge", false);
+
+    /// <summary>
+    /// A session joined with the extension connected and Edge allowed, on a laptop
+    /// whose Profile 1 is signed in with the school account (or, with
+    /// <paramref name="signedIn"/> false, no profile is), with the given Edge
+    /// windows open, and the school-profile guard's first scan done.
+    /// </summary>
+    private async Task<(FocusSessionController, Fixtures, Guid)> JoinWithSchoolProfileAsync(
+        bool signedIn = true, params BrowserWindowInfo[] windows)
+    {
+        var fixtures = new Fixtures { WithGuard = true, WithSchoolProfile = true };
+        _cleanup.Add(fixtures.EdgeProfiles);
+        fixtures.EdgeProfiles.SwitchOn("Default");
+        fixtures.EdgeProfiles.SwitchOn("Profile 1");
+        fixtures.EdgeProfiles.WriteLocalState(
+            ("Default", "ada.personal@outlook.com", null),
+            ("Profile 1", signedIn ? SchoolAddress : "", signedIn ? SchoolOid : null));
+        fixtures.EdgeWindows.Open(windows);
+        fixtures.Windows.Windows.AddRange(windows.Select(w => OpenWindowFor("msedge", w.Handle)));
+        var (controller, _) = BuildController(fixtures);
+        fixtures.Transport.RaiseConnected();
+        var payload = NewPayload(apps: EdgeAndWord);
+        await fixtures.Hub.RaiseSessionStarted(payload);
+        // The first scan, one interval after the join.
+        fixtures.Clock.Advance(SchoolProfileScan);
+        return (controller, fixtures, payload.SessionId);
+    }
+
+    [Fact]
+    public async Task A_window_of_another_profile_coming_forward_is_paused_with_the_school_profile_overlay()
+    {
+        var (_, fixtures, _) = await JoinWithSchoolProfileAsync(windows: [SchoolWindow, PersonalWindow]);
+        fixtures.Overlay.PausedShown.Clear();
+
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: PersonalWindow.Handle));
+
+        var shown = Assert.Single(fixtures.Overlay.PausedShown);
+        Assert.Equal(ExtensionPauseReason.OutsideSchoolProfile, shown.Prompt.Reason);
+        // The overlay takes it down and the keyboard over from it (#450).
+        Assert.Equal(PersonalWindow.Handle, shown.PausedWindow);
+        Assert.True(shown.StillPaused!());
+        // Edge is no way back from it; the button is.
+        Assert.DoesNotContain(shown.Rules, r => r.Value == "msedge");
+        // No place to fall back to after a block, and reported as blocked.
+        Assert.DoesNotContain(PersonalWindow.Handle, fixtures.Enforcer.Remembered);
+        Assert.True(Assert.Single(fixtures.Reporter.Reports).Blocked);
+        Assert.False(fixtures.Guard!.IsBrowserPaused);
+    }
+
+    [Fact]
+    public async Task The_school_profile_s_windows_keep_working()
+    {
+        var (_, fixtures, _) = await JoinWithSchoolProfileAsync(windows: [SchoolWindow, PersonalWindow]);
+        fixtures.Overlay.PausedShown.Clear();
+
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: SchoolWindow.Handle));
+
+        Assert.Empty(fixtures.Overlay.PausedShown);
+        Assert.Contains(SchoolWindow.Handle, fixtures.Enforcer.Remembered);
+        Assert.False(Assert.Single(fixtures.Reporter.Reports).Blocked);
+    }
+
+    [Fact]
+    public async Task Windows_outside_the_school_profile_on_screen_at_the_join_are_paused()
+    {
+        // The personal window has the foreground: the overlay takes it over. The
+        // Guest window behind it is only minimized, like the pause does (#427).
+        var (_, fixtures, _) = await JoinWithSchoolProfileAsync(windows: [SchoolWindow, PersonalWindow, GuestWindow]);
+
+        // The first scan already ran with nothing in the foreground: both went down.
+        Assert.Equal(new nint[] { PersonalWindow.Handle, GuestWindow.Handle }, fixtures.Enforcer.Minimized.Order());
+
+        fixtures.Enforcer.Minimized.Clear();
+        fixtures.Enforcer.ForegroundOf[PersonalWindow.Handle] = PersonalWindow.Handle;
+        fixtures.Clock.Advance(SchoolProfileScan);
+
+        Assert.Equal(new[] { GuestWindow.Handle }, fixtures.Enforcer.Minimized);
+        var shown = Assert.Single(fixtures.Overlay.PausedShown);
+        Assert.Equal(ExtensionPauseReason.OutsideSchoolProfile, shown.Prompt.Reason);
+        Assert.Equal(PersonalWindow.Handle, shown.PausedWindow);
+        Assert.DoesNotContain(SchoolWindow.Handle, fixtures.Enforcer.Minimized);
+    }
+
+    [Fact]
+    public async Task The_overlay_s_button_closes_the_window_and_brings_the_school_profile_forward()
+    {
+        var (_, fixtures, _) = await JoinWithSchoolProfileAsync(windows: [SchoolWindow, PersonalWindow]);
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: PersonalWindow.Handle));
+        var prompt = fixtures.Overlay.PausedShown.Last().Prompt;
+
+        Assert.True(prompt.TurnBackOn());
+
+        Assert.Equal(new[] { PersonalWindow.Handle }, fixtures.Launcher.Closed);
+        Assert.Equal(new[] { SchoolWindow.Handle }, fixtures.Enforcer.BroughtForward);
+        Assert.Empty(fixtures.Launcher.Opened);
+    }
+
+    [Fact]
+    public async Task With_no_school_profile_window_open_the_button_opens_edge_in_the_school_profile()
+    {
+        var (controller, fixtures, _) = await JoinWithSchoolProfileAsync(windows: [GuestWindow]);
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: GuestWindow.Handle));
+
+        // As the status endpoint drives it: the window the overlay was shown for.
+        Assert.True(controller.GoToSchoolProfile());
+
+        Assert.Equal(new[] { GuestWindow.Handle }, fixtures.Launcher.Closed);
+        Assert.Equal(new[] { "Profile 1" }, fixtures.Launcher.Opened);
+    }
+
+    [Fact]
+    public async Task The_button_never_closes_a_window_of_the_school_profile()
+    {
+        var (controller, fixtures, _) = await JoinWithSchoolProfileAsync(windows: [SchoolWindow]);
+
+        Assert.True(controller.GoToSchoolProfile(SchoolWindow.Handle));
+
+        Assert.Empty(fixtures.Launcher.Closed);
+        Assert.Equal(new[] { SchoolWindow.Handle }, fixtures.Enforcer.BroughtForward);
+    }
+
+    [Fact]
+    public async Task A_dialog_of_a_window_outside_the_school_profile_is_judged_by_that_window()
+    {
+        var (_, fixtures, _) = await JoinWithSchoolProfileAsync(windows: [SchoolWindow, PersonalWindow]);
+        fixtures.Overlay.PausedShown.Clear();
+
+        fixtures.Watcher.Raise(PickerFor(hwnd: 0x700, ownerProcess: "msedge", ownerHwnd: PersonalWindow.Handle));
+
+        var shown = Assert.Single(fixtures.Overlay.PausedShown);
+        // The picker goes to the overlay (and down with its owner, #428)...
+        Assert.Equal((nint)0x700, shown.PausedWindow);
+        // ...and the button closes the Edge window it belongs to.
+        Assert.True(shown.Prompt.TurnBackOn());
+        Assert.Equal(new[] { PersonalWindow.Handle }, fixtures.Launcher.Closed);
+    }
+
+    [Fact]
+    public async Task While_edge_is_open_for_repair_no_window_is_paused_for_its_profile()
+    {
+        // The extension switched off in the personal profile pauses Edge as a
+        // whole; its repair needs that profile's window.
+        var (controller, fixtures, _) = await JoinWithSchoolProfileAsync(windows: [SchoolWindow, PersonalWindow]);
+        fixtures.Transport.RaiseDisconnected();
+        fixtures.Clock.Advance(ExtensionGrace);
+        Assert.True(fixtures.Guard!.IsBrowserPaused);
+        Assert.True(controller.TurnExtensionBackOn());
+        fixtures.Overlay.PausedShown.Clear();
+        fixtures.Enforcer.Minimized.Clear();
+
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: PersonalWindow.Handle));
+        fixtures.Clock.Advance(SchoolProfileScan);
+
+        Assert.Empty(fixtures.Overlay.PausedShown);
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Contains(PersonalWindow.Handle, fixtures.Enforcer.Remembered);
+    }
+
+    [Fact]
+    public async Task The_pause_for_no_school_profile_names_the_account_to_sign_in_with()
+    {
+        var (_, fixtures, _) = await JoinWithSchoolProfileAsync(signedIn: false, windows: [SchoolWindow, PersonalWindow]);
+
+        Assert.True(fixtures.Guard!.IsBrowserPaused);
+        var shown = Assert.Single(fixtures.Overlay.PausedShown);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, shown.Prompt.Reason);
+        Assert.Equal(SchoolAddress, shown.Prompt.Account);
+        // Every Edge window goes down with Edge, the school one included.
+        Assert.Equal(new nint[] { SchoolWindow.Handle, PersonalWindow.Handle }, fixtures.Enforcer.Minimized.Order());
+    }
+
+    [Fact]
+    public async Task After_the_session_nothing_is_paused_for_its_profile()
+    {
+        var (controller, fixtures, sessionId) = await JoinWithSchoolProfileAsync(windows: [SchoolWindow, PersonalWindow]);
+        fixtures.Hub.RaiseSessionEnded(sessionId);
+        fixtures.Overlay.PausedShown.Clear();
+        fixtures.Enforcer.Minimized.Clear();
+
+        fixtures.Clock.Advance(SchoolProfileScan * 3);
+
+        Assert.Empty(fixtures.Enforcer.Minimized);
+        Assert.Empty(fixtures.Overlay.PausedShown);
+        Assert.False(controller.GoToSchoolProfile(PersonalWindow.Handle));
+        Assert.Empty(fixtures.Launcher.Closed);
+    }
+
     private static async Task<(FocusSessionController, Fixtures, Guid)> JoinThenSwitchExtensionOffAsync(
         IReadOnlyList<AllowedAppDto>? apps = null)
     {
@@ -1121,6 +1327,21 @@ public class FocusSessionControllerTests
             // #524: what the extension says about its own site access.
             var selfCheck = new ExtensionSelfCheckWatch(
                 fixtures.Transport, coordinator, new NoopTamperReporter(), guardSettings, fixtures.Clock);
+            // #525: the Edge profile signed in with the school account.
+            if (fixtures.WithSchoolProfile)
+                fixtures.SchoolProfile = new SchoolProfileGuard(
+                    coordinator,
+                    witness,
+                    new EdgeSchoolProfileProbe(
+                        fixtures.EdgeProfiles.UserData,
+                        new EdgeOpenProfileExtensionProbe(
+                            fixtures.EdgeProfiles.UserData, new NoAppIds(), "msedge", new[] { FakeEdgeProfiles.ExtensionId })),
+                    fixtures.EdgeWindows,
+                    new SignedInAccount { Current = new SchoolAccount(SchoolAddress, SchoolOid) },
+                    new NoopTamperReporter(),
+                    Options.Create(new SessionSettings { SchoolProfileScanSeconds = (int)SchoolProfileScan.TotalSeconds }),
+                    Options.Create(new WitnessSettings()),
+                    fixtures.Clock);
             guard = new ExtensionGuard(
                 coordinator,
                 witness,
@@ -1129,7 +1350,8 @@ public class FocusSessionControllerTests
                 guardSettings,
                 Options.Create(new WitnessSettings()),
                 clock: fixtures.Clock,
-                selfCheck: selfCheck);
+                selfCheck: selfCheck,
+                schoolProfile: fixtures.SchoolProfile);
             fixtures.Guard = guard;
         }
         var controller = new FocusSessionController(
@@ -1141,18 +1363,27 @@ public class FocusSessionControllerTests
             fixtures.Overlay,
             settings,
             fixtures.Clock,
-            guard: guard);
+            guard: guard,
+            schoolProfile: fixtures.SchoolProfile,
+            browserLauncher: fixtures.Launcher);
         fixtures.Coordinator = coordinator;
         return (controller, fixtures);
     }
 
     private static readonly TimeSpan ExtensionGrace = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ExtensionRepair = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan SchoolProfileScan = TimeSpan.FromSeconds(2);
 
     private sealed class Fixtures
     {
         /// <summary>Wire an <see cref="ExtensionGuard"/> (#427) over <see cref="Transport"/>.</summary>
         public bool WithGuard { get; init; }
+        /// <summary>With <see cref="WithGuard"/>: wire a <see cref="SchoolProfileGuard"/> (#525) over <see cref="EdgeProfiles"/>.</summary>
+        public bool WithSchoolProfile { get; init; }
+        public FakeEdgeProfiles EdgeProfiles { get; } = new();
+        public SchoolProfileGuardTests.FakeWindowReader EdgeWindows { get; } = new();
+        public SchoolProfileGuard? SchoolProfile { get; set; }
+        public RecordingLauncher Launcher { get; } = new();
         public FakeWitnessTransport Transport { get; } = new();
         public ExtensionGuard? Guard { get; set; }
         public FakeHub Hub { get; } = new();
@@ -1269,8 +1500,23 @@ public class FocusSessionControllerTests
         public Dictionary<nint, nint> ForegroundOf { get; } = new();
         public nint ForegroundWindowOf(nint windowHandle) =>
             ForegroundOf.TryGetValue(windowHandle, out var foreground) ? foreground : IntPtr.Zero;
-        public void BringForward(nint windowHandle) { }
+        public List<nint> BroughtForward { get; } = new();
+        public void BringForward(nint windowHandle) => BroughtForward.Add(windowHandle);
         public void Reset() => ResetCount++;
+    }
+
+    /// <summary>What the school-profile button asked of the browser (#525).</summary>
+    private sealed class RecordingLauncher : IBrowserProfileLauncher
+    {
+        public List<nint> Closed { get; } = new();
+        public List<string> Opened { get; } = new();
+        public void CloseWindow(nint windowHandle) => Closed.Add(windowHandle);
+        public void OpenProfile(string profile) => Opened.Add(profile);
+    }
+
+    private sealed class NoAppIds : IBrowserWindowAppIds
+    {
+        public IReadOnlyList<string> GetWindowAppIds(string processName) => Array.Empty<string>();
     }
 
     private sealed class FakeWindowEnumerator : IWindowEnumerator

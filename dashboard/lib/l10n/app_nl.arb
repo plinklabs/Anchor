@@ -171,6 +171,8 @@
   "feedTamperInPrivate": "{who, select, named{{name} heeft een InPrivate-venster geopend.} other{Een leerling heeft een InPrivate-venster geopend.}}",
   "feedTamperSiteAccess": "{who, select, named{{name} heeft de toegang van de Anchor-extensie tot websites beperkt.} other{Een leerling heeft de toegang van de Anchor-extensie tot websites beperkt.}}",
   "feedTamperAgentUnavailable": "{who, select, named{De Anchor-app van {name} draait niet meer.} other{De Anchor-app van een leerling draait niet meer.}}",
+  "feedTamperOutsideSchoolProfile": "{who, select, named{{name} hield een Edge-venster buiten het schoolprofiel open.} other{Een leerling hield een Edge-venster buiten het schoolprofiel open.}}",
+  "feedTamperSchoolProfileMissing": "{who, select, named{{name} is in Edge niet aangemeld met het schoolaccount.} other{Een leerling is in Edge niet aangemeld met het schoolaccount.}}",
   "feedTamperOther": "{who, select, named{Manipulatie gedetecteerd op de computer van {name}.} other{Manipulatie gedetecteerd op de computer van een leerling.}}",
   "feedOther": "Er is iets gebeurd in de sessie.",
   "feedSomeApp": "een app",

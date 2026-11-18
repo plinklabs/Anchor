@@ -46,4 +46,22 @@ public static class TamperKinds
     /// same string.
     /// </summary>
     public const string HostPermissionRevoked = "host_permission_revoked";
+
+    /// <summary>
+    /// During a session a window of another Edge profile, or a Guest window, stayed
+    /// open past <see cref="Settings.SessionSettings.SchoolProfileReportSeconds"/>
+    /// (#525). Only the profile signed in with the school account may be used, so
+    /// the agent pauses such a window at once and its overlay offers to close it;
+    /// the teacher hears of it only when the student leaves it open. An InPrivate
+    /// window is paused the same way but reported as <see cref="InPrivateOpened"/>.
+    /// </summary>
+    public const string OutsideSchoolProfile = "outside_school_profile";
+
+    /// <summary>
+    /// During a session no Edge profile was signed in with the student's school
+    /// account (or the one that is lacked the extension) for longer than
+    /// <see cref="Settings.SessionSettings.SchoolProfileReportSeconds"/> (#525).
+    /// Edge is paused meanwhile, with a message naming the account to sign in with.
+    /// </summary>
+    public const string SchoolProfileMissing = "school_profile_missing";
 }

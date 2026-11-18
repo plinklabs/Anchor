@@ -54,4 +54,20 @@ public sealed record SessionSettings
     /// isn't reported.
     /// </summary>
     public int ExtensionSiteAccessReportSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// How often, during a session, the agent looks up the Edge profile signed in
+    /// with the school account and the Edge windows outside it (#525): a window of
+    /// another profile, a Guest window or an InPrivate window is paused within this
+    /// long of opening.
+    /// </summary>
+    public int SchoolProfileScanSeconds { get; init; } = 2;
+
+    /// <summary>
+    /// How long a window outside the school profile may stay open, or Edge may lack
+    /// a profile signed in with the school account, before the teacher is told
+    /// (#525). The pause says what to do; a student who does it in time isn't
+    /// reported.
+    /// </summary>
+    public int SchoolProfileReportSeconds { get; init; } = 60;
 }

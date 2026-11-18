@@ -41,4 +41,20 @@ public static class InPrivateDetection
             return false;
         return windowTitle.Contains(InPrivateMarker, StringComparison.OrdinalIgnoreCase);
     }
+
+    // How Edge marks an InPrivate browser window in its title, between the page and
+    // "Microsoft Edge": "<page> - [InPrivate] - Microsoft Edge" (measured on Edge
+    // 157, in English and Dutch alike).
+    private const string InPrivateTitleMarker = "[InPrivate]";
+
+    /// <summary>
+    /// True when <paramref name="windowTitle"/> is that of an Edge InPrivate browser
+    /// window (#525). An InPrivate window carries its profile's AppUserModelID, so
+    /// only its title tells it from that profile's ordinary windows. Stricter than
+    /// <see cref="IsInPrivateEdgeWindow"/>: what this says pauses the window rather
+    /// than only reporting it, so a page that merely mentions InPrivate in its own
+    /// title must not count.
+    /// </summary>
+    public static bool HasInPrivateTitle(string? windowTitle) =>
+        windowTitle?.Contains(InPrivateTitleMarker, StringComparison.OrdinalIgnoreCase) == true;
 }

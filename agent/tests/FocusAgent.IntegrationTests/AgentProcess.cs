@@ -31,7 +31,20 @@ internal sealed record StatusSnapshot(
     // #456: when the last update check started, by the agent's update clock.
     [property: JsonPropertyName("lastUpdateCheck")] DateTimeOffset? LastUpdateCheck = null,
     // #446: what the log uploads did in this agent process.
-    [property: JsonPropertyName("logUpload")] LogUploadSnapshot? LogUpload = null);
+    [property: JsonPropertyName("logUpload")] LogUploadSnapshot? LogUpload = null,
+    // #525: where the Edge profile signed in with the school account stands.
+    [property: JsonPropertyName("schoolProfile")] SchoolProfileSnapshot? SchoolProfile = null);
+
+/// <summary>
+/// The school-profile rule as exposed on /status (#525): whether Edge has a
+/// profile signed in with the school account (<c>Unknown</c> / <c>Found</c> /
+/// <c>Missing</c>), which one (its folder), and the windows outside it (another
+/// profile, Guest, InPrivate) the last scan found.
+/// </summary>
+internal sealed record SchoolProfileSnapshot(
+    [property: JsonPropertyName("status")] string? Status,
+    [property: JsonPropertyName("profile")] string? Profile,
+    [property: JsonPropertyName("outsideWindows")] long[]? OutsideWindows);
 
 /// <summary>
 /// The log uploads as exposed on /status (#446): how many passes ran in this agent
@@ -344,6 +357,18 @@ internal sealed class AgentProcess : IAsyncDisposable
     public async Task<bool> TurnExtensionBackOnAsync()
     {
         using var res = await _http.PostAsync($"{_controlBase}/extension-repair", content: null);
+        return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    /// <summary>
+    /// The overlay's "go to my school profile" action for <paramref name="window"/>,
+    /// a window outside the school profile, via POST /school-profile (#525): the
+    /// agent closes it and brings the school profile forward. Returns false when
+    /// there was no school profile to go to.
+    /// </summary>
+    public async Task<bool> GoToSchoolProfileAsync(IntPtr window)
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/school-profile?window={(long)window}", content: null);
         return res.StatusCode == System.Net.HttpStatusCode.NoContent;
     }
 

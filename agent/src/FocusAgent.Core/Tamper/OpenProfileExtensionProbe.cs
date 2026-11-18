@@ -31,6 +31,13 @@ public interface IOpenProfileExtensionProbe
     /// when every open profile has it (or never had it).
     /// </summary>
     IReadOnlyList<string> FindSwitchedOff();
+
+    /// <summary>
+    /// What <paramref name="profile"/>'s preferences say about the extension now
+    /// (#525: the school profile must have it), or the last state that could be
+    /// read when they can't be.
+    /// </summary>
+    ProfileExtensionState ExtensionState(string profile);
 }
 
 /// <summary>What an Edge profile's preferences say about Anchor's extension.</summary>
@@ -134,13 +141,7 @@ public sealed class EdgeOpenProfileExtensionProbe : IOpenProfileExtensionProbe
                     if (!PreferenceFiles.Any(file => File.Exists(Path.Combine(profileFolder, file)))) continue;
                     var profile = Path.GetFileName(profileFolder);
 
-                    var state = ReadState(profileFolder);
-                    if (state == ProfileExtensionState.Unknown)
-                        state = _lastKnown.GetValueOrDefault(profile, ProfileExtensionState.Unknown);
-                    else
-                        _lastKnown[profile] = state;
-                    if (state is ProfileExtensionState.Enabled or ProfileExtensionState.Disabled)
-                        _hadExtension.Add(profile);
+                    var state = ReadKnownStateLocked(profile, profileFolder);
 
                     var off = state == ProfileExtensionState.Disabled ||
                               (state == ProfileExtensionState.Absent && _hadExtension.Contains(profile));
@@ -161,6 +162,42 @@ public sealed class EdgeOpenProfileExtensionProbe : IOpenProfileExtensionProbe
         }
     }
 
+    public ProfileExtensionState ExtensionState(string profile)
+    {
+        lock (_gate)
+        {
+            try
+            {
+                var profileFolder = Path.Combine(_userDataFolder, profile);
+                return Directory.Exists(profileFolder)
+                    ? ReadKnownStateLocked(profile, profileFolder)
+                    : ProfileExtensionState.Absent;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _log.LogDebug(ex, "Reading Edge profile {Profile} failed; keeping what it said before.", profile);
+                return _lastKnown.GetValueOrDefault(profile, ProfileExtensionState.Unknown);
+            }
+        }
+    }
+
+    /// <summary>
+    /// What the profile's preferences say, or what they last said when they can't
+    /// be read, and remembering the profiles the extension was seen in. Call under
+    /// <see cref="_gate"/>.
+    /// </summary>
+    private ProfileExtensionState ReadKnownStateLocked(string profile, string profileFolder)
+    {
+        var state = ReadState(profileFolder);
+        if (state == ProfileExtensionState.Unknown)
+            state = _lastKnown.GetValueOrDefault(profile, ProfileExtensionState.Unknown);
+        else
+            _lastKnown[profile] = state;
+        if (state is ProfileExtensionState.Enabled or ProfileExtensionState.Disabled)
+            _hadExtension.Add(profile);
+        return state;
+    }
+
     /// <summary>
     /// The AppUserModelIDs Edge gives the browser windows of
     /// <paramref name="profile"/>: <c>MSEdge.</c> followed by the names of the user
@@ -177,7 +214,7 @@ public sealed class EdgeOpenProfileExtensionProbe : IOpenProfileExtensionProbe
         return profile.Equals("Default", StringComparison.OrdinalIgnoreCase) ? [BrowserAppId, id] : [id];
     }
 
-    private static string Sanitize(string value) =>
+    internal static string Sanitize(string value) =>
         new(value.Where(c => char.IsAsciiLetterOrDigit(c) || c == '.').ToArray());
 
     /// <summary>

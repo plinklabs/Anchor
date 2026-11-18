@@ -48,8 +48,11 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     /// What the overlay shows while it is up: <c>Blocked</c> for a blocked app
     /// (#33), <c>BrowserPaused</c> for a browser paused because its extension is
     /// off (#427), <c>SiteAccessPaused</c> for one paused because the extension may
-    /// not work on all sites (#524); null while it is hidden or closed. Dev-only,
-    /// for /status: lets the headless e2e tell which overlay the student is on (#452).
+    /// not work on all sites (#524), <c>SchoolAccountPaused</c> for one paused
+    /// because no Edge profile is signed in with the school account and
+    /// <c>SchoolProfilePaused</c> for one window outside the school profile (#525);
+    /// null while it is hidden or closed. Dev-only, for /status: lets the headless
+    /// e2e tell which overlay the student is on (#452).
     /// </summary>
     public string? Showing => Volatile.Read(ref _showing);
 
@@ -81,12 +84,20 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         Func<bool>? stillPaused = null) =>
         Show(
             window => window.UpdateBrowserPausedContent(allowedRules, prompt),
-            prompt.Reason == ExtensionPauseReason.NoSiteAccess ? "SiteAccessPaused" : "BrowserPaused",
+            ShowingFor(prompt.Reason),
             pausedWindowHandle,
             $"for a paused {prompt.Browser.Value} with {allowedRules.Count} other allowed-app entries",
             // The paused browser's window (#450), or an app blocked meanwhile (#452).
             $"0x{pausedWindowHandle:X}",
             stillPaused);
+
+    private static string ShowingFor(ExtensionPauseReason reason) => reason switch
+    {
+        ExtensionPauseReason.NoSiteAccess => "SiteAccessPaused",
+        ExtensionPauseReason.NoSchoolProfile => "SchoolAccountPaused",
+        ExtensionPauseReason.OutsideSchoolProfile => "SchoolProfilePaused",
+        _ => "BrowserPaused",
+    };
 
     /// <summary>
     /// Shows the overlay with the content <paramref name="update"/> puts in it

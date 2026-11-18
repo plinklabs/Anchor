@@ -112,6 +112,8 @@ String feedSentence(
         'inprivate_opened' => l10n.feedTamperInPrivate(who, n),
         'host_permission_revoked' => l10n.feedTamperSiteAccess(who, n),
         'agent_unavailable' => l10n.feedTamperAgentUnavailable(who, n),
+        'outside_school_profile' => l10n.feedTamperOutsideSchoolProfile(who, n),
+        'school_profile_missing' => l10n.feedTamperSchoolProfileMissing(who, n),
         _ => l10n.feedTamperOther(who, n),
       };
   }

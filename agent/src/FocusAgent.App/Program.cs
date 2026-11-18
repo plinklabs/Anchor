@@ -50,6 +50,20 @@ public static class Program
     public const string OverlaySiteAccessArg = "--overlay-site-access";
 
     /// <summary>
+    /// Dev-only modifier for <see cref="ShowTestOverlayArg"/> (#525): show the
+    /// overlay's variant for an Edge paused because no profile is signed in with the
+    /// school account, naming a sample account, so the visual e2e can capture it.
+    /// </summary>
+    public const string OverlaySchoolAccountArg = "--overlay-school-account";
+
+    /// <summary>
+    /// Dev-only modifier for <see cref="ShowTestOverlayArg"/> (#525): show the
+    /// overlay's variant for an Edge window paused because it is outside the school
+    /// profile, so the visual e2e can capture it.
+    /// </summary>
+    public const string OverlaySchoolProfileArg = "--overlay-school-profile";
+
+    /// <summary>
     /// Dev-only flag (#173): show the real <see cref="MainWindow"/> against a
     /// synthetic "connected, in a focus session" state, with no WAM / hub /
     /// coordinator bootstrap, and keep it up so its redesigned ink surface can be
@@ -410,6 +424,8 @@ public static class Program
     public static bool ShowTestOverlay { get; private set; }
     public static bool OverlayPaused { get; private set; }
     public static bool OverlaySiteAccess { get; private set; }
+    public static bool OverlaySchoolAccount { get; private set; }
+    public static bool OverlaySchoolProfile { get; private set; }
     public static bool ShowTestMainWindow { get; private set; }
     public static bool ShowTestJoinByCode { get; private set; }
     public static bool ShowTestTrayMenu { get; private set; }
@@ -620,6 +636,8 @@ public static class Program
         ShowTestOverlay = args.Any(a => string.Equals(a, ShowTestOverlayArg, StringComparison.OrdinalIgnoreCase));
         OverlayPaused = args.Any(a => string.Equals(a, OverlayPausedArg, StringComparison.OrdinalIgnoreCase));
         OverlaySiteAccess = args.Any(a => string.Equals(a, OverlaySiteAccessArg, StringComparison.OrdinalIgnoreCase));
+        OverlaySchoolAccount = args.Any(a => string.Equals(a, OverlaySchoolAccountArg, StringComparison.OrdinalIgnoreCase));
+        OverlaySchoolProfile = args.Any(a => string.Equals(a, OverlaySchoolProfileArg, StringComparison.OrdinalIgnoreCase));
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
         ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
         ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));

@@ -45,6 +45,39 @@ internal sealed class FakeEdgeProfiles : IDisposable
             WriteRaw(profile, "Preferences", """{"extensions":{"alerts":{"initialized":true}}}""");
     }
 
+    /// <summary>
+    /// Edge's <c>Local State</c>, with the account each profile is signed in with
+    /// (#525), shaped as Edge 157 writes it: <c>profile.info_cache.&lt;folder&gt;</c>
+    /// with <c>user_name</c> (empty when not signed in) and, for a work or school
+    /// account, <c>edge_account_oid</c> (empty for a personal account).
+    /// </summary>
+    public void WriteLocalState(params (string Profile, string? UserName, string? ObjectId)[] profiles)
+    {
+        var cache = new JsonObject();
+        foreach (var (profile, userName, objectId) in profiles)
+            cache[profile] = new JsonObject
+            {
+                ["name"] = profile,
+                ["user_name"] = userName ?? "",
+                ["edge_account_oid"] = objectId ?? "",
+                ["edge_account_type"] = objectId is null ? 1 : 2,
+                ["is_using_default_name"] = true,
+            };
+        Directory.CreateDirectory(UserData);
+        var localState = new JsonObject
+        {
+            ["profile"] = new JsonObject { ["info_cache"] = cache, ["last_used"] = profiles.FirstOrDefault().Profile },
+        };
+        // In one move, as Edge replaces the file; and a different size from the
+        // last one, so a reader that goes by write time and size sees the change
+        // within the file system's time resolution.
+        var temp = Path.Combine(UserData, "Local State.tmp");
+        File.WriteAllText(temp, localState.ToJsonString() + new string(' ', ++_localStateWrites));
+        File.Move(temp, Path.Combine(UserData, "Local State"), overwrite: true);
+    }
+
+    private int _localStateWrites;
+
     public void WriteRaw(string profile, string file, string content)
     {
         Directory.CreateDirectory(ProfileFolder(profile));

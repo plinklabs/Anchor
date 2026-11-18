@@ -17,9 +17,13 @@ namespace FocusAgent.Native;
 ///
 /// The property store is called through its vtable rather than a COM wrapper, so
 /// it works on whatever thread the scan runs on.
+///
+/// The same IDs, with each window's title and whether it is minimized, tell the
+/// school-profile rule which profile a window belongs to (#525,
+/// <see cref="IBrowserWindowReader"/>).
 /// </summary>
 [SupportedOSPlatform("windows")]
-public sealed class BrowserWindowAppIds : IBrowserWindowAppIds
+public sealed class BrowserWindowAppIds : IBrowserWindowAppIds, IBrowserWindowReader
 {
     private const ushort VT_LPWSTR = 31;
     private static readonly Guid IID_IPropertyStore = new("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
@@ -60,6 +64,57 @@ public sealed class BrowserWindowAppIds : IBrowserWindowAppIds
             return true;
         }, IntPtr.Zero);
         return ids;
+    }
+
+    public IReadOnlyList<BrowserWindowInfo> GetBrowserWindows(string processName)
+    {
+        var wanted = Normalize(processName);
+        var windows = new List<BrowserWindowInfo>();
+        NativeMethods.EnumWindows((hwnd, _) =>
+        {
+            try
+            {
+                if (!NativeMethods.IsWindowVisible(hwnd)) return true;
+                NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
+                var app = _identifier.Identify(hwnd, (int)pid);
+                if (app is null || !Normalize(app.ProcessName).Equals(wanted, StringComparison.OrdinalIgnoreCase))
+                    return true;
+                // A window without an ID is no browser window (a helper, a popup
+                // menu); one with an ID is one whatever its title.
+                if (Read(hwnd) is { AppId.Length: > 0 } window)
+                    windows.Add(window);
+            }
+            catch (Exception ex)
+            {
+                _log.LogDebug(ex, "BrowserWindowAppIds: skipping hwnd 0x{Hwnd:X} after probe threw", hwnd);
+            }
+            return true;
+        }, IntPtr.Zero);
+        return windows;
+    }
+
+    public BrowserWindowInfo? Describe(nint windowHandle)
+    {
+        try
+        {
+            return windowHandle != IntPtr.Zero && NativeMethods.IsWindow(windowHandle) ? Read(windowHandle) : null;
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "BrowserWindowAppIds: reading hwnd 0x{Hwnd:X} threw", windowHandle);
+            return null;
+        }
+    }
+
+    private static BrowserWindowInfo Read(nint hwnd) =>
+        new(hwnd, ReadAppId(hwnd), ReadTitle(hwnd), NativeMethods.IsIconic(hwnd));
+
+    private static string? ReadTitle(nint hwnd)
+    {
+        var length = NativeMethods.GetWindowTextLengthW(hwnd);
+        if (length <= 0) return null;
+        var text = new System.Text.StringBuilder(length + 1);
+        return NativeMethods.GetWindowTextW(hwnd, text, text.Capacity) > 0 ? text.ToString() : null;
     }
 
     /// <summary>The window's explicit AppUserModelID, or null when it has none.</summary>
