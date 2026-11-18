@@ -11,9 +11,8 @@ namespace FocusAgent.IntegrationTests;
 /// End-to-end proof for #288: the <em>real</em> built agent registers (and, on
 /// uninstall, removes) the witness native-messaging host — the HKCU
 /// <c>NativeMessagingHosts\net.anchor.witness</c> key Edge reads, plus the manifest
-/// and <c>backend-url.json</c> files next to the host exe. This was the release-only
-/// gap behind the "install the extension" popup firing every launch and the extension
-/// never learning its backend, so it's exercised against the actual
+/// next to the host exe. This was the release-only gap behind the "install the
+/// extension" popup firing every launch, so it's exercised against the actual
 /// <c>Microsoft.Win32.Registry</c> + filesystem write, not a fake.
 ///
 /// A pure unit test (which this PR also has, against an in-memory store) cannot prove
@@ -29,10 +28,8 @@ namespace FocusAgent.IntegrationTests;
 [SupportedOSPlatform("windows")]
 public sealed class WitnessHostRegisterTests
 {
-    private const string BackendUrl = "https://e2e.witness.example";
-
     [Fact]
-    public async Task RegisterMode_writes_the_key_manifest_and_backend_file()
+    public async Task RegisterMode_writes_the_key_and_the_manifest()
     {
         using var key = ThrowawayHostKey.Create();
         using var dir = ThrowawayHostDir.Create();
@@ -57,10 +54,12 @@ public sealed class WitnessHostRegisterTests
             $"chrome-extension://{EdgeExtensionPolicy.ExtensionId}/",
             manifest.RootElement.GetProperty("allowed_origins")[0].GetString());
 
-        // The backend-url.json the host reads carries the configured backend.
-        var backendFile = Path.Combine(dir.Path, "backend-url.json");
-        using var backend = JsonDocument.Parse(File.ReadAllText(backendFile));
-        Assert.Equal(BackendUrl, backend.RootElement.GetProperty("backendUrl").GetString());
+        // The manifest is all the host needs (#495): it no longer hands the extension a
+        // backend URL or Entra config, so no backend-url.json or auth-config.json
+        // goes next to it.
+        Assert.Equal(
+            ["net.anchor.witness.json"],
+            Directory.GetFiles(dir.Path).Select(Path.GetFileName));
     }
 
     [Fact]
@@ -133,7 +132,7 @@ public sealed class WitnessHostRegisterTests
 
     /// <summary>
     /// Launch the real agent exe in a dev-only witness-host mode, pointed at a throwaway
-    /// HKCU key + directory + backend URL, and wait for it to exit. The exe is a WinExe
+    /// HKCU key + directory, and wait for it to exit. The exe is a WinExe
     /// (no console attached), so the work runs and the process exits without blocking on
     /// UI; we wait on the process itself.
     /// </summary>
@@ -150,7 +149,6 @@ public sealed class WitnessHostRegisterTests
         psi.ArgumentList.Add(modeFlag);
         psi.Environment["ANCHOR_WITNESS_HOST_KEY"] = key.WitnessKeyPath;
         psi.Environment["ANCHOR_WITNESS_HOST_EXE_PATH"] = dir.HostExePath;
-        psi.Environment["ANCHOR_WITNESS_HOST_BACKEND_URL"] = BackendUrl;
         // #497: empty, the agent's built-in extension IDs.
         psi.Environment["ANCHOR_WITNESS_HOST_TEST_RING_ID"] = testRingId ?? "";
 
@@ -228,7 +226,7 @@ public sealed class WitnessHostRegisterTests
 
     /// <summary>
     /// A throwaway directory standing in for the host exe's install dir — where the
-    /// agent drops the manifest + backend-url files. The exe itself need not exist (the
+    /// agent drops the manifest. The exe itself need not exist (the
     /// CLI mode drives the registrar directly). Removed on dispose.
     /// </summary>
     private sealed class ThrowawayHostDir : IDisposable

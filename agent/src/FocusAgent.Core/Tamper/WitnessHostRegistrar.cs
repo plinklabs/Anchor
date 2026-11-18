@@ -11,15 +11,14 @@ namespace FocusAgent.Core.Tamper;
 /// In dev this is <c>scripts/dev/register-witness-host.ps1</c>'s job; the release
 /// installer never did the equivalent, so the extension couldn't connect — leaving
 /// <c>ExtensionWitnessMonitor.IsConnected</c> false (the guided-install popup fired
-/// on every launch) and the <c>backend_url</c> hand-down stranded. The agent now does
-/// it itself on startup, idempotently, mirroring how it writes the Edge force-install
-/// policy (<see cref="Extension.ExtensionSelfRegistrar"/>) and the run-at-login entry
+/// on every launch). The agent now does it itself on startup, idempotently, mirroring
+/// how it writes the Edge force-install policy
+/// (<see cref="Extension.ExtensionSelfRegistrar"/>) and the run-at-login entry
 /// (<c>StartupRegistrar</c>).
 ///
-/// On each launch it ensures three artifacts agree with the current install:
-///   1. the host manifest JSON next to the exe (embeds the exe's absolute path),
-///   2. the <c>backend-url.json</c> next to the exe (the configured backend), and
-///   3. the HKCU key whose <c>(default)</c> value points at that manifest.
+/// On each launch it ensures two artifacts agree with the current install:
+///   1. the host manifest JSON next to the exe (embeds the exe's absolute path), and
+///   2. the HKCU key whose <c>(default)</c> value points at that manifest.
 /// A Velopack update lands the agent in a new versioned dir, so the recorded paths /
 /// content change between versions; re-running re-points them and never churns when
 /// nothing changed.
@@ -52,19 +51,12 @@ public sealed class WitnessHostRegistrar
     }
 
     /// <summary>
-    /// Ensure the manifest, backend-url file, optional auth-config file, and HKCU key
-    /// all describe the host exe at <paramref name="hostExePath"/> targeting
-    /// <paramref name="backendUrl"/>, returning whether any write happened. Idempotent:
+    /// Ensure the manifest and the HKCU key both describe the host exe at
+    /// <paramref name="hostExePath"/>, returning whether any write happened. Idempotent:
     /// each artifact is only (re-)written when missing or stale, so calling on every
     /// launch never churns identical content and never leaks a duplicate.
     /// </summary>
-    /// <param name="auth">
-    /// The deployment's Entra config (#289). When supplied, an <c>auth-config.json</c>
-    /// is written next to the host so the extension can mint a real student token; null
-    /// in dev (no per-deployment auth), where the extension uses the dev impersonation
-    /// shortcut and the host sends no <c>auth_config</c>.
-    /// </param>
-    public bool EnsureRegistered(string hostExePath, string backendUrl, WitnessAuthConfig? auth = null)
+    public bool EnsureRegistered(string hostExePath)
     {
         if (string.IsNullOrWhiteSpace(hostExePath))
             throw new ArgumentException("Host exe path must be provided.", nameof(hostExePath));
@@ -73,26 +65,16 @@ public sealed class WitnessHostRegistrar
             ?? throw new ArgumentException($"Host exe path '{hostExePath}' has no directory.", nameof(hostExePath));
 
         var manifestPath = WitnessHostManifest.ManifestPathFor(hostDir);
-        var backendUrlPath = WitnessHostManifest.BackendUrlPathFor(hostDir);
 
         var wroteManifest = EnsureFile(manifestPath, WitnessHostManifest.BuildManifest(hostExePath, _extensionIds), "host manifest");
-        var wroteBackend = EnsureFile(backendUrlPath, WitnessHostManifest.BuildBackendUrlFile(backendUrl), "backend-url file");
-
-        var wroteAuth = false;
-        if (auth is not null)
-        {
-            var authPath = WitnessHostManifest.AuthConfigPathFor(hostDir);
-            wroteAuth = EnsureFile(authPath, WitnessHostManifest.BuildAuthConfigFile(auth), "auth-config file");
-        }
-
         var wroteKey = EnsureKey(manifestPath);
-        return wroteManifest || wroteBackend || wroteAuth || wroteKey;
+        return wroteManifest || wroteKey;
     }
 
     /// <summary>
     /// Remove the host's HKCU key — called from the uninstall hook so uninstalling the
-    /// agent un-registers the host it installed (the manifest / backend-url files go
-    /// away with the install dir). Best-effort and idempotent: a missing key is fine,
+    /// agent un-registers the host it installed (the manifest goes away with the
+    /// install dir). Best-effort and idempotent: a missing key is fine,
     /// and any failure is logged rather than thrown so it can never block the uninstall.
     /// </summary>
     public void Remove()

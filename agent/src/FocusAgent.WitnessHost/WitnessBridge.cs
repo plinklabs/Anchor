@@ -29,33 +29,14 @@ public sealed class WitnessBridge
     private readonly Stream _input;
     private readonly Stream _output;
     private readonly IAgentLink _agent;
-    private readonly string? _backendUrlMessage;
-    private readonly string? _authConfigMessage;
     private readonly Channel<string> _outbound =
         Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
 
-    /// <param name="backendUrlMessage">
-    /// Optional pre-built <c>backend_url</c> native message (#204) the host hands
-    /// the extension as soon as the link opens. Only an extension from before #489
-    /// uses it (it connects to the hub itself); a current one ignores it.
-    /// </param>
-    /// <param name="authConfigMessage">
-    /// Optional pre-built <c>auth_config</c> native message (#289) the host hands
-    /// the extension up front, for the same older extensions: they sign the student
-    /// in through the browser with it. Null in dev.
-    /// </param>
-    public WitnessBridge(
-        Stream input,
-        Stream output,
-        IAgentLink agent,
-        string? backendUrlMessage = null,
-        string? authConfigMessage = null)
+    public WitnessBridge(Stream input, Stream output, IAgentLink agent)
     {
         _input = input;
         _output = output;
         _agent = agent;
-        _backendUrlMessage = backendUrlMessage;
-        _authConfigMessage = authConfigMessage;
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -64,17 +45,6 @@ public sealed class WitnessBridge
         _agent.Disconnected += OnAgentDisconnected;
         _agent.MessageReceived += OnAgentMessage;
         await _agent.StartAsync(ct).ConfigureAwait(false);
-
-        // Hand the extension its backend URL up front (#204). Queued before the
-        // read loop and drained by the single writer task, so it lands ahead of
-        // any agent up/down message and never races stdout.
-        if (_backendUrlMessage is not null)
-            _outbound.Writer.TryWrite(_backendUrlMessage);
-
-        // ...and its production auth config (#289), the same way. Both are for an
-        // extension from before #489, which still signs in and connects itself.
-        if (_authConfigMessage is not null)
-            _outbound.Writer.TryWrite(_authConfigMessage);
 
         var writer = Task.Run(() => DrainOutboundAsync(ct), CancellationToken.None);
         try

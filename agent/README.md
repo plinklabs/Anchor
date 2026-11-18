@@ -334,24 +334,6 @@ tamper signals, which the agent reports with its own connection
 port, so an arbitrary web page can't start or end a session. Protocol: see
 [`src/FocusAgent.WitnessHost/README.md`](src/FocusAgent.WitnessHost/README.md).
 
-#### Backend URL handed to the extension (#204)
-
-Extensions from before #489 connected to the backend themselves, so the host
-still hands them the backend URL (and the deployment's Entra config, #289) as
-soon as the link opens, until the store has updated them. A current extension
-ignores both.
-
-The host resolves which URL to send, in order:
-
-1. `ANCHOR_WITNESS_BACKEND_URL` env var — the per-deployment source the agent
-   installer sets.
-2. a `backend-url.json` file (`{"backendUrl":"https://…"}`) next to the host exe.
-3. the dev fallback `http://localhost:5276` so a plain dev loop works before any
-   deployment config exists.
-
-A production installer should set `ANCHOR_WITNESS_BACKEND_URL` (or drop the file)
-to the same backend the agent's `Backend:BaseUrl` targets.
-
 ### Single-machine dev verification
 
 Verifying student-agent behaviour (`SessionStarted`, the join-confirmation

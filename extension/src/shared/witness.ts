@@ -86,9 +86,7 @@ export type HostSignal =
  * `agent_available` / `agent_unavailable` as its pipe to the agent comes and
  * goes; everything else is the agent's. A message that is malformed — a missing
  * session id, domains that aren't a list — is ignored rather than half-applied,
- * so a noisy host can't wipe a working allowlist. So are the `backend_url` and
- * `auth_config` the host still sends for extensions from before #489, which
- * signed in and connected to the backend themselves.
+ * so a noisy host can't wipe a working allowlist.
  */
 export function parseHostMessage(raw: unknown): HostSignal {
   if (typeof raw !== 'object' || raw === null) return { kind: 'ignore' };

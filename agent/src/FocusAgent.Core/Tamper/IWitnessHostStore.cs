@@ -2,8 +2,8 @@ namespace FocusAgent.Core.Tamper;
 
 /// <summary>
 /// The agent's read/write access to the witness host registration (#288): the HKCU
-/// <c>NativeMessagingHosts</c> key Edge reads, plus the manifest / backend-url files
-/// next to the host exe. Abstracted off the concrete <c>Microsoft.Win32.Registry</c>
+/// <c>NativeMessagingHosts</c> key Edge reads, plus the manifest next to the host
+/// exe. Abstracted off the concrete <c>Microsoft.Win32.Registry</c>
 /// and filesystem writes so the orchestration in <see cref="WitnessHostRegistrar"/>
 /// — its idempotency decisions — is unit-testable with an in-memory fake, while the
 /// real registry + file paths are driven end-to-end by the integration test against

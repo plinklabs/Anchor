@@ -111,9 +111,9 @@ surprising number.
 
 There is **one** Anchor listing on the Edge Add-ons store, owned by Plink Labs,
 with a single store-assigned extension ID (see the caveat below and **Stable
-extension ID**). Because the extension is backend-agnostic — it gets its
-backend URL from the on-box agent at runtime (#204) — every fork reuses that one
-listing instead of publishing near-identical copies. So **forks normally don't
+extension ID**). Because the extension is backend-agnostic — it has no backend
+connection, and gets its session from the on-box agent (#489) — every fork reuses
+that one listing instead of publishing near-identical copies. So **forks normally don't
 run this workflow**; it ships the canonical listing.
 
 > **The store assigns the published ID — the committed `key` does not survive a
@@ -409,12 +409,6 @@ pwsh scripts/dev/register-witness-host.ps1   # build + HKCU registration (no adm
 then start the agent (`scripts/dev/dev-agent.ps1`, see the agent README) and a
 session from the dashboard. Without a backend or agent, `npm run dev:extension`
 (above) hands sessions down itself.
-
-Extensions before #489 signed the student in through the browser
-(`chrome.identity.launchWebAuthFlow`) and connected to the hub themselves, with
-the backend URL and Entra config the host handed down (`backend_url`,
-`auth_config`). The host still sends those for an extension the store hasn't
-updated yet; this extension ignores them.
 
 ## Smoke test
 

@@ -80,8 +80,7 @@ unit-tested with `MemoryStream`s.
   little-endian length prefix + UTF-8 JSON per message. The host forwards every
   extension message to the agent, forwards every agent message to the extension,
   and emits `{"type":"agent_available"}` / `{"type":"agent_unavailable"}` itself.
-  It also hands down `backend_url` / `auth_config` on start, which only an
-  extension from before #489 reads.
+  Nothing else: the host has no configuration of its own to hand down (#495).
 - **Host ↔ agent (named pipe `anchor-witness`):** newline-delimited JSON, both
   ways. The host adds its own `hello` and `ping` keepalives; the pipe's liveness
   is still the witness (connect = up, EOF = the extension is gone).
