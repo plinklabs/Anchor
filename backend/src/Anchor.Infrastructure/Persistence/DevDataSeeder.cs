@@ -125,6 +125,15 @@ public static class DevDataSeeder
                 // through it.
                 new EntrySeed("*.cloud.microsoft", BundleEntryMatchType.Wildcard),
                 new EntrySeed("*.microsoft365.com", BundleEntryMatchType.Wildcard),
+                // The shortcuts a student types (#532): outlook.com and
+                // onedrive.com redirect on to Outlook and onedrive.live.com,
+                // but the extension judges a navigation by its first URL.
+                // Exact, so the rest of *.outlook.com (consumer mail's other
+                // hosts, Safe Links) stays closed.
+                new EntrySeed("outlook.com", BundleEntryMatchType.Exact),
+                new EntrySeed("www.outlook.com", BundleEntryMatchType.Exact),
+                new EntrySeed("onedrive.com", BundleEntryMatchType.Exact),
+                new EntrySeed("www.onedrive.com", BundleEntryMatchType.Exact),
             }),
             new BundleSeed("Smartschool", new[]
             {

@@ -151,7 +151,7 @@ A bundle is a named group of apps and/or domains. Examples:
 
 - **Bingel** → domains `*.bingel.be`, `*.cloudfront.net` (the specific subset Bingel uses), …
 - **Smartschool** → `*.smartschool.be`, related CDN domains, …
-- **Microsoft 365** → domains for Outlook, Teams, OneDrive, SharePoint, Forms. That includes `*.cloud.microsoft` and `*.microsoft365.com` (#531): Microsoft 365 on the web lives on `*.cloud.microsoft` now (www.office.com and www.microsoft365.com redirect to the home page, m365.cloud.microsoft; portal.office.com and sign-in pass through www.microsoft365.com; Outlook, Teams, Word, Forms and the rest have `*.cloud.microsoft` hosts).
+- **Microsoft 365** → domains for Outlook, Teams, OneDrive, SharePoint, Forms. That includes `*.cloud.microsoft` and `*.microsoft365.com` (#531): Microsoft 365 on the web lives on `*.cloud.microsoft` now (www.office.com and www.microsoft365.com redirect to the home page, m365.cloud.microsoft; portal.office.com and sign-in pass through www.microsoft365.com; Outlook, Teams, Word, Forms and the rest have `*.cloud.microsoft` hosts). It also lists the shortcuts a student types, `outlook.com` and `onedrive.com` and their `www.` hosts (#532), as exact entries: they redirect on to Outlook and onedrive.live.com, but the extension judges a navigation by its first URL, so the shortcut itself has to be on the list. Exact, because `*.outlook.com` would also open the rest of consumer mail and the Safe Links hosts. A redirect's target is judged as well, once it commits.
 - **GeoGebra** → desktop app entry (signed publisher: International GeoGebra Institute) + `*.geogebra.org`
 - **YouTube (educational only)** — a future possibility once we figure out playlist filtering
 

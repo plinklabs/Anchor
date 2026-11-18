@@ -116,6 +116,14 @@ $ExampleBundles = @(
             # the Microsoft365BundleNewWebDomains migration.
             @{ Value = '*.cloud.microsoft'; MatchType = 'Wildcard'; Kind = 'Domain' }
             @{ Value = '*.microsoft365.com'; MatchType = 'Wildcard'; Kind = 'Domain' }
+            # The shortcuts a student types (#532), which redirect on to Outlook
+            # and onedrive.live.com; the extension judges a navigation by its
+            # first URL. Exact, so the rest of *.outlook.com (Safe Links among
+            # it) stays closed. Same migration as #531's two.
+            @{ Value = 'outlook.com'; MatchType = 'Exact'; Kind = 'Domain' }
+            @{ Value = 'www.outlook.com'; MatchType = 'Exact'; Kind = 'Domain' }
+            @{ Value = 'onedrive.com'; MatchType = 'Exact'; Kind = 'Domain' }
+            @{ Value = 'www.onedrive.com'; MatchType = 'Exact'; Kind = 'Domain' }
         )
     },
     @{

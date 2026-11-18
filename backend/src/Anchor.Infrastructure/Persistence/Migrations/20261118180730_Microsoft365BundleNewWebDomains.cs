@@ -5,15 +5,24 @@
 namespace Anchor.Infrastructure.Persistence.Migrations
 {
     /// <summary>
-    /// Adds Microsoft 365's newer web domains to a deployment's existing
-    /// Microsoft 365 bundle (#531). Microsoft 365 on the web moved to
-    /// <c>*.cloud.microsoft</c> (www.office.com and www.microsoft365.com now
-    /// redirect to m365.cloud.microsoft; Outlook, Teams, Word, Excel,
-    /// PowerPoint, OneDrive, OneNote and Forms have <c>*.cloud.microsoft</c>
-    /// hosts), so a student in a session with that bundle got the block page on
-    /// the Microsoft 365 home page. The seeds (DevDataSeeder,
-    /// scripts/seed-bundles.ps1) list both domains now, but they only insert a
-    /// bundle that is missing, so an existing bundle gets them here.
+    /// Adds the web domains Microsoft 365 is reached through, and which the
+    /// seeded bundle missed, to a deployment's existing Microsoft 365 bundle.
+    /// <list type="bullet">
+    /// <item>#531: Microsoft 365 on the web moved to <c>*.cloud.microsoft</c>
+    /// (www.office.com and www.microsoft365.com now redirect to
+    /// m365.cloud.microsoft; Outlook, Teams, Word, Excel, PowerPoint, OneDrive,
+    /// OneNote and Forms have <c>*.cloud.microsoft</c> hosts), so a student in
+    /// a session with that bundle got the block page on the Microsoft 365 home
+    /// page.</item>
+    /// <item>#532: the shortcuts a student types, outlook.com and onedrive.com
+    /// (and their www. hosts). They redirect on to hosts the bundle already
+    /// opens, but the extension judges a navigation by its first URL, so the
+    /// shortcut itself got the block page. Exact entries, so the rest of
+    /// <c>*.outlook.com</c> (Safe Links among it) stays closed.</item>
+    /// </list>
+    /// The seeds (DevDataSeeder, scripts/seed-bundles.ps1) list all of them now,
+    /// but they only insert a bundle that is missing, so an existing bundle gets
+    /// them here.
     /// <para>
     /// Only adds: the bundle keeps every entry it has, including any a teacher
     /// or admin added, and a domain it already lists isn't added twice. The
@@ -32,18 +41,35 @@ namespace Anchor.Infrastructure.Persistence.Migrations
     {
         private const string CloudMicrosoftEntryId = "6DA699AA-B296-4546-BEE2-7E72AECF1A93";
         private const string Microsoft365ComEntryId = "60A2B00F-4590-450B-AB07-9443ADE49DBF";
+        private const string OutlookComEntryId = "60325537-68F5-4690-945F-5D0FBAB3A251";
+        private const string WwwOutlookComEntryId = "2E6BB78A-65D4-4591-9005-05D1C3B26BF2";
+        private const string OneDriveComEntryId = "B15FB50F-82EF-46CF-9366-99A14A9B7D6D";
+        private const string WwwOneDriveComEntryId = "7C5266A8-DEB4-4721-BAD5-3DC64B3ADFFF";
+
+        private const string AddedEntryIds =
+            $"'{CloudMicrosoftEntryId}', '{Microsoft365ComEntryId}', " +
+            $"'{OutlookComEntryId}', '{WwwOutlookComEntryId}', " +
+            $"'{OneDriveComEntryId}', '{WwwOneDriveComEntryId}'";
 
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.Sql($"""
                 INSERT INTO BundleEntries (Id, BundleId, Kind, Value, MatchType)
-                SELECT added.Id, b.Id, 'Domain', added.Value, 'Wildcard'
+                SELECT added.Id, b.Id, 'Domain', added.Value, added.MatchType
                 FROM Bundles b
                 CROSS JOIN (
-                    SELECT '{CloudMicrosoftEntryId}' AS Id, '*.cloud.microsoft' AS Value
+                    SELECT '{CloudMicrosoftEntryId}' AS Id, '*.cloud.microsoft' AS Value, 'Wildcard' AS MatchType
                     UNION ALL
-                    SELECT '{Microsoft365ComEntryId}', '*.microsoft365.com'
+                    SELECT '{Microsoft365ComEntryId}', '*.microsoft365.com', 'Wildcard'
+                    UNION ALL
+                    SELECT '{OutlookComEntryId}', 'outlook.com', 'Exact'
+                    UNION ALL
+                    SELECT '{WwwOutlookComEntryId}', 'www.outlook.com', 'Exact'
+                    UNION ALL
+                    SELECT '{OneDriveComEntryId}', 'onedrive.com', 'Exact'
+                    UNION ALL
+                    SELECT '{WwwOneDriveComEntryId}', 'www.onedrive.com', 'Exact'
                 ) added
                 WHERE b.Name = 'Microsoft 365'
                   AND b.IsArchived = 0
@@ -64,7 +90,7 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                 SET Version = (SELECT MAX(same.Version) FROM Bundles same WHERE same.Name = Bundles.Name) + 1
                 WHERE Id IN (
                     SELECT e.BundleId FROM BundleEntries e
-                    WHERE e.Id IN ('{CloudMicrosoftEntryId}', '{Microsoft365ComEntryId}'));
+                    WHERE e.Id IN ({AddedEntryIds}));
                 """);
         }
 
@@ -76,7 +102,7 @@ namespace Anchor.Infrastructure.Persistence.Migrations
             // new ids, after which they are the admin's. The version stays.
             migrationBuilder.Sql($"""
                 DELETE FROM BundleEntries
-                WHERE Id IN ('{CloudMicrosoftEntryId}', '{Microsoft365ComEntryId}');
+                WHERE Id IN ({AddedEntryIds});
                 """);
         }
     }

@@ -100,6 +100,21 @@ export const MICROSOFT_365_HOSTS = [
 ];
 
 /**
+ * The shortcuts a student types for Outlook and OneDrive (#532), each with the
+ * host Microsoft redirects it on to. The extension judges a navigation by its
+ * first URL, so the shortcut itself must be on the list, not only where it
+ * leads; the Microsoft 365 bundle lists them as exact entries. Served over https
+ * from inside the browser (static-server.ts, redirectOverHttps), the way a
+ * student who types one reaches it; their targets come from the static server.
+ */
+export const MICROSOFT_365_SHORTCUTS = [
+  { host: 'outlook.com', redirectsTo: 'outlook.live.com' },
+  { host: 'www.outlook.com', redirectsTo: 'outlook.live.com' },
+  { host: 'onedrive.com', redirectsTo: 'onedrive.live.com' },
+  { host: 'www.onedrive.com', redirectsTo: 'onedrive.live.com' },
+] as const;
+
+/**
  * Google Fonts: a page's stylesheet and the font files it points at. Both load
  * as subresources, which the extension never filters, so no session lists them.
  */
@@ -117,6 +132,9 @@ export const MAPPED_HOSTS = [
   // Served from inside the browser, never fetched; mapped all the same so a
   // request the spec didn't answer can't reach the real Microsoft 365.
   ...MICROSOFT_365_HOSTS,
+  ...MICROSOFT_365_SHORTCUTS.map((s) => s.host),
+  // Where the shortcuts lead (outlook.live.com is in MICROSOFT_WEB_HOSTS).
+  'onedrive.live.com',
   WEB_FONT_CSS_HOST,
   WEB_FONT_FILE_HOST,
 ];
@@ -162,6 +180,10 @@ export const WITH_MS365: Domain[] = [
   { matchType: 'Exact', value: 'teams.microsoft.com' },
   { matchType: 'Wildcard', value: '*.cloud.microsoft' },
   { matchType: 'Wildcard', value: '*.microsoft365.com' },
+  { matchType: 'Exact', value: 'outlook.com' },
+  { matchType: 'Exact', value: 'www.outlook.com' },
+  { matchType: 'Exact', value: 'onedrive.com' },
+  { matchType: 'Exact', value: 'www.onedrive.com' },
 ];
 
 // --- Browser launch knobs -------------------------------------------------

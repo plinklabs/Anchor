@@ -69,6 +69,26 @@ export async function serveOverHttps(context: BrowserContext, hosts: readonly st
   );
 }
 
+/**
+ * Answer https:// navigations to each host in `redirects` from inside the
+ * browser with a redirect to the URL it maps that host to (#532), the way
+ * Microsoft answers a typed outlook.com. The redirect's target is a request
+ * Playwright doesn't answer (see serveOverHttps), so point it at a mapped host
+ * on the static server.
+ */
+export async function redirectOverHttps(
+  context: BrowserContext,
+  redirects: Readonly<Record<string, string>>,
+): Promise<void> {
+  await context.route(
+    (url) => url.protocol === 'https:' && Object.hasOwn(redirects, url.hostname),
+    (route) => {
+      const url = new URL(route.request().url());
+      return route.fulfill({ status: 301, headers: { location: redirects[url.hostname] } });
+    },
+  );
+}
+
 export async function startStaticServer(): Promise<StaticServer> {
   const origin = (host: string) => `http://${host}:${(server.address() as AddressInfo).port}`;
 

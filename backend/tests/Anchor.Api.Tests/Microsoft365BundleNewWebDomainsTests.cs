@@ -12,6 +12,8 @@ namespace Anchor.Api.Tests;
 /// <summary>
 /// #531: Microsoft 365 on the web moved to <c>*.cloud.microsoft</c>, reached
 /// through www.microsoft365.com, so the Microsoft 365 bundle lists both now.
+/// #532: it also lists the shortcuts a student types, outlook.com and
+/// onedrive.com (and their www. hosts), as exact entries.
 /// The seeds only insert a bundle that is missing, so a deployment's existing
 /// bundle (the pilot's) gets them from the Microsoft365BundleNewWebDomains
 /// migration, which the deploy pipeline applies. These tests run that
@@ -32,6 +34,15 @@ public sealed class Microsoft365BundleNewWebDomainsTests : IAsyncLifetime
         ("*.sharepoint.com", BundleEntryMatchType.Wildcard),
         ("outlook.office.com", BundleEntryMatchType.Exact),
         ("teams.microsoft.com", BundleEntryMatchType.Exact),
+    };
+
+    /// <summary>The typed shortcuts the bundle opens since #532.</summary>
+    private static readonly string[] TypedShortcuts =
+    {
+        "outlook.com",
+        "www.outlook.com",
+        "onedrive.com",
+        "www.onedrive.com",
     };
 
     private SqliteConnection _connection = null!;
@@ -59,8 +70,12 @@ public sealed class Microsoft365BundleNewWebDomainsTests : IAsyncLifetime
         var entries = await EntriesAsync(bundleId);
         Assert.Contains(("Domain", "Wildcard", "*.cloud.microsoft"), entries);
         Assert.Contains(("Domain", "Wildcard", "*.microsoft365.com"), entries);
+        foreach (var shortcut in TypedShortcuts)
+        {
+            Assert.Contains(("Domain", "Exact", shortcut), entries);
+        }
         // Exactly what a deployment seeded today starts with, so a pilot that
-        // was seeded before #531 doesn't differ from a fresh one.
+        // was seeded before #531 and #532 doesn't differ from a fresh one.
         Assert.Equal(await EntriesSeededTodayAsync(), entries);
         // As an edit in the catalogue editor would leave it.
         Assert.Equal(2, await VersionAsync(bundleId));
@@ -69,7 +84,7 @@ public sealed class Microsoft365BundleNewWebDomainsTests : IAsyncLifetime
     [Fact]
     public async Task What_a_teacher_changed_stays_and_a_domain_already_listed_is_not_added_twice()
     {
-        // Edited in the catalogue: *.live.com taken out, a site and one of the
+        // Edited in the catalogue: *.live.com taken out, a site and two of the
         // new domains (in another case) put in.
         var bundleId = await AddBundleAsync(Ms365, version: 3, new[]
         {
@@ -77,6 +92,7 @@ public sealed class Microsoft365BundleNewWebDomainsTests : IAsyncLifetime
             ("*.sharepoint.com", BundleEntryMatchType.Wildcard),
             ("kahoot.it", BundleEntryMatchType.Exact),
             ("*.Cloud.Microsoft", BundleEntryMatchType.Wildcard),
+            ("Outlook.com", BundleEntryMatchType.Exact),
         });
 
         Up();
@@ -88,10 +104,33 @@ public sealed class Microsoft365BundleNewWebDomainsTests : IAsyncLifetime
                 ("Domain", "Wildcard", "*.microsoft365.com"),
                 ("Domain", "Wildcard", "*.office.com"),
                 ("Domain", "Wildcard", "*.sharepoint.com"),
+                ("Domain", "Exact", "Outlook.com"),
                 ("Domain", "Exact", "kahoot.it"),
+                ("Domain", "Exact", "onedrive.com"),
+                ("Domain", "Exact", "www.onedrive.com"),
+                ("Domain", "Exact", "www.outlook.com"),
             },
             await EntriesAsync(bundleId));
         Assert.Equal(4, await VersionAsync(bundleId));
+    }
+
+    [Fact]
+    public async Task The_typed_shortcuts_open_only_themselves()
+    {
+        // #532: exact entries, not *.outlook.com or *.onedrive.com, which would
+        // also open the rest of consumer mail and the Safe Links hosts
+        // (<region>.safelinks.protection.outlook.com).
+        var bundleId = await AddBundleAsync(Ms365, version: 1, SeededBefore531);
+
+        Up();
+
+        var entries = await EntriesAsync(bundleId);
+        Assert.Equal(
+            TypedShortcuts
+                .Select(shortcut => ("Domain", "Exact", shortcut))
+                .OrderBy(e => e.Item3, StringComparer.Ordinal),
+            entries.Where(e => e.Value.EndsWith("outlook.com", StringComparison.Ordinal)
+                || e.Value.EndsWith("onedrive.com", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -116,17 +155,21 @@ public sealed class Microsoft365BundleNewWebDomainsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_bundle_that_lists_both_already_is_left_alone()
+    public async Task A_bundle_that_lists_them_all_already_is_left_alone()
     {
         var bundleId = await AddBundleAsync(Ms365, version: 5, new[]
         {
             ("*.cloud.microsoft", BundleEntryMatchType.Wildcard),
             ("*.microsoft365.com", BundleEntryMatchType.Wildcard),
+            ("outlook.com", BundleEntryMatchType.Exact),
+            ("www.outlook.com", BundleEntryMatchType.Exact),
+            ("onedrive.com", BundleEntryMatchType.Exact),
+            ("www.onedrive.com", BundleEntryMatchType.Exact),
         });
 
         Up();
 
-        Assert.Equal(2, (await EntriesAsync(bundleId)).Count);
+        Assert.Equal(6, (await EntriesAsync(bundleId)).Count);
         Assert.Equal(5, await VersionAsync(bundleId));
     }
 
@@ -154,7 +197,7 @@ public sealed class Microsoft365BundleNewWebDomainsTests : IAsyncLifetime
         Down();
 
         // *.cloud.microsoft was the teacher's, so it stays; *.microsoft365.com
-        // was the migration's.
+        // and the typed shortcuts were the migration's.
         Assert.Equal(
             new[]
             {
