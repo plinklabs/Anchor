@@ -18,16 +18,31 @@ public static class SessionAllowlist
         new AllowedAppDto(AllowedAppMatchKinds.ProcessName, "explorer"),
     };
 
+    /// <summary>
+    /// Only the hosts the Microsoft / school sign-in flow navigates through
+    /// (#516), so a session can't lock a student out of signing in, for example
+    /// through a site's "Sign in with Microsoft" or the dashboard on a teacher's
+    /// laptop. The rest of Microsoft's web (Office, Outlook, Teams, Copilot, ...)
+    /// comes with the Microsoft 365 bundle, which the teacher picks. Nothing for
+    /// subresources such as web fonts: the extension filters only top-level
+    /// navigations. contracts/session-baseline.json holds the same list, which
+    /// the extension's end-to-end specs hand down; a test keeps the two equal.
+    /// </summary>
     public static readonly IReadOnlyList<AllowedDomainDto> BaselineDomains = new[]
     {
+        // Entra sign-in (login.), its password reset (passwordreset.) and
+        // device sign-in (device.login.).
         new AllowedDomainDto(AllowedDomainMatchTypes.Wildcard, "*.microsoftonline.com"),
-        new AllowedDomainDto(AllowedDomainMatchTypes.Wildcard, "*.office.com"),
-        new AllowedDomainDto(AllowedDomainMatchTypes.Wildcard, "*.office365.com"),
-        new AllowedDomainDto(AllowedDomainMatchTypes.Wildcard, "*.microsoft.com"),
-        new AllowedDomainDto(AllowedDomainMatchTypes.Wildcard, "*.live.com"),
-        new AllowedDomainDto(AllowedDomainMatchTypes.Wildcard, "*.windows.net"),
-        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "fonts.googleapis.com"),
-        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "fonts.gstatic.com"),
+        // Entra's other sign-in hosts, which some sites still use as authority.
+        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "login.microsoft.com"),
+        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "login.windows.net"),
+        // Where sign-in sends a student who must register security info first.
+        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "mysignins.microsoft.com"),
+        // Personal Microsoft accounts: Entra hands a consumer address to
+        // login.live.com, which may verify it or reset its password on
+        // account.live.com.
+        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "login.live.com"),
+        new AllowedDomainDto(AllowedDomainMatchTypes.Exact, "account.live.com"),
     };
 
     /// <summary>

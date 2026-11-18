@@ -1,0 +1,16 @@
+{
+  "_about": [
+    "The domains every session allows on top of the teacher's bundles: only the hosts the Microsoft / school sign-in flow navigates through, so a session can't lock a student out of signing in (#516). Section 7.2 of focus-system-design.md says why each one is here.",
+    "Both sides test against this file. Backend CI (SessionBaselineContractTests) fails when the allowlist the backend sends for a session without bundles differs from it. The extension's end-to-end specs hand it down as every session's baseline, the way the backend does, and check in Edge that the sign-in hosts load while the rest of Microsoft's web stays blocked until the teacher picks the Microsoft 365 bundle.",
+    "The dashboard's own host is on every session's allowlist too (#409), but it comes from the deployment's configuration, so it isn't in this file.",
+    "Entries are as they go over the wire: an Exact entry matches its host only, a Wildcard entry (*.suffix) the suffix and every subdomain of it."
+  ],
+  "domains": [
+    { "matchType": "Wildcard", "value": "*.microsoftonline.com" },
+    { "matchType": "Exact", "value": "login.microsoft.com" },
+    { "matchType": "Exact", "value": "login.windows.net" },
+    { "matchType": "Exact", "value": "mysignins.microsoft.com" },
+    { "matchType": "Exact", "value": "login.live.com" },
+    { "matchType": "Exact", "value": "account.live.com" }
+  ]
+}

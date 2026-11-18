@@ -54,6 +54,38 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Baseline_allows_the_sign_in_hosts_and_none_of_the_rest_of_Microsofts_web()
+    {
+        // #516: the baseline is there so a session can't lock a student out of
+        // signing in. It used to allow every *.microsoft.com, *.office.com,
+        // *.live.com ... host, so Copilot, Outlook and Teams on the web were
+        // open in every session, whatever bundle the teacher picked. Those come
+        // with the Microsoft 365 bundle now. The Google Fonts entries went too:
+        // the extension filters only top-level navigations, never a page's fonts.
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
+
+        var expanded = await expander.ExpandAsync(Array.Empty<Guid>());
+
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Wildcard" && d.Value == "*.microsoftonline.com");
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "login.microsoft.com");
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "login.windows.net");
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "mysignins.microsoft.com");
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "login.live.com");
+        Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "account.live.com");
+        foreach (var gone in new[]
+                 {
+                     "*.office.com", "*.office365.com", "*.microsoft.com", "*.live.com", "*.windows.net",
+                     "fonts.googleapis.com", "fonts.gstatic.com",
+                 })
+        {
+            Assert.DoesNotContain(expanded.Domains, d => d.Value == gone);
+        }
+        // No other wildcard: each one past Entra's own domain lets in a whole
+        // family of sites.
+        Assert.Single(expanded.Domains, d => d.MatchType == "Wildcard");
+    }
+
+    [Fact]
     public async Task Bundle_domain_entries_are_merged_with_baseline_and_match_types_translated()
     {
         var bundleId = await SeedBundleAsync("Smartschool", entries: new[]
@@ -70,7 +102,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         Assert.Contains(expanded.Domains, d => d.MatchType == "Exact" && d.Value == "exact.example.com");
         Assert.Contains(expanded.Domains, d => d.MatchType == "Suffix" && d.Value == "school.local");
         // Baseline survives.
-        Assert.Contains(expanded.Domains, d => d.Value == "*.office.com");
+        Assert.Contains(expanded.Domains, d => d.Value == "*.microsoftonline.com");
     }
 
     [Fact]
@@ -95,14 +127,14 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
         var bundleId = await SeedBundleAsync("Already-Baseline", entries: new[]
         {
             (BundleEntryKind.App, "MSEDGE", BundleEntryMatchType.Exact),
-            (BundleEntryKind.Domain, "*.office.com", BundleEntryMatchType.Wildcard),
+            (BundleEntryKind.Domain, "*.MicrosoftOnline.com", BundleEntryMatchType.Wildcard),
         });
         var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
 
         var expanded = await expander.ExpandAsync(new[] { bundleId });
 
         Assert.Single(expanded.Apps, a => a.MatchKind == "ProcessName" && a.Value.Equals("msedge", StringComparison.OrdinalIgnoreCase));
-        Assert.Single(expanded.Domains, d => d.MatchType == "Wildcard" && d.Value.Equals("*.office.com", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(expanded.Domains, d => d.MatchType == "Wildcard" && d.Value.Equals("*.microsoftonline.com", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -192,7 +224,7 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
 
         Assert.Contains(expanded.Domains, d => d.MatchType == "Suffix" && d.Value == "reddit.com");
         // Baseline still present — the grant is additive, not a replacement.
-        Assert.Contains(expanded.Domains, d => d.Value == "*.office.com");
+        Assert.Contains(expanded.Domains, d => d.Value == "*.microsoftonline.com");
     }
 
     [Fact]

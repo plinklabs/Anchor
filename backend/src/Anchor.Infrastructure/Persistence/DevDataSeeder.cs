@@ -102,6 +102,9 @@ public static class DevDataSeeder
     {
         var seeds = new[]
         {
+            // The session baseline holds only the sign-in hosts (#516), so this
+            // bundle is what opens Office, Outlook, Teams, Copilot and the rest
+            // of Microsoft's web. Mirrored in scripts/seed-bundles.ps1.
             new BundleSeed("Microsoft 365", new[]
             {
                 new EntrySeed("*.office.com", BundleEntryMatchType.Wildcard),

@@ -96,6 +96,8 @@ Set-StrictMode -Version Latest
 # Exact/Wildcard/Suffix/SignedPublisher) — see BundleEntryConfiguration's
 # HasConversion<string>(). All entries below are domains, so Kind is Domain.
 $ExampleBundles = @(
+    # The session baseline holds only the sign-in hosts (#516), so this bundle is
+    # what opens Office, Outlook, Teams, Copilot and the rest of Microsoft's web.
     @{
         Name    = 'Microsoft 365'
         Entries = @(
