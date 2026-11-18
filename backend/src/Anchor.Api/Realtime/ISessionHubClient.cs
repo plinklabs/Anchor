@@ -10,6 +10,7 @@ public interface ISessionHubClient
     Task HeartbeatLost(HeartbeatLostPayload payload);
     Task AgentReconnected(AgentReconnectedPayload payload);
     Task AllowlistAmended(AllowlistAmendedPayload payload);
+    Task UnblockDenied(UnblockDeniedPayload payload);
     Task UnblockRequested(UnblockRequestedPayload payload);
     Task TamperDetected(TamperDetectedPayload payload);
 }

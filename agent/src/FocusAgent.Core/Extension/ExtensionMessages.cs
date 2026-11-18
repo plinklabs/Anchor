@@ -36,6 +36,12 @@ public static class ExtensionMessages
     /// <summary>The teacher approved an unblock request: the domains it adds (#73).</summary>
     public const string AllowlistAmended = "allowlist_amended";
 
+    /// <summary>
+    /// The teacher turned down an unblock request: the session and the host it
+    /// asked for (#523). The block page for that host says it was declined.
+    /// </summary>
+    public const string UnblockDenied = "unblock_denied";
+
     /// <summary>The answer to an <see cref="UnblockRequest"/>, matched by its <c>requestId</c>.</summary>
     public const string UnblockRequestResult = "unblock_request_result";
 

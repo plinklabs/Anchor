@@ -18,6 +18,7 @@ public interface ISessionBroadcaster
     Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default);
     Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default);
     Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default);
+    Task UnblockDeniedAsync(UnblockDeniedPayload payload, CancellationToken cancellationToken = default);
     Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default);
     Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default);
 }
@@ -100,6 +101,12 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         // Granted student only — every other extension/agent on the same
         // session must stay on the un-amended allowlist.
         => _hub.Clients.Group(SessionHub.UserGroupName(payload.UserId)).AllowlistAmended(payload);
+
+    public Task UnblockDeniedAsync(UnblockDeniedPayload payload, CancellationToken cancellationToken = default)
+        // The denied student only, like an approval (#523): their agent hands it
+        // to the extension, whose block page says the request was declined. No
+        // classmate learns what they asked for.
+        => _hub.Clients.Group(SessionHub.UserGroupName(payload.UserId)).UnblockDenied(payload);
 
     public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
         // Session group: the owning teacher is the only "interested" party,

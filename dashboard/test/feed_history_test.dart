@@ -241,6 +241,7 @@ void main() {
         'ForegroundChange',
         'BlockedUrl',
         'UnblockApproved',
+        'UnblockDenied',
         'SomethingNew',
       ]) {
         expect(
@@ -828,6 +829,25 @@ void main() {
       );
     });
 
+    test('a denial says whom it was for (#523)', () {
+      expect(
+        read('UnblockDenied', payloadJson: '{"host":"games.example.com"}'),
+        'Access to games.example.com was denied for Ada.',
+      );
+      expect(
+        read('UnblockDenied', payloadJson: '{}', name: null),
+        'Access to a website was denied for a student.',
+      );
+      expect(
+        read(
+          'UnblockDenied',
+          payloadJson: '{"host":"games.example.com"}',
+          l10n: nl,
+        ),
+        'Toegang tot games.example.com is geweigerd voor Ada.',
+      );
+    });
+
     test('an access request without a host names the site its page is on, '
         'or a website', () {
       expect(
@@ -925,11 +945,13 @@ void main() {
           count('UnblockRequest', 1),
           count('TamperDetected', 2),
           count('UnblockApproved', 1),
+          count('UnblockDenied', 2),
         ]),
         [
           'tampering detected 2 times',
           '1 access request',
           '1 website approved',
+          '2 requests denied',
           '3 blocked websites',
           '12 app switches',
         ],

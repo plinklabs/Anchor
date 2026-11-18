@@ -24,7 +24,8 @@ namespace FocusAgent.Core.Extension;
 /// the student has joined (so a declined session never reaches the extension),
 /// <see cref="ExtensionMessages.AllowlistReplaced"/> on a bundle change,
 /// <see cref="ExtensionMessages.AllowlistAmended"/> on an approved unblock
-/// request, <see cref="ExtensionMessages.SessionEnded"/> when the session ends or
+/// request, <see cref="ExtensionMessages.UnblockDenied"/> on a denied one (#523),
+/// <see cref="ExtensionMessages.SessionEnded"/> when the session ends or
 /// the student leaves it, and on every witness (re)connect the current session
 /// again, or <see cref="ExtensionMessages.NoSession"/>. Every Edge profile runs
 /// its own copy of the extension over its own connection (#517): each gets the
@@ -93,6 +94,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _coordinator.SessionLeft += OnSessionLeft;
         _coordinator.SessionAllowlistUpdated += OnAllowlistUpdated;
         _hub.AllowlistAmended += OnAllowlistAmended;
+        _hub.UnblockDenied += OnUnblockDenied;
         _witness.WitnessConnected += OnWitnessConnected;
         _witness.WitnessDisconnected += OnWitnessDisconnected;
         _witness.MessageReceived += OnMessageReceived;
@@ -196,6 +198,31 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _log.LogInformation(
             "Handed the extension {DomainCount} domains granted in session {SessionId}.",
             payload.AddedDomains.Count, payload.SessionId);
+    }
+
+    // Every profile: the student may have asked from any of them, and only the
+    // block page for the host acts on it. Not part of the connect snapshot: a
+    // block page opened after the denial has nothing pending to decline.
+    private void OnUnblockDenied(object? sender, UnblockDeniedPayload payload)
+    {
+        int sent;
+        lock (_gate)
+        {
+            if (_session?.SessionId != payload.SessionId)
+            {
+                _log.LogDebug("Ignoring UnblockDenied for {SessionId}: not the joined session.", payload.SessionId);
+                return;
+            }
+            sent = _witness.Broadcast(Serialize(new
+            {
+                type = ExtensionMessages.UnblockDenied,
+                sessionId = payload.SessionId,
+                host = payload.Host,
+            }));
+        }
+        _log.LogInformation(
+            "Told the extension the teacher declined {Host} in session {SessionId}: {Outcome}.",
+            payload.Host, payload.SessionId, sent > 0 ? $"sent to {sent}" : "no extension connected");
     }
 
     private void OnWitnessConnected(object? sender, WitnessConnection connection)
@@ -424,6 +451,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _coordinator.SessionLeft -= OnSessionLeft;
         _coordinator.SessionAllowlistUpdated -= OnAllowlistUpdated;
         _hub.AllowlistAmended -= OnAllowlistAmended;
+        _hub.UnblockDenied -= OnUnblockDenied;
         _witness.WitnessConnected -= OnWitnessConnected;
         _witness.WitnessDisconnected -= OnWitnessDisconnected;
         _witness.MessageReceived -= OnMessageReceived;

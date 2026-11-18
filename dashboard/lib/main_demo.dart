@@ -144,6 +144,9 @@ class _DemoSessions extends SessionsApi {
 
   @override
   Future<void> approveUnblockForClass(String s, String h) async {}
+
+  @override
+  Future<void> denyUnblock(String s, String u, String h) async {}
 }
 
 class _DemoBundles extends BundlesApi {

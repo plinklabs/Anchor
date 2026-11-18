@@ -42,6 +42,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get actionApprove => 'Approve';
 
   @override
+  String get actionDeny => 'Deny';
+
+  @override
   String get badgeLive => 'Live';
 
   @override
@@ -435,6 +438,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Could not approve the request. Please try again.';
 
   @override
+  String get sessionDenyError =>
+      'Could not deny the request. Please try again.';
+
+  @override
   String sessionCopiedCode(String code) {
     return 'Copied $code';
   }
@@ -733,6 +740,15 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String feedDeniedFor(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': 'Access to $host was denied for $name.',
+      'other': 'Access to $host was denied for a student.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String get sessionStateStale => 'Agent stopped reporting';
 
   @override
@@ -774,17 +790,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sessionPendingRequests => 'Pending requests';
-
-  @override
-  String sessionRequesters(int count, String names) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '$count students — $names',
-      one: '1 student — $names',
-    );
-    return '$_temp0';
-  }
 
   @override
   String get sessionMoreApprovalOptions => 'More approval options';
@@ -1416,7 +1421,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pastApprovedExceptions => 'Approved exceptions';
 
   @override
-  String get pastUnapprovedRequests => 'Unapproved requests';
+  String get pastUnansweredRequests => 'Unanswered requests';
 
   @override
   String get pastEventLog => 'Event log';
@@ -1526,6 +1531,17 @@ class AppLocalizationsEn extends AppLocalizations {
       locale: localeName,
       other: '$count websites approved',
       one: '1 website approved',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryDenied(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count requests denied',
+      one: '1 request denied',
     );
     return '$_temp0';
   }

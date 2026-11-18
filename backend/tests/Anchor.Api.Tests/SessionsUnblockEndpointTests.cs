@@ -526,6 +526,242 @@ public sealed class SessionsUnblockEndpointTests : IClassFixture<AnchorApiFactor
         Assert.Equal("imgur.com", imgur.Host);
     }
 
+    // ------- POST /sessions/{id}/unblock-requests/deny (#523) -------
+
+    [Fact]
+    public async Task POST_deny_unauthenticated_returns_401()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(scenario.Students[0].Id, "reddit.com"));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_deny_as_student_returns_403()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetStudent(client, scenario.Students[0]);
+
+        var response = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(scenario.Students[0].Id, "reddit.com"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_deny_by_non_owning_teacher_returns_403()
+    {
+        var owned = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var other = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, owned.Teacher.Id, owned.Class.Id, owned.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, other.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(owned.Students[0].Id, "reddit.com"));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_deny_for_missing_session_returns_404()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            $"/sessions/{Guid.NewGuid()}/unblock-requests/deny",
+            new UnblockDenialRequest(scenario.Students[0].Id, "reddit.com"));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_deny_for_ended_session_returns_400()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(scenario.Students[0].Id, "reddit.com"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_deny_for_non_participant_returns_400()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var outsider = await TestSeed.AddUserAsync(_factory, Anchor.Domain.Users.UserRole.Student, "Outsider");
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(outsider.Id, "reddit.com"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not a host")]
+    [InlineData("https://reddit.com")]
+    public async Task POST_deny_with_invalid_host_returns_400(string host)
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(scenario.Students[0].Id, host));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_deny_records_the_denial_under_the_student_and_tells_only_them()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        var student = scenario.Students[0];
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+
+        var response = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(student.Id, "REDDIT.com"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<UnblockDenialResponse>();
+        Assert.Equal(session.Id, body!.SessionId);
+        Assert.Equal(student.Id, body.UserId);
+        Assert.Equal("reddit.com", body.Host);
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            var denial = await db.Events.AsNoTracking()
+                .SingleAsync(e => e.SessionId == session.Id && e.Kind == EventKind.UnblockDenied);
+            Assert.Equal(student.Id, denial.UserId);
+            using var payload = System.Text.Json.JsonDocument.Parse(denial.PayloadJson);
+            Assert.Equal("reddit.com", payload.RootElement.GetProperty("host").GetString());
+            // A denial changes nobody's allowlist.
+            Assert.Equal(0, await db.SessionUnblockGrants.CountAsync(g => g.SessionId == session.Id));
+        }
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var told = Assert.Single(broadcaster.UnblockDeniedCalls, p => p.SessionId == session.Id);
+        Assert.Equal(student.Id, told.UserId);
+        Assert.Equal("reddit.com", told.Host);
+        Assert.Equal(body.DeniedAt, told.DeniedAt);
+        Assert.DoesNotContain(broadcaster.AllowlistAmendedCalls, p => p.SessionId == session.Id);
+    }
+
+    [Fact]
+    public async Task GET_unblock_requests_omits_a_denied_students_request_but_keeps_a_classmates_for_the_same_host()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        var earlier = DateTimeOffset.UtcNow.AddMinutes(-1);
+        await SeedUnblockEventAsync(session.Id, scenario.Students[0].Id, "reddit.com", "https://reddit.com/", earlier);
+        await SeedUnblockEventAsync(session.Id, scenario.Students[1].Id, "reddit.com", "https://reddit.com/", earlier);
+        await SeedUnblockEventAsync(session.Id, scenario.Students[0].Id, "imgur.com", "https://imgur.com/", earlier);
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        (await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(scenario.Students[0].Id, "reddit.com"))).EnsureSuccessStatusCode();
+
+        var body = await client.GetFromJsonAsync<List<UnblockRequestSummary>>(
+            $"/sessions/{session.Id}/unblock-requests");
+
+        // reddit.com stays for the classmate; the denied student's other request
+        // is untouched.
+        Assert.Equal(2, body!.Count);
+        var reddit = body.Single(s => s.Host == "reddit.com");
+        Assert.Equal(1, reddit.Count);
+        Assert.Equal(scenario.Students[1].Id, Assert.Single(reddit.Requesters).UserId);
+        var imgur = body.Single(s => s.Host == "imgur.com");
+        Assert.Equal(scenario.Students[0].Id, Assert.Single(imgur.Requesters).UserId);
+
+        // Denying the classmate too leaves no one on the host: its row goes.
+        (await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(scenario.Students[1].Id, "reddit.com"))).EnsureSuccessStatusCode();
+        body = await client.GetFromJsonAsync<List<UnblockRequestSummary>>(
+            $"/sessions/{session.Id}/unblock-requests");
+        Assert.Equal("imgur.com", Assert.Single(body!).Host);
+    }
+
+    [Fact]
+    public async Task GET_unblock_requests_shows_a_request_sent_after_the_students_latest_denial()
+    {
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, scenario.Students.Select(s => s.Id).ToList());
+        var student = scenario.Students[0];
+        await SeedUnblockEventAsync(
+            session.Id, student.Id, "reddit.com", "https://reddit.com/a", DateTimeOffset.UtcNow.AddMinutes(-2));
+        await SeedUnblockEventAsync(
+            session.Id, student.Id, "reddit.com", "https://reddit.com/b", DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, scenario.Teacher);
+        var denial = await (await client.PostAsJsonAsync(
+                $"/sessions/{session.Id}/unblock-requests/deny",
+                new UnblockDenialRequest(student.Id, "reddit.com")))
+            .Content.ReadFromJsonAsync<UnblockDenialResponse>();
+
+        Assert.Empty((await client.GetFromJsonAsync<List<UnblockRequestSummary>>(
+            $"/sessions/{session.Id}/unblock-requests"))!);
+
+        // The student asks again after the denial: only that request is pending.
+        var again = denial!.DeniedAt.AddSeconds(20);
+        await SeedUnblockEventAsync(session.Id, student.Id, "reddit.com", "https://reddit.com/c", again);
+
+        var reddit = Assert.Single((await client.GetFromJsonAsync<List<UnblockRequestSummary>>(
+            $"/sessions/{session.Id}/unblock-requests"))!);
+        Assert.Equal(1, reddit.Count);
+        var requester = Assert.Single(reddit.Requesters);
+        Assert.Equal(student.Id, requester.UserId);
+        Assert.Equal(again, requester.RequestedAt);
+        Assert.Equal(again, reddit.FirstRequestedAt);
+    }
+
     private async Task MarkParticipantJoinedAsync(Guid sessionId, Guid userId)
     {
         using var scope = _factory.Services.CreateScope();
@@ -555,7 +791,8 @@ public sealed class SessionsUnblockEndpointTests : IClassFixture<AnchorApiFactor
         }).ToList();
     }
 
-    private async Task SeedUnblockEventAsync(Guid sessionId, Guid userId, string host, string url)
+    private async Task SeedUnblockEventAsync(
+        Guid sessionId, Guid userId, string host, string url, DateTimeOffset? at = null)
     {
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
@@ -566,7 +803,7 @@ public sealed class SessionsUnblockEndpointTests : IClassFixture<AnchorApiFactor
             UserId = userId,
             Kind = EventKind.UnblockRequest,
             PayloadJson = payload,
-            OccurredAt = DateTimeOffset.UtcNow,
+            OccurredAt = at ?? DateTimeOffset.UtcNow,
         });
         await db.SaveChangesAsync();
     }

@@ -103,6 +103,9 @@ async function handleAgentMessage(message: AgentMessage): Promise<void> {
     case 'allowlist_amended':
       await handleAllowlistAmended(message.sessionId, message.addedDomains);
       return;
+    case 'unblock_denied':
+      await handleUnblockDenied(message.sessionId, message.host);
+      return;
   }
 }
 
@@ -240,6 +243,25 @@ async function notifyBlockPages(state: ActiveSessionState): Promise<void> {
     // "Receiving end does not exist" is the normal case when no block page
     // is open; not worth surfacing as an error.
     log.debug('no runtime listeners for allowlist-amended (expected if no block page open)', err);
+  }
+}
+
+// The teacher turned down a request (#523). Nothing changes on the allowlist:
+// the block page for the host says the request was declined, and lets the
+// student ask again.
+async function handleUnblockDenied(sessionId: string, host: string): Promise<void> {
+  const current = await getActiveSession();
+  if (current?.sessionId !== sessionId) {
+    log.warn('unblock denial dropped — no matching active session in cache', { sessionId });
+    return;
+  }
+  log.info('unblock request denied', { sessionId, host });
+  const message: ExtensionRuntimeMessage = { kind: 'unblock-denied', sessionId, host };
+  try {
+    await chrome.runtime.sendMessage(message);
+  } catch (err) {
+    // No block page open: nobody is waiting on the answer.
+    log.debug('no runtime listeners for unblock-denied (expected if no block page open)', err);
   }
 }
 

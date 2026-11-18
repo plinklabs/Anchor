@@ -625,6 +625,61 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
             e => e.SessionId == session.Id && e.UserId == student.Id && e.Kind == EventKind.UnblockRequest));
     }
 
+    /// <summary>
+    /// #523: the teacher turns a request down, the student's own connection (the
+    /// agent's, which hands it to the block page) hears it, and asking again puts
+    /// the request back on the teacher's list. The laptop's clock runs ten minutes
+    /// behind the server's, as an unsynced school laptop's can: the second request
+    /// still counts as sent after the denial, because the server dates requests.
+    /// </summary>
+    [Fact]
+    public async Task A_denied_student_hears_it_and_asking_again_is_pending_again_whatever_their_clock_says()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+        User teacher;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            teacher = await db.Users.AsNoTracking().SingleAsync(u => u.Id == session.TeacherId);
+        }
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        var denied = new TaskCompletionSource<UnblockDeniedPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.On<UnblockDeniedPayload>(nameof(ISessionHubClient.UnblockDenied), p => denied.TrySetResult(p));
+        await connection.StartAsync();
+        await JoinAsync(connection, session.Id);
+
+        var lagging = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var payload = System.Text.Json.JsonSerializer.Serialize(new { url = "https://reddit.com/r/aww", host = "reddit.com" });
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.UnblockRequest), payload, lagging));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, teacher);
+        var deny = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(student.Id, "reddit.com"));
+        deny.EnsureSuccessStatusCode();
+
+        var heard = await denied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(session.Id, heard.SessionId);
+        Assert.Equal(student.Id, heard.UserId);
+        Assert.Equal("reddit.com", heard.Host);
+        Assert.Empty((await client.GetFromJsonAsync<List<UnblockRequestSummary>>(
+            $"/sessions/{session.Id}/unblock-requests"))!);
+
+        // The student asks again, and their agent dates it by the same slow clock.
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.UnblockRequest), payload, lagging.AddSeconds(30)));
+
+        var pending = Assert.Single((await client.GetFromJsonAsync<List<UnblockRequestSummary>>(
+            $"/sessions/{session.Id}/unblock-requests"))!);
+        Assert.Equal("reddit.com", pending.Host);
+        Assert.Equal(student.Id, Assert.Single(pending.Requesters).UserId);
+        Assert.True(pending.LatestRequestedAt > heard.DeniedAt,
+            $"The request was dated {pending.LatestRequestedAt:O}, before the denial at {heard.DeniedAt:O}.");
+    }
+
     [Fact]
     public async Task ReportEvent_tamper_detected_broadcasts_kind_to_session_group()
     {

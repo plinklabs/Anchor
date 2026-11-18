@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isBlockLifted, type BlockedPage } from './block-release';
+import { isBlockLifted, isRequestDeclined, type BlockedPage } from './block-release';
 import type { AllowedDomain } from './host-matcher';
 
 const SESSION = 'session-123';
@@ -102,5 +102,31 @@ describe('isBlockLifted — what it never lifts', () => {
 
   it('keeps the block when the allowlist is empty', () => {
     expect(isBlockLifted(page('https://school.smartschool.be/'), SESSION, [])).toBe(false);
+  });
+});
+
+describe('isRequestDeclined — the teacher turned a request down (#523)', () => {
+  it('answers the page holding back the denied host', () => {
+    expect(isRequestDeclined(page('https://games.example/play?level=3'), SESSION, 'games.example')).toBe(true);
+  });
+
+  it('matches the host the way the page names it when it asks, whatever the case', () => {
+    expect(isRequestDeclined(page('https://Games.Example/'), SESSION, 'games.example')).toBe(true);
+    expect(isRequestDeclined(page('https://games.example/'), SESSION, 'GAMES.example')).toBe(true);
+  });
+
+  it('leaves a page for another host alone, a subdomain included', () => {
+    expect(isRequestDeclined(page('https://chat.example/'), SESSION, 'games.example')).toBe(false);
+    expect(isRequestDeclined(page('https://www.games.example/'), SESSION, 'games.example')).toBe(false);
+  });
+
+  it('leaves a page from another session, or without one, alone', () => {
+    expect(isRequestDeclined(page('https://games.example/'), 'session-OTHER', 'games.example')).toBe(false);
+    expect(isRequestDeclined(page('https://games.example/', null), SESSION, 'games.example')).toBe(false);
+  });
+
+  it('leaves a page without a usable url alone', () => {
+    expect(isRequestDeclined(page(''), SESSION, 'games.example')).toBe(false);
+    expect(isRequestDeclined(page('not a url'), SESSION, 'games.example')).toBe(false);
   });
 });

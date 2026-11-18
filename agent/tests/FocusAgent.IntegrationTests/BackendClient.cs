@@ -176,6 +176,13 @@ internal sealed class BackendClient
         using var res = await SendAsync(HttpMethod.Post, $"/sessions/{sessionId}/unblock", oid, new { userId, host });
     }
 
+    /// <summary>POST /sessions/{id}/unblock-requests/deny — the teacher turns one student's request down (#523).</summary>
+    public async Task DenyUnblockAsync(Guid sessionId, Guid userId, string host, string oid = TestConfig.TeacherOid)
+    {
+        using var res = await SendAsync(
+            HttpMethod.Post, $"/sessions/{sessionId}/unblock-requests/deny", oid, new { userId, host });
+    }
+
     public sealed record PendingUnblockRequest(string Host, IReadOnlyList<Guid> RequesterIds);
 
     /// <summary>GET /sessions/{id} → endedAt, or null while the session is running.</summary>

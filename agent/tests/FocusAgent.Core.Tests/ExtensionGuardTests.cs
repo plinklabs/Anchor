@@ -720,6 +720,7 @@ public class ExtensionGuardTests
         public event EventHandler<SessionStartedPayload>? SessionStarted;
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
         public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+        public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 #pragma warning restore CS0067
         public event EventHandler<Guid>? SessionEnded;
 

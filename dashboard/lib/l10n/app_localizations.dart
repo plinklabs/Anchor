@@ -164,6 +164,12 @@ abstract class AppLocalizations {
   /// **'Approve'**
   String get actionApprove;
 
+  /// No description provided for @actionDeny.
+  ///
+  /// In en, this message translates to:
+  /// **'Deny'**
+  String get actionDeny;
+
   /// No description provided for @badgeLive.
   ///
   /// In en, this message translates to:
@@ -812,6 +818,12 @@ abstract class AppLocalizations {
   /// **'Could not approve the request. Please try again.'**
   String get sessionApproveError;
 
+  /// No description provided for @sessionDenyError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not deny the request. Please try again.'**
+  String get sessionDenyError;
+
   /// No description provided for @sessionCopiedCode.
   ///
   /// In en, this message translates to:
@@ -1112,6 +1124,12 @@ abstract class AppLocalizations {
   /// **'Access to {host} was approved for the whole class.'**
   String feedApprovedForClass(String host);
 
+  /// Past session's event log (#523): the teacher denied a student's access request. The student may have asked again after it.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{Access to {host} was denied for {name}.} other{Access to {host} was denied for a student.}}'**
+  String feedDeniedFor(String who, String name, String host);
+
   /// No description provided for @sessionStateStale.
   ///
   /// In en, this message translates to:
@@ -1189,12 +1207,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Pending requests'**
   String get sessionPendingRequests;
-
-  /// No description provided for @sessionRequesters.
-  ///
-  /// In en, this message translates to:
-  /// **'{count, plural, =1{1 student — {names}} other{{count} students — {names}}}'**
-  String sessionRequesters(int count, String names);
 
   /// No description provided for @sessionMoreApprovalOptions.
   ///
@@ -2156,11 +2168,11 @@ abstract class AppLocalizations {
   /// **'Approved exceptions'**
   String get pastApprovedExceptions;
 
-  /// No description provided for @pastUnapprovedRequests.
+  /// Past session page: the access requests the teacher neither approved nor denied (#523).
   ///
   /// In en, this message translates to:
-  /// **'Unapproved requests'**
-  String get pastUnapprovedRequests;
+  /// **'Unanswered requests'**
+  String get pastUnansweredRequests;
 
   /// No description provided for @pastEventLog.
   ///
@@ -2245,6 +2257,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 website approved} other{{count} websites approved}}'**
   String pastSummaryApproved(int count);
+
+  /// Past session's activity summary (#523): how many of the student's access requests the teacher denied.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 request denied} other{{count} requests denied}}'**
+  String pastSummaryDenied(int count);
 
   /// No description provided for @pastSummaryBlockedSites.
   ///

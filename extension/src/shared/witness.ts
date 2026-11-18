@@ -14,7 +14,8 @@
 // - The agent is the extension's only identity (#489). The extension has no
 //   sign-in and no backend connection: the agent, signed in with the Windows
 //   account, hands the session it joined down this link (`session_started`, the
-//   allowlist changes, `session_ended`, and the current state on every connect),
+//   allowlist changes, a declined request, `session_ended`, and the current state
+//   on every connect),
 //   and the extension hands back what it reports (blocked URLs, unblock requests,
 //   its in-browser tamper signals), which the agent sends with its own connection.
 //
@@ -52,7 +53,9 @@ export type AgentMessage =
   | { type: 'no_session' }
   | { type: 'session_ended'; sessionId: string }
   | { type: 'allowlist_replaced'; sessionId: string; domains: AllowedDomainDto[] }
-  | { type: 'allowlist_amended'; sessionId: string; addedDomains: AllowedDomainDto[] };
+  | { type: 'allowlist_amended'; sessionId: string; addedDomains: AllowedDomainDto[] }
+  /** The teacher turned down the request for this host (#523). */
+  | { type: 'unblock_denied'; sessionId: string; host: string };
 
 /** The agent's answer to an unblock request, matched by its request id. */
 export interface UnblockRequestResult {
@@ -126,6 +129,10 @@ export function parseHostMessage(raw: unknown): HostSignal {
             kind: 'agent',
             message: { type: 'allowlist_amended', sessionId: msg.sessionId, addedDomains: msg.addedDomains },
           }
+        : { kind: 'ignore' };
+    case 'unblock_denied':
+      return isNonBlank(msg.sessionId) && isNonBlank(msg.host)
+        ? { kind: 'agent', message: { type: 'unblock_denied', sessionId: msg.sessionId, host: msg.host } }
         : { kind: 'ignore' };
     case 'unblock_request_result':
       return isNonBlank(msg.requestId)

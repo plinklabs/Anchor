@@ -123,6 +123,12 @@ export class FakeAgent {
     this.send({ type: 'allowlist_amended', sessionId: session.sessionId, addedDomains });
   }
 
+  /** The teacher turned down the student's request for `host` (#523). */
+  denyUnblock(host: string): void {
+    const session = this.requireSession();
+    this.send({ type: 'unblock_denied', sessionId: session.sessionId, host });
+  }
+
   /** The agent went away (it crashed, or was killed): close the host's pipe. */
   dropConnection(): void {
     this.socket?.destroy();

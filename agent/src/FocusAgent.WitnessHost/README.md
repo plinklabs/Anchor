@@ -86,7 +86,7 @@ unit-tested with `MemoryStream`s.
   is still the witness (connect = up, EOF = the extension is gone).
 - **The messages** (`FocusAgent.Core.Extension.ExtensionMessages`, mirrored in
   `witness.ts`): agent → extension `session_started`, `no_session`,
-  `allowlist_replaced`, `allowlist_amended`, `session_ended`,
+  `allowlist_replaced`, `allowlist_amended`, `unblock_denied`, `session_ended`,
   `unblock_request_result`; extension → agent `ping`, `blocked_url`,
   `unblock_request`, `tamper`. The agent sends the current session (or
   `no_session`) to each connection when it connects, sends every change to all

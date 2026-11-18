@@ -19,7 +19,7 @@ import 'past_session_shared.dart';
 ///
 /// Distinct from the live SessionPage: no hub connection, no live event stream —
 /// just an audit trail (header → bundles → participants → activity summary →
-/// approved exceptions → unapproved requests → event log).
+/// approved exceptions → unanswered requests → event log).
 ///
 /// Purely presentational: the load/redirect logic (bounce to the live view if
 /// the session hasn't actually ended) is untouched.
@@ -62,8 +62,8 @@ class _PastSessionPageState extends State<PastSessionPage> {
     });
     try {
       // The unblock-requests endpoint already filters out anything that
-      // received a grant, so on an ended session it returns exactly the
-      // requests the teacher never acted on.
+      // received a grant or a denial (#523), so on an ended session it returns
+      // exactly the requests the teacher never answered.
       final detailFuture = widget.sessions.getSession(widget.sessionId);
       final unapprovedFuture = widget.sessions.unblockRequests(
         widget.sessionId,
@@ -157,7 +157,7 @@ class _PastSessionPageState extends State<PastSessionPage> {
               const PastHairline(),
             ],
             if (_unapprovedRequests.isNotEmpty) ...<Widget>[
-              _PanelLabel(AppLocalizations.of(context).pastUnapprovedRequests),
+              _PanelLabel(AppLocalizations.of(context).pastUnansweredRequests),
               _UnapprovedList(requests: _unapprovedRequests),
               const PastHairline(),
             ],

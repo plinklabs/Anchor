@@ -71,6 +71,16 @@ describe('parseHostMessage', () => {
     expect(parseHostMessage({ type: 'allowlist_amended', sessionId: 's1' })).toEqual({ kind: 'ignore' });
   });
 
+  it('parses a declined request with its host (#523)', () => {
+    expect(parseHostMessage({ type: 'unblock_denied', sessionId: 's1', host: 'games.example' })).toEqual({
+      kind: 'agent',
+      message: { type: 'unblock_denied', sessionId: 's1', host: 'games.example' },
+    });
+    expect(parseHostMessage({ type: 'unblock_denied', sessionId: 's1' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'unblock_denied', sessionId: 's1', host: ' ' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'unblock_denied', host: 'games.example' })).toEqual({ kind: 'ignore' });
+  });
+
   it('parses the answer to an unblock request', () => {
     expect(parseHostMessage({ type: 'unblock_request_result', requestId: 'r1', ok: true })).toEqual({
       kind: 'unblock_result',

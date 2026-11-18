@@ -1135,6 +1135,7 @@ public class FocusSessionControllerTests
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
 #pragma warning disable CS0067 // Not raised by these tests.
         public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+        public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 #pragma warning restore CS0067
         public List<(Guid SessionId, string Kind, string PayloadJson, DateTimeOffset? At)> Reports { get; } = new();
 

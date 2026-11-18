@@ -292,8 +292,8 @@ the **real** native-messaging host to a stand-in for the on-box agent — no moc
    with the fake agent's pipe in `ANCHOR_WITNESS_PIPE`, so the host Edge starts
    connects to it.
 3. Drives the session the way the agent does: `session_started`,
-   `allowlist_replaced`, `allowlist_amended`, `session_ended`, and the agent
-   going away.
+   `allowlist_replaced`, `allowlist_amended`, `unblock_denied`, `session_ended`,
+   and the agent going away.
 
 What the agent hands down when the backend says so, and what it sends on, is the
 agent e2e's part (`ExtensionSessionHandDownTests`, real agent + real backend +
@@ -470,7 +470,9 @@ and the [`nativeMessaging`](src/manifest.json) permission). Two things ride on i
   extension off from Edge's windows and the profiles' preferences.
 - **The agent hands down the session (#489).** `session_started` when the agent
   has joined a session (a declined one never arrives), `allowlist_replaced` and
-  `allowlist_amended` as the teacher changes it, `session_ended` when it ends or
+  `allowlist_amended` as the teacher changes it, `unblock_denied` when the
+  teacher turns a request down (the block page for that host says so and lets
+  the student ask again, #523), `session_ended` when it ends or
   the student leaves it, and on every connect the current session or
   `no_session`. The extension sends back `blocked_url`, `unblock_request`
   (answered with `unblock_request_result`) and `tamper`, which the agent sends

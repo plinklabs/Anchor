@@ -187,6 +187,8 @@ Every session is strict: only bundle domains + baseline resolve; everything else
 
 The extension's block page includes a "request access" button that pings the dashboard. The teacher sees pending requests during the session and can approve them for the rest of the period in one click. The request log also tells us which bundles need expanding centrally.
 
+Decisions are per student: under each requested site the teacher sees who asked, and approves or denies each of them; approving the site for the whole class is a separate, deliberate choice. A denial takes that student's request off the pending list, and the site's row goes once no student is left on it. It reaches the student the way an approval does (backend → agent → extension), and the block page says the request was declined and offers to ask again. A denial isn't final: a request the student sends after it is pending again, so the list holds what still needs an answer. The backend dates each request as it arrives, so a student laptop's clock can't put a new request before the denial it follows (#523).
+
 ## 8. Joining a session
 
 **Primary:** the teacher clicks "Start session for class 3A." The backend pushes `SessionStart` via SignalR to every signed-in agent whose user belongs to 3A. Students see the join confirmation and join automatically. No code typing.

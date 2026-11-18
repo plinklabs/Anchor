@@ -278,6 +278,7 @@ public class InPrivateWitnessMonitorTests
         public event EventHandler<Guid>? SessionEnded;
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
         public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+        public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 #pragma warning restore CS0067
 
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;

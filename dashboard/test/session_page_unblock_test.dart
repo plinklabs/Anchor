@@ -6,12 +6,13 @@ import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
 
 // The dashboard authenticates via MSAL and can't be dev-impersonated, so we
 // pump the page with fake API subclasses rather than hitting a real backend
 // (see reference_dashboard_widget_test_verify). Covers the #101 approve-scope
-// choice on a pending unblock-request row: the primary button is per-student,
-// the kebab offers whole-class.
+// choice on a pending unblock-request row: each student who asked has their
+// own Approve and Deny (#523), and the kebab offers whole-class.
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
   tokenProvider: () async => null,
@@ -43,6 +44,8 @@ class _FakeSessions extends SessionsApi {
   final List<(String, String)> perStudentCalls = [];
   // host per whole-class approval call.
   final List<String> classCalls = [];
+  // (userId, host) per denial call (#523).
+  final List<(String, String)> denyCalls = [];
 
   @override
   Future<SessionDetail> getSession(String sessionId) async => SessionDetail(
@@ -76,7 +79,36 @@ class _FakeSessions extends SessionsApi {
   Future<void> approveUnblockForClass(String sessionId, String host) async {
     classCalls.add(host);
   }
+
+  @override
+  Future<void> denyUnblock(String sessionId, String userId, String host) async {
+    denyCalls.add((userId, host));
+    // As the backend has it: the student's request leaves the pending list,
+    // and the host's row goes once nobody is left on it.
+    pending = [
+      for (final s in pending)
+        if (s.host != host)
+          s
+        else if (s.requesters.any((r) => r.userId != userId))
+          UnblockRequestSummary(
+            host: s.host,
+            count: s.count - 1,
+            firstRequestedAt: s.firstRequestedAt,
+            latestRequestedAt: s.latestRequestedAt,
+            requesters: [
+              for (final r in s.requesters)
+                if (r.userId != userId) r,
+            ],
+          ),
+    ];
+  }
 }
+
+/// The Approve or Deny button on [name]'s line of the pending panel.
+Finder _onLineOf(String name, Type button, String label) => find.descendant(
+  of: find.ancestor(of: find.text(name), matching: find.byType(Row)).first,
+  matching: find.widgetWithText(button, label),
+);
 
 class _FakeBundles extends BundlesApi {
   _FakeBundles() : super(_dummyClient());
@@ -110,29 +142,73 @@ Future<void> _pumpPage(WidgetTester tester, _FakeSessions sessions) async {
 }
 
 void main() {
-  testWidgets('primary Approve grants per requesting student (#101)', (
+  testWidgets('each student who asked gets their own Approve and Deny (#523)', (
     tester,
   ) async {
     final sessions = _FakeSessions();
     await _pumpPage(tester, sessions);
 
     expect(find.text('chat.example.com'), findsOneWidget);
-    // The primary Approve is a calm ink OutlinedButton now (AD4, #169) — the
-    // magenta spark stays reserved for liveness, not approvals.
-    final approve = find.widgetWithText(OutlinedButton, 'Approve');
-    expect(approve, findsOneWidget);
-
-    await tester.tap(approve);
-    await tester.pump();
-    await tester.pump();
-
-    // One grant per requester, and the whole-class path was untouched.
-    expect(sessions.perStudentCalls, [
-      ('u1', 'chat.example.com'),
-      ('u2', 'chat.example.com'),
-    ]);
-    expect(sessions.classCalls, isEmpty);
+    expect(find.text('Ada'), findsOneWidget);
+    expect(find.text('Bo'), findsOneWidget);
+    // The Approve is a calm ink OutlinedButton (AD4, #169) — the magenta spark
+    // stays reserved for liveness, not approvals.
+    expect(find.widgetWithText(OutlinedButton, 'Approve'), findsNWidgets(2));
+    expect(find.widgetWithText(TextButton, 'Deny'), findsNWidgets(2));
+    // Deny is ink too: the theme's text button colour is the magenta spark.
+    final deny = tester.widget<TextButton>(
+      find.widgetWithText(TextButton, 'Deny').first,
+    );
+    expect(
+      deny.style?.foregroundColor?.resolve(<WidgetState>{}),
+      PlinkColors.ink,
+    );
   });
+
+  testWidgets('Approve grants only the student on its line (#101, #523)', (
+    tester,
+  ) async {
+    final sessions = _FakeSessions();
+    await _pumpPage(tester, sessions);
+
+    await tester.tap(_onLineOf('Bo', OutlinedButton, 'Approve'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(sessions.perStudentCalls, [('u2', 'chat.example.com')]);
+    expect(sessions.classCalls, isEmpty);
+    expect(sessions.denyCalls, isEmpty);
+  });
+
+  testWidgets(
+    'Deny turns one student down; the host goes once nobody is left (#523)',
+    (tester) async {
+      final sessions = _FakeSessions();
+      await _pumpPage(tester, sessions);
+
+      await tester.tap(_onLineOf('Ada', TextButton, 'Deny'));
+      await tester.pump();
+      await tester.pump();
+
+      // Ada's request is answered; Bo's for the same site still waits.
+      expect(sessions.denyCalls, [('u1', 'chat.example.com')]);
+      expect(sessions.perStudentCalls, isEmpty);
+      expect(find.text('Ada'), findsNothing);
+      expect(find.text('Bo'), findsOneWidget);
+      expect(find.text('chat.example.com'), findsOneWidget);
+
+      await tester.tap(_onLineOf('Bo', TextButton, 'Deny'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(sessions.denyCalls, [
+        ('u1', 'chat.example.com'),
+        ('u2', 'chat.example.com'),
+      ]);
+      expect(find.text('chat.example.com'), findsNothing);
+      expect(find.text('Pending requests'), findsNothing);
+    },
+  );
 
   testWidgets('kebab "Approve for whole class" grants session-wide (#101)', (
     tester,
@@ -153,5 +229,6 @@ void main() {
     // Exactly one whole-class POST for the host; no per-student grants issued.
     expect(sessions.classCalls, ['chat.example.com']);
     expect(sessions.perStudentCalls, isEmpty);
+    expect(sessions.denyCalls, isEmpty);
   });
 }

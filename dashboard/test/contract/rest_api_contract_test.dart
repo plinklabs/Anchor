@@ -189,6 +189,11 @@ final _calls = <_Call>[
     (a) => a.sessions.approveUnblockForClass('p1', 'example.com'),
   ),
   _Call(
+    'POST sessions/{id}/unblock-requests/deny',
+    'SessionsApi.denyUnblock',
+    (a) => a.sessions.denyUnblock('p1', 'u1', 'example.com'),
+  ),
+  _Call(
     'POST classes',
     'ClassesApi.createClass',
     (a) => a.classes.createClass(

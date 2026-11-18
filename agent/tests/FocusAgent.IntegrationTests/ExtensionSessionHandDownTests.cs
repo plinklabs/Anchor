@@ -100,6 +100,37 @@ public sealed class ExtensionSessionHandDownTests
                     "the approved host to be handed down");
                 Assert.Contains("docs.test", Domains(amended, "addedDomains"));
 
+                // 3b. The teacher turns the next request down (#523): the denial
+                //     comes back down with its host, the request leaves the
+                //     teacher's list, and asking again puts it back on it.
+                extension.Send(new
+                {
+                    type = "unblock_request",
+                    requestId = "e2e-2",
+                    sessionId = session.Id,
+                    url = "https://games.test/play",
+                    host = "games.test",
+                });
+                await extension.WaitForAsync(
+                    m => Type(m) == "unblock_request_result" && m.GetProperty("requestId").GetString() == "e2e-2", Wait,
+                    "the agent to answer the second unblock request");
+                var asked = await WaitForUnblockRequestAsync(api, session.Id, "games.test");
+                await api.DenyUnblockAsync(session.Id, Assert.Single(asked.RequesterIds), "games.test");
+                var denied = await extension.WaitForAsync(
+                    m => Type(m) == "unblock_denied" && SessionOf(m) == session.Id, Wait,
+                    "the denial to be handed down");
+                Assert.Equal("games.test", denied.GetProperty("host").GetString());
+                Assert.DoesNotContain(await api.GetUnblockRequestsAsync(session.Id), r => r.Host == "games.test");
+                extension.Send(new
+                {
+                    type = "unblock_request",
+                    requestId = "e2e-3",
+                    sessionId = session.Id,
+                    url = "https://games.test/play",
+                    host = "games.test",
+                });
+                await WaitForUnblockRequestAsync(api, session.Id, "games.test");
+
                 // 4. The teacher drops the bundle: the extension gets the new list,
                 //    the student's grant kept.
                 await api.UpdateBundlesAsync(session.Id, Array.Empty<Guid>());

@@ -31,8 +31,8 @@ const int feedHistoryLimit = 200;
 /// carries.
 ///
 /// Null for a kind the hub doesn't broadcast to the teacher (an app switch, a
-/// blocked site, an approval), and for an access request that names no site,
-/// whose broadcast the backend skips.
+/// blocked site, an approval or a denial), and for an access request that
+/// names no site, whose broadcast the backend skips.
 SessionEvent? feedEventOfStored(
   SessionRecentEvent stored, {
   required String sessionId,
@@ -109,8 +109,8 @@ SessionEvent? feedEventOfStored(
 /// reads (#498): the past session page's event log reads the session the way
 /// the live feed does (#491). A kind the hub broadcasts reads as the feed
 /// reads its broadcast ([feedEventOfStored], [feedSentence]); the kinds only
-/// the backend keeps, an app switch, a blocked website and an approval, get
-/// sentences of their own. [name] is the student's, from the roster.
+/// the backend keeps, an app switch, a blocked website, an approval and a
+/// denial (#523), get sentences of their own. [name] is the student's, from the roster.
 ///
 /// Never the event's kind or its payload: an event the dashboard doesn't know
 /// gets a sentence too.
@@ -152,6 +152,9 @@ String storedEventSentence(
       return payload['scope'] == 'class'
           ? l10n.feedApprovedForClass(host)
           : l10n.feedApprovedFor(who, n, host);
+    case 'UnblockDenied':
+      // Always one student's: denials are per student (#523).
+      return l10n.feedDeniedFor(who, n, _hostOf(payload) ?? l10n.feedSomeSite);
   }
   return l10n.feedOther;
 }
@@ -185,6 +188,7 @@ List<String> storedSummaryPhrases(
           _SummaryTopic.declined => l10n.pastSummaryDeclined(count),
           _SummaryTopic.accessRequests => l10n.pastSummaryAccessRequests(count),
           _SummaryTopic.approved => l10n.pastSummaryApproved(count),
+          _SummaryTopic.denied => l10n.pastSummaryDenied(count),
           _SummaryTopic.blockedSites => l10n.pastSummaryBlockedSites(count),
           _SummaryTopic.appSwitches => l10n.pastSummaryAppSwitches(count),
           _SummaryTopic.agentBack => l10n.pastSummaryAgentBack(count),
@@ -204,6 +208,7 @@ enum _SummaryTopic {
   declined,
   accessRequests,
   approved,
+  denied,
   blockedSites,
   appSwitches,
   agentBack,
@@ -219,6 +224,7 @@ _SummaryTopic _summaryTopicOf(String kind) => switch (kind) {
   'JoinDeclined' => _SummaryTopic.declined,
   'UnblockRequest' => _SummaryTopic.accessRequests,
   'UnblockApproved' => _SummaryTopic.approved,
+  'UnblockDenied' => _SummaryTopic.denied,
   'BlockedUrl' => _SummaryTopic.blockedSites,
   'ForegroundChange' => _SummaryTopic.appSwitches,
   'AgentReconnected' => _SummaryTopic.agentBack,

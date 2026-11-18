@@ -442,7 +442,14 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             throw new HubException($"Unknown event kind '{request.Kind}'.");
 
         var payloadJson = string.IsNullOrWhiteSpace(request.PayloadJson) ? "{}" : request.PayloadJson!;
-        var occurredAt = request.OccurredAt ?? _clock.GetUtcNow();
+        // An unblock request is stamped as it arrives, by this server's clock,
+        // whatever time the agent sent with it: the pending list sets it against
+        // the teacher's denials (#523), which are stamped here too. A student
+        // laptop whose clock runs behind would otherwise date a request it sent
+        // after a denial before it, and the request would never show.
+        var occurredAt = kind == EventKind.UnblockRequest
+            ? _clock.GetUtcNow()
+            : request.OccurredAt ?? _clock.GetUtcNow();
 
         var @event = new Event
         {

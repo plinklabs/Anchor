@@ -42,6 +42,18 @@ export function isBlockLifted(
   return isUrlAllowed(page.blockedUrl, domains);
 }
 
+/**
+ * True when the teacher's denial of `host` in `sessionId` (#523) answers the
+ * request this block page makes: same session, and `host` is the host of the
+ * URL it is holding back, as the page names it when it asks. A denial for
+ * another host, or another session, leaves the page as it is.
+ */
+export function isRequestDeclined(page: BlockedPage, sessionId: string, host: string): boolean {
+  if (!page.sessionId || page.sessionId !== sessionId) return false;
+  if (!isWebUrl(page.blockedUrl)) return false;
+  return new URL(page.blockedUrl).hostname.toLowerCase() === host.trim().toLowerCase();
+}
+
 function isWebUrl(candidate: string): boolean {
   let parsed: URL;
   try {

@@ -92,4 +92,13 @@ export type ExtensionRuntimeMessage =
       sessionId: string;
       /** The full allowlist now in force, entries as the matcher reads them. */
       domains: ReadonlyArray<AllowedDomainDto>;
+    }
+  | {
+      /**
+       * The teacher turned down the request for `host` (#523). The block page
+       * holding that host back says so, and offers to ask again.
+       */
+      kind: 'unblock-denied';
+      sessionId: string;
+      host: string;
     };
