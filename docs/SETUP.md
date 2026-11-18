@@ -565,9 +565,11 @@ these.
 
 `backend-deploy.yml` logs in to Azure with **OIDC federated credentials**
 (`azure/login`) — no long-lived secret (#274). Create a dedicated app
-registration that holds **Website Contributor** on the App Service, then a
-federated credential GitHub can exchange its id-token against. The subject must
-match the deploy job's environment, `repo:OWNER/REPO:environment:production`.
+registration that holds **Website Contributor** on the App Service and **SQL
+Server Contributor** on the SQL server (the deploy adds a firewall rule for its
+runner while it migrates, #504), then a federated credential GitHub can exchange
+its id-token against. The subject must match the deploy job's environment,
+`repo:OWNER/REPO:environment:production`.
 
 ```bash
 # App registration + service principal for the deploy
@@ -581,6 +583,12 @@ SP_ID=$(az ad sp show --id "$DEPLOY_APP_ID" --query id -o tsv)
 az role assignment create --assignee-object-id "$SP_ID" \
   --assignee-principal-type ServicePrincipal --role "Website Contributor" \
   --scope "/subscriptions/$SUB/resourceGroups/anchor-rg/providers/Microsoft.Web/sites/anchor-api-yourschool"
+
+# SQL Server Contributor on just the SQL server, so the deploy can let its
+# runner through the SQL firewall (Microsoft.Sql/servers/firewallRules/write)
+az role assignment create --assignee-object-id "$SP_ID" \
+  --assignee-principal-type ServicePrincipal --role "SQL Server Contributor" \
+  --scope "/subscriptions/$SUB/resourceGroups/anchor-rg/providers/Microsoft.Sql/servers/anchor-sql-yourschool"
 
 # Federated credential for the production environment
 az ad app federated-credential create --id "$DEPLOY_APP_ID" --parameters '{
@@ -686,9 +694,12 @@ gh variable set AGENT_CLIENT_ID   --repo OWNER/REPO --body "$AGENT_CLIENT_ID"
 
 The backend deploy applies the EF Core migrations to the database before it
 deploys the new build, so the first backend deploy creates the schema on the
-empty database; there is no separate migration step to run. It needs the SQL
-server's "Allow Azure services and resources to access this server" setting
-(the template's `AllowAzureServices` rule), which the App Service needs anyway.
+empty database; there is no separate migration step to run. To reach the
+database it adds a firewall rule for the runner's IP and removes it afterwards,
+which needs the deploy identity's SQL Server Contributor role on the SQL server
+([above](#create-the-backend-deploy-identity-oidc)). The App Service itself gets
+in through the SQL server's "Allow Azure services and resources to access this
+server" setting (the template's `AllowAzureServices` rule).
 
 ---
 

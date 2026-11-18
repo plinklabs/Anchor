@@ -88,6 +88,11 @@ param entraClientId string = ''
 @description('JWT audience the API validates. Defaults to api://<entraClientId> when a client ID is supplied.')
 param entraAudience string = empty(entraClientId) ? '' : 'api://${entraClientId}'
 
+// ── Deploy identity ─────────────────────────
+
+@description('Object id of the backend deploy identity\'s service principal (the OIDC app backend-deploy.yml logs in as). When set, it gets SQL Server Contributor on the SQL server, so the deploy can add a firewall rule for its runner (#504). Blank skips the assignment: scripts/setup.ps1 makes it itself after it creates the identity. Leave it blank when the identity already holds the role, or ARM rejects the second assignment (RoleAssignmentExists).')
+param deployPrincipalId string = ''
+
 // ── CORS ────────────────────────────────────
 
 @description('Allowed CORS origin for the dashboard SPA. Leave blank to default to the deployed Static Web App URL (so the dashboard can call the API from the browser); override to point at a custom domain. A parameter default cannot reference the SWA resource, so the empty-string fallback is resolved in the dashboardCorsOrigin variable below.')
@@ -114,13 +119,36 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   }
 }
 
-// Allow Azure services to reach the SQL server
+// Allow Azure services (the App Service) to reach the SQL server. The backend
+// deploy's GitHub runner gets a rule of its own instead (below).
 resource sqlFirewallAllowAzure 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
   parent: sqlServer
   name: 'AllowAzureServices'
   properties: {
     startIpAddress: '0.0.0.0'
     endIpAddress: '0.0.0.0'
+  }
+}
+
+// The backend deploy applies the EF Core migrations from a GitHub-hosted
+// runner, which is not always inside Azure, so AllowAzureServices doesn't
+// always admit it (#504). It adds a firewall rule for the runner's own IP and
+// removes it afterwards, which needs Microsoft.Sql/servers/firewallRules/write
+// and /delete on this server. SQL Server Contributor scoped to this one server
+// is the built-in role with those actions. It allows more (it could also change
+// or delete the server), but the identity already reads the SQL admin
+// connection string through Website Contributor, so it gets no further into the
+// data; a custom role with only the firewall actions would be one more
+// tenant-wide role definition per fork.
+var sqlServerContributorRoleId = '6d8ee4ec-f05a-4a1d-8b00-a9b17e38b437'
+
+resource deploySqlFirewallRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployPrincipalId)) {
+  name: guid(sqlServer.id, deployPrincipalId, sqlServerContributorRoleId)
+  scope: sqlServer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', sqlServerContributorRoleId)
+    principalId: deployPrincipalId
+    principalType: 'ServicePrincipal'
   }
 }
 

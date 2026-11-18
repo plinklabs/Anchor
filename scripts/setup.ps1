@@ -754,43 +754,58 @@ function Add-ServicePrincipal {
         -Target $AppId -Action "create service principal for $Label"
 }
 
-# Ensure the deploy service principal holds **Website Contributor** on the target
-# App Service — the least-privilege role azure/webapps-deploy needs over OIDC
-# (#274). Idempotent: skips when the assignment already exists. Created through
+# Ensure the deploy service principal holds a built-in role on one resource. It
+# needs two, each scoped to a single resource (least privilege):
+#   - **Website Contributor** on the App Service, which azure/webapps-deploy
+#     needs over OIDC (#274);
+#   - **SQL Server Contributor** on the SQL server, so backend-deploy.yml can add
+#     (and remove) a firewall rule for its runner before it migrates (#504).
+# Idempotent: skips when the assignment already exists. Created through
 # `az rest` (the ARM REST API) rather than `az role assignment create`, because
 # that command fails with "MissingSubscription" whenever --scope is a full
 # resource id on the az CLI build used here; the REST PUT carries the scope in
 # the URL and is unaffected. Existence is checked with `... list --all --assignee`
 # (which works) and filtered in PowerShell to avoid passing a quote-heavy
 # JMESPath through the Windows az.cmd re-parse.
-function Set-AppServiceDeployRole {
-    # SupportsShouldProcess so -WhatIf flows through; the actual mutation (the
-    # `az rest` PUT) is gated by Invoke-Native's own ShouldProcess.
+function Set-DeployRole {
+    # SupportsShouldProcess so -WhatIf flows through: the lookups still run, the
+    # `az rest` PUT doesn't (see the dry-run check below).
     [CmdletBinding(SupportsShouldProcess)]
-    param([string]$AppId, [string]$SubscriptionId, [string]$ResourceGroupName, [string]$SiteName)
+    param(
+        [string]$AppId, [string]$SubscriptionId, [string]$ResourceGroupName,
+        [string]$ResourceType,       # e.g. Microsoft.Web/sites
+        [string]$ResourceName,
+        [string]$RoleName,           # as `az role assignment list` names it
+        [string]$RoleDefinitionId    # the built-in role's well-known id
+    )
     if (-not $AppId -or $AppId -match '<') { return }
-    $roleDefId = 'de139f84-1756-47ae-9be6-808fbbe84772'   # Website Contributor (well-known)
-    $siteScope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$SiteName"
+    $scope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/$ResourceType/$ResourceName"
 
     $spId = Invoke-AzRead @('ad', 'sp', 'show', '--id', $AppId, '--query', 'id', '-o', 'tsv')
     if (-not $spId) {
-        Write-Manual "Deploy SP not found for $AppId — cannot assign Website Contributor. Re-run without -SkipEntra."
+        Write-Manual "Deploy SP not found for $AppId — cannot assign $RoleName. Re-run without -SkipEntra."
         return
     }
 
     $existingJson = Invoke-AzRead @('role', 'assignment', 'list', '--all', '--assignee', $AppId, '-o', 'json')
     if ($existingJson) {
         foreach ($ra in ($existingJson | ConvertFrom-Json)) {
-            if ((Test-Prop $ra 'roleDefinitionName' 'Website Contributor') -and (Test-Prop $ra 'scope' $siteScope)) {
-                Write-Host '    Deploy SP already has Website Contributor on the App Service — skipping.'
+            if ((Test-Prop $ra 'roleDefinitionName' $RoleName) -and (Test-Prop $ra 'scope' $scope)) {
+                Write-Host "    Deploy SP already has $RoleName on $ResourceName — skipping."
                 return
             }
         }
     }
 
+    # Under -WhatIf, New-TemporaryFile creates nothing and returns $null, so the
+    # dry run stops here rather than at Set-Content.
+    if (-not $PSCmdlet.ShouldProcess($ResourceName, "assign $RoleName to the deploy SP")) {
+        Write-Host "    DRYRUN  PUT $scope/providers/Microsoft.Authorization/roleAssignments/<new-guid> ($RoleName)" -ForegroundColor DarkGray
+        return
+    }
     $raGuid = [guid]::NewGuid().ToString()
     $body = @{ properties = @{
-            roleDefinitionId = "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$roleDefId"
+            roleDefinitionId = "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$RoleDefinitionId"
             principalId      = $spId
             principalType    = 'ServicePrincipal'
         } } | ConvertTo-Json -Depth 5 -Compress
@@ -798,9 +813,9 @@ function Set-AppServiceDeployRole {
     try {
         Set-Content -LiteralPath $bodyTmp -Value $body -Encoding UTF8
         Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PUT',
-            '--uri', "https://management.azure.com$siteScope/providers/Microsoft.Authorization/roleAssignments/${raGuid}?api-version=2022-04-01",
+            '--uri', "https://management.azure.com$scope/providers/Microsoft.Authorization/roleAssignments/${raGuid}?api-version=2022-04-01",
             '--body', "@$bodyTmp", '-o', 'none') `
-            -Target $SiteName -Action 'assign Website Contributor to the deploy SP'
+            -Target $ResourceName -Action "assign $RoleName to the deploy SP"
     }
     finally { Remove-Item -LiteralPath $bodyTmp -Force -ErrorAction SilentlyContinue }
 }
@@ -1559,6 +1574,7 @@ $appServiceName = Get-Output $outputs 'appServiceName' "anchor-api-$UniqueSuffix
 $appServiceUrl = Get-Output $outputs 'appServiceUrl'  "https://anchor-api-$UniqueSuffix.azurewebsites.net"
 $staticWebAppName = Get-Output $outputs 'staticWebAppName' 'anchor-dashboard'
 $swaUrl = Get-Output $outputs 'swaUrl' 'https://<swa-host>'
+$sqlServerName = Get-Output $outputs 'sqlServerName' $sqlServerNameGuess
 $outEntraTenant = Get-Output $outputs 'entraTenantId' $tenantId
 $outEntraClient = Get-Output $outputs 'entraClientId' $apiClientId
 $outEntraAudience = Get-Output $outputs 'entraAudience' "api://$apiClientId"
@@ -1567,6 +1583,7 @@ Write-Host "    appServiceName : $appServiceName"
 Write-Host "    appServiceUrl  : $appServiceUrl"
 Write-Host "    staticWebApp   : $staticWebAppName"
 Write-Host "    swaUrl         : $swaUrl"
+Write-Host "    sqlServerName  : $sqlServerName"
 Write-Host "    entraTenantId  : $outEntraTenant"
 Write-Host "    entraClientId  : $outEntraClient"
 Write-Host "    entraAudience  : $outEntraAudience"
@@ -1648,10 +1665,12 @@ if (-not $SkipEntra -and -not $WhatIfPreference -and ($appServiceName -notmatch 
 # ── Step 5b: deploy identity (OIDC federated credentials) ─────────────────────
 # backend-deploy.yml authenticates to Azure with OIDC (azure/login), not a
 # publish-profile secret (#274): a dedicated app registration ("Anchor Deploy")
-# holds Website Contributor on the App Service, and a federated credential lets
-# the GitHub Actions job — subject repo:<owner>/<repo>:environment:production,
-# matching the workflow's `environment: production` — exchange its id-token for an
-# Azure token, with no long-lived secret to leak or mis-set. $deployClientId is
+# holds Website Contributor on the App Service and SQL Server Contributor on the
+# SQL server (for the deploy's temporary firewall rule, #504), and a federated
+# credential lets the GitHub Actions job — subject
+# repo:<owner>/<repo>:environment:production, matching the workflow's
+# `environment: production` — exchange its id-token for an Azure token, with no
+# long-lived secret to leak or mis-set. $deployClientId is
 # set outside the -SkipEntra guard so the GitHub step can wire AZURE_CLIENT_ID
 # under StrictMode even when app registrations are managed out of band.
 $deployClientId = $DeployClientId
@@ -1683,8 +1702,19 @@ if (-not $SkipEntra) {
         # Website Contributor on the App Service. Needs the resolved name; under a
         # -WhatIf / -SkipInfra dry run it stays a placeholder, so guard on it.
         if ($appServiceName -notmatch '<') {
-            Set-AppServiceDeployRole -AppId $deployClientId -SubscriptionId $acct.id -ResourceGroupName $ResourceGroup -SiteName $appServiceName
+            Set-DeployRole -AppId $deployClientId -SubscriptionId $acct.id -ResourceGroupName $ResourceGroup `
+                -ResourceType 'Microsoft.Web/sites' -ResourceName $appServiceName `
+                -RoleName 'Website Contributor' -RoleDefinitionId 'de139f84-1756-47ae-9be6-808fbbe84772'
         }
+
+        # SQL Server Contributor on the SQL server, so backend-deploy.yml can let
+        # its runner through the SQL firewall to migrate (#504). Without it the
+        # deploy stops at "Open SQL firewall for this runner". The template can
+        # make the same assignment (deployPrincipalId), but it is deployed before
+        # this identity exists, so the script makes it here.
+        Set-DeployRole -AppId $deployClientId -SubscriptionId $acct.id -ResourceGroupName $ResourceGroup `
+            -ResourceType 'Microsoft.Sql/servers' -ResourceName $sqlServerName `
+            -RoleName 'SQL Server Contributor' -RoleDefinitionId '6d8ee4ec-f05a-4a1d-8b00-a9b17e38b437'
 
         # Federated credential for the GitHub environment. The subject needs the
         # repo, which is only resolved when GitHub wiring is in play.

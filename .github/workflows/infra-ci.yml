@@ -66,7 +66,8 @@ jobs:
           # Fork-parameterization contract (issue #212): no hardcoded names/IDs.
           for p in sqlServerName sqlDatabaseName appServiceName appServicePlanName \
                    staticWebAppName entraTenantId entraClientId \
-                   entraAudience entraInstance dashboardCorsOriginOverride; do
+                   entraAudience entraInstance dashboardCorsOriginOverride \
+                   deployPrincipalId; do
             require_param "$p"
           done
 
@@ -115,7 +116,19 @@ jobs:
             echo "::error::App Service sets Azure__SignalR__ConnectionString, but the API never reads it (in-process SignalR)"; exit 1
           fi
 
-          echo "Bicep parameter/output/appSetting/tier contract verified."
+          # backend-deploy.yml adds a SQL firewall rule for its runner (#504), so
+          # the template must be able to give the deploy identity
+          # (deployPrincipalId) SQL Server Contributor on the SQL server.
+          sql_server_contributor=6d8ee4ec-f05a-4a1d-8b00-a9b17e38b437
+          if ! jq -e '[.resources[] | select(.type == "Microsoft.Authorization/roleAssignments"
+                  and (.scope // "" | test("Microsoft\\.Sql/servers"))
+                  and (.properties.principalId | test("deployPrincipalId")))] | length == 1' \
+                "$json" >/dev/null ||
+             ! grep -q "$sql_server_contributor" "$json"; then
+            echo "::error::template must assign the deploy identity (deployPrincipalId) SQL Server Contributor on the SQL server (backend-deploy.yml's firewall rule, #504)"; exit 1
+          fi
+
+          echo "Bicep parameter/output/appSetting/tier/role contract verified."
 
       # scripts/setup.ps1 is the deploy path operators use. `az deployment`
       # rejects a parameter the template doesn't declare ("unrecognized template

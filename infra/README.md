@@ -167,6 +167,7 @@ resource only when you pass the matching per-resource locations (the
 | `entraInstance` | current cloud login endpoint | Entra authority. |
 | `dashboardCorsOriginOverride` | empty → deployed SWA URL | Allowed CORS origin for the dashboard SPA (`Cors__AllowedOrigins__0`). Its host is also always allowed in every session (#409). |
 | `sqlAdminLogin` / `sqlAdminPassword` | `anchoradmin` / *(required, secure)* | SQL admin credentials. |
+| `deployPrincipalId` | empty | Object id of the backend deploy identity's service principal. When set, it gets **SQL Server Contributor** on the SQL server, so `backend-deploy.yml` can add a firewall rule for its runner (#504). `scripts/setup.ps1` leaves it empty and makes the assignment itself, after it creates the identity; pass it only when the identity doesn't hold the role yet, or ARM rejects the duplicate (`RoleAssignmentExists`). |
 
 Bicep applies the Entra IDs and CORS origin as **App Service application
 settings** (double-underscore form), so the deployed API gets its
@@ -196,12 +197,12 @@ database's data is gone, of course) — but mind these:
 - **GitHub secrets/variables are not touched** (they live in the repo), but the
   `AZURE_STATIC_WEB_APPS_API_TOKEN` secret and the backend OIDC variables
   (`AZURE_CLIENT_ID` / `AZURE_TENANT_ID` / `AZURE_SUBSCRIPTION_ID`, plus the
-  Website Contributor role assignment on the App Service) are **bound to the
-  deleted resources** — they go stale. Re-run `scripts/setup.ps1` to recreate the
-  deploy identity + role assignment and refetch the SWA token; deploys will fail
-  to authenticate in the gap. A recreated Static Web App may also get a **new
-  default hostname**, which invalidates the SPA redirect URI — the script
-  rewrites it from the new SWA URL on each run.
+  deploy identity's role assignments on the App Service and the SQL server) are
+  **bound to the deleted resources** — they go stale. Re-run `scripts/setup.ps1`
+  to recreate the deploy identity + role assignments and refetch the SWA token;
+  deploys will fail to authenticate in the gap. A recreated Static Web App may
+  also get a **new default hostname**, which invalidates the SPA redirect URI —
+  the script rewrites it from the new SWA URL on each run.
 - **The SQL admin password cannot be read back from Azure.** If you didn't save
   it, you can't recover it — set a fresh one on the recreate (the script prompts
   for it and the deploy applies it).
