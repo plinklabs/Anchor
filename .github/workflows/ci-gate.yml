@@ -98,6 +98,7 @@ jobs:
             workflows:
               - '.github/workflows/**'
               - '.github/actions/**'
+              - '.github/scripts/**'
               - '.github/workflows/workflows-ci.yml'
 
       # Each wait targets a suite's check by its (now unique) job name and only

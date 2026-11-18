@@ -18,6 +18,11 @@ name: Workflows CI
 # action, shared with Extension CI so both run the same version. Run
 # `actionlint` from the repo root to get the same result locally.
 #
+# It also runs backend-deploy.yml's SQL firewall steps (#504) against a stub
+# az and curl (.github/scripts/test-backend-deploy-firewall.py): that workflow
+# only runs after a merge to main, against Azure. .github/scripts is in the
+# path filter for that test.
+#
 # Wired into the CI Gate: keep its `workflows` filter identical to the
 # pull_request paths below. This workflow's own file is listed by name even
 # though the first entry covers it: check-gate-filters.py pairs each filter
@@ -28,12 +33,14 @@ on:
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'
+      - '.github/scripts/**'
       - '.github/workflows/workflows-ci.yml'
   push:
     branches: [main, develop]
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'
+      - '.github/scripts/**'
       - '.github/workflows/workflows-ci.yml'
 
 permissions:
@@ -56,3 +63,8 @@ jobs:
         run: |
           shellcheck --version
           actionlint
+
+      # backend-deploy.yml runs only after a merge to main, against Azure, so
+      # this runs its SQL firewall steps (#504) against a stub az and curl.
+      - name: Test the backend deploy's SQL firewall steps
+        run: python3 .github/scripts/test-backend-deploy-firewall.py

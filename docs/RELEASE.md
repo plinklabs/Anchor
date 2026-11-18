@@ -91,10 +91,31 @@ push to main (backend/**) ─▶ Backend CI (build + test) ─▶ [success?] ─
   job before the deploy step, so the running build keeps serving. The app itself
   doesn't touch the database at startup. The bundle connects with the App
   Service's own `DefaultConnection` string, which the deploy identity reads
-  through its Website Contributor role, and reaches Azure SQL through the
-  "Allow Azure services" firewall rule (GitHub's Ubuntu runners run in Azure) —
-  no extra secret, role or firewall rule. Backend CI builds the same bundle on
-  every PR so a broken one is caught before merge.
+  through its Website Contributor role, so there is no extra secret. Backend CI
+  builds the same bundle on every PR so a broken one is caught before merge.
+- The runner reaches Azure SQL through a **temporary firewall rule for its own
+  public IP** (#504). GitHub's hosted runners aren't always inside Azure, so the
+  SQL server's "Allow Azure services" rule doesn't always admit them. The step
+  *Open SQL firewall for this runner* adds a rule named
+  `gh-backend-deploy-<run id>` just before the migrations, and the last step,
+  *Close SQL firewall*, removes it, also when an earlier step failed or the run
+  was cancelled. For this the deploy identity holds **SQL Server Contributor**
+  on the SQL server (`Microsoft.Sql/servers/firewallRules/write`);
+  `scripts/setup.ps1` assigns it. If the role is missing, the open step fails
+  with an error that names that permission and nothing is migrated or
+  deployed. Grant it once, from PowerShell (`AZURE_CLIENT_ID` is the deploy
+  app's client id, from the repo variables):
+
+  ```powershell
+  $sqlServerId = az sql server show -g anchor-rg -n anchor-sql-<suffix> --query id -o tsv
+  az role assignment create --assignee (gh variable get AZURE_CLIENT_ID) `
+    --role 'SQL Server Contributor' --scope $sqlServerId
+  ```
+
+  If `az role assignment create` fails with `MissingSubscription` (the az CLI
+  quirk in [`docs/SETUP.md`](SETUP.md#create-the-backend-deploy-identity-oidc)),
+  re-run `scripts/setup.ps1`, which makes the same assignment through
+  `az rest`. Then rerun the failed deploy (`gh run rerun <run id>`).
 - Deploys are serialized (`concurrency: backend-deploy`), so two runs never
   migrate the database at the same time.
 
@@ -353,8 +374,10 @@ entries are optional per fork — see [the client section](#client-tier).
 > **Backend auth — OIDC, no secret.** `backend-deploy.yml` authenticates to Azure
 > with **OIDC federated credentials** (`azure/login`), so there is no long-lived
 > backend deploy secret (#274). A dedicated `anchor-deploy` app registration holds
-> **Website Contributor** on the App Service (least privilege), and a federated
-> credential with subject `repo:<owner>/<repo>:environment:production` (matching
+> **Website Contributor** on the App Service and **SQL Server Contributor** on the
+> SQL server (for the deploy's temporary firewall rule, #504), each scoped to
+> that one resource, and a federated credential with subject
+> `repo:<owner>/<repo>:environment:production` (matching
 > the deploy job's `environment: production`) lets the Actions run exchange its
 > id-token for an Azure token. The deploy job declares `permissions: id-token:
 > write`. Config lives in the `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` /
@@ -689,8 +712,9 @@ below remain the fallback when you provision by hand.
      the by-hand steps and the full role model are in
      [`docs/SETUP.md`](SETUP.md#how-authorization-works-the-role-model).
 3. Create the **backend deploy identity**: an `anchor-deploy` app registration +
-   service principal with **Website Contributor** on the App Service, and a
-   federated credential (issuer `https://token.actions.githubusercontent.com`,
+   service principal with **Website Contributor** on the App Service and **SQL
+   Server Contributor** on the SQL server (#504), and a federated credential
+   (issuer `https://token.actions.githubusercontent.com`,
    subject `repo:<owner>/<repo>:environment:production`, audience
    `api://AzureADTokenExchange`). No secret to store.
 4. Add the GitHub **secret**: `AZURE_STATIC_WEB_APPS_API_TOKEN`.
