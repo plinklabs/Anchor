@@ -253,22 +253,11 @@ public partial class App : Application
             // and the session hand-down (#489) both ride on. In dev this is the
             // register-witness-host.ps1 script's job; the release installer never did
             // the equivalent, so the agent does it itself at startup (idempotent),
-            // mirroring the force-install policy write above. Also hands the host the
-            // agent's Backend:BaseUrl and the deployment's Entra tenant/client/scope
-            // (#204/#289): an extension from before #489 still signs in and connects to
-            // the hub itself and needs both, until the store has updated it. Current
-            // extensions ignore them. Best-effort, off the UI thread.
-            var backendBaseUrl = _host.Services.GetRequiredService<IOptions<BackendSettings>>().Value.BaseUrl;
-            var auth = _host.Services.GetRequiredService<IOptions<AuthSettings>>().Value;
-            var witnessAuth = !string.IsNullOrWhiteSpace(auth.TenantId)
-                              && !string.IsNullOrWhiteSpace(auth.ClientId)
-                              && !string.IsNullOrWhiteSpace(auth.Scope)
-                ? new WitnessAuthConfig(auth.TenantId, auth.ClientId, auth.Scope)
-                : null;
-            // #497: the host lets each of Anchor's extension IDs connect, the
+            // mirroring the force-install policy write above. Best-effort, off the UI
+            // thread. #497: the host lets each of Anchor's extension IDs connect, the
             // self-hosted test-ring build's included.
             var extensionIds = _host.Services.GetRequiredService<ExtensionPolicyParts>().Ids;
-            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(backendBaseUrl, witnessAuth, extensionIds));
+            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(extensionIds));
             // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
             // SessionLeft subscriptions are wired before the first session — the
             // poll loop starts on join and reports any open Edge InPrivate window.

@@ -24,20 +24,7 @@ var output = Console.OpenStandardOutput();
 var pipeName = Environment.GetEnvironmentVariable("ANCHOR_WITNESS_PIPE");
 if (string.IsNullOrWhiteSpace(pipeName)) pipeName = WitnessLink.PipeName;
 
-// Resolve the backend URL this deployment targets (#204) and hand it to the
-// extension over the native-messaging link, so a single published extension
-// learns its backend from the on-box agent at runtime instead of baking it in.
-var backendUrl = BackendUrlConfig.ResolveFromEnvironment();
-var backendUrlMessage = BackendUrlConfig.BuildMessage(backendUrl);
-
-// Resolve this deployment's Entra tenant/client/scope (#289) the same way and
-// hand it down too, so the extension can mint a real student token for the hub.
-// Null in a dev build (no per-deployment auth configured) — the extension then
-// falls back to the dev_impersonate_oid shortcut.
-var authConfig = AuthConfig.ResolveFromEnvironment();
-var authConfigMessage = authConfig is not null ? AuthConfig.BuildMessage(authConfig) : null;
-
 await using var agent = new NamedPipeAgentLink(pipeName);
-var bridge = new WitnessBridge(input, output, agent, backendUrlMessage, authConfigMessage);
+var bridge = new WitnessBridge(input, output, agent);
 await bridge.RunAsync(cts.Token);
 return 0;

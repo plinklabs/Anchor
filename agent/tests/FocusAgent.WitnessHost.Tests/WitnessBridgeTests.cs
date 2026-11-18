@@ -38,50 +38,18 @@ public class WitnessBridgeTests
     }
 
     [Fact]
-    public async Task Hands_down_backend_url_then_auth_config_up_front()
+    public async Task Writes_nothing_to_the_browser_until_the_agent_link_says_something()
     {
+        // #495: the bridge used to open with a backend_url and an auth_config for
+        // extensions from before #489. It has nothing of its own to hand down now.
         using var input = new MemoryStream(); // immediate EOF
         using var output = new MemoryStream();
         var agent = new FakeAgentLink();
 
-        await new WitnessBridge(
-            input, output, agent,
-            backendUrlMessage: "{\"type\":\"backend_url\",\"url\":\"https://anchor.example\"}",
-            authConfigMessage: "{\"type\":\"auth_config\",\"tenantId\":\"t\",\"clientId\":\"c\",\"scope\":\"s\"}")
-            .RunAsync();
+        await new WitnessBridge(input, output, agent).RunAsync();
 
         output.Position = 0;
-        var frames = ReadAllFrames(output);
-        // Both config messages land before any liveness traffic, backend URL first so
-        // the extension knows where to point before it tries to authenticate (#289).
-        Assert.Equal(
-            new[]
-            {
-                "{\"type\":\"backend_url\",\"url\":\"https://anchor.example\"}",
-                "{\"type\":\"auth_config\",\"tenantId\":\"t\",\"clientId\":\"c\",\"scope\":\"s\"}",
-            },
-            frames);
-    }
-
-    [Fact]
-    public async Task Omits_auth_config_when_none_supplied()
-    {
-        using var input = new MemoryStream(); // immediate EOF
-        using var output = new MemoryStream();
-        var agent = new FakeAgentLink();
-
-        await new WitnessBridge(
-            input, output, agent,
-            backendUrlMessage: "{\"type\":\"backend_url\",\"url\":\"https://anchor.example\"}")
-            .RunAsync();
-
-        output.Position = 0;
-        var frames = ReadAllFrames(output);
-        // Dev / no-auth deployment: only the backend URL goes down; the extension then
-        // stays on the dev_impersonate_oid path.
-        Assert.Equal(
-            new[] { "{\"type\":\"backend_url\",\"url\":\"https://anchor.example\"}" },
-            frames);
+        Assert.Empty(ReadAllFrames(output));
     }
 
     [Fact]

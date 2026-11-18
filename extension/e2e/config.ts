@@ -7,6 +7,7 @@
 // reports. These values pin the loopback hosts the specs navigate to and the
 // allowlists they hand down.
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Domain } from './fake-agent.ts';
@@ -53,21 +54,137 @@ export const DASHBOARD_HOST = 'dashboard.test';
 /** A host a spec grants mid-session, the way an approved unblock request does. */
 export const GRANTED_HOST = 'granted.test';
 
+/**
+ * Hosts the Microsoft / school sign-in flow navigates through (#516), which
+ * every session's baseline must keep reachable: Entra sign-in, its password
+ * reset and its other sign-in hosts, the security-info registration sign-in
+ * can send a student to, and personal-account sign-in.
+ */
+export const SIGN_IN_HOSTS = [
+  'login.microsoftonline.com',
+  'passwordreset.microsoftonline.com',
+  'login.microsoft.com',
+  'login.windows.net',
+  'mysignins.microsoft.com',
+  'login.live.com',
+  'account.live.com',
+];
+
+/**
+ * Microsoft's wider web, which the baseline used to open in every session
+ * (#516) and which now comes only with the Microsoft 365 bundle.
+ */
+export const MICROSOFT_WEB_HOSTS = [
+  'copilot.microsoft.com',
+  'www.office.com',
+  'outlook.office365.com',
+  'outlook.live.com',
+];
+
+/**
+ * Where Microsoft 365 on the web lives now (#531): its home page
+ * m365.cloud.microsoft, where www.office.com redirects; www.microsoft365.com,
+ * which redirects there too and which portal.office.com and sign-in send a
+ * student through; and the apps on their *.cloud.microsoft hosts. Only the
+ * Microsoft 365 bundle opens them. Every host under .microsoft is on Edge's HSTS
+ * preload list, so the specs serve these over https from inside the browser
+ * (static-server.ts, serveOverHttps).
+ */
+export const MICROSOFT_365_HOSTS = [
+  'www.microsoft365.com',
+  'm365.cloud.microsoft',
+  'outlook.cloud.microsoft',
+  'teams.cloud.microsoft',
+  'word.cloud.microsoft',
+  'forms.cloud.microsoft',
+];
+
+/**
+ * The shortcuts a student types for Outlook and OneDrive (#532), each with the
+ * host Microsoft redirects it on to. The extension judges a navigation by its
+ * first URL, so the shortcut itself must be on the list, not only where it
+ * leads; the Microsoft 365 bundle lists them as exact entries. Served over https
+ * from inside the browser (static-server.ts, redirectOverHttps), the way a
+ * student who types one reaches it; their targets come from the static server.
+ */
+export const MICROSOFT_365_SHORTCUTS = [
+  { host: 'outlook.com', redirectsTo: 'outlook.live.com' },
+  { host: 'www.outlook.com', redirectsTo: 'outlook.live.com' },
+  { host: 'onedrive.com', redirectsTo: 'onedrive.live.com' },
+  { host: 'www.onedrive.com', redirectsTo: 'onedrive.live.com' },
+] as const;
+
+/**
+ * Google Fonts: a page's stylesheet and the font files it points at. Both load
+ * as subresources, which the extension never filters, so no session lists them.
+ */
+export const WEB_FONT_CSS_HOST = 'fonts.googleapis.com';
+export const WEB_FONT_FILE_HOST = 'fonts.gstatic.com';
+
 /** Hosts Edge must resolve to the local static server (host → 127.0.0.1). */
-export const MAPPED_HOSTS = [OFFLIST_HOST, BUNDLE_ONLY_HOST, DASHBOARD_HOST, GRANTED_HOST];
+export const MAPPED_HOSTS = [
+  OFFLIST_HOST,
+  BUNDLE_ONLY_HOST,
+  DASHBOARD_HOST,
+  GRANTED_HOST,
+  ...SIGN_IN_HOSTS,
+  ...MICROSOFT_WEB_HOSTS,
+  // Served from inside the browser, never fetched; mapped all the same so a
+  // request the spec didn't answer can't reach the real Microsoft 365.
+  ...MICROSOFT_365_HOSTS,
+  ...MICROSOFT_365_SHORTCUTS.map((s) => s.host),
+  // Where the shortcuts lead (outlook.live.com is in MICROSOFT_WEB_HOSTS).
+  'onedrive.live.com',
+  WEB_FONT_CSS_HOST,
+  WEB_FONT_FILE_HOST,
+];
 
 // --- Allowlists the specs hand down ----------------------------------------
 // Shaped as the backend expands them (SessionAllowlist): the baseline the
 // backend always adds, plus whatever bundles the teacher attached.
 
-/** What every session allows: the dev baseline and the dashboard (#409). */
+/**
+ * The backend's baseline, the sign-in hosts (#516), read from the contract
+ * Backend CI holds SessionAllowlist.BaselineDomains to — so the specs hand down
+ * the list the backend really sends, not a copy that can drift from it.
+ */
+export const SIGN_IN_BASELINE: Domain[] = (
+  JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'contracts', 'session-baseline.json'), 'utf8')) as {
+    domains: Domain[];
+  }
+).domains;
+
+/**
+ * What every session allows: the backend's baseline, the dashboard (#409), and
+ * the loopback host the specs use for an on-list page.
+ */
 export const BASELINE: Domain[] = [
+  ...SIGN_IN_BASELINE,
   { matchType: 'Exact', value: BASELINE_ONLIST_HOST },
   { matchType: 'Exact', value: DASHBOARD_HOST },
 ];
 
-/** The baseline plus the seeded Microsoft 365 bundle's SharePoint entry. */
-export const WITH_MS365: Domain[] = [...BASELINE, { matchType: 'Wildcard', value: '*.sharepoint.com' }];
+/**
+ * The baseline plus the Microsoft 365 bundle as DevDataSeeder and
+ * scripts/seed-bundles.ps1 seed it. Its `*.microsoftonline.com` entry is left
+ * out: the baseline has it already, and the backend lists it once.
+ */
+export const WITH_MS365: Domain[] = [
+  ...BASELINE,
+  { matchType: 'Wildcard', value: '*.office.com' },
+  { matchType: 'Wildcard', value: '*.office365.com' },
+  { matchType: 'Wildcard', value: '*.microsoft.com' },
+  { matchType: 'Wildcard', value: '*.live.com' },
+  { matchType: 'Wildcard', value: '*.sharepoint.com' },
+  { matchType: 'Exact', value: 'outlook.office.com' },
+  { matchType: 'Exact', value: 'teams.microsoft.com' },
+  { matchType: 'Wildcard', value: '*.cloud.microsoft' },
+  { matchType: 'Wildcard', value: '*.microsoft365.com' },
+  { matchType: 'Exact', value: 'outlook.com' },
+  { matchType: 'Exact', value: 'www.outlook.com' },
+  { matchType: 'Exact', value: 'onedrive.com' },
+  { matchType: 'Exact', value: 'www.onedrive.com' },
+];
 
 // --- Browser launch knobs -------------------------------------------------
 /** Edge by default; override (e.g. `chromium`) with E2E_BROWSER_CHANNEL. */

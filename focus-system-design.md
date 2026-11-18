@@ -151,21 +151,33 @@ A bundle is a named group of apps and/or domains. Examples:
 
 - **Bingel** → domains `*.bingel.be`, `*.cloudfront.net` (the specific subset Bingel uses), …
 - **Smartschool** → `*.smartschool.be`, related CDN domains, …
-- **Microsoft 365** → ~20 domains for Outlook, Teams, OneDrive, SharePoint, Forms
+- **Microsoft 365** → domains for Outlook, Teams, OneDrive, SharePoint, Forms. That includes `*.cloud.microsoft` and `*.microsoft365.com` (#531): Microsoft 365 on the web lives on `*.cloud.microsoft` now (www.office.com and www.microsoft365.com redirect to the home page, m365.cloud.microsoft; portal.office.com and sign-in pass through www.microsoft365.com; Outlook, Teams, Word, Forms and the rest have `*.cloud.microsoft` hosts). It also lists the shortcuts a student types, `outlook.com` and `onedrive.com` and their `www.` hosts (#532), as exact entries: they redirect on to Outlook and onedrive.live.com, but the extension judges a navigation by its first URL, so the shortcut itself has to be on the list. Exact, because `*.outlook.com` would also open the rest of consumer mail and the Safe Links hosts. A redirect's target is judged as well, once it commits.
 - **GeoGebra** → desktop app entry (signed publisher: International GeoGebra Institute) + `*.geogebra.org`
 - **YouTube (educational only)** — a future possibility once we figure out playlist filtering
 
 Bundles are versioned and pushed to agents/extensions as part of session start. Teachers see "Bingel"; the agent and extension see the expanded set.
 
+The example bundles are seeded (`DevDataSeeder` in development, `scripts/seed-bundles.ps1` for a deployment), and a seed only inserts a bundle that is missing. So when a seeded bundle needs new entries, the seeds get them and an EF migration adds them to the bundle a deployment already has, without touching entries an admin added or removed (#531).
+
 ### 7.2 Baseline always-allow
 
-Every session implicitly allows:
+Every session implicitly allows the hosts the Microsoft / school sign-in flow navigates through, and nothing more of Microsoft's web (#516):
 
-- `*.microsoftonline.com`, `*.office.com`, `*.office365.com`, `*.microsoft.com`, `*.live.com`, `*.windows.net` — needed for Entra/Office login
+- `*.microsoftonline.com` — Entra sign-in (`login.`), its password reset (`passwordreset.`) and device sign-in (`device.login.`)
+- `login.microsoft.com`, `login.windows.net` — Entra's other sign-in hosts, which some sites still use as authority
+- `mysignins.microsoft.com` — where sign-in sends a student who must register security info (MFA, password reset) first
+- `login.live.com`, `account.live.com` — personal Microsoft accounts: Entra hands a consumer address to `login.live.com`, which may verify it or reset its password on `account.live.com`
 - The dashboard's host(s), taken from the deployment's `Cors:AllowedOrigins` (#409) — so a teacher who runs the agent on their own laptop can still pick bundles and end the session. Students may reach it too; they can't do anything there. The backend host itself needs no entry: the extension filters only top-level navigations, not the dashboard's API calls.
-- `fonts.googleapis.com`, `fonts.gstatic.com` — too common to block without breaking everything
 
-Without this baseline, the agent's own auth and most modern web pages fail.
+Without these, a student who has to sign in during a session (a site's "Sign in with Microsoft", or the dashboard on a teacher's laptop) is locked out. The agent itself signs in through WAM, outside Edge, so the list doesn't concern it.
+
+What the list leaves out, and why:
+
+- Office, Outlook, Teams, Copilot and the rest of `*.office.com`, `*.office365.com`, `*.microsoft.com` and `*.live.com` come with the **Microsoft 365** bundle (§7.1), so the teacher opts in. The baseline used to carry those wildcards, which opened them in every session.
+- `*.windows.net` is Azure's shared hosting namespace (storage, static sites, databases): anyone's site can live there. Its one sign-in host, `login.windows.net`, is listed above.
+- Web fonts (`fonts.googleapis.com`, `fonts.gstatic.com`) and the sign-in pages' own scripts and images load as subresources of the page, and so do the hidden frames sign-in uses to renew a token. The extension filters only top-level navigations, so none of them needs an entry.
+
+`contracts/session-baseline.json` holds the same list: Backend CI holds `SessionAllowlist.BaselineDomains` to it, and the extension's end-to-end specs hand it down and check in Edge that the sign-in hosts load while the rest stays blocked.
 
 ### 7.3 Enforcement model
 

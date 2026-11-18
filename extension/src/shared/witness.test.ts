@@ -22,14 +22,6 @@ describe('parseHostMessage', () => {
     expect(parseHostMessage('session_started')).toEqual({ kind: 'ignore' });
   });
 
-  it('ignores the backend_url / auth_config the host still sends for older extensions (#489)', () => {
-    // The extension no longer signs in or connects to the backend itself.
-    expect(parseHostMessage({ type: 'backend_url', url: 'https://anchor.example' })).toEqual({ kind: 'ignore' });
-    expect(parseHostMessage({ type: 'auth_config', tenantId: 't', clientId: 'c', scope: 's' })).toEqual({
-      kind: 'ignore',
-    });
-  });
-
   it('parses the session the agent hands down (#489)', () => {
     expect(
       parseHostMessage({

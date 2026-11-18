@@ -13,11 +13,12 @@ const wildcard = (value: string): AllowedDomain => ({ matchType: 'Wildcard', val
 const suffix = (value: string): AllowedDomain => ({ matchType: 'Suffix', value });
 const exact = (value: string): AllowedDomain => ({ matchType: 'Exact', value });
 
-// The allowlist a bundle change sends (#426): the baseline plus the bundle's
-// entries, which arrive in their catalogue form, `*.` prefix included.
+// The allowlist a bundle change sends (#426): the baseline (the sign-in hosts,
+// #516; contracts/session-baseline.json) plus the bundle's entries, which
+// arrive in their catalogue form, `*.` prefix included.
 const withSmartschoolBundle: AllowedDomain[] = [
   wildcard('*.microsoftonline.com'),
-  wildcard('*.office.com'),
+  exact('login.live.com'),
   wildcard('*.smartschool.be'),
 ];
 

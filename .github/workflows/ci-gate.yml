@@ -59,6 +59,7 @@ jobs:
             backend:
               - 'backend/**'
               - 'contracts/**'
+              - 'scripts/seed-bundles.ps1'
               - '.github/workflows/backend-ci.yml'
             agent:
               - 'agent/**'
@@ -76,6 +77,7 @@ jobs:
               - 'extension/**'
               - 'agent/src/FocusAgent.WitnessHost/**'
               - 'agent/src/FocusAgent.Core/**'
+              - 'contracts/session-baseline.json'
               - '.github/workflows/extension-e2e.yml'
             extension_unit:
               - 'extension/**'

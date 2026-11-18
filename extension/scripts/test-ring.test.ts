@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, verify } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -144,6 +144,23 @@ function tempDir(): string {
   return dir;
 }
 
+/**
+ * The bytes of the file at `path` once it exists and its size has held still
+ * between two polls; throws after `timeoutMs`. Edge's launcher can exit before
+ * its packer has written the .crx (#530), so the test can't read it straight away.
+ */
+async function settledFile(path: string, timeoutMs = 20_000, intervalMs = 100): Promise<Buffer> {
+  const deadline = Date.now() + timeoutMs;
+  let lastSize = -1;
+  for (;;) {
+    const size = existsSync(path) ? statSync(path).size : -1;
+    if (size > 0 && size === lastSize) return readFileSync(path);
+    if (Date.now() >= deadline) throw new Error(`${path} did not appear and settle within ${timeoutMs} ms`);
+    lastSize = size;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 function writeConfig(dir: string, extensionId: string, publicKey: string): string {
   const path = join(dir, 'test-ring.json');
   writeFileSync(path, JSON.stringify({ $comment: 'test', extensionId, publicKey }, null, 2) + '\n');
@@ -184,7 +201,7 @@ describe('CRX3 signing (#497)', () => {
     .map((dir) => join(dir, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))
     .find((exe) => existsSync(exe));
 
-  it.runIf(process.platform === 'win32' && edge)('writes the very bytes Edge’s own packer writes', () => {
+  it.runIf(process.platform === 'win32' && edge)('writes the very bytes Edge’s own packer writes', async () => {
     const dir = tempDir();
     const source = join(dir, 'ext');
     mkdirSync(source);
@@ -204,7 +221,9 @@ describe('CRX3 signing (#497)', () => {
       { stdio: 'ignore', timeout: 60_000 },
     );
 
-    const edgeCrx = readFileSync(join(dir, 'ext.crx'));
+    // msedge.exe can return before the packer has written the file (#530: on
+    // Edge 157.0.4341.60 it lands tens of ms later), so wait for it to settle.
+    const edgeCrx = await settledFile(join(dir, 'ext.crx'));
     const { id, archive } = verifyCrx3(edgeCrx);
     expect(id).toBe(key.id);
     expect(packCrx3(archive, key.privateKeyPem).equals(edgeCrx)).toBe(true);

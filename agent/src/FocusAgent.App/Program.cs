@@ -264,13 +264,12 @@ public static class Program
 
     /// <summary>
     /// Dev-only flag (#288): register the witness native-messaging host — write the
-    /// manifest + backend-url files next to the host exe and the HKCU
-    /// <c>NativeMessagingHosts</c> key pointing at the manifest — print the resulting
-    /// registry state, and exit (no WAM / hub / UI bootstrap). Drives the <em>real</em>
-    /// registry + filesystem write path so the integration test can assert the
-    /// registration is actually written on a clean box. Pair with
-    /// <see cref="WitnessHostKeyEnvVar"/> / <see cref="WitnessHostExePathEnvVar"/> /
-    /// <see cref="WitnessHostBackendUrlEnvVar"/> to point the write at a throwaway HKCU
+    /// manifest next to the host exe and the HKCU <c>NativeMessagingHosts</c> key
+    /// pointing at it — print the resulting registry state, and exit (no WAM / hub /
+    /// UI bootstrap). Drives the <em>real</em> registry + filesystem write path so the
+    /// integration test can assert the registration is actually written on a clean
+    /// box. Pair with <see cref="WitnessHostKeyEnvVar"/> /
+    /// <see cref="WitnessHostExePathEnvVar"/> to point the write at a throwaway HKCU
     /// subtree and directory instead of the live Edge key.
     /// </summary>
     public const string RegisterWitnessHostArg = "--register-witness-host";
@@ -293,19 +292,12 @@ public static class Program
     /// <summary>
     /// Dev-only env var (#288): an absolute host exe path the
     /// <see cref="RegisterWitnessHostArg"/> mode registers instead of the agent's own
-    /// <c>anchor-witness-host.exe</c>, so the integration test writes the manifest +
-    /// backend-url files into a throwaway directory of its choosing (the exe need not
-    /// exist — the CLI mode drives the registrar directly, without the startup
-    /// path's exe-present guard).
+    /// <c>anchor-witness-host.exe</c>, so the integration test writes the manifest
+    /// into a throwaway directory of its choosing (the exe need not exist — the CLI
+    /// mode drives the registrar directly, without the startup path's exe-present
+    /// guard).
     /// </summary>
     public const string WitnessHostExePathEnvVar = "ANCHOR_WITNESS_HOST_EXE_PATH";
-
-    /// <summary>
-    /// Dev-only env var (#288): the backend URL the <see cref="RegisterWitnessHostArg"/>
-    /// mode bakes into <c>backend-url.json</c>, so the test can assert the configured
-    /// backend reaches the file. Defaults to the local dev backend when unset.
-    /// </summary>
-    public const string WitnessHostBackendUrlEnvVar = "ANCHOR_WITNESS_HOST_BACKEND_URL";
 
     /// <summary>
     /// Dev-only env var (#497): the extension ID the <see cref="RegisterWitnessHostArg"/>
@@ -600,8 +592,8 @@ public static class Program
             return exitCode;
 
         // #288: dev-only register/unregister witness-host modes. These drive the real
-        // HKCU NativeMessagingHosts write/remove plus the manifest + backend-url file
-        // writes (the same path the startup registrar and Velopack uninstall hook run)
+        // HKCU NativeMessagingHosts write/remove plus the manifest write (the same
+        // path the startup registrar and Velopack uninstall hook run)
         // and exit, so the integration test can assert the registration end-to-end.
         // Handled before any WinUI bootstrap / single-instance gating since they
         // neither show UI nor need a running agent.
@@ -750,10 +742,9 @@ public static class Program
     /// <summary>
     /// Handle the dev-only <c>--register-witness-host</c> /
     /// <c>--unregister-witness-host</c> modes (#288): perform the real HKCU
-    /// <c>NativeMessagingHosts</c> write/remove plus the manifest + backend-url file
-    /// writes (against an optional throwaway key from <see cref="WitnessHostKeyEnvVar"/>,
-    /// host exe path from <see cref="WitnessHostExePathEnvVar"/>, and backend URL from
-    /// <see cref="WitnessHostBackendUrlEnvVar"/>), print the resulting state for the
+    /// <c>NativeMessagingHosts</c> write/remove plus the manifest write (against an
+    /// optional throwaway key from <see cref="WitnessHostKeyEnvVar"/> and host exe path
+    /// from <see cref="WitnessHostExePathEnvVar"/>), print the resulting state for the
     /// harness to read, and signal the caller to exit. Returns false for a normal launch
     /// so <see cref="Main"/> proceeds to the WinUI bootstrap.
     /// </summary>
@@ -772,15 +763,10 @@ public static class Program
                 var hostExePath = Environment.GetEnvironmentVariable(WitnessHostExePathEnvVar) is { Length: > 0 } p
                     ? p
                     : WitnessHostRegistration.DefaultHostExePath();
-                // Matches BackendUrlConfig.DevFallbackUrl (the host's own dev fallback);
-                // only ever used by the dev CLI test mode, which sets the env var anyway.
-                var backendUrl = Environment.GetEnvironmentVariable(WitnessHostBackendUrlEnvVar) is { Length: > 0 } u
-                    ? u
-                    : "http://localhost:5276";
                 var extensionIds = Environment.GetEnvironmentVariable(WitnessHostTestRingIdEnvVar) is { Length: > 0 } t
                     ? AnchorExtensionIds.WithTestRing(t)
                     : AnchorExtensionIds.Configured;
-                WitnessHostRegistration.EnsureRegistered(keyOverride, hostExePath, backendUrl, extensionIds);
+                WitnessHostRegistration.EnsureRegistered(keyOverride, hostExePath, extensionIds);
             }
             else
             {

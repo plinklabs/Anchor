@@ -9,7 +9,7 @@ namespace FocusAgent.App.Tamper;
 /// <summary>
 /// The real <see cref="IWitnessHostStore"/>: reads/writes the witness host's HKCU
 /// <c>NativeMessagingHosts</c> key via <c>Microsoft.Win32.Registry</c>, and the
-/// manifest / backend-url files via the filesystem (#288). Per-user (HKCU), so it
+/// manifest via the filesystem (#288). Per-user (HKCU), so it
 /// needs no admin — the same unmanaged-BYOD reason the force-install and Run-key
 /// stores use HKCU.
 ///
