@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import type { BrowserContext } from '@playwright/test';
 import { EXTENSION_ROOT, WEB_FONT_CSS_HOST, WEB_FONT_FILE_HOST } from './config.ts';
 
 export interface StaticServer {
@@ -43,6 +44,30 @@ const WEB_FONT_FILE = path.join(
   EXTENSION_ROOT,
   'src/vendor/plink-design-system/assets/fonts/hanken-grotesk/HankenGrotesk-Variable.woff2',
 );
+
+/**
+ * Answer https:// navigations to `hosts` from inside the browser, with the page
+ * the static server serves (#531). For hosts this server can't stand in for:
+ * every host under .microsoft (m365.cloud.microsoft ...) is on Edge's HSTS
+ * preload list, so Edge turns an http:// URL there into https://, which this
+ * server doesn't speak. Playwright answers the request before it reaches the
+ * network; the extension sees the navigation as it would any other. Playwright
+ * answers only a navigation's first request, never one a redirect leads to, so
+ * navigate to these hosts directly.
+ */
+export async function serveOverHttps(context: BrowserContext, hosts: readonly string[]): Promise<void> {
+  await context.route(
+    (url) => url.protocol === 'https:' && hosts.includes(url.hostname),
+    (route) => {
+      const url = new URL(route.request().url());
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: PAGE(url.host, url.pathname + url.search),
+      });
+    },
+  );
+}
 
 export async function startStaticServer(): Promise<StaticServer> {
   const origin = (host: string) => `http://${host}:${(server.address() as AddressInfo).port}`;

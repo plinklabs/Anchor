@@ -59,6 +59,7 @@ jobs:
             backend:
               - 'backend/**'
               - 'contracts/**'
+              - 'scripts/seed-bundles.ps1'
               - '.github/workflows/backend-ci.yml'
             agent:
               - 'agent/**'

@@ -82,6 +82,24 @@ export const MICROSOFT_WEB_HOSTS = [
 ];
 
 /**
+ * Where Microsoft 365 on the web lives now (#531): its home page
+ * m365.cloud.microsoft, where www.office.com redirects; www.microsoft365.com,
+ * which redirects there too and which portal.office.com and sign-in send a
+ * student through; and the apps on their *.cloud.microsoft hosts. Only the
+ * Microsoft 365 bundle opens them. Every host under .microsoft is on Edge's HSTS
+ * preload list, so the specs serve these over https from inside the browser
+ * (static-server.ts, serveOverHttps).
+ */
+export const MICROSOFT_365_HOSTS = [
+  'www.microsoft365.com',
+  'm365.cloud.microsoft',
+  'outlook.cloud.microsoft',
+  'teams.cloud.microsoft',
+  'word.cloud.microsoft',
+  'forms.cloud.microsoft',
+];
+
+/**
  * Google Fonts: a page's stylesheet and the font files it points at. Both load
  * as subresources, which the extension never filters, so no session lists them.
  */
@@ -96,6 +114,9 @@ export const MAPPED_HOSTS = [
   GRANTED_HOST,
   ...SIGN_IN_HOSTS,
   ...MICROSOFT_WEB_HOSTS,
+  // Served from inside the browser, never fetched; mapped all the same so a
+  // request the spec didn't answer can't reach the real Microsoft 365.
+  ...MICROSOFT_365_HOSTS,
   WEB_FONT_CSS_HOST,
   WEB_FONT_FILE_HOST,
 ];
@@ -139,6 +160,8 @@ export const WITH_MS365: Domain[] = [
   { matchType: 'Wildcard', value: '*.sharepoint.com' },
   { matchType: 'Exact', value: 'outlook.office.com' },
   { matchType: 'Exact', value: 'teams.microsoft.com' },
+  { matchType: 'Wildcard', value: '*.cloud.microsoft' },
+  { matchType: 'Wildcard', value: '*.microsoft365.com' },
 ];
 
 // --- Browser launch knobs -------------------------------------------------

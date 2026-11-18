@@ -109,6 +109,13 @@ $ExampleBundles = @(
             @{ Value = '*.sharepoint.com'; MatchType = 'Wildcard'; Kind = 'Domain' }
             @{ Value = 'outlook.office.com'; MatchType = 'Exact'; Kind = 'Domain' }
             @{ Value = 'teams.microsoft.com'; MatchType = 'Exact'; Kind = 'Domain' }
+            # Where Microsoft 365 on the web lives now (#531): the home page and
+            # Outlook, Teams, Word, Forms ... on *.cloud.microsoft, and
+            # www.microsoft365.com, which redirects there and which sign-in
+            # returns to. A deployment seeded before #531 gets these two from
+            # the Microsoft365BundleNewWebDomains migration.
+            @{ Value = '*.cloud.microsoft'; MatchType = 'Wildcard'; Kind = 'Domain' }
+            @{ Value = '*.microsoft365.com'; MatchType = 'Wildcard'; Kind = 'Domain' }
         )
     },
     @{

@@ -151,11 +151,13 @@ A bundle is a named group of apps and/or domains. Examples:
 
 - **Bingel** → domains `*.bingel.be`, `*.cloudfront.net` (the specific subset Bingel uses), …
 - **Smartschool** → `*.smartschool.be`, related CDN domains, …
-- **Microsoft 365** → ~20 domains for Outlook, Teams, OneDrive, SharePoint, Forms
+- **Microsoft 365** → domains for Outlook, Teams, OneDrive, SharePoint, Forms. That includes `*.cloud.microsoft` and `*.microsoft365.com` (#531): Microsoft 365 on the web lives on `*.cloud.microsoft` now (www.office.com and www.microsoft365.com redirect to the home page, m365.cloud.microsoft; portal.office.com and sign-in pass through www.microsoft365.com; Outlook, Teams, Word, Forms and the rest have `*.cloud.microsoft` hosts).
 - **GeoGebra** → desktop app entry (signed publisher: International GeoGebra Institute) + `*.geogebra.org`
 - **YouTube (educational only)** — a future possibility once we figure out playlist filtering
 
 Bundles are versioned and pushed to agents/extensions as part of session start. Teachers see "Bingel"; the agent and extension see the expanded set.
+
+The example bundles are seeded (`DevDataSeeder` in development, `scripts/seed-bundles.ps1` for a deployment), and a seed only inserts a bundle that is missing. So when a seeded bundle needs new entries, the seeds get them and an EF migration adds them to the bundle a deployment already has, without touching entries an admin added or removed (#531).
 
 ### 7.2 Baseline always-allow
 
