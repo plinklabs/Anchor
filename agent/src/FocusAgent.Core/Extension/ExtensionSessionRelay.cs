@@ -33,7 +33,10 @@ namespace FocusAgent.Core.Extension;
 /// <item>extension → agent: blocked pages (by their host only, #527), unblock
 /// requests (answered with <see cref="ExtensionMessages.UnblockRequestResult"/>,
 /// to the connection that asked) and the extension's own
-/// tamper signals, sent on as <c>ReportEvent</c> calls for the joined session.</item>
+/// tamper signals, sent on as <c>ReportEvent</c> calls for the joined session.
+/// What the extension says about its own settings
+/// (<see cref="ExtensionMessages.SelfCheck"/>, #524) is
+/// <see cref="ExtensionSelfCheckWatch"/>'s to read.</item>
 /// <item>The extension's liveness ping (<c>ExtensionHeartbeat</c>, #149), sent
 /// for it while at least one witness link is up, so <c>extension_silent</c> keeps
 /// working.</item>
@@ -53,8 +56,11 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
 
     // The in-browser tamper kinds the extension witnesses itself (#105). Anything
     // else from the link is dropped rather than shown on the teacher's roster.
+    // Since #524 the extension hands its site access to the agent as a self-check
+    // instead (ExtensionSelfCheckWatch); one older than that still reports
+    // host_permission_revoked itself, and it still reaches the teacher.
     private static readonly HashSet<string> ExtensionTamperKinds =
-        new(StringComparer.Ordinal) { "inprivate_opened", "host_permission_revoked" };
+        new(StringComparer.Ordinal) { TamperKinds.InPrivateOpened, TamperKinds.HostPermissionRevoked };
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {

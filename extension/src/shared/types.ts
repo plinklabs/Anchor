@@ -61,15 +61,17 @@ export interface UnblockRequestPayload {
 }
 
 /**
- * The kinds of tamper the extension can witness in-browser (#105):
- * - `inprivate_opened` — an InPrivate window was created during a session.
- * - `host_permission_revoked` — "Site access" was downgraded from "On all
- *   sites", so the navigation filter lost the host access it needs.
- * The agent sends them on as the `kind` of a TamperDetected event (#489), which
- * the backend surfaces verbatim on the teacher's roster. What the extension
- * can't witness about itself (`extension_disabled`) the agent reports.
+ * The kind of tamper the extension can witness in-browser (#105):
+ * `inprivate_opened` — an InPrivate window was created during a session. The
+ * agent sends it on as the `kind` of a TamperDetected event (#489), which the
+ * backend surfaces verbatim on the teacher's roster. What the extension can't
+ * witness about itself (`extension_disabled`) the agent reports. "Site access"
+ * turned down from "On all sites" (`host_permission_revoked`) the extension used
+ * to report here too; it now hands its settings to the agent (`self_check`,
+ * #524), which pauses Edge and tells the teacher only if the student doesn't put
+ * it back.
  */
-export type TamperKind = 'inprivate_opened' | 'host_permission_revoked';
+export type TamperKind = 'inprivate_opened';
 
 /**
  * Wire format for chrome.runtime messages exchanged between the background

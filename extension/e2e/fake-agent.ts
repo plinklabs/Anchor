@@ -129,6 +129,15 @@ export class FakeAgent {
     this.send({ type: 'unblock_denied', sessionId: session.sessionId, host });
   }
 
+  /**
+   * The student pressed the button on the agent's pause for Anchor's site
+   * access (#524): ask the extension to open its own settings page.
+   */
+  openExtensionPage(): void {
+    const session = this.requireSession();
+    this.send({ type: 'open_extension_page', sessionId: session.sessionId });
+  }
+
   /** The agent went away (it crashed, or was killed): close the host's pipe. */
   dropConnection(): void {
     this.socket?.destroy();

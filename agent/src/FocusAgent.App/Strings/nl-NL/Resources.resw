@@ -281,6 +281,18 @@
   <data name="Overlay_BrowserPaused_Hint" xml:space="preserve">
     <value>Edge gaat {0} seconden open. Ga naar edge://extensions en zet Anchor aan.</value>
   </data>
+  <data name="Overlay_SiteAccess_Headline" xml:space="preserve">
+    <value>Anchor mag niet op alle sites werken</value>
+  </data>
+  <data name="Overlay_SiteAccess_Message" xml:space="preserve">
+    <value>De sitetoegang van Anchor in Edge is gewijzigd, dus je kunt Edge in deze sessie pas weer gebruiken als ze weer op "Op alle sites" staat. Ga intussen verder met een van deze apps.</value>
+  </data>
+  <data name="Overlay_SiteAccess_TurnBackOn" xml:space="preserve">
+    <value>Open de instelling</value>
+  </data>
+  <data name="Overlay_SiteAccess_Hint" xml:space="preserve">
+    <value>Edge gaat {0} seconden open op de pagina van Anchor. Zet Sitetoegang op "Op alle sites".</value>
+  </data>
   <data name="Join_Button_Join" xml:space="preserve">
     <value>DEELNEMEN</value>
   </data>

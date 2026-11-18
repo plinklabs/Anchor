@@ -22,6 +22,8 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     public const string ShowTestOverlayArg = "--show-test-overlay";
     /// <summary>With <see cref="ShowTestOverlayArg"/>: show the paused-Edge variant (#427).</summary>
     public const string OverlayPausedArg = "--overlay-paused";
+    /// <summary>With <see cref="ShowTestOverlayArg"/>: show the variant for the extension's site access (#524).</summary>
+    public const string OverlaySiteAccessArg = "--overlay-site-access";
     public const string ShowTestToastArg = "--show-test-toast";
     public const string ShowTestMainWindowArg = "--show-test-mainwindow";
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";

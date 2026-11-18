@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Runtime.Versioning;
 using FocusAgent.Core.Focus;
+using FocusAgent.Core.Tamper;
 using FocusAgent.Native.Win32;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -45,9 +46,10 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
 
     /// <summary>
     /// What the overlay shows while it is up: <c>Blocked</c> for a blocked app
-    /// (#33), <c>BrowserPaused</c> for a paused browser (#427); null while it is
-    /// hidden or closed. Dev-only, for /status: lets the headless e2e tell which
-    /// overlay the student is on (#452).
+    /// (#33), <c>BrowserPaused</c> for a browser paused because its extension is
+    /// off (#427), <c>SiteAccessPaused</c> for one paused because the extension may
+    /// not work on all sites (#524); null while it is hidden or closed. Dev-only,
+    /// for /status: lets the headless e2e tell which overlay the student is on (#452).
     /// </summary>
     public string? Showing => Volatile.Read(ref _showing);
 
@@ -79,7 +81,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         Func<bool>? stillPaused = null) =>
         Show(
             window => window.UpdateBrowserPausedContent(allowedRules, prompt),
-            "BrowserPaused",
+            prompt.Reason == ExtensionPauseReason.NoSiteAccess ? "SiteAccessPaused" : "BrowserPaused",
             pausedWindowHandle,
             $"for a paused {prompt.Browser.Value} with {allowedRules.Count} other allowed-app entries",
             // The paused browser's window (#450), or an app blocked meanwhile (#452).

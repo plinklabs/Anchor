@@ -69,6 +69,16 @@ public sealed class OverlayVisualTests
         AssertOverlayRendersAndTearsDownAsync(
             extraArgs: [AgentSelfTestProcess.OverlayPausedArg], artifactPrefix: "overlay-paused");
 
+    /// <summary>
+    /// #524: the variant for an Edge paused because its extension may not work on
+    /// all sites: a longer headline, wrapped in the same column, its own action
+    /// and hint, on the same full-monitor ink surface, torn down the same way.
+    /// </summary>
+    [Fact]
+    public Task SiteAccessPausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlaySiteAccessArg], artifactPrefix: "overlay-site-access");
+
     private static async Task AssertOverlayRendersAndTearsDownAsync(string[] extraArgs, string artifactPrefix)
     {
         await using var agent = AgentSelfTestProcess.Launch(AgentSelfTestProcess.ShowTestOverlayArg, extraArgs: extraArgs);

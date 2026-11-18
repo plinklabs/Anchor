@@ -2,7 +2,8 @@ import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { selectTabsToRestore } from './shared/tab-restore';
-import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
+import { ALL_SITES, extensionPageUrl, runSelfCheck } from './shared/self-check';
+import { classifyCreatedWindow } from './shared/tamper';
 import { WitnessClient, WITNESS_HOST_NAME, type AgentMessage } from './shared/witness';
 import {
   clearActiveSession,
@@ -106,6 +107,9 @@ async function handleAgentMessage(message: AgentMessage): Promise<void> {
     case 'unblock_denied':
       await handleUnblockDenied(message.sessionId, message.host);
       return;
+    case 'open_extension_page':
+      await openExtensionPage(message.sessionId);
+      return;
   }
 }
 
@@ -136,6 +140,9 @@ async function handleSessionStarted(payload: SessionStartedPayload): Promise<voi
     sessionId: state.sessionId,
     domainCount: state.domains.length,
   });
+  // A setting changed before the session (or while the extension was away)
+  // fires nothing now, so read them and tell the agent (#524).
+  await reportSelfCheck(state.sessionId);
   // A reconnect can bring a wider allowlist than the cached one (a grant or a
   // bundle the extension missed): let block pages it now covers go back.
   await notifyBlockPages(state);
@@ -440,17 +447,14 @@ function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: string):
 // Tamper detection (#105, #146)
 // ---------------------------------------------------------------------------
 // Soft enforcement (design §5.4): make tampering visible to the teacher rather
-// than trying to prevent it. These listeners catch what the extension can
-// witness itself while running, and hand it to the agent to report; the agent
-// covers what the extension cannot witness about itself (disabled/removed).
+// than trying to prevent it. This listener catches what the extension can
+// witness itself while running, and hands it to the agent to report; the agent
+// covers what the extension cannot witness about itself (disabled/removed). The
+// extension's own settings go to the agent as a self-check (below).
 
 chrome.windows.onCreated.addListener((window) => {
   const kind = classifyCreatedWindow(window);
   if (kind) void reportTamperIfInSession(kind);
-});
-
-chrome.permissions.onRemoved.addListener((removed) => {
-  if (isHostAccessLoss(removed)) void reportTamperIfInSession('host_permission_revoked');
 });
 
 async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
@@ -464,4 +468,58 @@ async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
   }
   log.warn('tamper detected', { kind, sessionId: session.sessionId });
   witness?.report({ type: 'tamper', sessionId: session.sessionId, kind });
+}
+
+// ---------------------------------------------------------------------------
+// Self-check (#524)
+// ---------------------------------------------------------------------------
+// The extension reads its own settings and the agent decides what they mean: it
+// pauses Edge while "Site access" isn't "On all sites", lifts the pause as soon
+// as a check passes, and tells the teacher only if the student doesn't put it
+// back. See self-check.ts for what a student can change and why.
+//
+// The check runs on every session the agent hands down (a join, and every
+// reconnect: "Allow in InPrivate" restarts the extension, so that is how its
+// change comes in) and whenever the permissions change ("Site access" doesn't
+// restart it). So fixing it needs no restart of Edge or of the session.
+
+chrome.permissions.onRemoved.addListener(() => void reportSelfCheckIfInSession());
+chrome.permissions.onAdded.addListener(() => void reportSelfCheckIfInSession());
+
+async function reportSelfCheckIfInSession(): Promise<void> {
+  // Outside a session the student may set the extension up as they like.
+  const session = await getActiveSession();
+  if (!session) return;
+  await reportSelfCheck(session.sessionId);
+}
+
+async function reportSelfCheck(sessionId: string): Promise<void> {
+  const result = await runSelfCheck(
+    {
+      containsAllSites: () => chrome.permissions.contains(ALL_SITES),
+      isAllowedInPrivate: () => chrome.extension.isAllowedIncognitoAccess(),
+    },
+    (setting, err) => log.warn(`could not read the extension's ${setting}; counting it as fine`, err),
+  );
+  if (result.allSites) log.info('self-check', { sessionId, ...result });
+  else log.warn('self-check: the extension may not work on all sites', { sessionId, ...result });
+  witness?.report({ type: 'self_check', sessionId, ...result });
+}
+
+// The student pressed the button on the agent's pause: open the extension's own
+// page, where "Site access" is. The agent can't open it from outside the browser,
+// and it opens Edge for the repair window before asking.
+async function openExtensionPage(sessionId: string): Promise<void> {
+  const current = await getActiveSession();
+  if (current?.sessionId !== sessionId) {
+    log.warn('not opening the extension page for a session other than the active one', { sessionId });
+    return;
+  }
+  try {
+    const tab = await chrome.tabs.create({ url: extensionPageUrl(chrome.runtime.id), active: true });
+    if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
+    log.info('opened the extension page for the student', { sessionId });
+  } catch (err) {
+    log.error('opening the extension page failed', err);
+  }
 }

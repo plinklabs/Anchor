@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Realtime;
@@ -523,6 +524,42 @@ public class FocusSessionControllerTests
         Assert.Equal("msedge", shown.Prompt.Browser.Value);
         Assert.Equal(ExtensionRepair, shown.Prompt.RepairWindow);
         Assert.Empty(fixtures.Overlay.Shown);
+    }
+
+    [Fact]
+    public async Task An_extension_without_site_access_pauses_edge_with_its_own_explanation_and_a_way_to_the_setting()
+    {
+        // #524: the extension is on, but its "Site access" was turned down before
+        // the session. It says so when the session is handed to it; Edge is paused
+        // at once, the overlay says what is wrong, and its action opens Edge and
+        // has the extension open its own page.
+        var fixtures = new Fixtures { WithGuard = true };
+        fixtures.Windows.Windows.AddRange(new[]
+        {
+            OpenWindowFor("winword", hwnd: 0x10),
+            OpenWindowFor("msedge", hwnd: 0x20),
+        });
+        BuildController(fixtures);
+        fixtures.Transport.RaiseConnected();
+        var payload = NewPayload(apps: EdgeAndWord);
+        await fixtures.Hub.RaiseSessionStarted(payload);
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
+
+        fixtures.Transport.Check(payload.SessionId, allSites: false);
+
+        var shown = Assert.Single(fixtures.Overlay.PausedShown);
+        Assert.Equal((nint)0x20, shown.PausedWindow);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, shown.Prompt.Reason);
+        Assert.Equal(new[] { "winword" }, shown.Rules.Select(r => r.Value).ToArray());
+
+        Assert.True(shown.Prompt.TurnBackOn());
+        Assert.Equal(ExtensionGuardState.Repairing, fixtures.Guard!.State);
+        using var asked = JsonDocument.Parse(Assert.Single(fixtures.Transport.Sent));
+        Assert.Equal("open_extension_page", asked.RootElement.GetProperty("type").GetString());
+
+        // Edge comes forward for the repair window and is left alone.
+        fixtures.Watcher.Raise(ForegroundFor("msedge", hwnd: 0x20));
+        Assert.Single(fixtures.Overlay.PausedShown);
     }
 
     [Fact]
@@ -1076,18 +1113,23 @@ public class FocusSessionControllerTests
         if (fixtures.WithGuard)
         {
             var witness = new ExtensionWitnessMonitor(fixtures.Transport);
+            var guardSettings = Options.Create(new SessionSettings
+            {
+                ExtensionGraceSeconds = (int)ExtensionGrace.TotalSeconds,
+                ExtensionRepairSeconds = (int)ExtensionRepair.TotalSeconds,
+            });
+            // #524: what the extension says about its own site access.
+            var selfCheck = new ExtensionSelfCheckWatch(
+                fixtures.Transport, coordinator, new NoopTamperReporter(), guardSettings, fixtures.Clock);
             guard = new ExtensionGuard(
                 coordinator,
                 witness,
                 fixtures.Windows,
                 new NoopTamperReporter(),
-                Options.Create(new SessionSettings
-                {
-                    ExtensionGraceSeconds = (int)ExtensionGrace.TotalSeconds,
-                    ExtensionRepairSeconds = (int)ExtensionRepair.TotalSeconds,
-                }),
+                guardSettings,
                 Options.Create(new WitnessSettings()),
-                clock: fixtures.Clock);
+                clock: fixtures.Clock,
+                selfCheck: selfCheck);
             fixtures.Guard = guard;
         }
         var controller = new FocusSessionController(
@@ -1264,14 +1306,37 @@ public class FocusSessionControllerTests
         public void Close() => CloseCount++;
     }
 
-    private sealed class FakeWitnessTransport : IExtensionWitnessTransport
+    private sealed class FakeWitnessTransport : IExtensionWitnessChannel
     {
         // One Edge profile's extension, unless a test names another.
         private static readonly WitnessConnection Only = new(1);
         public event EventHandler<WitnessConnection>? WitnessConnected;
         public event EventHandler<WitnessConnection>? WitnessDisconnected;
+        public event EventHandler<WitnessMessage>? MessageReceived;
+
+        /// <summary>The lines the agent sent the extension.</summary>
+        public List<string> Sent { get; } = new();
+
         public void RaiseConnected(WitnessConnection? connection = null) => WitnessConnected?.Invoke(this, connection ?? Only);
         public void RaiseDisconnected(WitnessConnection? connection = null) => WitnessDisconnected?.Invoke(this, connection ?? Only);
+
+        /// <summary>The extension's self-check, as background.ts sends it (#524).</summary>
+        public void Check(Guid sessionId, bool allSites) =>
+            MessageReceived?.Invoke(this, new WitnessMessage(
+                Only, JsonSerializer.Serialize(new { type = "self_check", sessionId, allSites, inPrivate = false })));
+
+        public bool TrySend(WitnessConnection connection, string line)
+        {
+            Sent.Add(line);
+            return true;
+        }
+
+        public int Broadcast(string line)
+        {
+            Sent.Add(line);
+            return 1;
+        }
+
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
     }

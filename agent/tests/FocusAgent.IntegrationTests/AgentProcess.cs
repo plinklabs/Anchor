@@ -48,14 +48,20 @@ internal sealed record LogUploadSnapshot(
 /// The Edge pause as exposed on /status (#427): whether the extension's witness
 /// pipe is connected, how many extensions are (one per Edge profile, #517), the
 /// guard's state (<c>Off</c> / <c>Present</c> / <c>Waiting</c> /
-/// <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>), and the open Edge profiles
-/// that have the extension switched off or removed (#518).
+/// <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>), the open Edge profiles
+/// that have the extension switched off or removed (#518), and (#524) why Edge is
+/// paused (<c>ExtensionOff</c> / <c>NoSiteAccess</c>) and what the extension says
+/// about its own settings: whether one may not work on all sites, and whether
+/// they are allowed in InPrivate (null before any has said).
 /// </summary>
 internal sealed record ExtensionGuardSnapshot(
     [property: JsonPropertyName("witnessConnected")] bool WitnessConnected,
     [property: JsonPropertyName("state")] string? State,
     [property: JsonPropertyName("witnessConnections")] int WitnessConnections = 0,
-    [property: JsonPropertyName("profilesWithExtensionOff")] string[]? ProfilesWithExtensionOff = null);
+    [property: JsonPropertyName("profilesWithExtensionOff")] string[]? ProfilesWithExtensionOff = null,
+    [property: JsonPropertyName("pauseReason")] string? PauseReason = null,
+    [property: JsonPropertyName("siteAccessLost")] bool SiteAccessLost = false,
+    [property: JsonPropertyName("inPrivateAllowed")] bool? InPrivateAllowed = null);
 
 /// <summary>
 /// The Edge extension setup as exposed on /status (#405): where an Anchor

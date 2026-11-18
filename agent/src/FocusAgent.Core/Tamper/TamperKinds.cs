@@ -33,4 +33,17 @@ public static class TamperKinds
     /// flag covers both witnesses.
     /// </summary>
     public const string InPrivateOpened = "inprivate_opened";
+
+    /// <summary>
+    /// The extension's "Site access" was turned down from "On all sites" during
+    /// a session (#105). The extension used to report it itself the moment it saw
+    /// the change; since #524 it tells the agent what its settings allow, and
+    /// <see cref="ExtensionSelfCheckWatch"/> reports this kind only when the
+    /// student hasn't put it back within
+    /// <see cref="Settings.SessionSettings.ExtensionSiteAccessReportSeconds"/> of
+    /// the extension saying so, whether it was changed before the session or
+    /// during it. An extension older than #524 still reports it itself, under the
+    /// same string.
+    /// </summary>
+    public const string HostPermissionRevoked = "host_permission_revoked";
 }

@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.Versioning;
+using System.Text;
+using System.Text.Json;
 
 namespace FocusAgent.IntegrationTests;
 
@@ -766,6 +768,8 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
 {
     public static readonly TimeSpan Grace = TimeSpan.FromSeconds(3);
     public static readonly TimeSpan Repair = TimeSpan.FromSeconds(8);
+    /// <summary>How long site access may stay taken away before the teacher is told (#524).</summary>
+    public static readonly TimeSpan SiteAccessReport = TimeSpan.FromSeconds(5);
 
     private readonly BackendClient _api;
     private Guid? _sessionId;
@@ -822,6 +826,7 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
                     ["Witness__BrowserProcessName"] = TestConfig.AppProcessName,
                     ["Session__ExtensionGraceSeconds"] = ((int)Grace.TotalSeconds).ToString(),
                     ["Session__ExtensionRepairSeconds"] = ((int)Repair.TotalSeconds).ToString(),
+                    ["Session__ExtensionSiteAccessReportSeconds"] = ((int)SiteAccessReport.TotalSeconds).ToString(),
                 });
             await run.Agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
 
@@ -917,13 +922,16 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
 }
 
 /// <summary>
-/// The extension's end of the witness pipe, as the native host holds it: a
-/// write-only client on the agent's pipe (<c>NamedPipeAgentLink</c>). Connected
-/// means the extension is running; closing it is the extension switched off.
+/// The extension's end of the witness pipe, as the native host holds it: a client
+/// on the agent's pipe (<c>NamedPipeAgentLink</c>), newline-delimited JSON both
+/// ways. Connected means the extension is running; closing it is the extension
+/// switched off. <see cref="SendAsync"/> says what the extension says (#524: its
+/// self-check), and <see cref="WaitForAsync"/> reads what the agent sent it.
 /// </summary>
 internal sealed class FakeExtensionWitness : IAsyncDisposable
 {
     private readonly string _pipeName;
+    private readonly List<JsonElement> _received = new();
     private NamedPipeClientStream? _pipe;
 
     public FakeExtensionWitness(string pipeName) => _pipeName = pipeName;
@@ -931,7 +939,7 @@ internal sealed class FakeExtensionWitness : IAsyncDisposable
     public async Task ConnectAsync()
     {
         await DisconnectAsync();
-        var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+        var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         try
         {
             // The agent re-arms its pipe server right after a drop; the connect
@@ -945,6 +953,7 @@ internal sealed class FakeExtensionWitness : IAsyncDisposable
             throw;
         }
         _pipe = pipe;
+        _ = ReadAsync(pipe);
     }
 
     public async Task DisconnectAsync()
@@ -953,6 +962,56 @@ internal sealed class FakeExtensionWitness : IAsyncDisposable
         _pipe = null;
         if (pipe is not null)
             await pipe.DisposeAsync();
+    }
+
+    /// <summary>Sends one message to the agent, as the extension posts it.</summary>
+    public async Task SendAsync(object message)
+    {
+        var pipe = _pipe ?? throw new InvalidOperationException("The fake extension is not connected.");
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message) + "\n");
+        await pipe.WriteAsync(bytes);
+        await pipe.FlushAsync();
+    }
+
+    /// <summary>The first message from the agent the predicate accepts, or null after <paramref name="timeout"/>.</summary>
+    public async Task<JsonElement?> WaitForAsync(Func<JsonElement, bool> predicate, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            lock (_received)
+            {
+                foreach (var message in _received)
+                    if (predicate(message))
+                        return message;
+            }
+            await Task.Delay(100);
+        }
+        return null;
+    }
+
+    private async Task ReadAsync(NamedPipeClientStream pipe)
+    {
+        try
+        {
+            using var reader = new StreamReader(pipe, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            while (await reader.ReadLineAsync() is { } line)
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    lock (_received) _received.Add(doc.RootElement.Clone());
+                }
+                catch (JsonException)
+                {
+                    // Not JSON: nothing the extension would act on.
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or OperationCanceledException)
+        {
+            // Disconnected.
+        }
     }
 
     public async ValueTask DisposeAsync() => await DisconnectAsync();

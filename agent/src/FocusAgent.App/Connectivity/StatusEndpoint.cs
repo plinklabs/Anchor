@@ -65,9 +65,10 @@ namespace FocusAgent.App.Connectivity;
 /// whether the setup window is open, and how far the check for the extension
 /// got (#488: <c>WaitingForBrowser</c>, <c>Installed</c>, <c>GuidedInstall</c>, ...); <c>extensionGuard</c> (#427):
 /// whether the extension's witness is connected, the Edge pause's state and the
-/// open Edge profiles with the extension switched off (#518); and
+/// open Edge profiles with the extension switched off (#518), why Edge is paused
+/// and what the extension says about its own settings (#524); and
 /// <c>overlay</c> (#452): what the focus overlay shows while it is up
-/// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not; and
+/// (<c>Blocked</c> / <c>BrowserPaused</c> / <c>SiteAccessPaused</c>), null while it is not; and
 /// <c>pendingUpdate</c> (#449): the version of a downloaded update that the next
 /// agent start applies, null while none is waiting; and <c>lastUpdateCheck</c>
 /// (#456): when the last update check started, by the agent's clock; and

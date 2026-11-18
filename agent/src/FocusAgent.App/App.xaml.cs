@@ -227,6 +227,9 @@ public partial class App : Application
             // (and its only way to report). Resolved before the pipe starts listening
             // so the first extension to connect gets the current state handed down.
             _ = _host.Services.GetRequiredService<ExtensionSessionRelay>();
+            // #524: what the extension says about its own settings (its site
+            // access), read off the same link from its first message on.
+            var selfCheck = _host.Services.GetRequiredService<ExtensionSelfCheckWatch>();
             _ = witnessMonitor.StartAsync();
             // #427: and the guard that pauses Edge while the witness stays down in a
             // session — resolved now so its SessionJoined / ConnectionChanged
@@ -352,6 +355,11 @@ public partial class App : Application
                         state = extensionGuard.State.ToString(),
                         // #518: open Edge profiles with the extension switched off.
                         profilesWithExtensionOff = openProfiles.Profiles,
+                        // #524: why Edge is paused, and what the extension says
+                        // about its own settings.
+                        pauseReason = extensionGuard.PauseReason.ToString(),
+                        siteAccessLost = selfCheck.SiteAccessLost,
+                        inPrivateAllowed = selfCheck.InPrivateAllowed,
                     },
                     onTurnExtensionBackOn: _focus.TurnExtensionBackOn,
                     // #452: which overlay the student is on, if any.
@@ -809,14 +817,16 @@ public partial class App : Application
         };
 
         // #427: --overlay-paused shows the paused-Edge variant instead (the
-        // allowed-app rows then stand for the apps a student carries on with).
-        if (Program.OverlayPaused)
+        // allowed-app rows then stand for the apps a student carries on with);
+        // #524: --overlay-site-access its variant for the extension's site access.
+        if (Program.OverlayPaused || Program.OverlaySiteAccess)
             overlay.ShowBrowserPaused(
                 rules,
                 new BrowserPausedPrompt(
                     new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
                     TimeSpan.FromSeconds(60),
-                    () => false),
+                    () => false,
+                    Program.OverlaySiteAccess ? ExtensionPauseReason.NoSiteAccess : ExtensionPauseReason.ExtensionOff),
                 pausedWindowHandle: IntPtr.Zero);
         else
             overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName, blockedWindowHandle: IntPtr.Zero);
@@ -1137,6 +1147,21 @@ public partial class App : Application
             Add("window.overlay_paused_message", message);
             Add("window.overlay_paused_action", action);
             Add("window.overlay_paused_hint", hint);
+
+            // #524: the same overlay when Edge is paused because the extension
+            // may not work on all sites.
+            overlay.UpdateBrowserPausedContent(
+                Array.Empty<AllowedAppRule>(),
+                new BrowserPausedPrompt(
+                    new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
+                    TimeSpan.FromSeconds(60),
+                    () => false,
+                    ExtensionPauseReason.NoSiteAccess));
+            (headline, message, action, hint) = overlay.BrowserPausedProbe();
+            Add("window.overlay_siteaccess_headline", headline);
+            Add("window.overlay_siteaccess_message", message);
+            Add("window.overlay_siteaccess_action", action);
+            Add("window.overlay_siteaccess_hint", hint);
             overlay.Close();
         }
         catch (Exception ex)
@@ -1466,6 +1491,13 @@ public partial class App : Application
                 sp.GetRequiredService<ILogger<EdgeOpenProfileExtensionProbe>>());
         });
         builder.Services.AddSingleton<OpenProfileExtensionWatch>();
+        // #524 -- the extension can be on and still not filter everything: a
+        // student can turn its "Site access" down on its page in Edge, before the
+        // session, which fires nothing. The extension reads its own settings on
+        // every session it is handed and on every change and says so over the link;
+        // the guard pauses Edge while it may not work on all sites, and this watch
+        // tells the teacher if the student doesn't put it back.
+        builder.Services.AddSingleton<ExtensionSelfCheckWatch>();
         // #427 -- the report alone left Edge an unfiltered browser while the
         // extension was off. The guard pauses Edge once the witness has stayed down
         // past a short grace period during a joined session with Edge on screen, or

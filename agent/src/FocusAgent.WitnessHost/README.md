@@ -87,8 +87,8 @@ unit-tested with `MemoryStream`s.
 - **The messages** (`FocusAgent.Core.Extension.ExtensionMessages`, mirrored in
   `witness.ts`): agent → extension `session_started`, `no_session`,
   `allowlist_replaced`, `allowlist_amended`, `unblock_denied`, `session_ended`,
-  `unblock_request_result`; extension → agent `ping`, `blocked_url`,
-  `unblock_request`, `tamper`. The agent sends the current session (or
+  `unblock_request_result`, `open_extension_page`; extension → agent `ping`,
+  `blocked_url`, `unblock_request`, `tamper`, `self_check` (#524). The agent sends the current session (or
   `no_session`) to each connection when it connects, sends every change to all
   of them, and answers an `unblock_request` on the connection that asked.
 

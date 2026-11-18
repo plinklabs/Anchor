@@ -81,6 +81,29 @@ public sealed class I18nTests
     }
 
     [Fact]
+    public async Task The_site_access_pause_reads_in_English_and_Dutch()
+    {
+        // #524: the copy a student reads on the real overlay window when Edge is
+        // paused because the extension may not work on all sites, with a
+        // 60-second repair window.
+        var en = await RunVerifyI18nAsync("en-US");
+        Assert.Equal("Anchor is not allowed to work on all sites", en["window.overlay_siteaccess_headline"]);
+        Assert.StartsWith("Anchor's site access in Edge was changed", en["window.overlay_siteaccess_message"]);
+        Assert.Equal("Open the setting", en["window.overlay_siteaccess_action"]);
+        Assert.Equal(
+            "Edge opens for 60 seconds on Anchor's page. Set Site access to \"On all sites\".",
+            en["window.overlay_siteaccess_hint"]);
+
+        var nl = await RunVerifyI18nAsync("nl-NL");
+        Assert.Equal("Anchor mag niet op alle sites werken", nl["window.overlay_siteaccess_headline"]);
+        Assert.StartsWith("De sitetoegang van Anchor in Edge is gewijzigd", nl["window.overlay_siteaccess_message"]);
+        Assert.Equal("Open de instelling", nl["window.overlay_siteaccess_action"]);
+        Assert.Equal(
+            "Edge gaat 60 seconden open op de pagina van Anchor. Zet Sitetoegang op \"Op alle sites\".",
+            nl["window.overlay_siteaccess_hint"]);
+    }
+
+    [Fact]
     public async Task Unsupported_language_falls_back_to_English()
     {
         // fr-FR ships no catalogue, so MRT resolves the en-US default — never a

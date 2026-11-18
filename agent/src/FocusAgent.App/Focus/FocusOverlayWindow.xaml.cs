@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using FocusAgent.App.Localization;
 using FocusAgent.Core.Focus;
+using FocusAgent.Core.Tamper;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
@@ -60,18 +61,21 @@ public sealed partial class FocusOverlayWindow : Window
     }
 
     /// <summary>
-    /// The overlay for an Edge paused because its extension is off (#427): why
-    /// Edge went away, the one action that opens it to switch the extension back
-    /// on, and the other allowed apps to carry on with.
+    /// The overlay for an Edge paused because its extension is off (#427), or
+    /// because it may no longer work on all sites (#524): why Edge went away, the
+    /// one action that opens it to put that right, and the other allowed apps to
+    /// carry on with.
     /// </summary>
     public void UpdateBrowserPausedContent(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
     {
         _browserPrompt = prompt;
-        HeadlineText.Text = Loc.Get("Overlay_BrowserPaused_Headline");
-        MessageText.Text = Loc.Get("Overlay_BrowserPaused_Message");
-        BrowserRepairButton.Content = Loc.Get("Overlay_BrowserPaused_TurnBackOn");
+        // The site-access copy names the setting and has the button open it.
+        var copy = prompt.Reason == ExtensionPauseReason.NoSiteAccess ? "Overlay_SiteAccess" : "Overlay_BrowserPaused";
+        HeadlineText.Text = Loc.Get($"{copy}_Headline");
+        MessageText.Text = Loc.Get($"{copy}_Message");
+        BrowserRepairButton.Content = Loc.Get($"{copy}_TurnBackOn");
         BrowserRepairHintText.Text = Loc.Format(
-            "Overlay_BrowserPaused_Hint", (int)Math.Round(prompt.RepairWindow.TotalSeconds));
+            $"{copy}_Hint", (int)Math.Round(prompt.RepairWindow.TotalSeconds));
         BrowserRepairPanel.Visibility = Visibility.Visible;
         BlockedText.Visibility = Visibility.Collapsed;
 

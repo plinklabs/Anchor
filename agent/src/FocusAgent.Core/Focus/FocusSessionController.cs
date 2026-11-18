@@ -74,8 +74,9 @@ public sealed class FocusSessionController : IAsyncDisposable
 
     /// <summary>
     /// The student's "turn the extension back on" action on the paused-Edge
-    /// overlay (#427): opens Edge for the guard's repair window. Returns false
-    /// when Edge isn't paused. Also driven by the dev status endpoint so the
+    /// overlay (#427): opens Edge for the guard's repair window, and when Edge is
+    /// paused for the extension's site access, has the extension open its own page
+    /// (#524). Returns false when Edge isn't paused. Also driven by the dev status endpoint so the
     /// headless e2e can take the action without clicking the overlay.
     /// </summary>
     public bool TurnExtensionBackOn() => _guard?.BeginRepair() ?? false;
@@ -326,7 +327,10 @@ public sealed class FocusSessionController : IAsyncDisposable
         // A paused Edge is no way back, so leave it out of the allowed-app rows;
         // the prompt's own action is how the student gets Edge again.
         var others = matcher.UserRules.Where(r => !guard.IsBrowserRule(r)).ToArray();
-        var prompt = new BrowserPausedPrompt(guard.BrowserRule, guard.RepairWindow, TurnExtensionBackOn);
+        // Why it is paused (the extension off, or its site access taken away, #524)
+        // decides what the overlay says and what its action does.
+        var prompt = new BrowserPausedPrompt(
+            guard.BrowserRule, guard.RepairWindow, TurnExtensionBackOn, guard.PauseReason);
         // Edge goes down only while the pause lasts. The overlay gets to this show,
         // and to taking the window down, a moment later, behind the shows asked for
         // before it: by then the extension may be back, or the repair window open,

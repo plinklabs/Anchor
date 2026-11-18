@@ -46,4 +46,12 @@ public sealed record SessionSettings
     /// witness link can't show while another profile's extension is connected.
     /// </summary>
     public int ExtensionProfileScanSeconds { get; init; } = 5;
+
+    /// <summary>
+    /// How long, during a session, the extension may report that it can't work
+    /// on all sites before the teacher is told (#524). Edge is paused at once, and
+    /// the pause says how to put "Site access" back; a student who does so in time
+    /// isn't reported.
+    /// </summary>
+    public int ExtensionSiteAccessReportSeconds { get; init; } = 60;
 }

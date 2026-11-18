@@ -81,6 +81,15 @@ describe('parseHostMessage', () => {
     expect(parseHostMessage({ type: 'unblock_denied', host: 'games.example' })).toEqual({ kind: 'ignore' });
   });
 
+  it("parses the agent's ask to open the extension's own page, for its session (#524)", () => {
+    expect(parseHostMessage({ type: 'open_extension_page', sessionId: 's1' })).toEqual({
+      kind: 'agent',
+      message: { type: 'open_extension_page', sessionId: 's1' },
+    });
+    expect(parseHostMessage({ type: 'open_extension_page' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'open_extension_page', sessionId: ' ' })).toEqual({ kind: 'ignore' });
+  });
+
   it('parses the answer to an unblock request', () => {
     expect(parseHostMessage({ type: 'unblock_request_result', requestId: 'r1', ok: true })).toEqual({
       kind: 'unblock_result',

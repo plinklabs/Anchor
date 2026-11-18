@@ -45,6 +45,14 @@ public static class ExtensionMessages
     /// <summary>The answer to an <see cref="UnblockRequest"/>, matched by its <c>requestId</c>.</summary>
     public const string UnblockRequestResult = "unblock_request_result";
 
+    /// <summary>
+    /// Open the extension's own settings page, for the joined session (#524):
+    /// the student pressed the button on the pause for Anchor's site access. The
+    /// page (<c>edge://extensions/?id=…</c>) can't be opened from outside Edge,
+    /// but the extension can open it.
+    /// </summary>
+    public const string OpenExtensionPage = "open_extension_page";
+
     // ---- extension → agent -------------------------------------------------
 
     /// <summary>
@@ -57,8 +65,18 @@ public static class ExtensionMessages
     public const string UnblockRequest = "unblock_request";
 
     /// <summary>
-    /// The extension witnessed tampering in the browser (an InPrivate window, its
-    /// host access revoked); reported as a <c>TamperDetected</c> event (#105).
+    /// The extension witnessed tampering in the browser (an InPrivate window; an
+    /// extension older than #524 also its host access revoked); reported as a
+    /// <c>TamperDetected</c> event (#105).
     /// </summary>
     public const string Tamper = "tamper";
+
+    /// <summary>
+    /// What the extension reads about its own settings, for the joined session
+    /// (#524): <c>allSites</c> (its "Site access" is "On all sites") and
+    /// <c>inPrivate</c> ("Allow in InPrivate" is on). Sent on every session it is
+    /// handed and whenever its permissions change; read by
+    /// <see cref="Tamper.ExtensionSelfCheckWatch"/>.
+    /// </summary>
+    public const string SelfCheck = "self_check";
 }
