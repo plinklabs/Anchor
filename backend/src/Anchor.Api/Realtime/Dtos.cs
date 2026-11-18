@@ -175,3 +175,20 @@ public sealed record TamperDetectedPayload(
     string UserDisplayName,
     string Kind,
     DateTimeOffset DetectedAt);
+
+/// <summary>
+/// TEST PHASE ONLY (#515). Live notification that a student's agent saw an
+/// off-list site open in Edge without the extension blocking it (#526), so the
+/// teacher can look at the laptop while it is still open. Pushed to the session
+/// group, like <see cref="TamperDetectedPayload"/>, but no tamper flag: the gap
+/// may be the extension's, not the student's doing. <see cref="Host"/> is the
+/// site's host only, never its URL; <see cref="SeenAt"/> is when the agent first
+/// saw it. The <see cref="Anchor.Domain.Events.EventKind.UnfilteredSite"/> event
+/// is persisted too, so a reloaded page still shows it.
+/// </summary>
+public sealed record UnfilteredSitePayload(
+    Guid SessionId,
+    Guid UserId,
+    string UserDisplayName,
+    string Host,
+    DateTimeOffset SeenAt);

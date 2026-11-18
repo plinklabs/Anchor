@@ -21,6 +21,8 @@ public interface ISessionBroadcaster
     Task UnblockDeniedAsync(UnblockDeniedPayload payload, CancellationToken cancellationToken = default);
     Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default);
     Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default);
+    /// <summary>Test phase only (#515): an off-list site the extension let through (#526).</summary>
+    Task UnfilteredSiteAsync(UnfilteredSitePayload payload, CancellationToken cancellationToken = default);
 }
 
 internal sealed class SessionBroadcaster : ISessionBroadcaster
@@ -119,4 +121,8 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         // Session group: same routing as UnblockRequested — the owning teacher's
         // dashboard is the consumer, and no student may see a classmate's flag.
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).TamperDetected(payload);
+
+    public Task UnfilteredSiteAsync(UnfilteredSitePayload payload, CancellationToken cancellationToken = default)
+        // Session group, as TamperDetected: the owning teacher's live page only.
+        => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnfilteredSite(payload);
 }

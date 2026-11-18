@@ -64,6 +64,9 @@ import 'support/e2e_binding.dart';
 //   - the agent's reports that a student left an Edge window outside the
 //     school profile open, or isn't signed in to Edge with the school account,
 //     read as sentences in the feed (#525).
+//   - test phase only (#515): the agent's report of a site that isn't allowed
+//     open in Edge without the extension blocking it reads as a sentence in the
+//     feed, by its host only, with no tamper flag and no alert (#526).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -663,6 +666,40 @@ void main() {
         expect(find.textContaining(raw), findsNothing, reason: raw);
       }
       expect(find.byTooltip('Tampering detected'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a site the extension let through reads as a sentence in the feed, by its '
+    'host, without flagging the student (#526)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [_participant('Ada', ParticipantLiveState.joined)],
+      );
+
+      // The agent read Edge's address bar: a site that isn't allowed stayed
+      // open and the extension didn't block it. Test phase only (#515).
+      h.hub.emit('UnfilteredSite', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'userDisplayName': 'Ada',
+        'host': 'games.example',
+        'seenAt': '2026-06-12T07:24:00+00:00',
+      });
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          "Ada had games.example open in Edge, which isn't allowed, and it "
+          "wasn't blocked.",
+        ),
+        findsOneWidget,
+      );
+      // Never the kind, and no tamper flag: the gap may be the extension's.
+      expect(find.textContaining('UnfilteredSite'), findsNothing);
+      expect(find.byTooltip('Tampering detected'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );

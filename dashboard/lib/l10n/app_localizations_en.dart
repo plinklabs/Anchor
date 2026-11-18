@@ -702,6 +702,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String feedUnfilteredSite(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named':
+          '$name had $host open in Edge, which isn\'t allowed, and it wasn\'t blocked.',
+      'other':
+          'A student had $host open in Edge, which isn\'t allowed, and it wasn\'t blocked.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String feedTamperOther(String who, String name) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named': 'Tampering detected on $name\'s computer.',
@@ -1560,6 +1571,17 @@ class AppLocalizationsEn extends AppLocalizations {
       locale: localeName,
       other: '$count requests denied',
       one: '1 request denied',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryUnfilteredSites(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count websites not blocked',
+      one: '1 website not blocked',
     );
     return '$_temp0';
   }

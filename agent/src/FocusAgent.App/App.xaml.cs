@@ -240,6 +240,10 @@ public partial class App : Application
             // #525: during a session only the Edge profile signed in with the school
             // account may be used; the guard above already depends on it.
             var schoolProfile = _host.Services.GetRequiredService<SchoolProfileGuard>();
+            // #526 (test phase only, #515): the agent reads the address bar of the
+            // school profile's foreground Edge window during a session, a second
+            // witness of what the extension lets through.
+            var addressBar = _host.Services.GetRequiredService<AddressBarWitness>();
             // #211 + #405: self-register the Edge extension. With no force-install
             // policy under HKLM or HKCU (and no earlier "not now"), explain the step
             // and add the HKLM entry through one UAC prompt; then (the witness pipe
@@ -380,6 +384,14 @@ public partial class App : Application
                         outsideWindows = schoolProfile.OutsideWindows.Select(w => (long)w).ToArray(),
                     },
                     onGoToSchoolProfile: _focus.GoToSchoolProfile,
+                    // #526: whether the address bar is being read, how often it
+                    // was, and the off-list hosts reported in this session.
+                    addressBar: () => new
+                    {
+                        watching = addressBar.Watching,
+                        reads = addressBar.Reads,
+                        reported = addressBar.Reported,
+                    },
                     // #456: when the last update check ran, a check on demand, and
                     // time asleep: the update clock jumps, the timers don't.
                     lastUpdateCheck: () => _updateService?.LastCheckStartedAt,
@@ -1561,6 +1573,28 @@ public partial class App : Application
             sp.GetRequiredService<IOpenProfileExtensionProbe>(),
             sp.GetRequiredService<ILogger<EdgeSchoolProfileProbe>>()));
         builder.Services.AddSingleton<SchoolProfileGuard>();
+        // #526 -- test phase only (#515): a second witness of what the extension
+        // lets through. During a session the agent reads the address bar of the
+        // school profile's foreground Edge window (UI Automation), holds its host
+        // against the allowlist the extension was handed, and reports an off-list
+        // host that stays up past a short grace, once, by its host only.
+        builder.Services.AddSingleton<IAddressBarReader>(sp => new EdgeAddressBarReader(
+            sp.GetRequiredService<IAppIdentifier>(),
+            sp.GetRequiredService<ILogger<EdgeAddressBarReader>>()));
+        builder.Services.AddSingleton(sp =>
+        {
+            var schoolProfile = sp.GetRequiredService<SchoolProfileGuard>();
+            var relay = sp.GetRequiredService<ExtensionSessionRelay>();
+            return new AddressBarWitness(
+                sp.GetRequiredService<SessionCoordinator>(),
+                sp.GetRequiredService<IAddressBarReader>(),
+                schoolProfile.IsSchoolProfileWindow,
+                () => relay.Domains,
+                sp.GetRequiredService<ISessionHubConnection>(),
+                sp.GetRequiredService<IOptions<SessionSettings>>(),
+                sp.GetRequiredService<IOptions<WitnessSettings>>(),
+                log: sp.GetRequiredService<ILogger<AddressBarWitness>>());
+        });
         // #524 -- the extension can be on and still not filter everything: a
         // student can turn its "Site access" down on its page in Edge, before the
         // session, which fires nothing. The extension reads its own settings on

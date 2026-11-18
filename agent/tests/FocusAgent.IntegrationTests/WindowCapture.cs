@@ -369,6 +369,29 @@ internal static class WindowCapture
     /// <summary>End <see cref="PumpMessagesUntilQuit"/> on the thread <paramref name="threadId"/>.</summary>
     public static void PostQuit(uint threadId) => PostThreadMessageW(threadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
 
+    /// <summary>
+    /// The top-level windows, from the top of the z-order down, as
+    /// <c>EnumWindows</c> lists them (#526: the spec's Edge window that was in
+    /// front last comes first among Edge's).
+    /// </summary>
+    public static IReadOnlyList<IntPtr> TopLevelWindows()
+    {
+        var windows = new List<IntPtr>();
+        EnumWindows((hWnd, _) =>
+        {
+            windows.Add(hWnd);
+            return true;
+        }, IntPtr.Zero);
+        return windows;
+    }
+
+    /// <summary>The title of <paramref name="hwnd"/>, or "".</summary>
+    public static string GetWindowText(IntPtr hwnd)
+    {
+        var text = new StringBuilder(512);
+        return GetWindowTextW(hwnd, text, text.Capacity) > 0 ? text.ToString() : "";
+    }
+
     /// <summary>The id of the process that shows <paramref name="hwnd"/>, or 0.</summary>
     public static int ProcessIdOf(IntPtr hwnd)
     {

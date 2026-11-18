@@ -201,6 +201,10 @@ const _sentences = {
       'computer.',
   'HeartbeatLost': "A student's agent stopped reporting.",
   'AgentReconnected': 'A student is connected again.',
+  // #526, test phase only (#515).
+  'UnfilteredSite':
+      'contract-userDisplayName had contract-host open in Edge, which '
+      "isn't allowed, and it wasn't blocked.",
 };
 const _otherSentence = 'Something happened in the session.';
 

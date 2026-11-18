@@ -1088,6 +1088,12 @@ abstract class AppLocalizations {
   /// **'{who, select, named{{name} is not signed in to Edge with their school account.} other{A student is not signed in to Edge with their school account.}}'**
   String feedTamperSchoolProfileMissing(String who, String name);
 
+  /// Test phase only (#515). UnfilteredSite (#526): during a session the student's agent saw an off-list website open in Edge (the school profile's window in front) that the extension did not block. Live feed and past session's event log. {host} is the site's host only.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} had {host} open in Edge, which isn\'t allowed, and it wasn\'t blocked.} other{A student had {host} open in Edge, which isn\'t allowed, and it wasn\'t blocked.}}'**
+  String feedUnfilteredSite(String who, String name, String host);
+
   /// A tamper report of a kind the dashboard has no sentence for.
   ///
   /// In en, this message translates to:
@@ -2275,6 +2281,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 request denied} other{{count} requests denied}}'**
   String pastSummaryDenied(int count);
+
+  /// Test phase only (#515). Past session's activity summary (#526): how many off-list websites the agent saw open in Edge that the extension did not block.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 website not blocked} other{{count} websites not blocked}}'**
+  String pastSummaryUnfilteredSites(int count);
 
   /// No description provided for @pastSummaryBlockedSites.
   ///

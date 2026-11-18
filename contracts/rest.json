@@ -24,7 +24,8 @@
       "TamperDetected",
       "AgentMissing",
       "NotConnected",
-      "UnblockDenied"
+      "UnblockDenied",
+      "UnfilteredSite"
     ],
     "ClassMembershipRole": ["Member", "Teacher"],
     "ClassMembershipImportStatus": ["Added", "AlreadyMember", "NotFoundInEntra", "WrongSchool"],

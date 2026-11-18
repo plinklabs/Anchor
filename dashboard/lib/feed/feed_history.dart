@@ -20,6 +20,8 @@ const List<String> feedStoredKinds = <String>[
   'JoinDeclined',
   'ManualLeave',
   'AgentKilled',
+  // Test phase only (#515): an off-list site the extension let through (#526).
+  'UnfilteredSite',
 ];
 
 /// The most stored events the live page loads for its feed (#492).
@@ -31,8 +33,9 @@ const int feedHistoryLimit = 200;
 /// carries.
 ///
 /// Null for a kind the hub doesn't broadcast to the teacher (an app switch, a
-/// blocked site, an approval or a denial), and for an access request that
-/// names no site, whose broadcast the backend skips.
+/// blocked site, an approval or a denial), and for an access request or an
+/// unfiltered site (#526) that names no site, whose broadcast the backend
+/// skips.
 SessionEvent? feedEventOfStored(
   SessionRecentEvent stored, {
   required String sessionId,
@@ -73,6 +76,20 @@ SessionEvent? feedEventOfStored(
               ? kind.trim()
               : 'unknown',
           'detectedAt': _wire(at),
+        },
+        at: at,
+      );
+    case 'UnfilteredSite':
+      // As the backend reads it for the broadcast: the host only (#526).
+      final String? host = _hostOf(payload);
+      if (host == null) return null;
+      return SessionEvent(
+        kind: 'UnfilteredSite',
+        payload: <String, dynamic>{
+          ...about,
+          'userDisplayName': ?name,
+          'host': host,
+          'seenAt': _wire(at),
         },
         at: at,
       );
@@ -155,6 +172,9 @@ String storedEventSentence(
     case 'UnblockDenied':
       // Always one student's: denials are per student (#523).
       return l10n.feedDeniedFor(who, n, _hostOf(payload) ?? l10n.feedSomeSite);
+    case 'UnfilteredSite':
+      // One that names no host, which the hub doesn't broadcast (#526).
+      return l10n.feedUnfilteredSite(who, n, l10n.feedSomeSite);
   }
   return l10n.feedOther;
 }
@@ -203,6 +223,9 @@ List<String> storedSummaryPhrases(
       if (counts[topic] case final int count)
         switch (topic) {
           _SummaryTopic.tamper => l10n.pastSummaryTamper(count),
+          _SummaryTopic.unfilteredSites => l10n.pastSummaryUnfilteredSites(
+            count,
+          ),
           _SummaryTopic.agentStopped => l10n.pastSummaryAgentStopped(count),
           _SummaryTopic.agentMissing => l10n.pastSummaryAgentMissing(count),
           _SummaryTopic.notConnected => l10n.pastSummaryNotConnected(count),
@@ -223,6 +246,7 @@ List<String> storedSummaryPhrases(
 /// the teacher's attention first, as the feed ranks it (#491).
 enum _SummaryTopic {
   tamper,
+  unfilteredSites,
   agentStopped,
   agentMissing,
   notConnected,
@@ -239,6 +263,7 @@ enum _SummaryTopic {
 
 _SummaryTopic _summaryTopicOf(String kind) => switch (kind) {
   'TamperDetected' => _SummaryTopic.tamper,
+  'UnfilteredSite' => _SummaryTopic.unfilteredSites,
   'HeartbeatLost' => _SummaryTopic.agentStopped,
   'AgentMissing' => _SummaryTopic.agentMissing,
   'NotConnected' => _SummaryTopic.notConnected,
@@ -436,6 +461,7 @@ DateTime? _sentAt(SessionEvent event) {
     'ParticipantStateChanged' => 'at',
     'UnblockRequested' => 'requestedAt',
     'TamperDetected' => 'detectedAt',
+    'UnfilteredSite' => 'seenAt',
     'HeartbeatLost' => 'lastSeenAt',
     'AgentReconnected' => 'reconnectedAt',
     'SessionStarted' => 'startedAt',
@@ -463,6 +489,7 @@ String? feedEventIdentity(SessionEvent event) {
       _instant(p['requestedAt']),
     ],
     'TamperDetected' => <Object?>[user, p['kind'], _instant(p['detectedAt'])],
+    'UnfilteredSite' => <Object?>[user, p['host'], _instant(p['seenAt'])],
     'HeartbeatLost' => <Object?>[user, _instant(p['lastSeenAt'])],
     'AgentReconnected' => <Object?>[user, _instant(p['reconnectedAt'])],
     _ => null,

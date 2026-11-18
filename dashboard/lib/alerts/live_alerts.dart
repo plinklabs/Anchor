@@ -90,6 +90,7 @@ String? liveEventUserId(SessionEvent event) {
     case 'HeartbeatLost':
     case 'TamperDetected':
     case 'AgentReconnected':
+    case 'UnfilteredSite':
       final Object? id = event.payload['userId'];
       return id == null ? null : '$id';
   }
@@ -104,7 +105,9 @@ String? liveEventStudentName(
   String? Function(String userId)? nameOf,
 ) {
   final Object? name = switch (event.kind) {
-    'UnblockRequested' || 'TamperDetected' => event.payload['userDisplayName'],
+    'UnblockRequested' ||
+    'TamperDetected' ||
+    'UnfilteredSite' => event.payload['userDisplayName'],
     'ParticipantStateChanged' => event.payload['displayName'],
     _ => null,
   };

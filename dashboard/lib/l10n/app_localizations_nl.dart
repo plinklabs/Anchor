@@ -715,6 +715,17 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String feedUnfilteredSite(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named':
+          '$name had $host open in Edge, maar die website is niet toegelaten en werd niet geblokkeerd.',
+      'other':
+          'Een leerling had $host open in Edge, maar die website is niet toegelaten en werd niet geblokkeerd.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String feedTamperOther(String who, String name) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named': 'Manipulatie gedetecteerd op de computer van $name.',
@@ -1587,6 +1598,17 @@ class AppLocalizationsNl extends AppLocalizations {
       locale: localeName,
       other: '$count verzoeken geweigerd',
       one: '1 verzoek geweigerd',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryUnfilteredSites(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count niet-geblokkeerde websites',
+      one: '1 niet-geblokkeerde website',
     );
     return '$_temp0';
   }

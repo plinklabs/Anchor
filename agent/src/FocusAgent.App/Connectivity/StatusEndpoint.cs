@@ -74,7 +74,9 @@ namespace FocusAgent.App.Connectivity;
 /// open Edge profiles with the extension switched off (#518), why Edge is paused
 /// and what the extension says about its own settings (#524); <c>schoolProfile</c>
 /// (#525): whether Edge has a profile signed in with the school account, which
-/// one, and the windows outside it the last scan found; and
+/// one, and the windows outside it the last scan found; <c>addressBar</c> (#526):
+/// whether the agent is reading Edge's address bar (only during a session), how
+/// many times it has, and the off-list hosts it reported in this session; and
 /// <c>overlay</c> (#452): what the focus overlay shows while it is up
 /// (<c>Blocked</c> / <c>BrowserPaused</c> / <c>SiteAccessPaused</c>), null while it is not; and
 /// <c>pendingUpdate</c> (#449): the version of a downloaded update that the next
@@ -117,6 +119,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<object?>? _logUpload;
     private readonly Func<object?>? _schoolProfile;
     private readonly Func<nint, bool>? _onGoToSchoolProfile;
+    private readonly Func<object?>? _addressBar;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -144,7 +147,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<bool>? canQuit = null,
         Func<object?>? logUpload = null,
         Func<object?>? schoolProfile = null,
-        Func<nint, bool>? onGoToSchoolProfile = null)
+        Func<nint, bool>? onGoToSchoolProfile = null,
+        Func<object?>? addressBar = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -169,6 +173,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _logUpload = logUpload;
         _schoolProfile = schoolProfile;
         _onGoToSchoolProfile = onGoToSchoolProfile;
+        _addressBar = addressBar;
         _listener = new HttpListener();
     }
 
@@ -360,6 +365,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 overlay = _overlay?.Invoke(),
                 // #525: where the school profile stands and the windows outside it.
                 schoolProfile = _schoolProfile?.Invoke(),
+                // #526: whether the address bar is being read, how often it was,
+                // and the off-list hosts reported in this session.
+                addressBar = _addressBar?.Invoke(),
                 // #449: the downloaded update the next agent start applies, so the
                 // headless e2e can tell the update pass finished while the agent
                 // kept running.

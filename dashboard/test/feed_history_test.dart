@@ -169,6 +169,59 @@ void main() {
         _sentence(_stored('AgentKilled', _min(1))),
         'Ada left the session.',
       );
+      // #526, test phase only (#515): by its host only.
+      expect(
+        _sentence(
+          _stored(
+            'UnfilteredSite',
+            _min(1),
+            payloadJson: '{"host":"Games.Example"}',
+          ),
+        ),
+        "Ada had games.example open in Edge, which isn't allowed, and it "
+        "wasn't blocked.",
+      );
+    });
+
+    test('an off-list site the extension let through, in the hub shape', () {
+      final SessionEvent seen = feedEventOfStored(
+        _stored(
+          'UnfilteredSite',
+          _min(3),
+          payloadJson: '{"host":"games.example"}',
+        ),
+        sessionId: _sessionId,
+        name: 'Ada',
+      )!;
+      expect(seen.kind, 'UnfilteredSite');
+      expect(seen.payload, {
+        'sessionId': _sessionId,
+        'userId': _adaId,
+        'userDisplayName': 'Ada',
+        'host': 'games.example',
+        'seenAt': _min(3).toUtc().toIso8601String(),
+      });
+      expect(feedPriorityOf(seen), FeedPriority.warning);
+      // The live broadcast of it and the stored row are one row in the feed.
+      final SessionEvent live = SessionEvent(
+        kind: 'UnfilteredSite',
+        payload: {...seen.payload, 'seenAt': '2026-11-11T08:28:00+00:00'},
+        at: DateTime.now(),
+      );
+      expect(feedEventIdentity(live), feedEventIdentity(seen));
+      // Without a host there is nothing to show live, as the backend pushes
+      // none; the past session still reads it as a sentence.
+      final SessionRecentEvent hostless = _stored(
+        'UnfilteredSite',
+        _min(3),
+        payloadJson: '{"host":""}',
+      );
+      expect(feedEventOfStored(hostless, sessionId: _sessionId), isNull);
+      expect(
+        storedEventSentence(en, hostless, sessionId: _sessionId, name: 'Ada'),
+        "Ada had a website open in Edge, which isn't allowed, and it wasn't "
+        'blocked.',
+      );
     });
 
     test('in the hub shape the feed reads, with its priority', () {
@@ -984,9 +1037,11 @@ void main() {
           count('TamperDetected', 2),
           count('UnblockApproved', 1),
           count('UnblockDenied', 2),
+          count('UnfilteredSite', 2),
         ]),
         [
           'tampering detected 2 times',
+          '2 websites not blocked',
           '1 access request',
           '1 website approved',
           '2 requests denied',
@@ -1042,8 +1097,10 @@ void main() {
           count('ForegroundChange', 12),
           count('BlockedUrl', 3),
           count('UnblockRequest', 2),
+          count('UnfilteredSite', 1),
         ]),
         [
+          '1 niet-geblokkeerde website',
           '2 toegangsvragen',
           '3 geblokkeerde websites',
           '12 keer van app gewisseld',

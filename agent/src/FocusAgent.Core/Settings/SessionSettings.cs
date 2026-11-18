@@ -70,4 +70,17 @@ public sealed record SessionSettings
     /// reported.
     /// </summary>
     public int SchoolProfileReportSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// How often, during a session, the agent reads the address bar of the
+    /// foreground Edge window of the school profile (#526, test phase only, #515).
+    /// </summary>
+    public int AddressBarScanSeconds { get; init; } = 2;
+
+    /// <summary>
+    /// How long the address bar must keep showing the same off-list host before
+    /// the agent reports it (#526): the extension redirects an off-list navigation
+    /// as it starts, and until then the address bar shows where it was going.
+    /// </summary>
+    public int AddressBarGraceSeconds { get; init; } = 5;
 }

@@ -108,6 +108,59 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         Assert.DoesNotContain("search", @event.PayloadJson);
     }
 
+    /// <summary>
+    /// #526 (test phase only, #515): an off-list site the extension let through
+    /// is stored by its host and nothing else, whatever an agent sends, and goes
+    /// to the teacher's live page with that host. One that names no usable host
+    /// is stored empty and not pushed.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"host":"offlist.example"}""", "offlist.example")]
+    [InlineData("""{"host":" OffList.Example "}""", "offlist.example")]
+    [InlineData("""{"host":"https://offlist.example/c/123?q=my+search","url":"https://offlist.example/c/123?q=my+search","title":"my search"}""", "offlist.example")]
+    [InlineData("""{"host":"offlist.example:8099/c/123?q=my+search"}""", "offlist.example")]
+    [InlineData("""{"url":"https://offlist.example/c/123?q=my+search"}""", "")]
+    [InlineData("""{"host":"not a host /c/123?q=my+search"}""", "")]
+    [InlineData("""https://offlist.example/c/123?q=my+search""", "")]
+    public async Task ReportEvent_unfiltered_site_is_stored_and_pushed_by_its_host_only(string sent, string host)
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        var seenAt = new DateTimeOffset(2026, 11, 18, 9, 30, 0, TimeSpan.Zero);
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.UnfilteredSite), sent, OccurredAt: seenAt));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var @event = await db.Events.AsNoTracking()
+            .SingleAsync(e => e.SessionId == session.Id && e.UserId == student.Id);
+        Assert.Equal(EventKind.UnfilteredSite, @event.Kind);
+        Assert.Equal(new System.Text.Json.Nodes.JsonObject { ["host"] = host }.ToJsonString(), @event.PayloadJson);
+        Assert.Equal(seenAt, @event.OccurredAt);
+        Assert.DoesNotContain("/c/123", @event.PayloadJson);
+        Assert.DoesNotContain("search", @event.PayloadJson);
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var calls = broadcaster.UnfilteredSiteCalls.Where(c => c.SessionId == session.Id).ToList();
+        if (host.Length == 0)
+        {
+            Assert.Empty(calls);
+            return;
+        }
+        var call = Assert.Single(calls);
+        Assert.Equal(student.Id, call.UserId);
+        Assert.Equal("Test Student", call.UserDisplayName);
+        Assert.Equal(host, call.Host);
+        Assert.Equal(seenAt, call.SeenAt);
+        // No tamper flag: the gap may be the extension's, not the student's doing.
+        Assert.DoesNotContain(broadcaster.TamperDetectedCalls, c => c.SessionId == session.Id);
+    }
+
     [Fact]
     public async Task Non_participant_cannot_report_event()
     {

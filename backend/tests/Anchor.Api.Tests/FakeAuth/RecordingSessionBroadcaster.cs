@@ -31,6 +31,7 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     public ConcurrentBag<UnblockDeniedPayload> UnblockDeniedCalls { get; } = new();
     public ConcurrentBag<UnblockRequestedPayload> UnblockRequestedCalls { get; } = new();
     public ConcurrentBag<TamperDetectedPayload> TamperDetectedCalls { get; } = new();
+    public ConcurrentBag<UnfilteredSitePayload> UnfilteredSiteCalls { get; } = new();
 
     public Task SessionStartedAsync(
         SessionStartedPayload payload,
@@ -102,6 +103,12 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     {
         TamperDetectedCalls.Add(payload);
         return _inner.TamperDetectedAsync(payload, cancellationToken);
+    }
+
+    public Task UnfilteredSiteAsync(UnfilteredSitePayload payload, CancellationToken cancellationToken = default)
+    {
+        UnfilteredSiteCalls.Add(payload);
+        return _inner.UnfilteredSiteAsync(payload, cancellationToken);
     }
 }
 

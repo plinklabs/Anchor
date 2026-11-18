@@ -33,7 +33,20 @@ internal sealed record StatusSnapshot(
     // #446: what the log uploads did in this agent process.
     [property: JsonPropertyName("logUpload")] LogUploadSnapshot? LogUpload = null,
     // #525: where the Edge profile signed in with the school account stands.
-    [property: JsonPropertyName("schoolProfile")] SchoolProfileSnapshot? SchoolProfile = null);
+    [property: JsonPropertyName("schoolProfile")] SchoolProfileSnapshot? SchoolProfile = null,
+    // #526: whether the agent reads Edge's address bar, and what it reported.
+    [property: JsonPropertyName("addressBar")] AddressBarSnapshot? AddressBar = null);
+
+/// <summary>
+/// The address-bar witness as exposed on /status (#526, test phase only): whether
+/// the agent is reading the school profile's foreground Edge window (only during
+/// a session), how many times it has read an address bar since it started, and
+/// the off-list hosts it reported in this session.
+/// </summary>
+internal sealed record AddressBarSnapshot(
+    [property: JsonPropertyName("watching")] bool Watching,
+    [property: JsonPropertyName("reads")] int Reads,
+    [property: JsonPropertyName("reported")] string[]? Reported);
 
 /// <summary>
 /// The school-profile rule as exposed on /status (#525): whether Edge has a

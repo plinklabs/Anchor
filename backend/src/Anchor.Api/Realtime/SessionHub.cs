@@ -447,6 +447,11 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         // personal detail the teacher doesn't need.
         if (kind == EventKind.BlockedUrl)
             payloadJson = BlockedUrlPayloadWithoutUrl(payloadJson);
+        // Test phase only (#515): an off-list site the extension let through
+        // (#526) is kept by its host and nothing else, as a blocked page is.
+        string? unfilteredHost = null;
+        if (kind == EventKind.UnfilteredSite)
+            (payloadJson, unfilteredHost) = UnfilteredSitePayloadHostOnly(payloadJson);
         // An unblock request is stamped as it arrives, by this server's clock,
         // whatever time the agent sent with it: the pending list sets it against
         // the teacher's denials (#523), which are stamped here too. A student
@@ -508,6 +513,18 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                     ExtractTamperKind(payloadJson),
                     occurredAt),
                 ct);
+        }
+        // UnfilteredSite (#526, test phase only, #515): pushed to the teacher's
+        // live page so they can look while the site is still open. Without a
+        // host there is nothing to show; the stored row is all there is then.
+        else if (kind == EventKind.UnfilteredSite)
+        {
+            if (!string.IsNullOrEmpty(unfilteredHost))
+            {
+                await _broadcaster.UnfilteredSiteAsync(
+                    new UnfilteredSitePayload(request.SessionId, user.Id, user.DisplayName, unfilteredHost, occurredAt),
+                    ct);
+            }
         }
         // AgentKilled (#110): the student deliberately quit the agent mid-session.
         // Mark the participant left so the roster resolves to Left immediately —
@@ -607,6 +624,37 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         {
             return "{}";
         }
+    }
+
+    /// <summary>
+    /// An UnfilteredSite payload as it is stored (#526): <c>{"host":"…"}</c> and
+    /// nothing else, and that host. The agent sends the host alone; whatever
+    /// else a payload carries is left out, a host that comes with a path or query
+    /// string is cut down to the host, and one that doesn't parse keeps nothing.
+    /// </summary>
+    private static (string PayloadJson, string Host) UnfilteredSitePayloadHostOnly(string payloadJson)
+    {
+        var host = string.Empty;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                root.TryGetProperty("host", out var h) && h.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var value = h.GetString()?.Trim() ?? string.Empty;
+                if (value.Length > 0 && !value.Contains("://", StringComparison.Ordinal))
+                    value = "http://" + value;
+                if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+                    host = uri.IdnHost.ToLowerInvariant();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Nothing kept.
+        }
+
+        return (new System.Text.Json.Nodes.JsonObject { ["host"] = host }.ToJsonString(), host);
     }
 
     /// <summary>
