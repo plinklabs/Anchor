@@ -25,6 +25,11 @@ namespace FocusAgent.IntegrationTests;
 /// foreground: what this asserts comes from the agent's own scans and
 /// <c>ShowWindow</c> calls, not from foreground events, which are the flaky part
 /// on a headless desktop. The overlays are <see cref="SchoolProfileOverlayTests"/>'.
+///
+/// #537 adds the windows of sites installed as apps: each carries its package's
+/// ID in every profile, so the run also stands in the packages (a folder of the
+/// spec's own, each with an <c>AppxManifest.xml</c> shaped as Edge 157 writes it)
+/// and lists the profiles each app is installed in in <c>Local State</c>.
 /// </summary>
 [Collection(AgentE2ECollection.Name)]
 [SupportedOSPlatform("windows")]
@@ -104,6 +109,69 @@ public sealed class SchoolProfileTests
         await Task.Delay(TimeSpan.FromSeconds(3));
         Assert.False(WindowCapture.IsIconic(guest.Handle), "The Guest window was paused after the session ended.");
         Assert.False(WindowCapture.IsIconic(inPrivate.Handle), "The InPrivate window was paused after the session ended.");
+    }
+
+    [Fact]
+    public async Task AppWindowsOfAnotherProfile_ArePaused_TheSchoolProfilesOwnAppsKeepWorking_AndAllWorkAgainAfterTheSession()
+    {
+        // #537: sites installed as apps. Each app window carries its package's ID
+        // in every profile (measured on Edge 157); the package names the app, and
+        // Local State the profiles it is installed in.
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(_backend.Url, api, signedIn: true);
+        await run.WaitForAsync(
+            s => s.SchoolProfile is { Status: "Found", Profile: "Default" }, TimeSpan.FromSeconds(10),
+            "the agent to find the school profile (Default)");
+
+        // 1. Teams is installed as an app in the school profile, a game site in the
+        //    personal one, and Outlook in both (the personal one first). The student
+        //    has their school profile open and every app's window.
+        var teams = run.InstallApp("localhost-AB457204_ebq0fnkrwaj2c", "abjckpmkhelphnmlbbjeehohmjbopiio", "Default");
+        var games = run.InstallApp("localhost-15D39BB8_ts9w021fep8jm", "poiahfjabbbejmkahpdcpdgnnfmbakcf", "Profile 1");
+        var outlook = run.InstallApp("localhost-5C0FFEE1_q1w2e3r4t5y6u", "faolnafnngnfdaknnbpnkhgohbobgegn", "Profile 1", "Default");
+        // The school profile's windows are never handed the foreground by the others
+        // going down: the spec's process plays Edge but isn't allowed as Edge is.
+        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge", neverActivated: true);
+        var schoolTeams = await run.OpenWindowAsync("Anchor e2e Teams", teams, neverActivated: true);
+        var personalGames = await run.OpenWindowAsync("Anchor e2e Games", games);
+        // An app in two profiles: Edge ends each window's title with its profile's name.
+        var schoolOutlook = await run.OpenWindowAsync("Anchor e2e Outlook - School", outlook, neverActivated: true);
+        var personalOutlook = await run.OpenWindowAsync("Anchor e2e Outlook - Personal", outlook);
+
+        // The personal profile's app windows are paused within a few seconds...
+        foreach (var (window, what) in new[] { (personalGames, "personal game app"), (personalOutlook, "personal Outlook app") })
+            Assert.True(
+                await BrowserPauseRun.WaitForIconicAsync(window.Handle, expected: true, TimeSpan.FromSeconds(6)),
+                $"The {what}'s window was not paused (minimized) within a few seconds of opening.");
+        var found = await run.WaitForAsync(
+            s => (s.SchoolProfile?.OutsideWindows ?? []).Length == 2, TimeSpan.FromSeconds(5),
+            "the agent to list the two app windows outside the school profile");
+        Assert.Equal(
+            new[] { personalGames.Handle, personalOutlook.Handle }.Select(h => (long)h).Order(),
+            found!.SchoolProfile!.OutsideWindows!.Order());
+        // ...the school profile's own apps and window keep working.
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        foreach (var (window, what) in new[] { (schoolTeams, "school Teams app"), (schoolOutlook, "school Outlook app"), (school, "school profile") })
+            Assert.False(WindowCapture.IsIconic(window.Handle), $"The {what}'s window was paused.");
+        Assert.Equal("Present", (await run.Agent.TryGetStatusAsync())?.ExtensionGuard?.State);
+
+        // 2. Left open past the report time: the teacher is told once, as of windows
+        //    outside the school profile.
+        Assert.True(
+            await TamperReports.WaitForAsync(
+                api, run.SessionId, "outside_school_profile", 1, SchoolProfileRun.Report + TimeSpan.FromSeconds(10)),
+            "App windows outside the school profile stayed open past the report time, but the teacher was not told (once).");
+
+        // 3. The session ends: the paused app windows can be used again.
+        await run.EndSessionAsync();
+        await run.WaitForAsync(
+            s => s.JoinedSessionId is null && s.SchoolProfile?.Status == "Unknown", TimeSpan.FromSeconds(10),
+            "the session to end on the agent");
+        foreach (var window in new[] { personalGames, personalOutlook })
+            WindowCapture.RestoreWithoutActivating(window.Handle);
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        Assert.False(WindowCapture.IsIconic(personalGames.Handle), "The personal game app's window was paused after the session ended.");
+        Assert.False(WindowCapture.IsIconic(personalOutlook.Handle), "The personal Outlook app's window was paused after the session ended.");
     }
 
     [Fact]
@@ -352,6 +420,29 @@ public sealed class SchoolProfileOverlayTests
     }
 
     [Fact]
+    public async Task AnAppWindowOfAnotherProfileComingForward_GetsTheSchoolProfileOverlay_WithTheKeyboard()
+    {
+        // #537: a site installed as an app in the personal profile.
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(_backend.Url, api, signedIn: true);
+        await run.WaitForAsync(
+            s => s.SchoolProfile?.Status == "Found", TimeSpan.FromSeconds(10), "the agent to find the school profile");
+        var games = run.InstallApp("localhost-15D39BB8_ts9w021fep8jm", "poiahfjabbbejmkahpdcpdgnnfmbakcf", "Profile 1");
+
+        var app = await run.OpenWindowAsync("Anchor e2e Games", games);
+        Assert.True(WindowCapture.ActivateOnce(app.Handle), "The app window could not be brought forward.");
+
+        await AssertOverlayAsync(run, app.Handle, "SchoolProfilePaused");
+
+        // Its button closes the app window.
+        Assert.True(await run.Agent.GoToSchoolProfileAsync(IntPtr.Zero), "The agent refused to go to the school profile.");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (WindowCapture.IsWindow(app.Handle) && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        Assert.False(WindowCapture.IsWindow(app.Handle), "The overlay's button did not close the app window it was shown for.");
+    }
+
+    [Fact]
     public async Task WithoutASchoolProfile_EdgeComingForward_GetsTheOverlayThatNamesTheAccount_WithTheKeyboard()
     {
         var api = new BackendClient(_backend.Url);
@@ -430,6 +521,9 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     private readonly BackendClient _api;
     private readonly string _root;
     private readonly List<OffListWindow> _windows = new();
+    // Per installed site's app (#537): the profiles it is installed in, for Local State.
+    private readonly Dictionary<string, string[]> _appProfiles = new();
+    private bool _signedIn;
     private Guid? _sessionId;
     private AgentProcess? _agent;
     private FakeExtensionWitness? _extension;
@@ -445,6 +539,8 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     public FakeExtensionWitness Extension => _extension ?? throw new InvalidOperationException("Extension not connected.");
     public Guid SessionId => _sessionId ?? throw new InvalidOperationException("No session started.");
     private string UserData => Path.Combine(_root, "User Data");
+    /// <summary>The packages of the sites installed as apps (#537), one folder per package family, as Windows keeps them.</summary>
+    private string Packages => Path.Combine(_root, "Packages");
 
     /// <param name="schoolProfileHasExtension">
     /// False: the Default profile never had the extension (#536), as a profile the
@@ -481,6 +577,8 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
                     // The spec's own windows play Edge's.
                     ["Witness__BrowserProcessName"] = self.ProcessName,
                     ["Witness__BrowserUserDataFolder"] = run.UserData,
+                    // And its own packages those of the sites installed as apps (#537).
+                    ["Witness__BrowserAppPackagesFolder"] = run.Packages,
                     // The address WAM would give with the account; the object ID is
                     // the impersonated student's.
                     ["Dev__ImpersonateUsername"] = SchoolAddress,
@@ -518,13 +616,32 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     /// foreground unless <paramref name="activate"/>, carrying
     /// <paramref name="appId"/> as Edge gives each profile's windows.
     /// </summary>
-    public async Task<OffListWindow> OpenWindowAsync(string title, string appId, bool activate = false)
+    /// <param name="neverActivated">
+    /// Windows doesn't hand it the foreground when a window above it is minimized
+    /// (<c>WS_EX_NOACTIVATE</c>). For a window that must stay up while others are
+    /// paused around it: Edge is an allowed app in a session, but the spec's process
+    /// that plays it isn't, and a stand-in that ends up with the foreground that
+    /// way is taken down as an off-list app, which Edge never is.
+    /// </param>
+    public async Task<OffListWindow> OpenWindowAsync(
+        string title, string appId, bool activate = false, bool neverActivated = false)
     {
         var window = await OffListWindow.OpenAsync(title, TimeSpan.FromSeconds(10), activate: activate);
         _windows.Add(window);
+        if (neverActivated)
+            SetWindowLongPtrW(window.Handle, GwlExStyle, GetWindowLongPtrW(window.Handle, GwlExStyle) | WsExNoActivate);
         WindowAppId.Set(window.Handle, appId);
         return window;
     }
+
+    private const int GwlExStyle = -20;
+    private const nint WsExNoActivate = 0x08000000;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern nint GetWindowLongPtrW(IntPtr hwnd, int index);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern nint SetWindowLongPtrW(IntPtr hwnd, int index, nint value);
 
     /// <summary>
     /// Edge's <c>Local State</c>: the Default profile signed in with the school
@@ -533,6 +650,7 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     /// </summary>
     public void WriteLocalState(bool signedIn)
     {
+        _signedIn = signedIn;
         var cache = new JsonObject
         {
             ["Default"] = new JsonObject
@@ -550,10 +668,64 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
                 ["edge_account_type"] = 1,
             },
         };
+        var localState = new JsonObject { ["profile"] = new JsonObject { ["info_cache"] = cache } };
+        // The profiles each site installed as an app is installed in (#537).
+        if (_appProfiles.Count > 0)
+        {
+            var shims = new JsonObject();
+            foreach (var (appId, profiles) in _appProfiles)
+                shims[appId] = new JsonObject
+                {
+                    ["installed_profiles"] = new JsonArray(profiles.Select(p => (JsonNode?)p).ToArray()),
+                    ["last_active_profiles"] = new JsonArray((JsonNode?)profiles[^1]),
+                };
+            localState["app_shims"] = shims;
+        }
         Directory.CreateDirectory(UserData);
         var temp = Path.Combine(UserData, "Local State.tmp");
-        File.WriteAllText(temp, new JsonObject { ["profile"] = new JsonObject { ["info_cache"] = cache } }.ToJsonString());
+        File.WriteAllText(temp, localState.ToJsonString());
         File.Move(temp, Path.Combine(UserData, "Local State"), overwrite: true);
+    }
+
+    /// <summary>
+    /// The student installs a site as an app in <paramref name="profile"/> (and
+    /// then in <paramref name="alsoIn"/>), as Edge 157 does it (#537): a package of
+    /// its own (<paramref name="family"/>) whose manifest names the app, this
+    /// <c>User Data</c> folder and the first profile, and Local State listing every
+    /// profile it is in. Returns the AppUserModelID its windows carry in all of them.
+    /// </summary>
+    public string InstallApp(string family, string appId, string profile, params string[] alsoIn)
+    {
+        var folder = Path.Combine(Packages, family);
+        Directory.CreateDirectory(folder);
+        var parameters =
+            $"--app-id={appId} --ip-edge-aumid=Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!MSEDGE --user-data-dir=&quot;{UserData}&quot;";
+        File.WriteAllText(Path.Combine(folder, "AppxManifest.xml"), $"""
+            <?xml version="1.0"?>
+            <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3" xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap uap3 rescap">
+             <Identity Name="{family[..family.IndexOf('_')]}" Publisher="CN=anchor-e2e.test, OID.2.25.311729368913984317654407730594956997722=1" Version="1.0.0.0" ProcessorArchitecture="neutral"/>
+             <Properties><DisplayName>Anchor e2e app</DisplayName><PublisherDisplayName>anchor-e2e.test</PublisherDisplayName><Logo>Images\StoreLogo.png</Logo></Properties>
+             <Dependencies>
+              <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.19041.0" MaxVersionTested="10.0.19041.0"/>
+              <uap10:HostRuntimeDependency Name="Microsoft.MicrosoftEdge.Stable" Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" MinVersion="1.0.0.0"/>
+             </Dependencies>
+             <Resources><Resource Language="EN-US"/></Resources>
+             <Applications>
+              <Application Id="App" uap10:HostId="PWA" uap10:Parameters="{parameters}">
+               <uap:VisualElements DisplayName="Anchor e2e app" Description="Anchor e2e app" BackgroundColor="transparent" Square150x150Logo="Images\Square150x150Logo.png" Square44x44Logo="Images\Square44x44Logo.png"/>
+               <Extensions>
+                <uap3:Extension Category="windows.appExtension">
+                 <uap3:AppExtension Name="com.ms.webapp.internals.4" Id="{family[..family.IndexOf('_')]}" PublicFolder="Public" DisplayName="Edge WebApp Internals" Description="parameters?{parameters};profile-directory?{profile};start-url?https://anchor-e2e.test/"/>
+                </uap3:Extension>
+               </Extensions>
+              </Application>
+             </Applications>
+             <Capabilities><rescap:Capability Name="runFullTrust"/></Capabilities>
+            </Package>
+            """);
+        _appProfiles[appId] = [profile, .. alsoIn];
+        WriteLocalState(_signedIn);
+        return family + "!App";
     }
 
     /// <summary>

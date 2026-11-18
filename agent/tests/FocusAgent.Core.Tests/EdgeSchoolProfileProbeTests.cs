@@ -132,9 +132,9 @@ public sealed class EdgeSchoolProfileProbeTests : IDisposable
     // The Default profile as the school profile: plain MSEdge.
     [InlineData("Default", "MSEdge", "Lesson - School - Microsoft​ Edge", EdgeWindowProfile.SchoolProfile)]
     [InlineData("Default", "MSEdge.UserData.Default", "Lesson - School - Microsoft​ Edge", EdgeWindowProfile.SchoolProfile)]
-    // What the rule can't place is left alone: an installed site's app window, a
-    // window without an ID yet, another app.
-    [InlineData("Profile 1", "MSEdge._crx_abcdef.UserData.Default", "Outlook", EdgeWindowProfile.Unknown)]
+    // What the rule can't place is left alone: an app window whose package isn't
+    // there (#537), a window without an ID yet, another app.
+    [InlineData("Profile 1", "localhost-AB457204_ebq0fnkrwaj2c!App", "Outlook", EdgeWindowProfile.Unknown)]
     [InlineData("Profile 1", null, "Lesson", EdgeWindowProfile.Unknown)]
     [InlineData("Profile 1", "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App", "notes.txt", EdgeWindowProfile.Unknown)]
     // Without a school profile, every browser window is outside it.
@@ -152,7 +152,123 @@ public sealed class EdgeSchoolProfileProbeTests : IDisposable
         Assert.True(EdgeSchoolProfileProbe.IsOutside(EdgeWindowProfile.Guest));
         Assert.True(EdgeSchoolProfileProbe.IsOutside(EdgeWindowProfile.InPrivate));
         Assert.False(EdgeSchoolProfileProbe.IsOutside(EdgeWindowProfile.SchoolProfile));
+        Assert.False(EdgeSchoolProfileProbe.IsOutside(EdgeWindowProfile.SchoolProfileApp));
         Assert.False(EdgeSchoolProfileProbe.IsOutside(EdgeWindowProfile.Unknown));
+    }
+
+    // #537: an installed site's app window carries its package's ID in every
+    // profile; Local State lists the profiles the app is installed in.
+    private const string TeamsApp = "localhost-AB457204_ebq0fnkrwaj2c";
+    private const string GamesApp = "localhost-15D39BB8_ts9w021fep8jm";
+
+    private EdgeSchoolProfileProbe ProbeWithApps() =>
+        new(_profiles.UserData,
+            new EdgeOpenProfileExtensionProbe(
+                _profiles.UserData, new NoWindows(), "msedge", new[] { FakeEdgeProfiles.ExtensionId }),
+            apps: _profiles.Apps());
+
+    private void SchoolInProfile1()
+    {
+        _profiles.SwitchOn("Default");
+        _profiles.SwitchOn("Profile 1");
+        _profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", SchoolAddress, SchoolOid));
+    }
+
+    [Fact]
+    public void An_app_window_belongs_to_the_one_profile_its_app_is_installed_in()
+    {
+        SchoolInProfile1();
+        var teams = _profiles.InstallApp(TeamsApp, "abjckpmkhelphnmlbbjeehohmjbopiio", "Profile 1");
+        var games = _profiles.InstallApp(GamesApp, "poiahfjabbbejmkahpdcpdgnnfmbakcf", "Default");
+        var probe = ProbeWithApps();
+
+        // The school profile's own app stays usable; another profile's is outside it.
+        Assert.Equal(EdgeWindowProfile.SchoolProfileApp, probe.Classify("Profile 1", teams, "Teams"));
+        Assert.Equal(EdgeWindowProfile.OtherProfile, probe.Classify("Profile 1", games, "Games"));
+        // A page title that mentions InPrivate makes no app window InPrivate.
+        Assert.Equal(EdgeWindowProfile.OtherProfile, probe.Classify("Profile 1", games, "[InPrivate] games"));
+        // Without a school profile, every app window is outside it.
+        Assert.Equal(EdgeWindowProfile.OtherProfile, probe.Classify(null, teams, "Teams"));
+        // Without the packages, app windows can't be placed (as before #537).
+        Assert.Equal(EdgeWindowProfile.Unknown, Probe().Classify("Profile 1", games, "Games"));
+    }
+
+    [Fact]
+    public void An_app_installed_in_the_school_profile_and_another_is_placed_by_the_profile_its_title_ends_with()
+    {
+        // Edge 157 ends the windows of an app installed in two profiles with the
+        // profile's name: "Anchor537 Measure - Persoonlijk", "... - Profiel 2".
+        SchoolInProfile1();
+        var outlook = _profiles.InstallApp(TeamsApp, "abjckpmkhelphnmlbbjeehohmjbopiio", "Default", "Profile 1");
+        var probe = ProbeWithApps();
+
+        Assert.Equal(EdgeWindowProfile.SchoolProfileApp, probe.Classify("Profile 1", outlook, "Mail - Outlook - School", "School"));
+        Assert.Equal(EdgeWindowProfile.OtherProfile, probe.Classify("Profile 1", outlook, "Mail - Outlook - Personal", "School"));
+        // Until the name Edge shows for the school profile is known, it can't be told.
+        Assert.Equal(EdgeWindowProfile.Unknown, probe.Classify("Profile 1", outlook, "Mail - Outlook - School"));
+    }
+
+    [Fact]
+    public void Without_local_state_s_list_an_app_belongs_to_the_profile_its_package_names_and_a_deleted_profile_doesn_t_count()
+    {
+        SchoolInProfile1();
+        var teams = _profiles.InstallApp(TeamsApp, "abjckpmkhelphnmlbbjeehohmjbopiio", "Profile 1", "Profile 9");
+        var probe = ProbeWithApps();
+
+        // Profile 9 was deleted: it is in no list of Edge's profiles any more.
+        Assert.Equal(EdgeWindowProfile.SchoolProfileApp, probe.Classify("Profile 1", teams, "Teams"));
+
+        // A Local State without app_shims: the package's profile.
+        _profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", SchoolAddress, SchoolOid));
+        File.WriteAllText(
+            Path.Combine(_profiles.UserData, "Local State"),
+            File.ReadAllText(Path.Combine(_profiles.UserData, "Local State")).Replace("app_shims", "something_else"));
+        Assert.Equal(EdgeWindowProfile.SchoolProfileApp, ProbeWithApps().Classify("Profile 1", teams, "Teams"));
+        Assert.Equal(EdgeWindowProfile.OtherProfile, ProbeWithApps().Classify("Default", teams, "Teams"));
+    }
+
+    [Fact]
+    public void An_app_of_another_user_data_folder_is_outside_the_school_profile()
+    {
+        SchoolInProfile1();
+        Directory.CreateDirectory(Path.Combine(_profiles.Packages, TeamsApp));
+        // Installed from Edge's own User Data folder, not the one the agent reads.
+        File.WriteAllText(
+            Path.Combine(_profiles.Packages, TeamsApp, "AppxManifest.xml"),
+            FakeEdgeProfiles.AppManifest("localhost-AB457204", "abjckpmkhelphnmlbbjeehohmjbopiio", "Profile 1", null));
+        var probe = new EdgeSchoolProfileProbe(
+            _profiles.UserData,
+            new EdgeOpenProfileExtensionProbe(_profiles.UserData, new NoWindows(), "msedge", new[] { FakeEdgeProfiles.ExtensionId }),
+            apps: _profiles.Apps(defaultUserDataFolder: @"C:\Users\ada\AppData\Local\Microsoft\Edge\User Data"));
+
+        Assert.Equal(EdgeWindowProfile.OtherProfile, probe.Classify("Profile 1", TeamsApp + "!App", "Teams"));
+
+        // The same app, of the User Data folder the agent reads when that is Edge's own.
+        var own = new EdgeSchoolProfileProbe(
+            _profiles.UserData + "\\",
+            new EdgeOpenProfileExtensionProbe(_profiles.UserData, new NoWindows(), "msedge", new[] { FakeEdgeProfiles.ExtensionId }),
+            apps: _profiles.Apps(defaultUserDataFolder: _profiles.UserData));
+        Assert.Equal(EdgeWindowProfile.SchoolProfileApp, own.Classify("Profile 1", TeamsApp + "!App", "Teams"));
+    }
+
+    [Fact]
+    public void The_name_edge_shows_for_the_school_profile_comes_from_one_of_its_ordinary_browser_windows()
+    {
+        var probe = Probe();
+        var windows = new[]
+        {
+            new BrowserWindowInfo(1, "MSEdge", "News - Personal - Microsoft​ Edge", false),
+            new BrowserWindowInfo(2, "MSEdge.UserData.Profile1", "about:blank - [InPrivate] - Microsoft​ Edge", false),
+            new BrowserWindowInfo(3, TeamsApp + "!App", "Teams - School", false),
+            new BrowserWindowInfo(4, "MSEdge.UserData.Profile1", "Lesson - Week 3 - School - Microsoft​ Edge", true),
+        };
+
+        Assert.Equal("School", probe.SchoolProfileName("Profile 1", windows));
+        Assert.Equal("Personal", probe.SchoolProfileName("Default", windows));
+        Assert.Null(probe.SchoolProfileName("Profile 1", windows.Take(3)));
+        Assert.Null(probe.SchoolProfileName(null, windows));
+        // A title without the profile's name has none to give.
+        Assert.Null(probe.SchoolProfileName("Profile 1", [new BrowserWindowInfo(5, "MSEdge.UserData.Profile1", "Microsoft​ Edge", false)]));
     }
 
     private sealed class NoWindows : IBrowserWindowAppIds

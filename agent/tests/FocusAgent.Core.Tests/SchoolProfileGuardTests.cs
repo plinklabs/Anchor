@@ -79,6 +79,68 @@ public sealed class SchoolProfileGuardTests : IDisposable
     }
 
     [Fact]
+    public async Task Another_profile_s_app_window_is_paused_and_reported_like_its_browser_windows_the_school_profile_s_app_stays()
+    {
+        // #537: Teams installed as an app in the school profile, a game site in the
+        // personal one. Their windows carry their packages' IDs, as on Edge 157.
+        var teams = new BrowserWindowInfo(0x40, _h.Profiles.InstallApp("localhost-AB457204_ebq0fnkrwaj2c", "abjckpmkhelphnmlbbjeehohmjbopiio", "Profile 1"), "Teams", false);
+        var games = new BrowserWindowInfo(0x50, _h.Profiles.InstallApp("localhost-15D39BB8_ts9w021fep8jm", "poiahfjabbbejmkahpdcpdgnnfmbakcf", "Default"), "Games", false);
+        _h.Windows.Open(School, teams, games);
+        _h.ExtensionConnected();
+        var sessionId = await _h.JoinAsync();
+        _h.FirstScan();
+
+        Assert.Equal(new nint[] { 0x50 }, _h.Guard.OutsideWindows);
+        Assert.Equal(new nint[] { 0x50 }, Assert.Single(_h.OutsideEvents));
+        Assert.True(_h.Guard.IsOutsideSchoolProfile(games.Handle));
+        Assert.Equal(EdgeWindowProfile.SchoolProfileApp, _h.Guard.Classify(teams.Handle));
+        Assert.False(_h.Guard.IsOutsideSchoolProfile(teams.Handle));
+        // No browser window: nothing reads its address bar, and the student is
+        // brought to the school profile's browser window, not to it.
+        Assert.False(_h.Guard.IsSchoolProfileWindow(teams.Handle));
+        Assert.Equal(School.Handle, _h.Guard.FindSchoolProfileWindow());
+        _h.Windows.Close(School.Handle);
+        Assert.Equal(IntPtr.Zero, _h.Guard.FindSchoolProfileWindow());
+
+        // Left open past the report time, the teacher hears of it as of a window of
+        // another profile.
+        _h.Run(Report);
+        Assert.Equal(new[] { (sessionId, TamperKinds.OutsideSchoolProfile) }, _h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task An_app_in_the_school_profile_and_another_is_placed_by_the_name_the_school_profile_s_browser_windows_show()
+    {
+        // Outlook installed as an app in the personal profile first, then in the
+        // school one: one package, one ID, and Edge ends each window's title with
+        // its profile's name.
+        var outlook = _h.Profiles.InstallApp("localhost-AB457204_ebq0fnkrwaj2c", "abjckpmkhelphnmlbbjeehohmjbopiio", "Default", "Profile 1");
+        var schoolOutlook = new BrowserWindowInfo(0x40, outlook, "Inbox - Outlook - School", false);
+        var personalOutlook = new BrowserWindowInfo(0x41, outlook, "Inbox - Outlook - Personal", false);
+        _h.Windows.Open(schoolOutlook, personalOutlook);
+        _h.ExtensionConnected();
+        await _h.JoinAsync();
+        _h.FirstScan();
+
+        // No window of the school profile shows its name yet: neither can be placed.
+        Assert.Empty(_h.Guard.OutsideWindows);
+        Assert.Equal(EdgeWindowProfile.Unknown, _h.Guard.Classify(schoolOutlook.Handle));
+
+        // The student opens the school profile ("Lesson - School - Microsoft Edge").
+        _h.Windows.Open(School);
+        _h.Clock.Advance(Scan);
+        Assert.Equal(new nint[] { 0x41 }, _h.Guard.OutsideWindows);
+        Assert.Equal(EdgeWindowProfile.SchoolProfileApp, _h.Guard.Classify(schoolOutlook.Handle));
+        Assert.True(_h.Guard.IsOutsideSchoolProfile(personalOutlook.Handle));
+
+        // The name stays known once its window is closed again.
+        _h.Windows.Close(School.Handle);
+        _h.Clock.Advance(Scan);
+        Assert.Equal(new nint[] { 0x41 }, _h.Guard.OutsideWindows);
+        Assert.Equal(EdgeWindowProfile.SchoolProfileApp, _h.Guard.Classify(schoolOutlook.Handle));
+    }
+
+    [Fact]
     public async Task The_school_profile_s_window_on_screen_is_the_one_to_bring_the_student_to()
     {
         var minimized = School with { Handle = 0x12, Minimized = true };
@@ -379,7 +441,8 @@ public sealed class SchoolProfileGuardTests : IDisposable
             var account = new SignedInAccount { Current = new SchoolAccount(SchoolAddress, SchoolOid) };
             var probe = new EdgeSchoolProfileProbe(
                 Profiles.UserData,
-                new EdgeOpenProfileExtensionProbe(Profiles.UserData, new NoAppIds(), "msedge", new[] { FakeEdgeProfiles.ExtensionId }));
+                new EdgeOpenProfileExtensionProbe(Profiles.UserData, new NoAppIds(), "msedge", new[] { FakeEdgeProfiles.ExtensionId }),
+                apps: Profiles.Apps());
             Guard = new SchoolProfileGuard(
                 Coordinator,
                 new ExtensionWitnessMonitor(Transport),

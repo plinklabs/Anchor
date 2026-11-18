@@ -20,12 +20,14 @@ namespace FocusAgent.Core.Tamper;
 /// school profile (<see cref="EdgeSchoolProfileProbe"/>) and Edge's open windows:
 /// <list type="bullet">
 /// <item>With a school profile (<see cref="SchoolProfileStatus.Found"/>), a window
-/// of any other profile, a Guest window and an InPrivate window is outside it:
+/// of any other profile, a Guest window and an InPrivate window is outside it, and
+/// so is the window of a site installed as an app in another profile (#537):
 /// <see cref="WindowsOutside"/> hands the ones on screen to the focus controller,
 /// which pauses each of them with the extension pause's overlay and machinery
 /// (<see cref="Focus.FocusSessionController"/>), and pauses one that comes
 /// forward again (<see cref="IsOutsideSchoolProfile"/>). The school profile's
-/// windows keep working.</item>
+/// windows keep working, the windows of the sites installed as apps in it
+/// too.</item>
 /// <item>With none (<see cref="SchoolProfileStatus.Missing"/>), every Edge window
 /// is outside it, so <see cref="ExtensionGuard"/> pauses Edge as a whole. With no
 /// profile signed in with the school account
@@ -76,6 +78,9 @@ public sealed class SchoolProfileGuard : IDisposable
     private Guid? _sessionId;
     private ITimer? _timer;
     private SchoolProfileReading _reading = SchoolProfileReading.Unknown;
+    // The name Edge shows for the school profile, from the title of one of its
+    // browser windows (#537); kept while none is open.
+    private string? _schoolProfileName;
     private IReadOnlyList<nint> _outside = Array.Empty<nint>();
     // Since when a window outside the school profile (InPrivate aside) has been
     // open, and since when there has been no school profile; null while not.
@@ -192,38 +197,43 @@ public sealed class SchoolProfileGuard : IDisposable
     public event EventHandler<IReadOnlyList<nint>>? WindowsOutside;
 
     /// <summary>
-    /// Which profile <paramref name="windowHandle"/>, a browser window, belongs to,
-    /// read now against the school profile the last scan found.
-    /// <see cref="EdgeWindowProfile.Unknown"/> while no school profile is found
-    /// (outside a session, too) and for a window the rule can't place.
+    /// Which profile <paramref name="windowHandle"/>, a browser or installed site's
+    /// app window, belongs to, read now against the school profile the last scan
+    /// found. <see cref="EdgeWindowProfile.Unknown"/> while no school profile is
+    /// found (outside a session, too) and for a window the rule can't place.
     /// </summary>
     public EdgeWindowProfile Classify(nint windowHandle)
     {
-        string? school;
+        string? school, schoolName;
         lock (_gate)
         {
             if (_reading.Status != SchoolProfileStatus.Found) return EdgeWindowProfile.Unknown;
             school = _reading.Profile;
+            schoolName = _schoolProfileName;
         }
         var window = _windows.Describe(windowHandle);
-        return window is null ? EdgeWindowProfile.Unknown : _probe.Classify(school, window.AppId, window.Title);
+        return window is null
+            ? EdgeWindowProfile.Unknown
+            : _probe.Classify(school, window.AppId, window.Title, schoolName);
     }
 
     /// <summary>
     /// True when <paramref name="windowHandle"/> is an ordinary (not InPrivate)
-    /// window of the school profile, the one place Edge may be used during a
-    /// session. False outside a session and whenever that can't be told. What
-    /// reads Edge from outside, such as the address-bar check (#526), looks only at
-    /// these windows: the others are paused.
+    /// browser window of the school profile, the one place Edge may be used during
+    /// a session. False for the window of a site installed as an app there, which
+    /// has no address bar (#537), outside a session and whenever that can't be
+    /// told. What reads Edge from outside, such as the address-bar check (#526),
+    /// looks only at these windows: the others are paused.
     /// </summary>
     public bool IsSchoolProfileWindow(nint windowHandle) =>
         Classify(windowHandle) == EdgeWindowProfile.SchoolProfile;
 
     /// <summary>
-    /// True when <paramref name="windowHandle"/> is a window of another profile, a
-    /// Guest window or an InPrivate window while there is a school profile: one the
-    /// rule pauses. Whether the rule is in force (the extension pause's state) is
-    /// the caller's to say.
+    /// True when <paramref name="windowHandle"/> is a window of another profile
+    /// (a site installed as an app there included, #537), a Guest window or an
+    /// InPrivate window while there is a school profile: one the rule pauses.
+    /// Whether the rule is in force (the extension pause's state) is the caller's
+    /// to say.
     /// </summary>
     public bool IsOutsideSchoolProfile(nint windowHandle) =>
         EdgeSchoolProfileProbe.IsOutside(Classify(windowHandle));
@@ -282,6 +292,7 @@ public sealed class SchoolProfileGuard : IDisposable
     private void ResetLocked()
     {
         _reading = SchoolProfileReading.Unknown;
+        _schoolProfileName = null;
         _outside = Array.Empty<nint>();
         _outsideSince = null;
         _missingSince = null;
@@ -321,8 +332,20 @@ public sealed class SchoolProfileGuard : IDisposable
         var windows = reading.Status == SchoolProfileStatus.Found
             ? _windows.GetBrowserWindows(_browser)
             : Array.Empty<BrowserWindowInfo>();
+        // The name Edge shows for the school profile places the windows of an app
+        // installed in it and in another profile too (#537). It stays known while
+        // none of its browser windows is open, for as long as it is the same profile.
+        string? schoolName;
+        lock (_gate)
+        {
+            schoolName = string.Equals(reading.Profile, _reading.Profile, StringComparison.OrdinalIgnoreCase)
+                ? _schoolProfileName
+                : null;
+        }
+        schoolName = _probe.SchoolProfileName(reading.Status == SchoolProfileStatus.Found ? reading.Profile : null, windows)
+                     ?? schoolName;
         var outside = windows
-            .Select(w => (Window: w, Profile: _probe.Classify(reading.Profile, w.AppId, w.Title)))
+            .Select(w => (Window: w, Profile: _probe.Classify(reading.Profile, w.AppId, w.Title, schoolName)))
             .Where(w => EdgeSchoolProfileProbe.IsOutside(w.Profile))
             .ToList();
         // The rule leaves a device alone where the extension never connected, as the
@@ -338,6 +361,7 @@ public sealed class SchoolProfileGuard : IDisposable
             if (_sessionId != sessionId) return;
             previous = _reading;
             _reading = reading;
+            _schoolProfileName = schoolName;
             _outside = outside.Select(w => w.Window.Handle).ToArray();
             missing = reading.Status == SchoolProfileStatus.Missing;
             var wasMissing = previous.Status == SchoolProfileStatus.Missing;
