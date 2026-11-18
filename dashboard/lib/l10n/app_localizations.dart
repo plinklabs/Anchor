@@ -1088,6 +1088,12 @@ abstract class AppLocalizations {
   /// **'{who, select, named{{name} is not signed in to Edge with their school account.} other{A student is not signed in to Edge with their school account.}}'**
   String feedTamperSchoolProfileMissing(String who, String name);
 
+  /// Tamper report school_profile_without_extension (#536): during a session the student was signed in to Edge with their school account, but in a profile without the Anchor extension (Edge stays paused, its button opens the store listing in that profile), and the student did not add the extension in time.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} hasn\'t added Anchor to their school profile in Edge.} other{A student hasn\'t added Anchor to their school profile in Edge.}}'**
+  String feedTamperSchoolProfileWithoutExtension(String who, String name);
+
   /// Test phase only (#515). UnfilteredSite (#526): during a session the student's agent saw an off-list website open in Edge (the school profile's window in front) that the extension did not block. Live feed and past session's event log. {host} is the site's host only.
   ///
   /// In en, this message translates to:

@@ -39,8 +39,13 @@ public interface IBrowserProfileLauncher
     /// <summary>Asks the window to close, as its close button does.</summary>
     void CloseWindow(nint windowHandle);
 
-    /// <summary>Opens the browser in <paramref name="profile"/> (a profile folder, <c>Profile 1</c>).</summary>
-    void OpenProfile(string profile);
+    /// <summary>
+    /// Opens the browser in <paramref name="profile"/> (a profile folder,
+    /// <c>Profile 1</c>), at <paramref name="url"/> when one is given: a tab of that
+    /// profile, in a new window when none of it is open. The store listing opened
+    /// this way adds the extension to that profile (#536).
+    /// </summary>
+    void OpenProfile(string profile, string? url = null);
 }
 
 /// <summary>Which Edge profile a browser window belongs to, as the school-profile rule judges it (#525).</summary>
@@ -80,7 +85,9 @@ public enum SchoolProfileStatus
 
     /// <summary>
     /// No profile is signed in with the school account, or the one that is has
-    /// never had the extension: Edge can't be used until there is one.
+    /// never had the extension: Edge can't be used until there is one. The
+    /// reading's <see cref="SchoolProfileReading.Profile"/> tells the two apart
+    /// (#536): the student has to sign in, or to add Anchor to that profile.
     /// </summary>
     Missing,
 }

@@ -1,6 +1,7 @@
 using FocusAgent.Core.Auth;
 using System.Text.Json;
 using FocusAgent.Core.Dtos;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
@@ -915,6 +916,132 @@ public class ExtensionGuardTests
         Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
     }
 
+    // ---- the school profile without the extension (#536) ----------------------
+
+    [Fact]
+    public async Task A_school_profile_without_the_extension_pauses_edge_for_that_and_the_button_opens_the_store_listing_in_it()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.Remove("Default");
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+
+        h.FirstSchoolScan();
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+        Assert.Empty(h.Reporter.Calls);
+
+        // The overlay's button: Edge opens at Anchor's store listing, in the profile
+        // signed in with the school account.
+        Assert.True(h.Guard.BeginRepair());
+        Assert.Equal(ExtensionGuardState.Repairing, h.Guard.State);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        Assert.Equal(new[] { ("Default", (string?)EdgeExtensionPolicy.StoreListingUrl) }, h.Launcher.Opened);
+
+        // The student adds Anchor there: the pause is over, and the teacher hears nothing.
+        h.Clock.Advance(TimeSpan.FromSeconds(20));
+        h.Profiles.SwitchOn("Default");
+        h.Clock.Advance(SchoolScan);
+
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        h.Run(Repair + SchoolReport);
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task The_button_of_the_other_pauses_opens_no_store_listing()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+
+        Assert.True(h.Guard.BeginRepair());
+
+        Assert.Empty(h.Launcher.Opened);
+    }
+
+    [Fact]
+    public async Task Signing_in_to_a_profile_without_the_extension_while_paused_changes_what_the_pause_says()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.Remove("Default");
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+        h.Clock.Advance(SchoolScan);
+
+        // Paused anew, so the overlay says what is missing now.
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        Assert.Equal(2, h.PausedEvents);
+
+        // A scan that finds the same pauses nothing again.
+        h.Clock.Advance(SchoolScan);
+        Assert.Equal(2, h.PausedEvents);
+
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.Clock.Advance(SchoolScan);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(3, h.PausedEvents);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Signing_in_during_the_repair_window_to_a_profile_without_the_extension_pauses_for_that_once_it_runs_out()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.Remove("Default");
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.True(h.Guard.BeginRepair());
+
+        h.Clock.Advance(TimeSpan.FromSeconds(20));
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+        h.Clock.Advance(SchoolScan);
+        // The student is in Edge: the repair window runs its course.
+        Assert.Equal(ExtensionGuardState.Repairing, h.Guard.State);
+
+        h.Run(Repair);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+    }
+
+    [Fact]
+    public async Task A_school_profile_still_without_the_extension_is_told_as_such_and_edge_paused_again_after_the_repair_window()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.Remove("Default");
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.True(h.Guard.BeginRepair());
+
+        h.Run(Repair);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        Assert.Equal(new[] { (session, TamperKinds.SchoolProfileWithoutExtension) }, h.Reporter.Calls);
+    }
+
     [Fact]
     public async Task Leaving_the_session_while_paused_for_site_access_lifts_the_pause()
     {
@@ -931,6 +1058,14 @@ public class ExtensionGuardTests
         Assert.Empty(h.Reporter.Calls);
     }
 
+    /// <summary>What the repair action opened in which Edge profile (#536).</summary>
+    private sealed class RecordingProfileLauncher : IBrowserProfileLauncher
+    {
+        public List<(string Profile, string? Url)> Opened { get; } = new();
+        public void CloseWindow(nint windowHandle) { }
+        public void OpenProfile(string profile, string? url = null) => Opened.Add((profile, url));
+    }
+
     private sealed class Harness : IDisposable
     {
         public FakeHub Hub { get; } = new();
@@ -945,6 +1080,7 @@ public class ExtensionGuardTests
         public FakeEdgeProfiles Profiles { get; } = new();
         public ExtensionSelfCheckWatch? SelfCheck { get; }
         public SchoolProfileGuard? SchoolProfile { get; }
+        public RecordingProfileLauncher Launcher { get; } = new();
         public int PausedEvents { get; private set; }
 
         /// <param name="profiles">
@@ -1023,7 +1159,8 @@ public class ExtensionGuardTests
                 watch,
                 Clock,
                 selfCheck: SelfCheck,
-                schoolProfile: SchoolProfile);
+                schoolProfile: SchoolProfile,
+                browserLauncher: Launcher);
             Guard.BrowserPaused += (_, _) => PausedEvents++;
         }
 

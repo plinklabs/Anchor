@@ -306,6 +306,18 @@ Until then Edge can't be used in this session. You can carry on with one of thes
   <data name="Overlay_SchoolAccount_Hint" xml:space="preserve">
     <value>Edge opens for {0} seconds. Click your profile picture at the top of Edge and sign in with that account.</value>
   </data>
+  <data name="Overlay_SchoolExtension_Headline" xml:space="preserve">
+    <value>Add Anchor to your school profile</value>
+  </data>
+  <data name="Overlay_SchoolExtension_Message" xml:space="preserve">
+    <value>You're signed in to Edge with your school account, but Anchor still has to be added to your school profile. Until then Edge can't be used in this session. You can carry on with one of these apps in the meantime.</value>
+  </data>
+  <data name="Overlay_SchoolExtension_TurnBackOn" xml:space="preserve">
+    <value>Add Anchor</value>
+  </data>
+  <data name="Overlay_SchoolExtension_Hint" xml:space="preserve">
+    <value>Edge opens for {0} seconds at Anchor in the store, in your school profile. Click Get, then Add extension.</value>
+  </data>
   <data name="Overlay_SchoolProfile_Headline" xml:space="preserve">
     <value>Work in your school profile</value>
   </data>

@@ -27,16 +27,25 @@ namespace FocusAgent.Core.Tamper;
 /// forward again (<see cref="IsOutsideSchoolProfile"/>). The school profile's
 /// windows keep working.</item>
 /// <item>With none (<see cref="SchoolProfileStatus.Missing"/>), every Edge window
-/// is outside it, so <see cref="ExtensionGuard"/> pauses Edge as a whole
-/// (<see cref="ExtensionPauseReason.NoSchoolProfile"/>), with a message that names
-/// the account to sign in with and a button that opens Edge for its repair window.
-/// The pause lifts by itself once a profile with that account has the extension.</item>
+/// is outside it, so <see cref="ExtensionGuard"/> pauses Edge as a whole. With no
+/// profile signed in with the school account
+/// (<see cref="ExtensionPauseReason.NoSchoolProfile"/>), its message names the
+/// account to sign in with and its button opens Edge for its repair window. With
+/// one that is but lacks the extension
+/// (<see cref="ExtensionPauseReason.SchoolProfileWithoutExtension"/>, #536), it says
+/// Anchor still has to be added to that profile (<see cref="ProfileWithoutExtension"/>),
+/// and its button opens the store listing in it. The pause lifts by itself once a
+/// profile with that account has the extension.</item>
 /// </list>
 /// The teacher is told only when the student doesn't resolve it within
 /// <see cref="SessionSettings.SchoolProfileReportSeconds"/>: a window outside the
-/// school profile still open (<see cref="TamperKinds.OutsideSchoolProfile"/>), or
-/// still no school profile (<see cref="TamperKinds.SchoolProfileMissing"/>). An
-/// InPrivate window is left out of the first: it has its own report (#148).
+/// school profile still open (<see cref="TamperKinds.OutsideSchoolProfile"/>),
+/// still no profile signed in with the school account
+/// (<see cref="TamperKinds.SchoolProfileMissing"/>), or still no extension in the
+/// one that is (<see cref="TamperKinds.SchoolProfileWithoutExtension"/>). Signing
+/// in and adding the extension are two steps, and each gets the report time of
+/// its own. An InPrivate window is left out of the first: it has its own report
+/// (#148).
 ///
 /// Like the extension pause, the rule leaves a device alone where the extension
 /// never connected since the agent started: there Edge isn't filtered in any
@@ -71,6 +80,9 @@ public sealed class SchoolProfileGuard : IDisposable
     // open, and since when there has been no school profile; null while not.
     private DateTimeOffset? _outsideSince;
     private DateTimeOffset? _missingSince;
+    // Whether what has been missing since _missingSince is the extension in the
+    // profile signed in with the school account (#536), not the sign-in itself.
+    private bool _missingExtension;
     // The teacher has been told of the current one; cleared once it is resolved.
     private bool _reportedOutside;
     private bool _reportedMissing;
@@ -125,6 +137,32 @@ public sealed class SchoolProfileGuard : IDisposable
     /// <summary>True while, in a session, no Edge profile signed in with the school account has the extension.</summary>
     public bool IsMissing => Status == SchoolProfileStatus.Missing;
 
+    /// <summary>
+    /// Where the school profile stands, as the last scan found it, read in one go:
+    /// its status, and the profile signed in with the school account while it is
+    /// <see cref="SchoolProfileStatus.Found"/> or lacks the extension (#536).
+    /// <see cref="SchoolProfileReading.Unknown"/> outside a session.
+    /// </summary>
+    public SchoolProfileReading Reading
+    {
+        get { lock (_gate) return _reading; }
+    }
+
+    /// <summary>
+    /// The profile signed in with the school account (its folder) while it doesn't
+    /// have the extension (#536): Anchor still has to be added to it. Null while no
+    /// profile is signed in with the school account, while the one that is has the
+    /// extension, and outside a session.
+    /// </summary>
+    public string? ProfileWithoutExtension
+    {
+        get
+        {
+            lock (_gate)
+                return _reading.Status == SchoolProfileStatus.Missing ? _reading.Profile : null;
+        }
+    }
+
     /// <summary>The school account Edge must be signed in with, for the pause to name.</summary>
     public string? AccountName => _account.Current?.Username;
 
@@ -136,7 +174,10 @@ public sealed class SchoolProfileGuard : IDisposable
 
     /// <summary>
     /// Raised when <see cref="IsMissing"/> changes during a session, with its new
-    /// value, on a timer thread. Not raised for the reset when the session ends.
+    /// value, and while it stays true when what is missing does (#536): the student
+    /// signed in to a profile that lacks the extension (<see cref="ProfileWithoutExtension"/>
+    /// is that profile now), or signed out of it. On a timer thread. Not raised for
+    /// the reset when the session ends.
     /// </summary>
     public event EventHandler<bool>? MissingChanged;
 
@@ -243,6 +284,7 @@ public sealed class SchoolProfileGuard : IDisposable
         _outside = Array.Empty<nint>();
         _outsideSince = null;
         _missingSince = null;
+        _missingExtension = false;
         _reportedOutside = false;
         _reportedMissing = false;
     }
@@ -288,16 +330,21 @@ public sealed class SchoolProfileGuard : IDisposable
         var now = _clock.GetUtcNow();
 
         bool missingChanged, missing;
-        SchoolProfileStatus previous;
+        SchoolProfileReading previous;
         string? reportKind = null;
         lock (_gate)
         {
             if (_sessionId != sessionId) return;
-            previous = _reading.Status;
+            previous = _reading;
             _reading = reading;
             _outside = outside.Select(w => w.Window.Handle).ToArray();
             missing = reading.Status == SchoolProfileStatus.Missing;
-            missingChanged = missing != (previous == SchoolProfileStatus.Missing);
+            var wasMissing = previous.Status == SchoolProfileStatus.Missing;
+            // While missing, what is missing can change too (#536): the student
+            // signed in to a profile without the extension, or out of it.
+            missingChanged = missing != wasMissing
+                             || (missing && !string.Equals(reading.Profile, previous.Profile, StringComparison.OrdinalIgnoreCase));
+            var missingExtension = missing && reading.Profile is not null;
 
             // What the teacher is told: only what the student hasn't resolved in time.
             var reportable = outside.Any(w => w.Profile != EdgeWindowProfile.InPrivate);
@@ -322,16 +369,28 @@ public sealed class SchoolProfileGuard : IDisposable
             }
             else
             {
+                // Signing in and adding the extension are two steps (#536): the
+                // student who signs in to a profile without it gets the report time
+                // again to add it, and the teacher hears of the step left undone.
+                if (_missingSince is not null && missingExtension != _missingExtension)
+                {
+                    _missingSince = null;
+                    _reportedMissing = false;
+                }
+                _missingExtension = missingExtension;
                 _missingSince ??= now;
                 if (!_reportedMissing && now - _missingSince >= _reportAfter)
                 {
                     _reportedMissing = true;
-                    reportKind = TamperKinds.SchoolProfileMissing;
+                    reportKind = missingExtension
+                        ? TamperKinds.SchoolProfileWithoutExtension
+                        : TamperKinds.SchoolProfileMissing;
                 }
             }
         }
 
-        if (reading.Status != previous)
+        if (reading.Status != previous.Status
+            || !string.Equals(reading.Profile, previous.Profile, StringComparison.OrdinalIgnoreCase))
         {
             if (reading.Status != SchoolProfileStatus.Missing)
                 _log.LogInformation("School profile: {Status} ({Profile})", reading.Status, reading.Profile ?? "none");

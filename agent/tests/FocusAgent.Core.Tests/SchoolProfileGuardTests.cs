@@ -180,6 +180,129 @@ public sealed class SchoolProfileGuardTests : IDisposable
         Assert.Equal(new[] { (sessionId, TamperKinds.SchoolProfileMissing) }, _h.Reporter.Calls);
     }
 
+    // ---- a school profile without the extension (#536) ------------------------
+
+    [Fact]
+    public async Task A_profile_signed_in_with_the_school_account_without_the_extension_is_missing_with_its_folder()
+    {
+        _h.Profiles.Remove("Profile 1");
+        _h.Windows.Open(School, Personal);
+        _h.ExtensionConnected();
+        await _h.JoinAsync();
+        _h.FirstScan();
+
+        Assert.True(_h.Guard.IsMissing);
+        Assert.Equal("Profile 1", _h.Guard.ProfileWithoutExtension);
+        Assert.Equal(new SchoolProfileReading(SchoolProfileStatus.Missing, "Profile 1"), _h.Guard.Reading);
+        // Not the school profile yet: Edge is paused as a whole for it.
+        Assert.Null(_h.Guard.Profile);
+        Assert.Equal(new[] { true }, _h.MissingEvents);
+        Assert.Empty(_h.OutsideEvents);
+
+        // The student adds Anchor to it from the store.
+        _h.Profiles.SwitchOn("Profile 1");
+        _h.Clock.Advance(Scan);
+
+        Assert.False(_h.Guard.IsMissing);
+        Assert.Null(_h.Guard.ProfileWithoutExtension);
+        Assert.Equal("Profile 1", _h.Guard.Profile);
+        Assert.Equal(new[] { true, false }, _h.MissingEvents);
+        Assert.Empty(_h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Signing_in_to_a_profile_without_the_extension_and_out_again_says_what_is_missing_now()
+    {
+        _h.Profiles.Remove("Profile 1");
+        _h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", "", null));
+        _h.Windows.Open(School);
+        _h.ExtensionConnected();
+        await _h.JoinAsync();
+        _h.FirstScan();
+        Assert.True(_h.Guard.IsMissing);
+        Assert.Null(_h.Guard.ProfileWithoutExtension);
+
+        // Signed in to Profile 1, which never had the extension: still missing, but
+        // something else is.
+        _h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", SchoolAddress, SchoolOid));
+        _h.Clock.Advance(Scan);
+        Assert.Equal("Profile 1", _h.Guard.ProfileWithoutExtension);
+        Assert.Equal(new[] { true, true }, _h.MissingEvents);
+
+        // A scan that finds the same raises nothing.
+        _h.Clock.Advance(Scan);
+        Assert.Equal(2, _h.MissingEvents.Count);
+
+        // Signed out again.
+        _h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", "", null));
+        _h.Clock.Advance(Scan);
+        Assert.Null(_h.Guard.ProfileWithoutExtension);
+        Assert.Equal(new[] { true, true, true }, _h.MissingEvents);
+    }
+
+    [Fact]
+    public async Task A_school_profile_left_without_the_extension_is_told_to_the_teacher_as_such_once()
+    {
+        _h.Profiles.Remove("Profile 1");
+        _h.Windows.Open(School);
+        _h.ExtensionConnected();
+        var sessionId = await _h.JoinAsync();
+        _h.FirstScan();
+
+        _h.Run(Report - Scan);
+        Assert.Empty(_h.Reporter.Calls);
+        _h.Run(Scan);
+        _h.Run(Report * 2);
+
+        Assert.Equal(new[] { (sessionId, TamperKinds.SchoolProfileWithoutExtension) }, _h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Signing_in_and_adding_the_extension_each_get_the_report_time_and_done_in_time_nothing_is_told()
+    {
+        _h.Profiles.Remove("Profile 1");
+        _h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", "", null));
+        _h.Windows.Open(School);
+        _h.ExtensionConnected();
+        await _h.JoinAsync();
+        _h.FirstScan();
+
+        // Signed in just before the report time ran out...
+        _h.Run(Report - Scan * 2);
+        _h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", SchoolAddress, SchoolOid));
+        // ...adding the extension gets the report time of its own.
+        _h.Run(Report - Scan);
+        Assert.Empty(_h.Reporter.Calls);
+
+        _h.Profiles.SwitchOn("Profile 1");
+        _h.Run(Report * 2);
+
+        Assert.False(_h.Guard.IsMissing);
+        Assert.Empty(_h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Each_step_left_undone_is_told_to_the_teacher_as_what_it_is()
+    {
+        _h.Profiles.Remove("Profile 1");
+        _h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", "", null));
+        _h.Windows.Open(School);
+        _h.ExtensionConnected();
+        var sessionId = await _h.JoinAsync();
+        _h.FirstScan();
+
+        _h.Run(Report + Scan);
+        Assert.Equal(new[] { (sessionId, TamperKinds.SchoolProfileMissing) }, _h.Reporter.Calls);
+
+        // Signed in at last, to a profile without the extension, which then isn't added.
+        _h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", SchoolAddress, SchoolOid));
+        _h.Run(Report + Scan * 2);
+
+        Assert.Equal(
+            new[] { (sessionId, TamperKinds.SchoolProfileMissing), (sessionId, TamperKinds.SchoolProfileWithoutExtension) },
+            _h.Reporter.Calls);
+    }
+
     [Fact]
     public async Task A_device_where_the_extension_never_connected_is_left_alone()
     {

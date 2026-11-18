@@ -98,6 +98,15 @@ public sealed class OverlayVisualTests
         AssertOverlayRendersAndTearsDownAsync(
             extraArgs: [AgentSelfTestProcess.OverlaySchoolProfileArg], artifactPrefix: "overlay-school-profile");
 
+    /// <summary>
+    /// #536: the variant for an Edge paused because the profile signed in with the
+    /// school account doesn't have the extension, with its "add Anchor" action.
+    /// </summary>
+    [Fact]
+    public Task SchoolExtensionPausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlaySchoolExtensionArg], artifactPrefix: "overlay-school-extension");
+
     private static async Task AssertOverlayRendersAndTearsDownAsync(string[] extraArgs, string artifactPrefix)
     {
         await using var agent = AgentSelfTestProcess.Launch(AgentSelfTestProcess.ShowTestOverlayArg, extraArgs: extraArgs);

@@ -306,6 +306,18 @@ Tot dan kun je Edge in deze sessie niet gebruiken. Ga intussen verder met een va
   <data name="Overlay_SchoolAccount_Hint" xml:space="preserve">
     <value>Edge gaat {0} seconden open. Klik bovenaan in Edge op je profielfoto en meld je aan met dat account.</value>
   </data>
+  <data name="Overlay_SchoolExtension_Headline" xml:space="preserve">
+    <value>Voeg Anchor toe aan je schoolprofiel</value>
+  </data>
+  <data name="Overlay_SchoolExtension_Message" xml:space="preserve">
+    <value>Je bent in Edge aangemeld met je schoolaccount, maar Anchor moet nog aan je schoolprofiel worden toegevoegd. Tot dan kun je Edge in deze sessie niet gebruiken. Ga intussen verder met een van deze apps.</value>
+  </data>
+  <data name="Overlay_SchoolExtension_TurnBackOn" xml:space="preserve">
+    <value>Anchor toevoegen</value>
+  </data>
+  <data name="Overlay_SchoolExtension_Hint" xml:space="preserve">
+    <value>Edge gaat {0} seconden open bij Anchor in de store, in je schoolprofiel. Klik op Ophalen en daarna op Extensie toevoegen.</value>
+  </data>
   <data name="Overlay_SchoolProfile_Headline" xml:space="preserve">
     <value>Werk in je schoolprofiel</value>
   </data>

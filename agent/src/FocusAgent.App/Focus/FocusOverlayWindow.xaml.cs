@@ -62,10 +62,11 @@ public sealed partial class FocusOverlayWindow : Window
 
     /// <summary>
     /// The overlay for an Edge paused because its extension is off (#427), because
-    /// it may no longer work on all sites (#524), or because no Edge profile is
-    /// signed in with the school account (#525), and for one Edge window paused
-    /// because it is outside the school profile (#525): why it went away, the one
-    /// action that puts that right, and the other allowed apps to carry on with.
+    /// it may no longer work on all sites (#524), because no Edge profile is signed
+    /// in with the school account (#525) or because the one that is lacks the
+    /// extension (#536), and for one Edge window paused because it is outside the
+    /// school profile (#525): why it went away, the one action that puts that right,
+    /// and the other allowed apps to carry on with.
     /// </summary>
     public void UpdateBrowserPausedContent(IReadOnlyList<AllowedAppRule> allowedRules, BrowserPausedPrompt prompt)
     {
@@ -89,6 +90,7 @@ public sealed partial class FocusOverlayWindow : Window
     {
         ExtensionPauseReason.NoSiteAccess => "Overlay_SiteAccess",
         ExtensionPauseReason.NoSchoolProfile => "Overlay_SchoolAccount",
+        ExtensionPauseReason.SchoolProfileWithoutExtension => "Overlay_SchoolExtension",
         ExtensionPauseReason.OutsideSchoolProfile => "Overlay_SchoolProfile",
         _ => "Overlay_BrowserPaused",
     };
@@ -175,11 +177,13 @@ public sealed partial class FocusOverlayWindow : Window
     {
         if (_browserPrompt is not { } prompt)
             return;
-        if (prompt.Reason == ExtensionPauseReason.OutsideSchoolProfile)
+        if (prompt.Reason is ExtensionPauseReason.OutsideSchoolProfile
+            or ExtensionPauseReason.SchoolProfileWithoutExtension)
         {
             // #525: the action closes the paused window and brings the school
-            // profile forward itself; bringing "Edge" forward could pick the
-            // paused window's profile.
+            // profile forward itself; #536: it opens the store listing in the
+            // school profile. Bringing "Edge" forward after it could pick another
+            // profile's window.
             prompt.TurnBackOn();
             _onLaunched(prompt.Browser);
             return;

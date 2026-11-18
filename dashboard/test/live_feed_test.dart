@@ -218,6 +218,11 @@ void main() {
           'Ada is not signed in to Edge with their school account.',
           'Ada is in Edge niet aangemeld met het schoolaccount.',
         ),
+        // #536: signed in, but Anchor was never added to that profile.
+        'school_profile_without_extension': (
+          "Ada hasn't added Anchor to their school profile in Edge.",
+          'Ada heeft Anchor nog niet toegevoegd aan het schoolprofiel in Edge.',
+        ),
         // A kind this dashboard doesn't know yet: a sentence, not the code.
         'clock_tampered': (
           "Tampering detected on Ada's computer.",

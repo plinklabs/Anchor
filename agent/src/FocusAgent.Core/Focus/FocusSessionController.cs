@@ -90,8 +90,10 @@ public sealed class FocusSessionController : IAsyncDisposable
     /// The student's "turn the extension back on" action on the paused-Edge
     /// overlay (#427): opens Edge for the guard's repair window, and when Edge is
     /// paused for the extension's site access, has the extension open its own page
-    /// (#524). Returns false when Edge isn't paused. Also driven by the dev status endpoint so the
-    /// headless e2e can take the action without clicking the overlay.
+    /// (#524); when it is paused because the school profile lacks the extension,
+    /// opens the store listing in that profile (#536). Returns false when Edge isn't
+    /// paused. Also driven by the dev status endpoint so the headless e2e can take
+    /// the action without clicking the overlay.
     /// </summary>
     public bool TurnExtensionBackOn() => _guard?.BeginRepair() ?? false;
 

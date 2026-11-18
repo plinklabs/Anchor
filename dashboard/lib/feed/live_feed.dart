@@ -119,6 +119,8 @@ String feedSentence(
         'agent_unavailable' => l10n.feedTamperAgentUnavailable(who, n),
         'outside_school_profile' => l10n.feedTamperOutsideSchoolProfile(who, n),
         'school_profile_missing' => l10n.feedTamperSchoolProfileMissing(who, n),
+        'school_profile_without_extension' =>
+          l10n.feedTamperSchoolProfileWithoutExtension(who, n),
         _ => l10n.feedTamperOther(who, n),
       };
     case 'UnfilteredSite':

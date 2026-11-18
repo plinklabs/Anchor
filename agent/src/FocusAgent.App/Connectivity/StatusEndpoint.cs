@@ -74,7 +74,9 @@ namespace FocusAgent.App.Connectivity;
 /// open Edge profiles with the extension switched off (#518), why Edge is paused
 /// and what the extension says about its own settings (#524); <c>schoolProfile</c>
 /// (#525): whether Edge has a profile signed in with the school account, which
-/// one, and the windows outside it the last scan found; <c>addressBar</c> (#526):
+/// one, and the windows outside it the last scan found, the one signed in that
+/// lacks the extension and what the overlay's buttons last opened in which profile
+/// (#536); <c>addressBar</c> (#526):
 /// whether the agent is reading Edge's address bar (only during a session), how
 /// many times it has, and the off-list hosts it reported in this session; and
 /// <c>overlay</c> (#452): what the focus overlay shows while it is up

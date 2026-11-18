@@ -150,10 +150,113 @@ public sealed class SchoolProfileTests
 }
 
 /// <summary>
+/// Asserting e2e for #536: the Edge profile signed in with the school account
+/// doesn't have Anchor's extension (a laptop with the guided install, where the
+/// student signed in to a profile the extension was never added to). Edge is
+/// paused for that, not for signing in; the overlay's button opens the store
+/// listing in that profile; adding the extension there lifts the pause; and the
+/// teacher hears of it as such, or not at all when the student adds it in time.
+/// The same stand-ins as <see cref="SchoolProfileTests"/>: the e2e's Edge is never
+/// started, so what the button opened is read from /status.
+/// </summary>
+[Collection(AgentE2ECollection.Name)]
+[SupportedOSPlatform("windows")]
+public sealed class SchoolProfileWithoutExtensionTests
+{
+    private readonly BackendFixture _backend;
+    public SchoolProfileWithoutExtensionTests(BackendFixture backend) => _backend = backend;
+
+    [Fact]
+    public async Task ASchoolProfileWithoutTheExtension_PausesEdgeToAddAnchor_TheButtonOpensTheStoreInIt_AndAnUnresolvedOneReachesTheTeacherAsSuch()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(
+            _backend.Url, api, signedIn: true, schoolProfileHasExtension: false);
+
+        // 1. The student is signed in to Edge with the school account, in a profile
+        //    Anchor was never added to: Edge is paused for that, not for signing in.
+        await run.WaitForAsync(
+            s => s.ExtensionGuard is { State: "Paused", PauseReason: "SchoolProfileWithoutExtension" }
+                 && s.SchoolProfile is { Status: "Missing", WithoutExtension: "Default" },
+            TimeSpan.FromSeconds(10), "Edge to be paused for the school profile without the extension");
+
+        // 2. Not resolved in time: the teacher is told once that Anchor isn't in the
+        //    school profile; never that the student isn't signed in, nor "switched off".
+        Assert.True(
+            await TamperReports.WaitForAsync(
+                api, run.SessionId, "school_profile_without_extension", 1,
+                SchoolProfileRun.Report + TimeSpan.FromSeconds(10)),
+            "The school profile stayed without the extension past the report time, but the teacher was not told (once).");
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "school_profile_missing"));
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "extension_disabled"));
+
+        // 3. The overlay's button opens Edge for the repair window, at Anchor's
+        //    store listing, in the profile signed in with the school account.
+        Assert.True(await run.Agent.TurnExtensionBackOnAsync(), "The agent refused to open the store listing.");
+        var opened = await run.WaitForAsync(
+            s => s.ExtensionGuard is { State: "Repairing", PauseReason: "SchoolProfileWithoutExtension" }
+                 && s.SchoolProfile?.LastOpened is not null,
+            TimeSpan.FromSeconds(3), "Edge to open at the store listing in the school profile");
+        Assert.Equal(
+            new ProfileOpenedSnapshot("Default", FocusAgent.Core.Extension.EdgeExtensionPolicy.StoreListingUrl),
+            opened!.SchoolProfile!.LastOpened);
+
+        // 4. The student adds Anchor there: the pause is over for good.
+        run.AddExtension("Default");
+        await run.WaitForAsync(
+            s => s.ExtensionGuard?.State == "Present" && s.SchoolProfile is { Status: "Found", Profile: "Default" },
+            TimeSpan.FromSeconds(6), "the pause to lift once Anchor was added to the school profile");
+        await Task.Delay(SchoolProfileRun.Repair);
+        Assert.Equal("Present", (await run.Agent.TryGetStatusAsync())?.ExtensionGuard?.State);
+        Assert.Equal(1, await TamperReports.CountAsync(api, run.SessionId, "school_profile_without_extension"));
+    }
+
+    [Fact]
+    public async Task SigningInToAProfileWithoutTheExtension_ChangesWhatThePauseSays_AndAddingAnchorInTimeTellsTheTeacherNothing()
+    {
+        // A report time long enough for both steps to be taken in time.
+        var report = TimeSpan.FromSeconds(20);
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(
+            _backend.Url, api, signedIn: false, schoolProfileHasExtension: false, report: report);
+        await run.WaitForAsync(
+            s => s.ExtensionGuard is { State: "Paused", PauseReason: "NoSchoolProfile" }
+                 && s.SchoolProfile is { Status: "Missing", WithoutExtension: null },
+            TimeSpan.FromSeconds(10), "Edge to be paused for no profile signed in with the school account");
+        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge");
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        Assert.False(WindowCapture.IsIconic(school.Handle), "The Edge window was taken down before anything changed.");
+
+        // 1. The student signs in to Edge with the school account, in a profile
+        //    without Anchor: the pause now says to add Anchor, and takes Edge down
+        //    again to say so.
+        run.WriteLocalState(signedIn: true);
+        await run.WaitForAsync(
+            s => s.ExtensionGuard is { State: "Paused", PauseReason: "SchoolProfileWithoutExtension" }
+                 && s.SchoolProfile?.WithoutExtension == "Default",
+            TimeSpan.FromSeconds(6), "the pause to say Anchor still has to be added to the school profile");
+        Assert.True(
+            await BrowserPauseRun.WaitForIconicAsync(school.Handle, expected: true, TimeSpan.FromSeconds(5)),
+            "Edge was paused anew for the school profile without the extension, but its window was not minimized.");
+
+        // 2. They add Anchor to it in time: the pause is over, and the teacher hears
+        //    of neither step.
+        run.AddExtension("Default");
+        await run.WaitForAsync(
+            s => s.ExtensionGuard?.State == "Present" && s.SchoolProfile is { Status: "Found", Profile: "Default" },
+            TimeSpan.FromSeconds(6), "the pause to lift once Anchor was added to the school profile");
+        await Task.Delay(report + TimeSpan.FromSeconds(3));
+        foreach (var kind in new[] { "school_profile_without_extension", "school_profile_missing", "extension_disabled" })
+            Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, kind));
+    }
+}
+
+/// <summary>
 /// #525, what the student sees: a window outside the school profile that comes
-/// forward gets the school-profile overlay ("Work in your school profile"), and
-/// with no profile signed in with the school account at all Edge gets the overlay
-/// that names the account; either way the overlay has the keyboard. Their copy in
+/// forward gets the school-profile overlay ("Work in your school profile"), with
+/// no profile signed in with the school account at all Edge gets the overlay that
+/// names the account, and (#536) with one that lacks the extension Edge gets the
+/// overlay that says to add Anchor to it; either way the overlay has the keyboard. Their copy in
 /// both languages is <c>I18nTests</c>' and their rendering <c>OverlayVisualTests</c>';
 /// this is the live rule bringing them up. Depends on the real foreground, so it
 /// runs in the non-blocking Visual lane, like <see cref="ExtensionSiteAccessOverlayTests"/>.
@@ -203,6 +306,23 @@ public sealed class SchoolProfileOverlayTests
         Assert.True(WindowCapture.ActivateOnce(window.Handle), "The Edge window could not be brought forward.");
 
         await AssertOverlayAsync(run, window.Handle, "SchoolAccountPaused");
+    }
+
+    [Fact]
+    public async Task ASchoolProfileWithoutTheExtension_EdgeComingForward_GetsTheOverlayToAddAnchor_WithTheKeyboard()
+    {
+        // #536: signed in with the school account, in a profile without Anchor.
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(
+            _backend.Url, api, signedIn: true, schoolProfileHasExtension: false);
+        await run.WaitForAsync(
+            s => s.ExtensionGuard is { State: "Paused", PauseReason: "SchoolProfileWithoutExtension" },
+            TimeSpan.FromSeconds(10), "Edge to be paused for the school profile without the extension");
+
+        var window = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge");
+        Assert.True(WindowCapture.ActivateOnce(window.Handle), "The Edge window could not be brought forward.");
+
+        await AssertOverlayAsync(run, window.Handle, "SchoolExtensionPaused");
     }
 
     private static async Task AssertOverlayAsync(SchoolProfileRun run, IntPtr window, string expected)
@@ -266,7 +386,15 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     public Guid SessionId => _sessionId ?? throw new InvalidOperationException("No session started.");
     private string UserData => Path.Combine(_root, "User Data");
 
-    public static async Task<SchoolProfileRun> StartAsync(string backendUrl, BackendClient api, bool signedIn)
+    /// <param name="schoolProfileHasExtension">
+    /// False: the Default profile never had the extension (#536), as a profile the
+    /// student signed in to on a laptop with the guided install; Profile 1 still has
+    /// it, and its extension is the one connected.
+    /// </param>
+    /// <param name="report">How long the teacher's reports wait; <see cref="Report"/> by default.</param>
+    public static async Task<SchoolProfileRun> StartAsync(
+        string backendUrl, BackendClient api, bool signedIn, bool schoolProfileHasExtension = true,
+        TimeSpan? report = null)
     {
         var stale = await api.GetRejoinableSessionIdsAsync();
         Assert.True(
@@ -277,8 +405,8 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
         var run = new SchoolProfileRun(api, Path.Combine(Path.GetTempPath(), "anchor-e2e-edge-" + Guid.NewGuid().ToString("N")));
         try
         {
-            foreach (var profile in new[] { "Default", "Profile 1" })
-                run.WritePreferences(profile);
+            run.WritePreferences("Default", withExtension: schoolProfileHasExtension);
+            run.WritePreferences("Profile 1");
             run.WriteLocalState(signedIn);
 
             var pipeName = "anchor-witness-e2e-" + Guid.NewGuid().ToString("N");
@@ -297,7 +425,7 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
                     // the impersonated student's.
                     ["Dev__ImpersonateUsername"] = SchoolAddress,
                     ["Session__SchoolProfileScanSeconds"] = "1",
-                    ["Session__SchoolProfileReportSeconds"] = ((int)Report.TotalSeconds).ToString(),
+                    ["Session__SchoolProfileReportSeconds"] = ((int)(report ?? Report).TotalSeconds).ToString(),
                     ["Session__ExtensionRepairSeconds"] = ((int)Repair.TotalSeconds).ToString(),
                 });
             await run.Agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
@@ -365,21 +493,32 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
         File.Move(temp, Path.Combine(UserData, "Local State"), overwrite: true);
     }
 
-    private void WritePreferences(string profile)
+    /// <summary>
+    /// The student adds Anchor to <paramref name="profile"/> from the store (#536):
+    /// Edge writes it to the profile's preferences.
+    /// </summary>
+    public void AddExtension(string profile = "Default") => WritePreferences(profile);
+
+    private void WritePreferences(string profile, bool withExtension = true)
     {
         var folder = Path.Combine(UserData, profile);
         Directory.CreateDirectory(folder);
-        var entry = new JsonObject
-        {
-            ["location"] = 1,
-            ["path"] = $"{StoreExtensionId}\\0.4.4_0",
-            ["disable_reasons"] = new JsonArray(),
-        };
+        var settings = new JsonObject();
+        if (withExtension)
+            settings[StoreExtensionId] = new JsonObject
+            {
+                ["location"] = 1,
+                ["path"] = $"{StoreExtensionId}\\0.4.4_0",
+                ["disable_reasons"] = new JsonArray(),
+            };
         var preferences = new JsonObject
         {
-            ["extensions"] = new JsonObject { ["settings"] = new JsonObject { [StoreExtensionId] = entry } },
+            ["extensions"] = new JsonObject { ["settings"] = settings },
         };
-        File.WriteAllText(Path.Combine(folder, "Secure Preferences"), preferences.ToJsonString());
+        // As Edge replaces it: in one move.
+        var temp = Path.Combine(folder, "Secure Preferences.tmp");
+        File.WriteAllText(temp, preferences.ToJsonString());
+        File.Move(temp, Path.Combine(folder, "Secure Preferences"), overwrite: true);
     }
 
     /// <summary>Poll /status until it matches, or fail naming what was awaited.</summary>
@@ -390,7 +529,8 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
             last is not null && predicate(last),
             $"Timed out after {timeout.TotalSeconds:N0}s waiting for {what} " +
             $"(guard: {last?.ExtensionGuard?.State ?? "<none>"}/{last?.ExtensionGuard?.PauseReason ?? "<none>"}, " +
-            $"school profile: {last?.SchoolProfile?.Status ?? "<none>"} ({last?.SchoolProfile?.Profile ?? "none"}), " +
+            $"school profile: {last?.SchoolProfile?.Status ?? "<none>"} ({last?.SchoolProfile?.Profile ?? "none"}, " +
+            $"without the extension: {last?.SchoolProfile?.WithoutExtension ?? "none"}), " +
             $"outside: {(last?.SchoolProfile?.OutsideWindows ?? []).Length}).");
         return last;
     }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
@@ -497,12 +498,16 @@ public class FocusSessionControllerTests : IDisposable
     /// windows open, and the school-profile guard's first scan done.
     /// </summary>
     private async Task<(FocusSessionController, Fixtures, Guid)> JoinWithSchoolProfileAsync(
-        bool signedIn = true, params BrowserWindowInfo[] windows)
+        bool signedIn = true, bool withoutExtension = false, params BrowserWindowInfo[] windows)
     {
         var fixtures = new Fixtures { WithGuard = true, WithSchoolProfile = true };
         _cleanup.Add(fixtures.EdgeProfiles);
         fixtures.EdgeProfiles.SwitchOn("Default");
-        fixtures.EdgeProfiles.SwitchOn("Profile 1");
+        // #536: Profile 1, signed in with the school account, never had the extension.
+        if (withoutExtension)
+            fixtures.EdgeProfiles.Remove("Profile 1");
+        else
+            fixtures.EdgeProfiles.SwitchOn("Profile 1");
         fixtures.EdgeProfiles.WriteLocalState(
             ("Default", "ada.personal@outlook.com", null),
             ("Profile 1", signedIn ? SchoolAddress : "", signedIn ? SchoolOid : null));
@@ -658,6 +663,28 @@ public class FocusSessionControllerTests : IDisposable
         Assert.Equal(SchoolAddress, shown.Prompt.Account);
         // Every Edge window goes down with Edge, the school one included.
         Assert.Equal(new nint[] { SchoolWindow.Handle, PersonalWindow.Handle }, fixtures.Enforcer.Minimized.Order());
+    }
+
+    [Fact]
+    public async Task The_pause_for_a_school_profile_without_the_extension_says_so_and_its_button_opens_the_store_listing_in_it()
+    {
+        var (_, fixtures, _) = await JoinWithSchoolProfileAsync(
+            withoutExtension: true, windows: [SchoolWindow, PersonalWindow]);
+
+        Assert.True(fixtures.Guard!.IsBrowserPaused);
+        var shown = Assert.Single(fixtures.Overlay.PausedShown);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, shown.Prompt.Reason);
+        // Every Edge window goes down with Edge, the school profile's included.
+        Assert.Equal(new nint[] { SchoolWindow.Handle, PersonalWindow.Handle }, fixtures.Enforcer.Minimized.Order());
+
+        // The button: Edge opens for the repair window, at Anchor's store listing in
+        // the profile signed in with the school account. No window is closed.
+        Assert.True(shown.Prompt.TurnBackOn());
+
+        Assert.Equal(ExtensionGuardState.Repairing, fixtures.Guard.State);
+        Assert.Equal(new[] { "Profile 1" }, fixtures.Launcher.Opened);
+        Assert.Equal(new[] { EdgeExtensionPolicy.StoreListingUrl }, fixtures.Launcher.OpenedAt);
+        Assert.Empty(fixtures.Launcher.Closed);
     }
 
     [Fact]
@@ -1351,7 +1378,8 @@ public class FocusSessionControllerTests : IDisposable
                 Options.Create(new WitnessSettings()),
                 clock: fixtures.Clock,
                 selfCheck: selfCheck,
-                schoolProfile: fixtures.SchoolProfile);
+                schoolProfile: fixtures.SchoolProfile,
+                browserLauncher: fixtures.Launcher);
             fixtures.Guard = guard;
         }
         var controller = new FocusSessionController(
@@ -1505,13 +1533,19 @@ public class FocusSessionControllerTests : IDisposable
         public void Reset() => ResetCount++;
     }
 
-    /// <summary>What the school-profile button asked of the browser (#525).</summary>
+    /// <summary>What the school-profile buttons asked of the browser (#525, #536).</summary>
     private sealed class RecordingLauncher : IBrowserProfileLauncher
     {
         public List<nint> Closed { get; } = new();
         public List<string> Opened { get; } = new();
+        /// <summary>The address each <see cref="Opened"/> profile was opened at, null for none.</summary>
+        public List<string?> OpenedAt { get; } = new();
         public void CloseWindow(nint windowHandle) => Closed.Add(windowHandle);
-        public void OpenProfile(string profile) => Opened.Add(profile);
+        public void OpenProfile(string profile, string? url = null)
+        {
+            Opened.Add(profile);
+            OpenedAt.Add(url);
+        }
     }
 
     private sealed class NoAppIds : IBrowserWindowAppIds

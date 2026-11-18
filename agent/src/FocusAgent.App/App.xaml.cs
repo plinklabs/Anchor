@@ -320,6 +320,7 @@ public partial class App : Application
             if (Program.StatusEndpointPort is int port)
             {
                 var focusOverlay = _host.Services.GetRequiredService<IFocusOverlay>() as WinUiFocusOverlay;
+                var profileLauncher = _host.Services.GetRequiredService<IBrowserProfileLauncher>() as BrowserProfileLauncher;
                 var sleepClock = _host.Services.GetService<SimulatedSleepClock>();
                 _statusEndpoint = new StatusEndpoint(
                     _connection,
@@ -376,12 +377,18 @@ public partial class App : Application
                     // #449: the downloaded update the next start applies, if any.
                     pendingUpdate: () => _updateService?.PendingVersion,
                     // #525: where the school profile stands, and the overlay's "go
-                    // to my school profile" action.
+                    // to my school profile" action. #536: the profile signed in with
+                    // the school account that lacks the extension, and what the
+                    // overlay's buttons last opened in which profile.
                     schoolProfile: () => new
                     {
                         status = schoolProfile.Status.ToString(),
                         profile = schoolProfile.Profile,
                         outsideWindows = schoolProfile.OutsideWindows.Select(w => (long)w).ToArray(),
+                        withoutExtension = schoolProfile.ProfileWithoutExtension,
+                        lastOpened = profileLauncher?.LastOpened is { } opened
+                            ? new { profile = opened.Profile, url = opened.Url }
+                            : null,
                     },
                     onGoToSchoolProfile: _focus.GoToSchoolProfile,
                     // #526: whether the address bar is being read, how often it
@@ -844,9 +851,11 @@ public partial class App : Application
         // allowed-app rows then stand for the apps a student carries on with);
         // #524: --overlay-site-access its variant for the extension's site access;
         // #525: --overlay-school-account the one for no profile signed in with the
-        // school account, --overlay-school-profile the one for a window outside it.
+        // school account, --overlay-school-profile the one for a window outside it;
+        // #536: --overlay-school-extension the one for a school profile without the
+        // extension.
         if (Program.OverlayPaused || Program.OverlaySiteAccess || Program.OverlaySchoolAccount
-            || Program.OverlaySchoolProfile)
+            || Program.OverlaySchoolProfile || Program.OverlaySchoolExtension)
             overlay.ShowBrowserPaused(
                 rules,
                 new BrowserPausedPrompt(
@@ -856,6 +865,7 @@ public partial class App : Application
                     Program.OverlaySiteAccess ? ExtensionPauseReason.NoSiteAccess
                     : Program.OverlaySchoolAccount ? ExtensionPauseReason.NoSchoolProfile
                     : Program.OverlaySchoolProfile ? ExtensionPauseReason.OutsideSchoolProfile
+                    : Program.OverlaySchoolExtension ? ExtensionPauseReason.SchoolProfileWithoutExtension
                     : ExtensionPauseReason.ExtensionOff,
                     Account: SelfTestDemoContent.SchoolAccount),
                 pausedWindowHandle: IntPtr.Zero);
@@ -1196,11 +1206,13 @@ public partial class App : Application
 
             // #525: Edge paused because no profile is signed in with the school
             // account, naming it, and one Edge window paused because it is outside
-            // the school profile.
+            // the school profile; #536: Edge paused because the profile signed in
+            // with the school account doesn't have the extension.
             foreach (var (reason, key) in new[]
                      {
                          (ExtensionPauseReason.NoSchoolProfile, "schoolaccount"),
                          (ExtensionPauseReason.OutsideSchoolProfile, "schoolprofile"),
+                         (ExtensionPauseReason.SchoolProfileWithoutExtension, "schoolextension"),
                      })
             {
                 overlay.UpdateBrowserPausedContent(

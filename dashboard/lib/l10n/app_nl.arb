@@ -173,6 +173,7 @@
   "feedTamperAgentUnavailable": "{who, select, named{De Anchor-app van {name} draait niet meer.} other{De Anchor-app van een leerling draait niet meer.}}",
   "feedTamperOutsideSchoolProfile": "{who, select, named{{name} hield een Edge-venster buiten het schoolprofiel open.} other{Een leerling hield een Edge-venster buiten het schoolprofiel open.}}",
   "feedTamperSchoolProfileMissing": "{who, select, named{{name} is in Edge niet aangemeld met het schoolaccount.} other{Een leerling is in Edge niet aangemeld met het schoolaccount.}}",
+  "feedTamperSchoolProfileWithoutExtension": "{who, select, named{{name} heeft Anchor nog niet toegevoegd aan het schoolprofiel in Edge.} other{Een leerling heeft Anchor nog niet toegevoegd aan het schoolprofiel in Edge.}}",
   "feedUnfilteredSite": "{who, select, named{{name} had {host} open in Edge, maar die website is niet toegelaten en werd niet geblokkeerd.} other{Een leerling had {host} open in Edge, maar die website is niet toegelaten en werd niet geblokkeerd.}}",
   "feedTamperOther": "{who, select, named{Manipulatie gedetecteerd op de computer van {name}.} other{Manipulatie gedetecteerd op de computer van een leerling.}}",
   "feedOther": "Er is iets gebeurd in de sessie.",

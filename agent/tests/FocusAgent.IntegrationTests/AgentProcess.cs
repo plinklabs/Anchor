@@ -52,12 +52,22 @@ internal sealed record AddressBarSnapshot(
 /// The school-profile rule as exposed on /status (#525): whether Edge has a
 /// profile signed in with the school account (<c>Unknown</c> / <c>Found</c> /
 /// <c>Missing</c>), which one (its folder), and the windows outside it (another
-/// profile, Guest, InPrivate) the last scan found.
+/// profile, Guest, InPrivate) the last scan found. #536: the profile signed in
+/// with the school account while it lacks the extension, and what the overlay's
+/// buttons last opened in which profile (the e2e's Edge is a stand-in that is
+/// never started).
 /// </summary>
 internal sealed record SchoolProfileSnapshot(
     [property: JsonPropertyName("status")] string? Status,
     [property: JsonPropertyName("profile")] string? Profile,
-    [property: JsonPropertyName("outsideWindows")] long[]? OutsideWindows);
+    [property: JsonPropertyName("outsideWindows")] long[]? OutsideWindows,
+    [property: JsonPropertyName("withoutExtension")] string? WithoutExtension = null,
+    [property: JsonPropertyName("lastOpened")] ProfileOpenedSnapshot? LastOpened = null);
+
+/// <summary>What the agent last opened in which Edge profile (#536): the profile folder, and the address or null.</summary>
+internal sealed record ProfileOpenedSnapshot(
+    [property: JsonPropertyName("profile")] string? Profile,
+    [property: JsonPropertyName("url")] string? Url);
 
 /// <summary>
 /// The log uploads as exposed on /status (#446): how many passes ran in this agent

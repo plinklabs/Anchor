@@ -625,7 +625,7 @@ void main() {
 
   testWidgets(
     'the school-profile reports read as sentences in the feed and flag the '
-    'student (#525)',
+    'student (#525, #536)',
     (tester) async {
       final h = await _bootToLiveSession(
         tester,
@@ -634,14 +634,16 @@ void main() {
 
       // During a session only the Edge profile signed in with the school
       // account may be used. The agent tells the teacher only what the student
-      // leaves unresolved: a paused window of another profile still open, or
-      // no profile signed in with the school account at all.
+      // leaves unresolved: a paused window of another profile still open, no
+      // profile signed in with the school account at all, or (#536) one that
+      // is, without the Anchor extension.
       h.sessions.roster = [
         _participant('Ada', ParticipantLiveState.joined, tampered: true),
       ];
       for (final (kind, minute) in [
         ('outside_school_profile', 22),
         ('school_profile_missing', 23),
+        ('school_profile_without_extension', 24),
       ]) {
         h.hub.emit('TamperDetected', {
           'sessionId': _sessionId,
@@ -661,8 +663,16 @@ void main() {
         find.text('Ada is not signed in to Edge with their school account.'),
         findsOneWidget,
       );
+      expect(
+        find.text("Ada hasn't added Anchor to their school profile in Edge."),
+        findsOneWidget,
+      );
       // Never the kind itself, and the roster flags her like any tampering.
-      for (final raw in ['outside_school_profile', 'school_profile_missing']) {
+      for (final raw in [
+        'outside_school_profile',
+        'school_profile_missing',
+        'school_profile_without_extension',
+      ]) {
         expect(find.textContaining(raw), findsNothing, reason: raw);
       }
       expect(find.byTooltip('Tampering detected'), findsOneWidget);

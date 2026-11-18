@@ -59,9 +59,20 @@ public static class TamperKinds
 
     /// <summary>
     /// During a session no Edge profile was signed in with the student's school
-    /// account (or the one that is lacked the extension) for longer than
+    /// account for longer than
     /// <see cref="Settings.SessionSettings.SchoolProfileReportSeconds"/> (#525).
     /// Edge is paused meanwhile, with a message naming the account to sign in with.
     /// </summary>
     public const string SchoolProfileMissing = "school_profile_missing";
+
+    /// <summary>
+    /// During a session the Edge profile signed in with the student's school
+    /// account stayed without Anchor's extension for longer than
+    /// <see cref="Settings.SessionSettings.SchoolProfileReportSeconds"/> (#536).
+    /// Edge is paused meanwhile, with a message that Anchor still has to be added
+    /// to that profile and a button that opens the store listing in it. Signing in
+    /// and adding the extension are two steps, each with the report time of its
+    /// own, so the teacher hears of the one the student left undone.
+    /// </summary>
+    public const string SchoolProfileWithoutExtension = "school_profile_without_extension";
 }

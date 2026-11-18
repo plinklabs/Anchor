@@ -702,6 +702,16 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String feedTamperSchoolProfileWithoutExtension(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name hasn\'t added Anchor to their school profile in Edge.',
+      'other':
+          'A student hasn\'t added Anchor to their school profile in Edge.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String feedUnfilteredSite(String who, String name, String host) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named':
