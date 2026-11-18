@@ -102,7 +102,10 @@ class _SessionPageState extends State<SessionPage> {
   bool _notYours = false;
   SessionDetail? _detail;
   List<UnblockRequestSummary> _pendingRequests = const [];
-  final Set<String> _approving = {};
+  // The decisions on pending requests still on their way to the backend: by
+  // host for the whole class, by host and student for one student
+  // ([_decisionKey]).
+  final Map<String, _Decision> _deciding = {};
   String? _unblockError;
   List<BundleSummary>? _availableBundles;
   bool _updatingBundles = false;
@@ -349,55 +352,73 @@ class _SessionPageState extends State<SessionPage> {
     unawaited(_hub.disconnect());
   }
 
-  Future<void> _approveHost(UnblockRequestSummary summary) async {
-    final l10n = AppLocalizations.of(context);
-    setState(() {
-      _approving.add(summary.host);
-      _unblockError = null;
-    });
-    try {
-      // One POST per pending student. Run sequentially: the volume is small
-      // (a class is rarely > 30 kids) and serial avoids tripping any
-      // backend rate limit we might add later.
-      for (final requester in summary.requesters) {
-        await widget.sessions.approveUnblock(
-          widget.sessionId,
-          requester.userId,
-          summary.host,
-        );
-      }
-      // Refresh from the source of truth so a request that arrived between
-      // initial load and approval doesn't get accidentally hidden.
-      await _loadPendingRequests();
-    } catch (e) {
-      if (!mounted) return;
-      final line = _failureText(e, l10n.sessionApproveError, l10n);
-      setState(() => _unblockError = line);
-    } finally {
-      if (mounted) setState(() => _approving.remove(summary.host));
-    }
-  }
+  /// Approve one student's request (#101): the per-student scope, the safer
+  /// default. Decisions are per student (#523): a classmate who asked for the
+  /// same site stays pending.
+  Future<void> _approveStudent(
+    UnblockRequestSummary summary,
+    UnblockRequestRequester requester,
+  ) => _decide(
+    _decisionKey(summary.host, requester.userId),
+    _Decision.approve,
+    (l10n) => l10n.sessionApproveError,
+    () => widget.sessions.approveUnblock(
+      widget.sessionId,
+      requester.userId,
+      summary.host,
+    ),
+  );
+
+  /// Deny one student's request (#523): it leaves the pending list, and their
+  /// block page says it was declined. They can ask again.
+  Future<void> _denyStudent(
+    UnblockRequestSummary summary,
+    UnblockRequestRequester requester,
+  ) => _decide(
+    _decisionKey(summary.host, requester.userId),
+    _Decision.deny,
+    (l10n) => l10n.sessionDenyError,
+    () => widget.sessions.denyUnblock(
+      widget.sessionId,
+      requester.userId,
+      summary.host,
+    ),
+  );
 
   /// Whole-class approval (#101): one POST that adds the host to the live
   /// session allowlist for everyone, rather than a grant per requesting student.
-  Future<void> _approveHostForClass(UnblockRequestSummary summary) async {
+  Future<void> _approveHostForClass(UnblockRequestSummary summary) => _decide(
+    summary.host,
+    _Decision.approve,
+    (l10n) => l10n.sessionApproveError,
+    () =>
+        widget.sessions.approveUnblockForClass(widget.sessionId, summary.host),
+  );
+
+  /// Runs one of the teacher's decisions on a request, [key] busy meanwhile,
+  /// then refreshes the pending list from the source of truth, so a request
+  /// that arrived in between doesn't get hidden. A failure reads as
+  /// [generic]'s sentence, never the raw exception (#383).
+  Future<void> _decide(
+    String key,
+    _Decision decision,
+    String Function(AppLocalizations) generic,
+    Future<void> Function() send,
+  ) async {
     final l10n = AppLocalizations.of(context);
     setState(() {
-      _approving.add(summary.host);
+      _deciding[key] = decision;
       _unblockError = null;
     });
     try {
-      await widget.sessions.approveUnblockForClass(
-        widget.sessionId,
-        summary.host,
-      );
+      await send();
       await _loadPendingRequests();
     } catch (e) {
       if (!mounted) return;
-      final line = _failureText(e, l10n.sessionApproveError, l10n);
+      final line = _failureText(e, generic(l10n), l10n);
       setState(() => _unblockError = line);
     } finally {
-      if (mounted) setState(() => _approving.remove(summary.host));
+      if (mounted) setState(() => _deciding.remove(key));
     }
   }
 
@@ -442,8 +463,8 @@ class _SessionPageState extends State<SessionPage> {
       // UnblockRequested = a student just clicked Request access. Re-fetch
       // the pending list rather than maintain a separate in-memory tracker:
       // the GET endpoint already de-dupes per (student, host) and filters
-      // out already-granted entries, so this is the cheapest way to stay
-      // consistent with the source of truth.
+      // out what was granted or denied (#523), so this is the cheapest way to
+      // stay consistent with the source of truth.
       if (evt.kind == 'UnblockRequested') {
         _loadPendingRequests();
       }
@@ -689,9 +710,10 @@ class _SessionPageState extends State<SessionPage> {
         ? _PendingRequestsPanel(
             key: key,
             requests: _pendingRequests,
-            approving: _approving,
+            deciding: _deciding,
             error: _unblockError,
-            onApprove: _approveHost,
+            onApprove: _approveStudent,
+            onDeny: _denyStudent,
             onApproveClass: _approveHostForClass,
           )
         : null;
@@ -1742,20 +1764,29 @@ class _RosterRow extends StatelessWidget {
   }
 }
 
+/// A decision the teacher made on a pending request that is still on its way
+/// to the backend: which button shows the spinner.
+enum _Decision { approve, deny }
+
+/// What [_SessionPageState._deciding] keys one student's request by.
+String _decisionKey(String host, String userId) => '$host\n$userId';
+
 class _PendingRequestsPanel extends StatelessWidget {
   const _PendingRequestsPanel({
     super.key,
     required this.requests,
-    required this.approving,
+    required this.deciding,
     required this.error,
     required this.onApprove,
+    required this.onDeny,
     required this.onApproveClass,
   });
 
   final List<UnblockRequestSummary> requests;
-  final Set<String> approving;
+  final Map<String, _Decision> deciding;
   final String? error;
-  final void Function(UnblockRequestSummary) onApprove;
+  final void Function(UnblockRequestSummary, UnblockRequestRequester) onApprove;
+  final void Function(UnblockRequestSummary, UnblockRequestRequester) onDeny;
   final void Function(UnblockRequestSummary) onApproveClass;
 
   @override
@@ -1787,15 +1818,25 @@ class _PendingRequestsPanel extends StatelessWidget {
             child: ListView.builder(
               shrinkWrap: true,
               itemCount: requests.length,
-              itemBuilder: (context, i) => Padding(
-                padding: const EdgeInsets.only(bottom: PlinkSpacing.s2),
-                child: _PendingRequestRow(
-                  summary: requests[i],
-                  isApproving: approving.contains(requests[i].host),
-                  onApprove: () => onApprove(requests[i]),
-                  onApproveClass: () => onApproveClass(requests[i]),
-                ),
-              ),
+              itemBuilder: (context, i) {
+                final summary = requests[i];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+                  child: _PendingRequestRow(
+                    summary: summary,
+                    wholeClass: deciding[summary.host],
+                    deciding: {
+                      for (final r in summary.requesters)
+                        if (deciding[_decisionKey(summary.host, r.userId)]
+                            case final _Decision d)
+                          r.userId: d,
+                    },
+                    onApprove: (r) => onApprove(summary, r),
+                    onDeny: (r) => onDeny(summary, r),
+                    onApproveClass: () => onApproveClass(summary),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -1804,76 +1845,151 @@ class _PendingRequestsPanel extends StatelessWidget {
   }
 }
 
+/// One requested site: its host, then a line per student who asked for it,
+/// each with their own Approve and Deny (#523). A teacher may allow a site for
+/// one student and not for another.
 class _PendingRequestRow extends StatelessWidget {
   const _PendingRequestRow({
     required this.summary,
-    required this.isApproving,
+    required this.wholeClass,
+    required this.deciding,
     required this.onApprove,
+    required this.onDeny,
     required this.onApproveClass,
   });
 
   final UnblockRequestSummary summary;
-  final bool isApproving;
-  final VoidCallback onApprove;
+
+  /// The whole-class approval on its way, if any: every line waits on it.
+  final _Decision? wholeClass;
+
+  /// The decisions on their way, by student.
+  final Map<String, _Decision> deciding;
+  final void Function(UnblockRequestRequester) onApprove;
+  final void Function(UnblockRequestRequester) onDeny;
   final VoidCallback onApproveClass;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final names = summary.requesters.map((r) => r.displayName).join(', ');
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // The host is technical — set it in mono, like a spec.
-              Text(
+    final l10n = AppLocalizations.of(context);
+    final bool anyBusy = wholeClass != null || deciding.isNotEmpty;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            // The host is technical — set it in mono, like a spec.
+            Expanded(
+              child: Text(
                 summary.host,
                 style: _monoSpec(PlinkColors.ink, PlinkType.textSm),
               ),
-              const SizedBox(height: 2),
-              Text(
-                AppLocalizations.of(
-                  context,
-                ).sessionRequesters(summary.count, names),
-                style: theme.textTheme.bodySmall,
+            ),
+            if (wholeClass != null)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: PlinkSpacing.s3),
+                child: _ButtonSpinner(),
               ),
-            ],
-          ),
-        ),
-        const SizedBox(width: PlinkSpacing.s3),
-        // Primary action is per-student — the design's safer default (#101) —
-        // and a calm ink button, not the magenta spark. The broader "whole
-        // class" scope is tucked behind the kebab so it takes a deliberate tap.
-        OutlinedButton(
-          onPressed: isApproving ? null : onApprove,
-          child: isApproving
-              ? const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Text(AppLocalizations.of(context).actionApprove),
-        ),
-        PopupMenuButton<String>(
-          tooltip: AppLocalizations.of(context).sessionMoreApprovalOptions,
-          enabled: !isApproving,
-          onSelected: (value) {
-            if (value == 'class') onApproveClass();
-          },
-          itemBuilder: (context) => [
-            PopupMenuItem<String>(
-              value: 'class',
-              child: Text(
-                AppLocalizations.of(context).sessionApproveWholeClass,
-              ),
+            // The broader "whole class" scope is tucked behind the kebab so it
+            // takes a deliberate tap (#101).
+            PopupMenuButton<String>(
+              tooltip: l10n.sessionMoreApprovalOptions,
+              enabled: !anyBusy,
+              onSelected: (value) {
+                if (value == 'class') onApproveClass();
+              },
+              itemBuilder: (context) => [
+                PopupMenuItem<String>(
+                  value: 'class',
+                  child: Text(l10n.sessionApproveWholeClass),
+                ),
+              ],
             ),
           ],
         ),
+        for (final requester in summary.requesters)
+          _RequesterLine(
+            name: requester.displayName,
+            busy: deciding[requester.userId],
+            locked: wholeClass != null,
+            onApprove: () => onApprove(requester),
+            onDeny: () => onDeny(requester),
+          ),
       ],
     );
   }
+}
+
+/// One student's request for a site: their name, Approve and Deny.
+class _RequesterLine extends StatelessWidget {
+  const _RequesterLine({
+    required this.name,
+    required this.busy,
+    required this.locked,
+    required this.onApprove,
+    required this.onDeny,
+  });
+
+  final String name;
+
+  /// The decision on its way for this student, if any.
+  final _Decision? busy;
+
+  /// Whether a whole-class approval holds this line too.
+  final bool locked;
+  final VoidCallback onApprove;
+  final VoidCallback onDeny;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
+    final bool enabled = busy == null && !locked;
+    return Padding(
+      padding: const EdgeInsets.only(top: PlinkSpacing.s1),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              name,
+              style: theme.textTheme.bodySmall,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: PlinkSpacing.s3),
+          // Approve is the calm ink button, not the magenta spark (#169); Deny
+          // sits beside it, quieter, as the teacher's other answer.
+          OutlinedButton(
+            onPressed: enabled ? onApprove : null,
+            child: busy == _Decision.approve
+                ? const _ButtonSpinner()
+                : Text(l10n.actionApprove),
+          ),
+          const SizedBox(width: PlinkSpacing.s2),
+          TextButton(
+            onPressed: enabled ? onDeny : null,
+            // Ink, like Approve: the theme would paint a text button in the
+            // magenta spark, which is reserved for liveness.
+            style: TextButton.styleFrom(foregroundColor: PlinkColors.ink),
+            child: busy == _Decision.deny
+                ? const _ButtonSpinner()
+                : Text(l10n.actionDeny),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ButtonSpinner extends StatelessWidget {
+  const _ButtonSpinner();
+
+  @override
+  Widget build(BuildContext context) => const SizedBox(
+    width: 14,
+    height: 14,
+    child: CircularProgressIndicator(strokeWidth: 2),
+  );
 }
 
 class _SessionSummaryPanel extends StatelessWidget {

@@ -23,7 +23,9 @@
       "UnblockApproved",
       "TamperDetected",
       "AgentMissing",
-      "NotConnected"
+      "NotConnected",
+      "UnblockDenied",
+      "UnfilteredSite"
     ],
     "ClassMembershipRole": ["Member", "Teacher"],
     "ClassMembershipImportStatus": ["Added", "AlreadyMember", "NotFoundInEntra", "WrongSchool"],
@@ -160,6 +162,9 @@
     },
     "POST sessions/{id}/unblock": {
       "request": { "userId": "string?", "host": "string", "scope": "string?" }
+    },
+    "POST sessions/{id}/unblock-requests/deny": {
+      "request": { "userId": "string", "host": "string" }
     },
 
     "GET classes": {

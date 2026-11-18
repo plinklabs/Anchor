@@ -26,15 +26,21 @@ import 'support/e2e_binding.dart';
 // muted register — a calm "Ended" outline badge, never the magenta LIVE spark.
 // And, like the live feed (#491), it reads in plain sentences (#498): its
 // event log and activity summary never show an event's raw kind or payload,
-// which wait in a tooltip for troubleshooting.
+// which wait in a tooltip for troubleshooting. A blocked page shows there by
+// its host only (#527), though an older agent stored its whole URL. So does a
+// site the agent saw open that the extension didn't block (#526, test phase
+// only, #515).
 
 final _startedAt = DateTime(2026, 6, 12, 9, 15);
 final _endedAt = DateTime(2026, 6, 12, 10, 5);
 const _sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const _blockedPayload =
-    '{"url":"https://chat.example.com/c/1","host":"chat.example.com"}';
+const _blockedUrl = 'https://chat.example.com/c/1?q=my+search';
+const _blockedPayload = '{"url":"$_blockedUrl","host":"chat.example.com"}';
 const _blockedSentence =
     "Ada Lovelace tried to open chat.example.com, which isn't allowed.";
+const _unfilteredSentence =
+    "Ada Lovelace had games.example open in Edge, which isn't allowed, and it "
+    "wasn't blocked.";
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -114,6 +120,13 @@ class _FakeSessions extends SessionsApi {
         firstAt: _startedAt,
         lastAt: _endedAt,
       ),
+      SessionEventSummary(
+        userId: 'u1',
+        kind: 'UnfilteredSite',
+        count: 1,
+        firstAt: _startedAt,
+        lastAt: _endedAt,
+      ),
     ],
     recentEvents: [
       SessionRecentEvent(
@@ -122,6 +135,13 @@ class _FakeSessions extends SessionsApi {
         kind: 'BlockedUrl',
         payloadJson: _blockedPayload,
         occurredAt: DateTime(2026, 6, 12, 9, 30, 5),
+      ),
+      SessionRecentEvent(
+        id: 'e1b',
+        userId: 'u1',
+        kind: 'UnfilteredSite',
+        payloadJson: '{"host":"games.example"}',
+        occurredAt: DateTime(2026, 6, 12, 9, 29, 10),
       ),
       SessionRecentEvent(
         id: 'e2',
@@ -240,11 +260,16 @@ void main() {
         find.text('Ada Lovelace asks for access to youtube.com.'),
         findsOneWidget,
       );
+      expect(find.text(_unfilteredSentence), findsOneWidget);
       // The summary says what she did in words, not in event kinds.
-      expect(find.text('3 blocked websites, 12 app switches'), findsOneWidget);
+      expect(
+        find.text('1 website not blocked, 3 blocked websites, 12 app switches'),
+        findsOneWidget,
+      );
       // Nowhere on the page the raw event: no kind, no payload.
       for (final raw in const [
         'BlockedUrl',
+        'UnfilteredSite',
         'ForegroundChange',
         'UnblockRequest',
         'processName',
@@ -253,14 +278,20 @@ void main() {
         expect(find.textContaining(raw), findsNothing, reason: raw);
       }
 
-      // The raw event waits on a lingering hover, for troubleshooting.
+      // The raw event waits on a lingering hover, for troubleshooting: the
+      // blocked page by its host, never its URL (#527).
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
       addTearDown(mouse.removePointer);
       await mouse.moveTo(tester.getCenter(find.text(_blockedSentence)));
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
-      expect(find.text('BlockedUrl\n$_blockedPayload'), findsOneWidget);
+      expect(
+        find.text('BlockedUrl\n{"host":"chat.example.com"}'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('/c/1'), findsNothing);
+      expect(find.textContaining('my+search'), findsNothing);
       await mouse.moveTo(Offset.zero);
       await tester.pumpAndSettle();
 

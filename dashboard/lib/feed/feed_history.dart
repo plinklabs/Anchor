@@ -20,6 +20,8 @@ const List<String> feedStoredKinds = <String>[
   'JoinDeclined',
   'ManualLeave',
   'AgentKilled',
+  // Test phase only (#515): an off-list site the extension let through (#526).
+  'UnfilteredSite',
 ];
 
 /// The most stored events the live page loads for its feed (#492).
@@ -31,8 +33,9 @@ const int feedHistoryLimit = 200;
 /// carries.
 ///
 /// Null for a kind the hub doesn't broadcast to the teacher (an app switch, a
-/// blocked site, an approval), and for an access request that names no site,
-/// whose broadcast the backend skips.
+/// blocked site, an approval or a denial), and for an access request or an
+/// unfiltered site (#526) that names no site, whose broadcast the backend
+/// skips.
 SessionEvent? feedEventOfStored(
   SessionRecentEvent stored, {
   required String sessionId,
@@ -76,6 +79,20 @@ SessionEvent? feedEventOfStored(
         },
         at: at,
       );
+    case 'UnfilteredSite':
+      // As the backend reads it for the broadcast: the host only (#526).
+      final String? host = _hostOf(payload);
+      if (host == null) return null;
+      return SessionEvent(
+        kind: 'UnfilteredSite',
+        payload: <String, dynamic>{
+          ...about,
+          'userDisplayName': ?name,
+          'host': host,
+          'seenAt': _wire(at),
+        },
+        at: at,
+      );
     case 'HeartbeatLost':
       final Object? lastSeenAt = payload['lastSeenAt'];
       return SessionEvent(
@@ -109,8 +126,8 @@ SessionEvent? feedEventOfStored(
 /// reads (#498): the past session page's event log reads the session the way
 /// the live feed does (#491). A kind the hub broadcasts reads as the feed
 /// reads its broadcast ([feedEventOfStored], [feedSentence]); the kinds only
-/// the backend keeps, an app switch, a blocked website and an approval, get
-/// sentences of their own. [name] is the student's, from the roster.
+/// the backend keeps, an app switch, a blocked website, an approval and a
+/// denial (#523), get sentences of their own. [name] is the student's, from the roster.
 ///
 /// Never the event's kind or its payload: an event the dashboard doesn't know
 /// gets a sentence too.
@@ -152,8 +169,36 @@ String storedEventSentence(
       return payload['scope'] == 'class'
           ? l10n.feedApprovedForClass(host)
           : l10n.feedApprovedFor(who, n, host);
+    case 'UnblockDenied':
+      // Always one student's: denials are per student (#523).
+      return l10n.feedDeniedFor(who, n, _hostOf(payload) ?? l10n.feedSomeSite);
+    case 'UnfilteredSite':
+      // One that names no host, which the hub doesn't broadcast (#526).
+      return l10n.feedUnfilteredSite(who, n, l10n.feedSomeSite);
   }
   return l10n.feedOther;
+}
+
+/// [stored] as the backend stored it, for troubleshooting: its kind and its
+/// payload, which the past session page shows on a lingering hover (#498).
+///
+/// A blocked page shows by its host only, never its URL (#527): a path or
+/// query string can hold search terms and other personal detail the teacher
+/// doesn't need, and the backend still keeps rows from agents that sent the
+/// URL.
+String storedEventRaw(SessionRecentEvent stored) {
+  if (stored.kind != 'BlockedUrl') {
+    return stored.payloadJson.isEmpty
+        ? stored.kind
+        : '${stored.kind}\n${stored.payloadJson}';
+  }
+  final Map<String, dynamic> payload = _decode(stored.payloadJson);
+  final Map<String, dynamic> shown = <String, dynamic>{
+    'host': ?_hostOf(payload),
+    if (payload['tabId'] case final num tabId) 'tabId': tabId,
+    if (payload['occurredAt'] case final String at) 'occurredAt': at,
+  };
+  return shown.isEmpty ? stored.kind : '${stored.kind}\n${jsonEncode(shown)}';
 }
 
 /// What a student did in a session, as the past session page's activity
@@ -178,6 +223,9 @@ List<String> storedSummaryPhrases(
       if (counts[topic] case final int count)
         switch (topic) {
           _SummaryTopic.tamper => l10n.pastSummaryTamper(count),
+          _SummaryTopic.unfilteredSites => l10n.pastSummaryUnfilteredSites(
+            count,
+          ),
           _SummaryTopic.agentStopped => l10n.pastSummaryAgentStopped(count),
           _SummaryTopic.agentMissing => l10n.pastSummaryAgentMissing(count),
           _SummaryTopic.notConnected => l10n.pastSummaryNotConnected(count),
@@ -185,6 +233,7 @@ List<String> storedSummaryPhrases(
           _SummaryTopic.declined => l10n.pastSummaryDeclined(count),
           _SummaryTopic.accessRequests => l10n.pastSummaryAccessRequests(count),
           _SummaryTopic.approved => l10n.pastSummaryApproved(count),
+          _SummaryTopic.denied => l10n.pastSummaryDenied(count),
           _SummaryTopic.blockedSites => l10n.pastSummaryBlockedSites(count),
           _SummaryTopic.appSwitches => l10n.pastSummaryAppSwitches(count),
           _SummaryTopic.agentBack => l10n.pastSummaryAgentBack(count),
@@ -197,6 +246,7 @@ List<String> storedSummaryPhrases(
 /// the teacher's attention first, as the feed ranks it (#491).
 enum _SummaryTopic {
   tamper,
+  unfilteredSites,
   agentStopped,
   agentMissing,
   notConnected,
@@ -204,6 +254,7 @@ enum _SummaryTopic {
   declined,
   accessRequests,
   approved,
+  denied,
   blockedSites,
   appSwitches,
   agentBack,
@@ -212,6 +263,7 @@ enum _SummaryTopic {
 
 _SummaryTopic _summaryTopicOf(String kind) => switch (kind) {
   'TamperDetected' => _SummaryTopic.tamper,
+  'UnfilteredSite' => _SummaryTopic.unfilteredSites,
   'HeartbeatLost' => _SummaryTopic.agentStopped,
   'AgentMissing' => _SummaryTopic.agentMissing,
   'NotConnected' => _SummaryTopic.notConnected,
@@ -219,6 +271,7 @@ _SummaryTopic _summaryTopicOf(String kind) => switch (kind) {
   'JoinDeclined' => _SummaryTopic.declined,
   'UnblockRequest' => _SummaryTopic.accessRequests,
   'UnblockApproved' => _SummaryTopic.approved,
+  'UnblockDenied' => _SummaryTopic.denied,
   'BlockedUrl' => _SummaryTopic.blockedSites,
   'ForegroundChange' => _SummaryTopic.appSwitches,
   'AgentReconnected' => _SummaryTopic.agentBack,
@@ -408,6 +461,7 @@ DateTime? _sentAt(SessionEvent event) {
     'ParticipantStateChanged' => 'at',
     'UnblockRequested' => 'requestedAt',
     'TamperDetected' => 'detectedAt',
+    'UnfilteredSite' => 'seenAt',
     'HeartbeatLost' => 'lastSeenAt',
     'AgentReconnected' => 'reconnectedAt',
     'SessionStarted' => 'startedAt',
@@ -435,6 +489,7 @@ String? feedEventIdentity(SessionEvent event) {
       _instant(p['requestedAt']),
     ],
     'TamperDetected' => <Object?>[user, p['kind'], _instant(p['detectedAt'])],
+    'UnfilteredSite' => <Object?>[user, p['host'], _instant(p['seenAt'])],
     'HeartbeatLost' => <Object?>[user, _instant(p['lastSeenAt'])],
     'AgentReconnected' => <Object?>[user, _instant(p['reconnectedAt'])],
     _ => null,

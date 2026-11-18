@@ -25,6 +25,7 @@ namespace FocusAgent.App.Auth;
 public sealed class InjectedTokenProvider : IAuthTokenProvider
 {
     private readonly string _impersonateOid;
+    private readonly string _username;
     private readonly ILogger<InjectedTokenProvider> _log;
 
     public InjectedTokenProvider(
@@ -40,6 +41,8 @@ public sealed class InjectedTokenProvider : IAuthTokenProvider
                 "Without an impersonation OID the agent has no identity to send to the backend.");
         }
         _impersonateOid = oid;
+        var username = dev.Value.ImpersonateUsername?.Trim() ?? string.Empty;
+        _username = username.Length > 0 ? username : $"impersonated:{oid}";
         _log.LogWarning(
             "WAM bypass active (--inject-token). Hub will authenticate via X-Dev-Impersonate-Oid={Oid} only. " +
             "Never enable this in production.",
@@ -55,7 +58,9 @@ public sealed class InjectedTokenProvider : IAuthTokenProvider
     public Task<AuthResult> AcquireTokenAsync(CancellationToken ct = default) =>
         Task.FromResult(new AuthResult(
             AccessToken: string.Empty,
-            Username: $"impersonated:{_impersonateOid}",
+            Username: _username,
             DisplayName: "Dev Impersonated",
-            ExpiresOn: DateTimeOffset.MaxValue));
+            ExpiresOn: DateTimeOffset.MaxValue,
+            // #525: the account the school profile must be signed in with.
+            AccountId: _impersonateOid));
 }

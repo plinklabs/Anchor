@@ -281,6 +281,55 @@
   <data name="Overlay_BrowserPaused_Hint" xml:space="preserve">
     <value>Edge opens for {0} seconds. Go to edge://extensions and switch Anchor on.</value>
   </data>
+  <data name="Overlay_SiteAccess_Headline" xml:space="preserve">
+    <value>Anchor is not allowed to work on all sites</value>
+  </data>
+  <data name="Overlay_SiteAccess_Message" xml:space="preserve">
+    <value>Anchor's site access in Edge was changed, so Edge can't be used in this session until it's back to "On all sites". You can carry on with one of these apps in the meantime.</value>
+  </data>
+  <data name="Overlay_SiteAccess_TurnBackOn" xml:space="preserve">
+    <value>Open the setting</value>
+  </data>
+  <data name="Overlay_SiteAccess_Hint" xml:space="preserve">
+    <value>Edge opens for {0} seconds on Anchor's page. Set Site access to "On all sites".</value>
+  </data>
+  <data name="Overlay_SchoolAccount_Headline" xml:space="preserve">
+    <value>Sign in to Edge with your school account</value>
+  </data>
+  <data name="Overlay_SchoolAccount_Message" xml:space="preserve">
+    <value>You need to sign in to Edge with your school account: {0}
+Until then Edge can't be used in this session. You can carry on with one of these apps in the meantime.</value>
+  </data>
+  <data name="Overlay_SchoolAccount_TurnBackOn" xml:space="preserve">
+    <value>Open Edge to sign in</value>
+  </data>
+  <data name="Overlay_SchoolAccount_Hint" xml:space="preserve">
+    <value>Edge opens for {0} seconds. Click your profile picture at the top of Edge and sign in with that account.</value>
+  </data>
+  <data name="Overlay_SchoolExtension_Headline" xml:space="preserve">
+    <value>Add Anchor to your school profile</value>
+  </data>
+  <data name="Overlay_SchoolExtension_Message" xml:space="preserve">
+    <value>You're signed in to Edge with your school account, but Anchor still has to be added to your school profile. Until then Edge can't be used in this session. You can carry on with one of these apps in the meantime.</value>
+  </data>
+  <data name="Overlay_SchoolExtension_TurnBackOn" xml:space="preserve">
+    <value>Add Anchor</value>
+  </data>
+  <data name="Overlay_SchoolExtension_Hint" xml:space="preserve">
+    <value>Edge opens for {0} seconds at Anchor in the store, in your school profile. Click Get, then Add extension.</value>
+  </data>
+  <data name="Overlay_SchoolProfile_Headline" xml:space="preserve">
+    <value>Work in your school profile</value>
+  </data>
+  <data name="Overlay_SchoolProfile_Message" xml:space="preserve">
+    <value>During the lesson you work in your school profile. This Edge window is outside it (another profile, a Guest window or an InPrivate window), so it stays paused until the session ends.</value>
+  </data>
+  <data name="Overlay_SchoolProfile_TurnBackOn" xml:space="preserve">
+    <value>Go to my school profile</value>
+  </data>
+  <data name="Overlay_SchoolProfile_Hint" xml:space="preserve">
+    <value>This window closes and Edge opens in your school profile.</value>
+  </data>
   <data name="Join_Button_Join" xml:space="preserve">
     <value>JOIN</value>
   </data>

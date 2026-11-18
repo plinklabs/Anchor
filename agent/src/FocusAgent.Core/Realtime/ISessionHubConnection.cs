@@ -15,6 +15,11 @@ public interface ISessionHubConnection : IAsyncDisposable
     /// agent relays it to the extension, which filters URLs (#489).
     /// </summary>
     event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+    /// <summary>
+    /// The teacher turned down one of this student's unblock requests (#523).
+    /// The agent relays it to the extension, whose block page says so.
+    /// </summary>
+    event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 
     Task StartAsync(CancellationToken ct = default);
     Task StopAsync(CancellationToken ct = default);

@@ -129,6 +129,20 @@ public sealed record AllowlistAmendedPayload(
     IReadOnlyList<AllowedDomainDto> AddedDomains);
 
 /// <summary>
+/// The teacher turned down one of this student's unblock requests (#523).
+/// Pushed to the student's user group, where their agent hands it down to the
+/// extension, so the block page for <see cref="Host"/> says the request was
+/// declined and offers to ask again. Nothing changes on the allowlist. The
+/// corresponding <see cref="Anchor.Domain.Events.EventKind.UnblockDenied"/>
+/// event is persisted, so the denial outlives a dashboard reload.
+/// </summary>
+public sealed record UnblockDeniedPayload(
+    Guid SessionId,
+    Guid UserId,
+    string Host,
+    DateTimeOffset DeniedAt);
+
+/// <summary>
 /// Live notification that a student has clicked "Request access" on the
 /// extension's block page. Pushed to the session group so the teacher's
 /// dashboard can show the pending request without polling. The corresponding
@@ -161,3 +175,20 @@ public sealed record TamperDetectedPayload(
     string UserDisplayName,
     string Kind,
     DateTimeOffset DetectedAt);
+
+/// <summary>
+/// TEST PHASE ONLY (#515). Live notification that a student's agent saw an
+/// off-list site open in Edge without the extension blocking it (#526), so the
+/// teacher can look at the laptop while it is still open. Pushed to the session
+/// group, like <see cref="TamperDetectedPayload"/>, but no tamper flag: the gap
+/// may be the extension's, not the student's doing. <see cref="Host"/> is the
+/// site's host only, never its URL; <see cref="SeenAt"/> is when the agent first
+/// saw it. The <see cref="Anchor.Domain.Events.EventKind.UnfilteredSite"/> event
+/// is persisted too, so a reloaded page still shows it.
+/// </summary>
+public sealed record UnfilteredSitePayload(
+    Guid SessionId,
+    Guid UserId,
+    string UserDisplayName,
+    string Host,
+    DateTimeOffset SeenAt);

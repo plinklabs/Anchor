@@ -69,6 +69,44 @@ public sealed class OverlayVisualTests
         AssertOverlayRendersAndTearsDownAsync(
             extraArgs: [AgentSelfTestProcess.OverlayPausedArg], artifactPrefix: "overlay-paused");
 
+    /// <summary>
+    /// #524: the variant for an Edge paused because its extension may not work on
+    /// all sites: a longer headline, wrapped in the same column, its own action
+    /// and hint, on the same full-monitor ink surface, torn down the same way.
+    /// </summary>
+    [Fact]
+    public Task SiteAccessPausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlaySiteAccessArg], artifactPrefix: "overlay-site-access");
+
+    /// <summary>
+    /// #525: the variant for an Edge paused because no profile is signed in with
+    /// the school account: a message with the account on its own line, its own
+    /// action and hint, on the same full-monitor ink surface, torn down the same way.
+    /// </summary>
+    [Fact]
+    public Task SchoolAccountPausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlaySchoolAccountArg], artifactPrefix: "overlay-school-account");
+
+    /// <summary>
+    /// #525: the variant for one Edge window paused because it is outside the
+    /// school profile, with its "go to my school profile" action.
+    /// </summary>
+    [Fact]
+    public Task SchoolProfilePausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlaySchoolProfileArg], artifactPrefix: "overlay-school-profile");
+
+    /// <summary>
+    /// #536: the variant for an Edge paused because the profile signed in with the
+    /// school account doesn't have the extension, with its "add Anchor" action.
+    /// </summary>
+    [Fact]
+    public Task SchoolExtensionPausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlaySchoolExtensionArg], artifactPrefix: "overlay-school-extension");
+
     private static async Task AssertOverlayRendersAndTearsDownAsync(string[] extraArgs, string artifactPrefix)
     {
         await using var agent = AgentSelfTestProcess.Launch(AgentSelfTestProcess.ShowTestOverlayArg, extraArgs: extraArgs);

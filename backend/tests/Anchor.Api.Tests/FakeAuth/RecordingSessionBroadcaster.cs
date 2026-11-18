@@ -28,8 +28,10 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     public ConcurrentBag<HeartbeatLostPayload> HeartbeatLostCalls { get; } = new();
     public ConcurrentBag<AgentReconnectedPayload> AgentReconnectedCalls { get; } = new();
     public ConcurrentBag<AllowlistAmendedPayload> AllowlistAmendedCalls { get; } = new();
+    public ConcurrentBag<UnblockDeniedPayload> UnblockDeniedCalls { get; } = new();
     public ConcurrentBag<UnblockRequestedPayload> UnblockRequestedCalls { get; } = new();
     public ConcurrentBag<TamperDetectedPayload> TamperDetectedCalls { get; } = new();
+    public ConcurrentBag<UnfilteredSitePayload> UnfilteredSiteCalls { get; } = new();
 
     public Task SessionStartedAsync(
         SessionStartedPayload payload,
@@ -85,6 +87,12 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
         return _inner.AllowlistAmendedAsync(payload, cancellationToken);
     }
 
+    public Task UnblockDeniedAsync(UnblockDeniedPayload payload, CancellationToken cancellationToken = default)
+    {
+        UnblockDeniedCalls.Add(payload);
+        return _inner.UnblockDeniedAsync(payload, cancellationToken);
+    }
+
     public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
     {
         UnblockRequestedCalls.Add(payload);
@@ -95,6 +103,12 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     {
         TamperDetectedCalls.Add(payload);
         return _inner.TamperDetectedAsync(payload, cancellationToken);
+    }
+
+    public Task UnfilteredSiteAsync(UnfilteredSitePayload payload, CancellationToken cancellationToken = default)
+    {
+        UnfilteredSiteCalls.Add(payload);
+        return _inner.UnfilteredSiteAsync(payload, cancellationToken);
     }
 }
 

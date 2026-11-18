@@ -69,12 +69,18 @@ void main() {
         _back('ada'),
         _event('SessionStarted', {'sessionId': 's'}),
         _event('SessionEnded', {'sessionId': 's'}),
+        // #526 (test phase only): a site the extension let through is in the
+        // feed, but no alert: the gap may be the extension's, not the student's.
+        _event('UnfilteredSite', {'userId': 'ada', 'host': 'games.example'}),
       ]) {
         expect(liveAlertCategoryOf(event), isNull, reason: event.kind);
       }
       final h = _alerts();
       h.alerts.handle(_state('ada', 'Joined'));
       h.alerts.handle(_back('ada'));
+      h.alerts.handle(
+        _event('UnfilteredSite', {'userId': 'ada', 'host': 'games.example'}),
+      );
       expect(h.seen, isEmpty);
     });
 

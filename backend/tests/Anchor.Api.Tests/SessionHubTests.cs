@@ -66,6 +66,101 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         Assert.Equal("{\"app\":\"chrome\"}", @event.PayloadJson);
     }
 
+    /// <summary>
+    /// #527: a blocked page is stored by its host only. Agents still in the
+    /// field send its whole URL, path and query string included, and some sent
+    /// it with no host; what is stored names the host and nothing of the URL.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        """{"url":"https://Chat.Example.com/c/123?q=my+search","host":"chat.example.com","tabId":7,"occurredAt":"2026-11-18T09:30:00+00:00"}""",
+        """{"host":"chat.example.com","tabId":7,"occurredAt":"2026-11-18T09:30:00+00:00"}""")]
+    [InlineData(
+        """{"url":"https://Chat.Example.com/c/123?q=my+search","host":"","tabId":7}""",
+        """{"host":"chat.example.com","tabId":7}""")]
+    [InlineData(
+        """{"host":"chat.example.com","tabId":7,"occurredAt":"2026-11-18T09:30:00+00:00"}""",
+        """{"host":"chat.example.com","tabId":7,"occurredAt":"2026-11-18T09:30:00+00:00"}""")]
+    [InlineData("""{"url":"not a url /c/123?q=my+search"}""", """{"host":""}""")]
+    [InlineData("""https://chat.example.com/c/123?q=my+search""", "{}")]
+    [InlineData("""["https://chat.example.com/c/123?q=my+search"]""", "{}")]
+    public async Task ReportEvent_blocked_url_is_stored_by_its_host_without_the_url(string sent, string stored)
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.BlockedUrl), sent, OccurredAt: null));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var @event = await db.Events.AsNoTracking()
+            .SingleAsync(e => e.SessionId == session.Id && e.UserId == student.Id);
+        Assert.Equal(EventKind.BlockedUrl, @event.Kind);
+        Assert.Equal(
+            System.Text.Json.Nodes.JsonNode.Parse(stored)!.ToJsonString(),
+            System.Text.Json.Nodes.JsonNode.Parse(@event.PayloadJson)!.ToJsonString());
+        Assert.DoesNotContain("/c/123", @event.PayloadJson);
+        Assert.DoesNotContain("search", @event.PayloadJson);
+    }
+
+    /// <summary>
+    /// #526 (test phase only, #515): an off-list site the extension let through
+    /// is stored by its host and nothing else, whatever an agent sends, and goes
+    /// to the teacher's live page with that host. One that names no usable host
+    /// is stored empty and not pushed.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"host":"offlist.example"}""", "offlist.example")]
+    [InlineData("""{"host":" OffList.Example "}""", "offlist.example")]
+    [InlineData("""{"host":"https://offlist.example/c/123?q=my+search","url":"https://offlist.example/c/123?q=my+search","title":"my search"}""", "offlist.example")]
+    [InlineData("""{"host":"offlist.example:8099/c/123?q=my+search"}""", "offlist.example")]
+    [InlineData("""{"url":"https://offlist.example/c/123?q=my+search"}""", "")]
+    [InlineData("""{"host":"not a host /c/123?q=my+search"}""", "")]
+    [InlineData("""https://offlist.example/c/123?q=my+search""", "")]
+    public async Task ReportEvent_unfiltered_site_is_stored_and_pushed_by_its_host_only(string sent, string host)
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        var seenAt = new DateTimeOffset(2026, 11, 18, 9, 30, 0, TimeSpan.Zero);
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.UnfilteredSite), sent, OccurredAt: seenAt));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var @event = await db.Events.AsNoTracking()
+            .SingleAsync(e => e.SessionId == session.Id && e.UserId == student.Id);
+        Assert.Equal(EventKind.UnfilteredSite, @event.Kind);
+        Assert.Equal(new System.Text.Json.Nodes.JsonObject { ["host"] = host }.ToJsonString(), @event.PayloadJson);
+        Assert.Equal(seenAt, @event.OccurredAt);
+        Assert.DoesNotContain("/c/123", @event.PayloadJson);
+        Assert.DoesNotContain("search", @event.PayloadJson);
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        var calls = broadcaster.UnfilteredSiteCalls.Where(c => c.SessionId == session.Id).ToList();
+        if (host.Length == 0)
+        {
+            Assert.Empty(calls);
+            return;
+        }
+        var call = Assert.Single(calls);
+        Assert.Equal(student.Id, call.UserId);
+        Assert.Equal("Test Student", call.UserDisplayName);
+        Assert.Equal(host, call.Host);
+        Assert.Equal(seenAt, call.SeenAt);
+        // No tamper flag: the gap may be the extension's, not the student's doing.
+        Assert.DoesNotContain(broadcaster.TamperDetectedCalls, c => c.SessionId == session.Id);
+    }
+
     [Fact]
     public async Task Non_participant_cannot_report_event()
     {
@@ -623,6 +718,61 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
         Assert.True(await db.Events.AnyAsync(
             e => e.SessionId == session.Id && e.UserId == student.Id && e.Kind == EventKind.UnblockRequest));
+    }
+
+    /// <summary>
+    /// #523: the teacher turns a request down, the student's own connection (the
+    /// agent's, which hands it to the block page) hears it, and asking again puts
+    /// the request back on the teacher's list. The laptop's clock runs ten minutes
+    /// behind the server's, as an unsynced school laptop's can: the second request
+    /// still counts as sent after the denial, because the server dates requests.
+    /// </summary>
+    [Fact]
+    public async Task A_denied_student_hears_it_and_asking_again_is_pending_again_whatever_their_clock_says()
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+        User teacher;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+            teacher = await db.Users.AsNoTracking().SingleAsync(u => u.Id == session.TeacherId);
+        }
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        var denied = new TaskCompletionSource<UnblockDeniedPayload>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.On<UnblockDeniedPayload>(nameof(ISessionHubClient.UnblockDenied), p => denied.TrySetResult(p));
+        await connection.StartAsync();
+        await JoinAsync(connection, session.Id);
+
+        var lagging = DateTimeOffset.UtcNow.AddMinutes(-10);
+        var payload = System.Text.Json.JsonSerializer.Serialize(new { url = "https://reddit.com/r/aww", host = "reddit.com" });
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.UnblockRequest), payload, lagging));
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetTeacher(client, teacher);
+        var deny = await client.PostAsJsonAsync(
+            $"/sessions/{session.Id}/unblock-requests/deny",
+            new UnblockDenialRequest(student.Id, "reddit.com"));
+        deny.EnsureSuccessStatusCode();
+
+        var heard = await denied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(session.Id, heard.SessionId);
+        Assert.Equal(student.Id, heard.UserId);
+        Assert.Equal("reddit.com", heard.Host);
+        Assert.Empty((await client.GetFromJsonAsync<List<UnblockRequestSummary>>(
+            $"/sessions/{session.Id}/unblock-requests"))!);
+
+        // The student asks again, and their agent dates it by the same slow clock.
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.UnblockRequest), payload, lagging.AddSeconds(30)));
+
+        var pending = Assert.Single((await client.GetFromJsonAsync<List<UnblockRequestSummary>>(
+            $"/sessions/{session.Id}/unblock-requests"))!);
+        Assert.Equal("reddit.com", pending.Host);
+        Assert.Equal(student.Id, Assert.Single(pending.Requesters).UserId);
+        Assert.True(pending.LatestRequestedAt > heard.DeniedAt,
+            $"The request was dated {pending.LatestRequestedAt:O}, before the denial at {heard.DeniedAt:O}.");
     }
 
     [Fact]

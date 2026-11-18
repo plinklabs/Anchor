@@ -71,6 +71,25 @@ describe('parseHostMessage', () => {
     expect(parseHostMessage({ type: 'allowlist_amended', sessionId: 's1' })).toEqual({ kind: 'ignore' });
   });
 
+  it('parses a declined request with its host (#523)', () => {
+    expect(parseHostMessage({ type: 'unblock_denied', sessionId: 's1', host: 'games.example' })).toEqual({
+      kind: 'agent',
+      message: { type: 'unblock_denied', sessionId: 's1', host: 'games.example' },
+    });
+    expect(parseHostMessage({ type: 'unblock_denied', sessionId: 's1' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'unblock_denied', sessionId: 's1', host: ' ' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'unblock_denied', host: 'games.example' })).toEqual({ kind: 'ignore' });
+  });
+
+  it("parses the agent's ask to open the extension's own page, for its session (#524)", () => {
+    expect(parseHostMessage({ type: 'open_extension_page', sessionId: 's1' })).toEqual({
+      kind: 'agent',
+      message: { type: 'open_extension_page', sessionId: 's1' },
+    });
+    expect(parseHostMessage({ type: 'open_extension_page' })).toEqual({ kind: 'ignore' });
+    expect(parseHostMessage({ type: 'open_extension_page', sessionId: ' ' })).toEqual({ kind: 'ignore' });
+  });
+
   it('parses the answer to an unblock request', () => {
     expect(parseHostMessage({ type: 'unblock_request_result', requestId: 'r1', ok: true })).toEqual({
       kind: 'unblock_result',
@@ -226,7 +245,6 @@ describe('WitnessClient', () => {
     const report = {
       type: 'blocked_url' as const,
       sessionId: 's1',
-      url: 'https://offlist.test/',
       host: 'offlist.test',
       tabId: 4,
       occurredAt: '2026-11-11T08:00:00Z',

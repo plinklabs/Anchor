@@ -40,6 +40,10 @@
     "AgentReconnected": {
       "fields": ["sessionId", "userId", "reconnectedAt"],
       "audience": ["session"]
+    },
+    "UnfilteredSite": {
+      "fields": ["sessionId", "userId", "userDisplayName", "host", "seenAt"],
+      "audience": ["session"]
     }
   },
   "methods": {
@@ -51,7 +55,7 @@
     }
   },
   "notCovered": {
-    "events": ["SessionBundlesUpdated", "AllowlistAmended", "ParticipationEnded"],
+    "events": ["SessionBundlesUpdated", "AllowlistAmended", "UnblockDenied", "ParticipationEnded"],
     "methods": ["DeclineSession", "Heartbeat", "ExtensionHeartbeat", "IsInSession", "GetStartedSession", "ReportEvent"]
   }
 }

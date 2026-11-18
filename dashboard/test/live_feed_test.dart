@@ -39,6 +39,13 @@ SessionEvent _tamper(String kind) => _event('TamperDetected', {
   'detectedAt': '2026-11-11T19:28:11+00:00',
 });
 
+SessionEvent _unfiltered(String host) => _event('UnfilteredSite', {
+  'userId': _adaId,
+  'userDisplayName': 'Ada',
+  'host': host,
+  'seenAt': '2026-11-11T19:28:11+00:00',
+});
+
 String? _roster(String userId) => const {_adaId: 'Ada', _boId: 'Bo'}[userId];
 
 void main() {
@@ -202,6 +209,20 @@ void main() {
           "Ada's Anchor app stopped running.",
           'De Anchor-app van Ada draait niet meer.',
         ),
+        // #525: only told when the student doesn't resolve it.
+        'outside_school_profile': (
+          'Ada kept an Edge window open outside the school profile.',
+          'Ada hield een Edge-venster buiten het schoolprofiel open.',
+        ),
+        'school_profile_missing': (
+          'Ada is not signed in to Edge with their school account.',
+          'Ada is in Edge niet aangemeld met het schoolaccount.',
+        ),
+        // #536: signed in, but Anchor was never added to that profile.
+        'school_profile_without_extension': (
+          "Ada hasn't added Anchor to their school profile in Edge.",
+          'Ada heeft Anchor nog niet toegevoegd aan het schoolprofiel in Edge.',
+        ),
         // A kind this dashboard doesn't know yet: a sentence, not the code.
         'clock_tampered': (
           "Tampering detected on Ada's computer.",
@@ -213,6 +234,34 @@ void main() {
         expect(feedSentence(en, _tamper(kind)), english, reason: kind);
         expect(feedSentence(nl, _tamper(kind)), dutch, reason: kind);
       }
+    });
+
+    // #526, test phase only (#515): the agent saw a site that isn't allowed
+    // open in Edge, and the extension didn't block it. By its host only.
+    test('an off-list site the extension let through names the site', () {
+      final seen = _unfiltered('games.example');
+      expect(
+        feedSentence(en, seen),
+        "Ada had games.example open in Edge, which isn't allowed, and it "
+        "wasn't blocked.",
+      );
+      expect(
+        feedSentence(nl, seen),
+        'Ada had games.example open in Edge, maar die website is niet '
+        'toegelaten en werd niet geblokkeerd.',
+      );
+      // Named from the roster when the event has no name; a site in any case.
+      final bare = _event('UnfilteredSite', {'userId': _boId, 'host': ''});
+      expect(
+        feedSentence(en, bare, nameOf: _roster),
+        "Bo had a website open in Edge, which isn't allowed, and it wasn't "
+        'blocked.',
+      );
+      expect(
+        feedSentence(en, _event('UnfilteredSite', {'host': 'x.example'})),
+        "A student had x.example open in Edge, which isn't allowed, and it "
+        "wasn't blocked.",
+      );
     });
 
     test('an event the feed does not know gets a sentence, not a dump', () {
@@ -247,6 +296,7 @@ void main() {
           'host': 'example.com',
         }),
         _tamper('extension_silent'),
+        _unfiltered('games.example'),
         _event('SomethingNew'),
       ];
       for (final e in events) {
@@ -275,6 +325,8 @@ void main() {
         _state('HeartbeatStale'): FeedPriority.warning,
         // Nothing is enforced for a class member who never joined (#493).
         _state('NotConnected'): FeedPriority.warning,
+        // Edge isn't filtered on the laptop (#526).
+        _unfiltered('games.example'): FeedPriority.warning,
         _state('Joined'): FeedPriority.routine,
         _state('NeverJoined'): FeedPriority.routine,
         _event('AgentReconnected', {'userId': _adaId}): FeedPriority.routine,

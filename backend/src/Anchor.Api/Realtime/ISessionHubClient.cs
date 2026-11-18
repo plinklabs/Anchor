@@ -10,6 +10,9 @@ public interface ISessionHubClient
     Task HeartbeatLost(HeartbeatLostPayload payload);
     Task AgentReconnected(AgentReconnectedPayload payload);
     Task AllowlistAmended(AllowlistAmendedPayload payload);
+    Task UnblockDenied(UnblockDeniedPayload payload);
     Task UnblockRequested(UnblockRequestedPayload payload);
     Task TamperDetected(TamperDetectedPayload payload);
+    /// <summary>Test phase only (#515): an off-list site the extension let through (#526).</summary>
+    Task UnfilteredSite(UnfilteredSitePayload payload);
 }

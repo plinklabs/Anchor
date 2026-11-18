@@ -18,8 +18,9 @@ public sealed record SessionSettings
     /// Interval at which the agent's InPrivate witness (#148) re-scans the open
     /// Edge windows while in a joined session. A few seconds is responsive enough
     /// for a teacher's live roster without polling the window list tightly; the
-    /// scan only reports each InPrivate window once, so a short interval doesn't
-    /// produce repeat events.
+    /// scan reports each InPrivate window once, and only when it is still open
+    /// <see cref="SchoolProfileReportSeconds"/> after it opened (#535), so a short
+    /// interval doesn't produce repeat events.
     /// </summary>
     public int InPrivateScanIntervalSeconds { get; init; } = 5;
 
@@ -46,4 +47,42 @@ public sealed record SessionSettings
     /// witness link can't show while another profile's extension is connected.
     /// </summary>
     public int ExtensionProfileScanSeconds { get; init; } = 5;
+
+    /// <summary>
+    /// How long, during a session, the extension may report that it can't work
+    /// on all sites before the teacher is told (#524). Edge is paused at once, and
+    /// the pause says how to put "Site access" back; a student who does so in time
+    /// isn't reported.
+    /// </summary>
+    public int ExtensionSiteAccessReportSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// How often, during a session, the agent looks up the Edge profile signed in
+    /// with the school account and the Edge windows outside it (#525): a window of
+    /// another profile, a Guest window or an InPrivate window is paused within this
+    /// long of opening.
+    /// </summary>
+    public int SchoolProfileScanSeconds { get; init; } = 2;
+
+    /// <summary>
+    /// How long a window outside the school profile may stay open, or Edge may lack
+    /// a profile signed in with the school account, before the teacher is told
+    /// (#525). An InPrivate window too, which the agent's InPrivate witness reports
+    /// as <c>inprivate_opened</c> (#535). The pause says what to do; a student who
+    /// does it in time isn't reported.
+    /// </summary>
+    public int SchoolProfileReportSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// How often, during a session, the agent reads the address bar of the
+    /// foreground Edge window of the school profile (#526, test phase only, #515).
+    /// </summary>
+    public int AddressBarScanSeconds { get; init; } = 2;
+
+    /// <summary>
+    /// How long the address bar must keep showing the same off-list host before
+    /// the agent reports it (#526): the extension redirects an off-list navigation
+    /// as it starts, and until then the address bar shows where it was going.
+    /// </summary>
+    public int AddressBarGraceSeconds { get; init; } = 5;
 }

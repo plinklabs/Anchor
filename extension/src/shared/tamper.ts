@@ -5,10 +5,12 @@
 // Soft-enforcement posture (design §5.4): we cannot *prevent* a student from
 // reconfiguring or sidestepping the extension via Edge's own extension-management
 // page (edge://extensions — site access, Allow in InPrivate, disable, remove),
-// so we make the attempt *visible* to the teacher instead. These are the signals
+// so we make the attempt *visible* to the teacher instead. This is the signal
 // the extension can witness while it is still running; the robust ones
 // (extension disabled/removed, InPrivate when the extension has no incognito
-// access) come from the agent acting as on-box witness in a follow-up.
+// access) come from the agent acting as on-box witness. Its own settings (site
+// access, Allow in InPrivate) the extension reads and hands to the agent, which
+// decides what they mean (#524, self-check.ts).
 
 import type { TamperKind } from './types';
 
@@ -23,17 +25,4 @@ export function classifyCreatedWindow(
   window: { incognito?: boolean } | null | undefined,
 ): TamperKind | null {
   return window?.incognito === true ? 'inprivate_opened' : null;
-}
-
-/**
- * True when a permissions removal means we lost host access we need to filter
- * URLs. Downgrading "Site access" from "On all sites" to "On click" / "On
- * specific sites" in edge://extensions revokes the broad host permission; with
- * it withheld the navigation filter goes blind, so the loss is itself the
- * tamper signal. A removal carrying only API permissions (no origins) is not.
- */
-export function isHostAccessLoss(
-  removed: { origins?: readonly string[] } | null | undefined,
-): boolean {
-  return (removed?.origins?.length ?? 0) > 0;
 }

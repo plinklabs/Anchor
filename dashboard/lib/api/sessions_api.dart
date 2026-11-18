@@ -595,6 +595,18 @@ class SessionsApi {
     _ensureOk(res);
   }
 
+  /// Turn down one student's pending request for [host] (#523). Their request
+  /// leaves the pending list and their block page says it was declined; a
+  /// request they send after this is pending again.
+  Future<void> denyUnblock(String sessionId, String userId, String host) async {
+    final res = await _client.post(
+      'sessions/$sessionId/unblock-requests/deny',
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'userId': userId, 'host': host}),
+    );
+    _ensureOk(res);
+  }
+
   void _ensureOk(http.Response res) {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw ApiException(res.statusCode, res.body);

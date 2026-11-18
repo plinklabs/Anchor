@@ -1,4 +1,5 @@
 using FocusAgent.Core.Dtos;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
@@ -46,6 +47,46 @@ public enum ExtensionGuardState
     Repairing,
 }
 
+/// <summary>Why <see cref="ExtensionGuard"/> has Edge paused, or is opening it to repair.</summary>
+public enum ExtensionPauseReason
+{
+    /// <summary>
+    /// The extension is switched off or removed: its link stayed down, or an open
+    /// profile has it off (#427, #518).
+    /// </summary>
+    ExtensionOff,
+
+    /// <summary>
+    /// The extension is on, but says it may not work on all sites: its "Site
+    /// access" was turned down from "On all sites" (#524).
+    /// </summary>
+    NoSiteAccess,
+
+    /// <summary>
+    /// No Edge profile is signed in with the student's school account, and during a
+    /// session only that profile may be used (#525). The pause names the account to
+    /// sign in with.
+    /// </summary>
+    NoSchoolProfile,
+
+    /// <summary>
+    /// An Edge profile is signed in with the student's school account, but it
+    /// doesn't have the extension (#536): it would browse unfiltered (#519). The
+    /// pause says Anchor still has to be added to that profile, and its repair
+    /// action opens the store listing in it, the guided install's (#211).
+    /// </summary>
+    SchoolProfileWithoutExtension,
+
+    /// <summary>
+    /// One window is paused, not Edge: it is outside the school profile (another
+    /// profile, Guest or InPrivate, #525). Never the guard's own reason:
+    /// <see cref="SchoolProfileGuard"/> finds such windows and the focus controller
+    /// pauses each with the overlay this reason picks, whose button closes the
+    /// window and takes the student to the school profile.
+    /// </summary>
+    OutsideSchoolProfile,
+}
+
 /// <summary>
 /// Pauses Edge while the extension is gone during a joined session (#427), and
 /// tells the teacher (#146, #518). The extension can be switched off when it
@@ -62,6 +103,26 @@ public enum ExtensionGuardState
 /// is really gone while Edge is open (#518): a restart that reconnects within
 /// the grace period and an Edge that was closed report nothing, and one outage
 /// is reported once, however often the student opens Edge to repair it.
+///
+/// The extension can also be on and still say it may not work on all sites: its
+/// "Site access" was turned down on its page in Edge, before the session or during
+/// it (#524). <see cref="ExtensionSelfCheckWatch"/> hears that from the extension
+/// itself; Edge is paused at once for <see cref="ExtensionPauseReason.NoSiteAccess"/>,
+/// the repair action has the extension open its own page, and the next check that
+/// passes lifts the pause. That watch tells the teacher, and only when the student
+/// doesn't put it back in time.
+///
+/// During a session only the Edge profile signed in with the school account may
+/// be used (#525). While <see cref="SchoolProfileGuard"/> finds none, Edge is paused
+/// as a whole for <see cref="ExtensionPauseReason.NoSchoolProfile"/>: the pause
+/// names the account, the repair action opens Edge so the student can sign in, and
+/// the pause lifts once a profile with that account has the extension. When a
+/// profile is signed in with it but lacks the extension, the pause is for
+/// <see cref="ExtensionPauseReason.SchoolProfileWithoutExtension"/> instead (#536):
+/// it says Anchor still has to be added there, and the repair action opens the
+/// store listing in that profile. That guard tells the teacher, and only when it
+/// isn't resolved in time. (The windows outside a school profile that does exist
+/// are paused one by one by the focus controller.)
 ///
 /// With several Edge profiles, the extension can be switched off in one while
 /// another's is still connected. The links can't show that, so
@@ -94,6 +155,9 @@ public sealed class ExtensionGuard : IDisposable
     private readonly IWindowEnumerator _windows;
     private readonly ITamperReporter _reporter;
     private readonly OpenProfileExtensionWatch? _profiles;
+    private readonly ExtensionSelfCheckWatch? _selfCheck;
+    private readonly SchoolProfileGuard? _schoolProfile;
+    private readonly IBrowserProfileLauncher? _browserLauncher;
     private readonly TimeProvider _clock;
     private readonly ILogger<ExtensionGuard> _log;
     private readonly TimeSpan _grace;
@@ -101,6 +165,7 @@ public sealed class ExtensionGuard : IDisposable
     private readonly object _gate = new();
 
     private ExtensionGuardState _state = ExtensionGuardState.Off;
+    private ExtensionPauseReason _reason = ExtensionPauseReason.ExtensionOff;
     private Guid? _sessionId;
     private ITimer? _timer;
     // Bumped on every state change so a timer callback that was already queued
@@ -116,6 +181,18 @@ public sealed class ExtensionGuard : IDisposable
     /// Finds an open profile with the extension switched off while another
     /// profile's is connected (#518). Null: only the links are looked at.
     /// </param>
+    /// <param name="selfCheck">
+    /// What the extension says about its own settings (#524). Null: its site
+    /// access isn't looked at.
+    /// </param>
+    /// <param name="schoolProfile">
+    /// Whether an Edge profile is signed in with the school account (#525). Null:
+    /// any profile will do.
+    /// </param>
+    /// <param name="browserLauncher">
+    /// Opens the store listing in the school profile that lacks the extension
+    /// (#536). Null: the repair action opens Edge only.
+    /// </param>
     public ExtensionGuard(
         SessionCoordinator sessions,
         ExtensionWitnessMonitor witness,
@@ -125,13 +202,19 @@ public sealed class ExtensionGuard : IDisposable
         IOptions<WitnessSettings> witnessSettings,
         OpenProfileExtensionWatch? profiles = null,
         TimeProvider? clock = null,
-        ILogger<ExtensionGuard>? log = null)
+        ILogger<ExtensionGuard>? log = null,
+        ExtensionSelfCheckWatch? selfCheck = null,
+        SchoolProfileGuard? schoolProfile = null,
+        IBrowserProfileLauncher? browserLauncher = null)
     {
         _sessions = sessions;
         _witness = witness;
         _windows = windows;
         _reporter = reporter;
         _profiles = profiles;
+        _selfCheck = selfCheck;
+        _schoolProfile = schoolProfile;
+        _browserLauncher = browserLauncher;
         _clock = clock ?? TimeProvider.System;
         _log = log ?? NullLogger<ExtensionGuard>.Instance;
         _grace = TimeSpan.FromSeconds(Math.Max(1, settings.Value.ExtensionGraceSeconds));
@@ -143,6 +226,10 @@ public sealed class ExtensionGuard : IDisposable
         _witness.ConnectionChanged += OnWitnessChanged;
         if (_profiles is not null)
             _profiles.Changed += OnProfilesChanged;
+        if (_selfCheck is not null)
+            _selfCheck.Changed += OnSelfCheckChanged;
+        if (_schoolProfile is not null)
+            _schoolProfile.MissingChanged += OnSchoolProfileChanged;
     }
 
     /// <summary>How long <see cref="BeginRepair"/> opens Edge for.</summary>
@@ -161,6 +248,17 @@ public sealed class ExtensionGuard : IDisposable
 
     /// <summary>True while Edge must be handled as an off-list app.</summary>
     public bool IsBrowserPaused => State == ExtensionGuardState.Paused;
+
+    /// <summary>
+    /// Why Edge is <see cref="ExtensionGuardState.Paused"/> or
+    /// <see cref="ExtensionGuardState.Repairing"/>: what the pause tells the
+    /// student and what its button does. <see cref="ExtensionPauseReason.ExtensionOff"/>
+    /// in every other state.
+    /// </summary>
+    public ExtensionPauseReason PauseReason
+    {
+        get { lock (_gate) return _reason; }
+    }
 
     /// <summary>
     /// Raised when Edge becomes paused — after the grace period, when a repair
@@ -213,26 +311,65 @@ public sealed class ExtensionGuard : IDisposable
     /// </summary>
     public bool BeginRepair()
     {
+        ExtensionPauseReason reason;
         lock (_gate)
         {
             if (_state != ExtensionGuardState.Paused) return false;
+            reason = _reason;
             StartTimerLocked(ExtensionGuardState.Repairing, RepairWindow);
         }
-        _log.LogInformation(
-            "Opening {Browser} for {RepairSeconds}s so the extension can be switched back on",
-            _browser, (int)RepairWindow.TotalSeconds);
+        if (reason == ExtensionPauseReason.NoSiteAccess)
+        {
+            _log.LogInformation(
+                "Opening {Browser} for {RepairSeconds}s so the extension's site access can be put back",
+                _browser, (int)RepairWindow.TotalSeconds);
+            // The setting is on the extension's own page, which only the extension
+            // can open (#524). Edge is allowed by now, so the page it opens stays up.
+            _selfCheck?.OpenExtensionPage();
+        }
+        else if (reason == ExtensionPauseReason.NoSchoolProfile)
+        {
+            // Edge doesn't open its own settings pages from outside (an edge:// URL
+            // on its command line opens a new tab instead, Edge 157), so the student
+            // signs in from Edge's profile button; the overlay's hint says where.
+            _log.LogInformation(
+                "Opening {Browser} for {RepairSeconds}s so the student can sign in with the school account",
+                _browser, (int)RepairWindow.TotalSeconds);
+        }
+        else if (reason == ExtensionPauseReason.SchoolProfileWithoutExtension)
+        {
+            // #536: the guided install's store listing (#211), opened in the profile
+            // signed in with the school account: Edge adds an extension to the
+            // profile whose window has the listing open. Edge is allowed by now.
+            var profile = _schoolProfile?.ProfileWithoutExtension;
+            _log.LogInformation(
+                "Opening {Browser} for {RepairSeconds}s at the extension's store listing in school profile {Profile}",
+                _browser, (int)RepairWindow.TotalSeconds, profile ?? "none");
+            if (profile is not null)
+                _browserLauncher?.OpenProfile(profile, EdgeExtensionPolicy.StoreListingUrl);
+        }
+        else
+        {
+            _log.LogInformation(
+                "Opening {Browser} for {RepairSeconds}s so the extension can be switched back on",
+                _browser, (int)RepairWindow.TotalSeconds);
+        }
         return true;
     }
 
     private void OnSessionJoined(object? sender, SessionStartedPayload payload)
     {
         ExtensionGuardState state;
+        Pause? pause = null;
         lock (_gate)
         {
             _sessionId = payload.SessionId;
             // Read the witness under our gate so a connect/drop racing the join is
             // applied after it, not lost: OnWitnessChanged takes the same gate.
-            if (_witness.IsConnected)
+            if (_witness.IsConnected && ProblemWithLinkUpLocked() is { } problem)
+                // The extension's answer to the session beat this handler (#524).
+                pause = PauseLocked(problem);
+            else if (_witness.IsConnected)
                 SetStateLocked(ExtensionGuardState.Present);
             else if (_witness.HasConnected)
                 // Switched off before the session started: same grace as a drop.
@@ -242,6 +379,8 @@ public sealed class ExtensionGuard : IDisposable
             state = _state;
         }
         _log.LogInformation("Extension guard for session {SessionId} starts {State}", payload.SessionId, state);
+        if (pause is not null)
+            Announce(pause, Describe(pause.Reason));
     }
 
     private void OnSessionLeft(object? sender, Guid sessionId)
@@ -264,16 +403,17 @@ public sealed class ExtensionGuard : IDisposable
             previous = _state;
             if (!connected)
                 StartTimerLocked(ExtensionGuardState.Waiting, _grace);
-            else if (_profiles?.IsExtensionOff == true)
+            else if (ProblemWithLinkUpLocked() is { } problem)
                 // One profile's extension is back, but another open profile still
-                // has it switched off (#518).
-                pause = PauseLocked();
+                // has it switched off (#518), or one says it may not work on all
+                // sites (#524).
+                pause = PauseLocked(problem);
             else
                 SetStateLocked(ExtensionGuardState.Present);
         }
 
         if (pause is not null)
-            Announce(pause, "an open profile has the extension switched off");
+            Announce(pause, Describe(pause.Reason));
         else if (connected && previous == ExtensionGuardState.Paused)
             _log.LogInformation("Extension reconnected; {Browser} is no longer paused", _browser);
         else if (!connected)
@@ -299,10 +439,54 @@ public sealed class ExtensionGuard : IDisposable
             if (_sessionId is null || _state == ExtensionGuardState.Off) return;
             if (off)
             {
-                if (_state == ExtensionGuardState.Present)
-                    pause = PauseLocked();
+                // Paused for site access already (#524): being switched off in an
+                // open profile is the bigger thing, for the student and the teacher.
+                if (_state == ExtensionGuardState.Present
+                    || (_state == ExtensionGuardState.Paused && _reason != ExtensionPauseReason.ExtensionOff))
+                    pause = PauseLocked(ExtensionPauseReason.ExtensionOff);
             }
             else if (_state != ExtensionGuardState.Present && _witness.IsConnected)
+            {
+                if (ProblemWithLinkUpLocked() is not { } problem)
+                {
+                    SetStateLocked(ExtensionGuardState.Present);
+                    lifted = true;
+                }
+                else if (_state == ExtensionGuardState.Paused && _reason != problem)
+                    // Every open profile has the extension again, but one says it
+                    // may not work on all sites (#524): the pause says so now.
+                    pause = PauseLocked(problem);
+            }
+        }
+
+        if (pause is not null)
+            Announce(pause, Describe(pause.Reason));
+        else if (lifted)
+            _log.LogInformation("Every open profile has the extension again; {Browser} is no longer paused", _browser);
+    }
+
+    /// <summary>
+    /// A connected extension says it may not work on all sites, or no longer
+    /// does (#524). It said so itself, so there is nothing to wait for: Edge is
+    /// paused at once, and the pause lifts as soon as a check passes. A link that
+    /// is down is already being handled, and a pause for the extension being off
+    /// stays one.
+    /// </summary>
+    private void OnSelfCheckChanged(object? sender, bool lost)
+    {
+        Pause? pause = null;
+        var lifted = false;
+        lock (_gate)
+        {
+            // Off: the extension never connected on this device, so nothing is guarded.
+            if (_sessionId is null || _state == ExtensionGuardState.Off) return;
+            if (lost)
+            {
+                if (_state == ExtensionGuardState.Present)
+                    pause = PauseLocked(ExtensionPauseReason.NoSiteAccess);
+            }
+            else if (_state != ExtensionGuardState.Present && _witness.IsConnected
+                     && ProblemWithLinkUpLocked() is null)
             {
                 SetStateLocked(ExtensionGuardState.Present);
                 lifted = true;
@@ -310,10 +494,90 @@ public sealed class ExtensionGuard : IDisposable
         }
 
         if (pause is not null)
-            Announce(pause, "an open profile has the extension switched off");
+            Announce(pause, Describe(pause.Reason));
         else if (lifted)
-            _log.LogInformation("Every open profile has the extension again; {Browser} is no longer paused", _browser);
+            _log.LogInformation("The extension may work on all sites again; {Browser} is no longer paused", _browser);
     }
+
+    /// <summary>
+    /// No Edge profile is signed in with the school account any more, or one is
+    /// again (#525), or the one that is lacks the extension (#536). The
+    /// school-profile guard has looked it up, so there is nothing to wait for: Edge
+    /// is paused at once, the pause says what is missing now, and it lifts as soon
+    /// as the school profile is found. It comes before site access: which profile
+    /// is the school profile decides which extension's settings matter. A link that
+    /// is down is already being handled, a pause for the extension being off stays
+    /// one, and a repair window runs its course (when it runs out, Edge is paused
+    /// for what is missing then).
+    /// </summary>
+    private void OnSchoolProfileChanged(object? sender, bool missing)
+    {
+        Pause? pause = null;
+        var lifted = false;
+        lock (_gate)
+        {
+            // Off: the extension never connected on this device, so nothing is guarded.
+            if (_sessionId is null || _state == ExtensionGuardState.Off) return;
+            if (missing)
+            {
+                if (SchoolProfileProblemLocked() is { } reason
+                    && (_state == ExtensionGuardState.Present
+                        || (_state == ExtensionGuardState.Paused
+                            && _reason != reason
+                            && _reason is ExtensionPauseReason.NoSiteAccess
+                                or ExtensionPauseReason.NoSchoolProfile
+                                or ExtensionPauseReason.SchoolProfileWithoutExtension)))
+                    pause = PauseLocked(reason);
+            }
+            else if (_state != ExtensionGuardState.Present && _witness.IsConnected)
+            {
+                if (ProblemWithLinkUpLocked() is not { } problem)
+                {
+                    SetStateLocked(ExtensionGuardState.Present);
+                    lifted = true;
+                }
+                else if (_state == ExtensionGuardState.Paused && _reason != problem)
+                    pause = PauseLocked(problem);
+            }
+        }
+
+        if (pause is not null)
+            Announce(pause, Describe(pause.Reason));
+        else if (lifted)
+            _log.LogInformation(
+                "An Edge profile is signed in with the school account again; {Browser} is no longer paused", _browser);
+    }
+
+    /// <summary>
+    /// What keeps Edge from being filtered while an extension's link is up, if
+    /// anything. Call under <see cref="_gate"/>.
+    /// </summary>
+    private ExtensionPauseReason? ProblemWithLinkUpLocked() =>
+        _profiles?.IsExtensionOff == true ? ExtensionPauseReason.ExtensionOff
+        : SchoolProfileProblemLocked() is { } school ? school
+        : _selfCheck?.SiteAccessLost == true ? ExtensionPauseReason.NoSiteAccess
+        : null;
+
+    /// <summary>
+    /// What is missing for the school profile, if anything: a profile signed in
+    /// with the school account (#525), or the extension in the one that is (#536).
+    /// Read in one go, so the two can't be mixed up mid-scan.
+    /// </summary>
+    private ExtensionPauseReason? SchoolProfileProblemLocked() =>
+        _schoolProfile?.Reading is { Status: SchoolProfileStatus.Missing } reading
+            ? reading.Profile is null
+                ? ExtensionPauseReason.NoSchoolProfile
+                : ExtensionPauseReason.SchoolProfileWithoutExtension
+            : null;
+
+    private static string Describe(ExtensionPauseReason reason) => reason switch
+    {
+        ExtensionPauseReason.NoSiteAccess => "the extension may not work on all sites",
+        ExtensionPauseReason.NoSchoolProfile => "no Edge profile is signed in with the school account",
+        ExtensionPauseReason.SchoolProfileWithoutExtension =>
+            "the Edge profile signed in with the school account doesn't have the extension",
+        _ => "an open profile has the extension switched off",
+    };
 
     private void OnTimer(long generation)
     {
@@ -346,7 +610,12 @@ public sealed class ExtensionGuard : IDisposable
             // Something moved on while we were probing (a reconnect, a leave).
             if (generation != _generation) return;
             if (browserOnScreen)
-                pause = PauseLocked();
+                // The link is down, or a repair window ran out with the problem
+                // that paused Edge still there.
+                pause = PauseLocked(
+                    _witness.IsConnected && ProblemWithLinkUpLocked() is { } problem
+                        ? problem
+                        : ExtensionPauseReason.ExtensionOff);
             else
                 SetStateLocked(ExtensionGuardState.Dormant);
         }
@@ -360,19 +629,34 @@ public sealed class ExtensionGuard : IDisposable
             return;
         }
 
-        Announce(pause, $"the extension is still gone after {expired}");
+        Announce(pause, pause.Reason switch
+        {
+            ExtensionPauseReason.NoSiteAccess => $"the extension still may not work on all sites after {expired}",
+            ExtensionPauseReason.NoSchoolProfile =>
+                $"still no Edge profile signed in with the school account after {expired}",
+            ExtensionPauseReason.SchoolProfileWithoutExtension =>
+                $"the school profile still doesn't have the extension after {expired}",
+            _ => $"the extension is still gone after {expired}",
+        });
     }
 
     /// <summary>What entering <see cref="ExtensionGuardState.Paused"/> still has to do outside the gate.</summary>
     /// <param name="ReportFor">The session to tell the teacher in, or null when they already know.</param>
-    private sealed record Pause(Guid? ReportFor);
+    /// <param name="Reason">Why Edge is paused.</param>
+    private sealed record Pause(Guid? ReportFor, ExtensionPauseReason Reason);
 
-    private Pause PauseLocked()
+    private Pause PauseLocked(ExtensionPauseReason reason)
     {
-        var report = !_reported;
+        // "Switched off or removed" is told at the pause (#518). Site access is told
+        // by the self-check watch, and only if the student doesn't put it back (#524);
+        // a missing school profile, or its missing extension, by the school-profile
+        // guard, likewise (#525, #536).
+        var report = reason == ExtensionPauseReason.ExtensionOff && !_reported;
         SetStateLocked(ExtensionGuardState.Paused);
-        _reported = true;
-        return new Pause(report ? _sessionId : null);
+        _reason = reason;
+        if (report)
+            _reported = true;
+        return new Pause(report ? _sessionId : null, reason);
     }
 
     private void Announce(Pause pause, string why)
@@ -423,6 +707,9 @@ public sealed class ExtensionGuard : IDisposable
         // The extension is back, or the session is over: that outage is done.
         if (state is ExtensionGuardState.Present or ExtensionGuardState.Off)
             _reported = false;
+        // A reason belongs to a pause and to the repair window it opens.
+        if (state is not (ExtensionGuardState.Paused or ExtensionGuardState.Repairing))
+            _reason = ExtensionPauseReason.ExtensionOff;
         _state = state;
         _generation++;
         _timer?.Dispose();
@@ -436,6 +723,10 @@ public sealed class ExtensionGuard : IDisposable
         _witness.ConnectionChanged -= OnWitnessChanged;
         if (_profiles is not null)
             _profiles.Changed -= OnProfilesChanged;
+        if (_selfCheck is not null)
+            _selfCheck.Changed -= OnSelfCheckChanged;
+        if (_schoolProfile is not null)
+            _schoolProfile.MissingChanged -= OnSchoolProfileChanged;
         lock (_gate)
         {
             _sessionId = null;

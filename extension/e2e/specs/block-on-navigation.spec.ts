@@ -6,6 +6,10 @@
 // #489 — the extension reports each block to the on-box agent, which sends it
 // to the teacher with its own connection; and with the agent gone, the session
 // it handed down stays in force rather than leaving Edge unfiltered.
+//
+// #527 — the report names the host only: the path and query string, which can
+// hold search terms, stay on the student's device, where the block page shows
+// them the whole URL.
 
 import { test, expect } from '../fixtures.ts';
 import { expectRedirectedToBlockPage } from '../asserts.ts';
@@ -25,16 +29,21 @@ test('navigating to an off-list site is redirected to the block page, and the ag
   agent,
   staticServer,
 }) => {
-  const offlistUrl = staticServer.url(OFFLIST_HOST, '/during-session');
+  const offlistUrl = staticServer.url(OFFLIST_HOST, '/during-session?q=my+search');
   const page = await ext.context.newPage();
   // The redirect fires in onBeforeNavigate, so this goto is superseded — its
   // rejection is expected and irrelevant; the resulting URL is what matters.
   await page.goto(offlistUrl).catch(() => {});
 
   await expectRedirectedToBlockPage(page, ext, OFFLIST_HOST);
+  // The student sees the whole URL they were stopped at...
+  await expect(page.locator('[data-blocked-url]')).toHaveText(offlistUrl);
+  // ...the teacher's report names the host only (#527).
   const report = await agent.waitForMessage((m) => m.type === 'blocked_url');
-  expect(report).toMatchObject({ sessionId, url: offlistUrl, host: OFFLIST_HOST });
+  expect(report).toMatchObject({ sessionId, host: OFFLIST_HOST });
   expect(typeof report.tabId).toBe('number');
+  expect(report).not.toHaveProperty('url');
+  expect(JSON.stringify(report)).not.toContain('during-session');
 });
 
 test('navigating to an on-list site is left untouched', async ({ ext, staticServer }) => {

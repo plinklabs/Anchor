@@ -36,6 +36,61 @@ public class BrowserWindowAppIdsTests
     }
 
     [Fact]
+    public void Reads_each_browser_window_s_app_id_title_and_whether_it_is_minimized()
+    {
+        // #525: which profile a window belongs to (its ID), whether it is InPrivate
+        // (its title), and whether it is down already.
+        using var window = TestWindow.Open("about:blank - [InPrivate] - Microsoft Edge");
+        using var other = TestWindow.Open("No app id");
+        using var current = Process.GetCurrentProcess();
+        var reader = new BrowserWindowAppIds(new AppIdentifier());
+        WindowAppId.Set(window.Handle, "MSEdge.UserData.Profile1");
+
+        var found = Assert.Single(reader.GetBrowserWindows(current.ProcessName), w => w.Handle == window.Handle);
+        Assert.Equal("MSEdge.UserData.Profile1", found.AppId);
+        Assert.Equal("about:blank - [InPrivate] - Microsoft Edge", found.Title);
+        Assert.False(found.Minimized);
+        // A window without an ID is no browser window.
+        Assert.DoesNotContain(reader.GetBrowserWindows(current.ProcessName), w => w.Handle == other.Handle);
+        Assert.Empty(reader.GetBrowserWindows("no-such-process-" + Guid.NewGuid().ToString("N")));
+
+        window.MinimizeWithoutActivating();
+        var described = reader.Describe(window.Handle);
+        Assert.NotNull(described);
+        Assert.Equal("MSEdge.UserData.Profile1", described.AppId);
+        Assert.True(described.Minimized);
+        Assert.Null(reader.Describe(0));
+    }
+
+    [Fact]
+    public void The_launcher_closes_a_window_as_its_close_button_does_and_opens_only_edge_in_a_profile()
+    {
+        var window = TestWindow.Open("Anchor close test");
+        try
+        {
+            using var current = Process.GetCurrentProcess();
+            // Standing another process in for the browser, as the e2e does: nothing
+            // is started, so a test never opens Edge on the developer's desktop.
+            var launcher = new BrowserProfileLauncher(current.ProcessName);
+
+            launcher.CloseWindow(window.Handle);
+            launcher.OpenProfile("Profile 1");
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (IsWindow(window.Handle) && DateTime.UtcNow < deadline)
+                Thread.Sleep(50);
+            Assert.False(IsWindow(window.Handle), "The window was not closed.");
+        }
+        finally
+        {
+            window.Dispose();
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(nint hWnd);
+
+    [Fact]
     public void Reads_it_from_a_thread_that_never_initialised_COM()
     {
         // The scan runs on a timer thread.

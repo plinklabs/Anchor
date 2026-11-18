@@ -65,6 +65,10 @@
     "message": "Approved — opening the page…",
     "description": "Status when the teacher approved access and the page is reopening."
   },
+  "blockDenied": {
+    "message": "Your teacher declined this request. Ask again if you still need the site.",
+    "description": "Status when the teacher turned the unblock request down; Request access is enabled again."
+  },
   "blockReasonUnknown": {
     "message": "Unknown error",
     "description": "Fallback reason embedded in blockReachTeacherFailed when the background reports none."

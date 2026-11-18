@@ -18,8 +18,11 @@ public interface ISessionBroadcaster
     Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default);
     Task AgentReconnectedAsync(AgentReconnectedPayload payload, CancellationToken cancellationToken = default);
     Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default);
+    Task UnblockDeniedAsync(UnblockDeniedPayload payload, CancellationToken cancellationToken = default);
     Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default);
     Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default);
+    /// <summary>Test phase only (#515): an off-list site the extension let through (#526).</summary>
+    Task UnfilteredSiteAsync(UnfilteredSitePayload payload, CancellationToken cancellationToken = default);
 }
 
 internal sealed class SessionBroadcaster : ISessionBroadcaster
@@ -101,6 +104,12 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         // session must stay on the un-amended allowlist.
         => _hub.Clients.Group(SessionHub.UserGroupName(payload.UserId)).AllowlistAmended(payload);
 
+    public Task UnblockDeniedAsync(UnblockDeniedPayload payload, CancellationToken cancellationToken = default)
+        // The denied student only, like an approval (#523): their agent hands it
+        // to the extension, whose block page says the request was declined. No
+        // classmate learns what they asked for.
+        => _hub.Clients.Group(SessionHub.UserGroupName(payload.UserId)).UnblockDenied(payload);
+
     public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
         // Session group: the owning teacher is the only "interested" party,
         // and the only one in it (#366): it carries the student's name and the
@@ -112,4 +121,8 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         // Session group: same routing as UnblockRequested — the owning teacher's
         // dashboard is the consumer, and no student may see a classmate's flag.
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).TamperDetected(payload);
+
+    public Task UnfilteredSiteAsync(UnfilteredSitePayload payload, CancellationToken cancellationToken = default)
+        // Session group, as TamperDetected: the owning teacher's live page only.
+        => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).UnfilteredSite(payload);
 }

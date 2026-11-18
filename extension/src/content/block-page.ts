@@ -1,6 +1,6 @@
 import { logger } from '../shared/logger';
 import { localizeDocument, t } from '../shared/i18n';
-import { isBlockLifted, type BlockedPage } from '../shared/block-release';
+import { isBlockLifted, isRequestDeclined, type BlockedPage } from '../shared/block-release';
 import type { ExtensionRuntimeMessage, UnblockRequestPayload } from '../shared/types';
 
 const log = logger('block-page');
@@ -124,6 +124,23 @@ function wireAllowlistAmendedListener(params: BlockParams): void {
   });
 }
 
+// The teacher turned the request for this page's host down (#523). Say so in
+// place of "Requested", and let the student ask again: a denial isn't final.
+function wireUnblockDeniedListener(params: BlockParams): void {
+  if (!params.sessionId) return;
+
+  chrome.runtime.onMessage.addListener((raw) => {
+    const message = raw as ExtensionRuntimeMessage;
+    if (message?.kind !== 'unblock-denied') return;
+    if (!isRequestDeclined(params, message.sessionId, message.host)) return;
+
+    log.info('the teacher declined the request for the blocked page', { host: message.host });
+    setStatus(t('blockDenied'));
+    const requestBtn = document.querySelector<HTMLButtonElement>('[data-action="request"]');
+    if (requestBtn) requestBtn.disabled = false;
+  });
+}
+
 const params = readParams();
 log.info('block page loaded', { blockedUrl: params.blockedUrl, sessionId: params.sessionId });
 // Localize the static copy first, then paint the dynamic bits over it so the
@@ -132,3 +149,4 @@ localizeDocument();
 render(params);
 wireButtons(params);
 wireAllowlistAmendedListener(params);
+wireUnblockDeniedListener(params);

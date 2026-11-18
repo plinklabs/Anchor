@@ -68,7 +68,10 @@ public sealed class WamTokenProvider : IAuthTokenProvider, IAsyncDisposable
                 AccessToken: result.AccessToken,
                 Username: result.Account?.Username ?? string.Empty,
                 DisplayName: ExtractDisplayName(result),
-                ExpiresOn: result.ExpiresOn);
+                ExpiresOn: result.ExpiresOn,
+                // #525: the Entra object ID an Edge profile signed in with the same
+                // account carries.
+                AccountId: result.UniqueId ?? result.Account?.HomeAccountId?.ObjectId);
             _last = auth;
             return auth;
         }

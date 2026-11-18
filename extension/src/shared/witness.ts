@@ -14,9 +14,14 @@
 // - The agent is the extension's only identity (#489). The extension has no
 //   sign-in and no backend connection: the agent, signed in with the Windows
 //   account, hands the session it joined down this link (`session_started`, the
-//   allowlist changes, `session_ended`, and the current state on every connect),
+//   allowlist changes, a declined request, `session_ended`, and the current state
+//   on every connect),
 //   and the extension hands back what it reports (blocked URLs, unblock requests,
 //   its in-browser tamper signals), which the agent sends with its own connection.
+// - The extension tells the agent what it reads about its own settings
+//   (`self_check`, #524) on every session it is handed and whenever its
+//   permissions change, and the agent can ask it to open its own settings page
+//   (`open_extension_page`), which nothing outside the browser can open.
 //
 // Same split as tamper.ts / host-matcher.ts: the pure parsing + backoff helpers
 // live here and are unit-tested; the chrome.runtime wiring is injected so the
@@ -52,7 +57,14 @@ export type AgentMessage =
   | { type: 'no_session' }
   | { type: 'session_ended'; sessionId: string }
   | { type: 'allowlist_replaced'; sessionId: string; domains: AllowedDomainDto[] }
-  | { type: 'allowlist_amended'; sessionId: string; addedDomains: AllowedDomainDto[] };
+  | { type: 'allowlist_amended'; sessionId: string; addedDomains: AllowedDomainDto[] }
+  /** The teacher turned down the request for this host (#523). */
+  | { type: 'unblock_denied'; sessionId: string; host: string }
+  /**
+   * Open the extension's own settings page (#524): the student pressed the
+   * button on the agent's pause, so Anchor's site access can be put back.
+   */
+  | { type: 'open_extension_page'; sessionId: string };
 
 /** The agent's answer to an unblock request, matched by its request id. */
 export interface UnblockRequestResult {
@@ -60,10 +72,16 @@ export interface UnblockRequestResult {
   error?: string;
 }
 
-/** What the extension sends the agent to report (#489). */
+/**
+ * What the extension sends the agent to report (#489). A blocked page is
+ * reported by its host only, never its URL (#527). `self_check` is what the
+ * extension reads about its own settings during a session (#524, see
+ * self-check.ts); the agent pauses Edge while `allSites` is false.
+ */
 export type ExtensionReport =
-  | { type: 'blocked_url'; sessionId: string; url: string; host: string; tabId: number; occurredAt: string }
-  | { type: 'tamper'; sessionId: string; kind: string };
+  | { type: 'blocked_url'; sessionId: string; host: string; tabId: number; occurredAt: string }
+  | { type: 'tamper'; sessionId: string; kind: string }
+  | { type: 'self_check'; sessionId: string; allSites: boolean; inPrivate: boolean };
 
 /** An unblock request, before the client gives it a request id. */
 export interface UnblockRequest {
@@ -126,6 +144,14 @@ export function parseHostMessage(raw: unknown): HostSignal {
             kind: 'agent',
             message: { type: 'allowlist_amended', sessionId: msg.sessionId, addedDomains: msg.addedDomains },
           }
+        : { kind: 'ignore' };
+    case 'unblock_denied':
+      return isNonBlank(msg.sessionId) && isNonBlank(msg.host)
+        ? { kind: 'agent', message: { type: 'unblock_denied', sessionId: msg.sessionId, host: msg.host } }
+        : { kind: 'ignore' };
+    case 'open_extension_page':
+      return isNonBlank(msg.sessionId)
+        ? { kind: 'agent', message: { type: 'open_extension_page', sessionId: msg.sessionId } }
         : { kind: 'ignore' };
     case 'unblock_request_result':
       return isNonBlank(msg.requestId)

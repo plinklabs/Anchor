@@ -42,6 +42,9 @@ class AppLocalizationsNl extends AppLocalizations {
   String get actionApprove => 'Goedkeuren';
 
   @override
+  String get actionDeny => 'Weigeren';
+
+  @override
   String get badgeLive => 'Live';
 
   @override
@@ -441,6 +444,10 @@ class AppLocalizationsNl extends AppLocalizations {
       'Kon het verzoek niet goedkeuren. Probeer het opnieuw.';
 
   @override
+  String get sessionDenyError =>
+      'Kon het verzoek niet weigeren. Probeer het opnieuw.';
+
+  @override
   String sessionCopiedCode(String code) {
     return '$code gekopieerd';
   }
@@ -689,6 +696,47 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String feedTamperOutsideSchoolProfile(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name hield een Edge-venster buiten het schoolprofiel open.',
+      'other':
+          'Een leerling hield een Edge-venster buiten het schoolprofiel open.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperSchoolProfileMissing(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name is in Edge niet aangemeld met het schoolaccount.',
+      'other': 'Een leerling is in Edge niet aangemeld met het schoolaccount.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperSchoolProfileWithoutExtension(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named':
+          '$name heeft Anchor nog niet toegevoegd aan het schoolprofiel in Edge.',
+      'other':
+          'Een leerling heeft Anchor nog niet toegevoegd aan het schoolprofiel in Edge.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedUnfilteredSite(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named':
+          '$name had $host open in Edge, maar die website is niet toegelaten en werd niet geblokkeerd.',
+      'other':
+          'Een leerling had $host open in Edge, maar die website is niet toegelaten en werd niet geblokkeerd.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String feedTamperOther(String who, String name) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named': 'Manipulatie gedetecteerd op de computer van $name.',
@@ -749,6 +797,15 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String feedDeniedFor(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': 'Toegang tot $host is geweigerd voor $name.',
+      'other': 'Toegang tot $host is geweigerd voor een leerling.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String get sessionStateStale => 'Agent rapporteert niet meer';
 
   @override
@@ -790,17 +847,6 @@ class AppLocalizationsNl extends AppLocalizations {
 
   @override
   String get sessionPendingRequests => 'Openstaande verzoeken';
-
-  @override
-  String sessionRequesters(int count, String names) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '$count leerlingen — $names',
-      one: '1 leerling — $names',
-    );
-    return '$_temp0';
-  }
 
   @override
   String get sessionMoreApprovalOptions => 'Meer goedkeuringsopties';
@@ -1441,7 +1487,7 @@ class AppLocalizationsNl extends AppLocalizations {
   String get pastApprovedExceptions => 'Goedgekeurde uitzonderingen';
 
   @override
-  String get pastUnapprovedRequests => 'Niet-goedgekeurde verzoeken';
+  String get pastUnansweredRequests => 'Onbeantwoorde verzoeken';
 
   @override
   String get pastEventLog => 'Gebeurtenissenlog';
@@ -1552,6 +1598,28 @@ class AppLocalizationsNl extends AppLocalizations {
       locale: localeName,
       other: '$count websites goedgekeurd',
       one: '1 website goedgekeurd',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryDenied(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count verzoeken geweigerd',
+      one: '1 verzoek geweigerd',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryUnfilteredSites(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count niet-geblokkeerde websites',
+      one: '1 niet-geblokkeerde website',
     );
     return '$_temp0';
   }

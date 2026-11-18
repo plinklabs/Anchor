@@ -230,4 +230,11 @@ public sealed record DevSettings
     /// student identities without multiple Entra accounts.
     /// </summary>
     public string ImpersonateOid { get; init; } = "";
+
+    /// <summary>
+    /// Optional sign-in name to go with <see cref="ImpersonateOid"/>, as WAM would
+    /// give it (an address). Lets the e2e show the pause that names the school
+    /// account Edge must be signed in with (#525). Empty: a placeholder naming the OID.
+    /// </summary>
+    public string ImpersonateUsername { get; init; } = "";
 }

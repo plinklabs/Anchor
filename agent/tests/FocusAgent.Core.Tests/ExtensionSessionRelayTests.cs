@@ -128,6 +128,42 @@ public class ExtensionSessionRelayTests
     }
 
     [Fact]
+    public async Task A_denied_request_is_handed_down_with_its_host_and_leaves_the_allowlist_alone()
+    {
+        var h = new Harness();
+        h.Channel.RaiseConnected();
+        var sessionId = await h.JoinAsync(Office);
+        h.Channel.ClearSent();
+
+        h.Hub.RaiseUnblockDenied(new UnblockDeniedPayload(sessionId, Guid.NewGuid(), "games.example", DateTimeOffset.UtcNow));
+
+        var message = Assert.Single(h.Channel.Messages());
+        Assert.Equal("unblock_denied", Type(message));
+        Assert.Equal(sessionId, message.GetProperty("sessionId").GetGuid());
+        Assert.Equal("games.example", message.GetProperty("host").GetString());
+        Assert.Equal(new[] { Office }, h.Relay.Domains);
+
+        // Nothing to catch up on: an extension that connects later has no block
+        // page still waiting on that request.
+        h.Channel.ClearSent();
+        h.Channel.RaiseConnected();
+        Assert.Equal("session_started", Type(Assert.Single(h.Channel.Messages())));
+    }
+
+    [Fact]
+    public async Task A_denial_for_another_session_is_not_handed_down()
+    {
+        var h = new Harness();
+        h.Channel.RaiseConnected();
+        await h.JoinAsync(Office);
+        h.Channel.ClearSent();
+
+        h.Hub.RaiseUnblockDenied(new UnblockDeniedPayload(Guid.NewGuid(), Guid.NewGuid(), "games.example", DateTimeOffset.UtcNow));
+
+        Assert.Empty(h.Channel.Messages());
+    }
+
+    [Fact]
     public async Task The_end_of_the_session_is_handed_down()
     {
         var h = new Harness();
@@ -167,11 +203,11 @@ public class ExtensionSessionRelayTests
         h.Channel.RaiseConnected();
         var sessionId = await h.JoinAsync(Office);
 
+        // The extension reports the host only (#527).
         h.Channel.Receive(new
         {
             type = "blocked_url",
             sessionId,
-            url = "https://games.example/play",
             host = "games.example",
             tabId = 7,
             occurredAt = "2026-11-11T09:30:00.000Z",
@@ -182,9 +218,40 @@ public class ExtensionSessionRelayTests
         Assert.Equal("BlockedUrl", report.Kind);
         Assert.Equal(DateTimeOffset.Parse("2026-11-11T09:30:00Z"), report.OccurredAt);
         using var payload = JsonDocument.Parse(report.PayloadJson);
-        Assert.Equal("https://games.example/play", payload.RootElement.GetProperty("url").GetString());
         Assert.Equal("games.example", payload.RootElement.GetProperty("host").GetString());
         Assert.Equal(7, payload.RootElement.GetProperty("tabId").GetInt32());
+        Assert.False(payload.RootElement.TryGetProperty("url", out _));
+    }
+
+    [Theory]
+    [InlineData("games.example")]
+    [InlineData("")]
+    public async Task A_blocked_url_from_an_older_extension_is_reported_by_its_host_without_the_url(string sentHost)
+    {
+        // #527: an extension the store hasn't updated yet still sends the whole
+        // URL, path and query string included. The agent sends the teacher the
+        // host only, and works it out from the URL when the report has none.
+        var h = new Harness();
+        h.Channel.RaiseConnected();
+        var sessionId = await h.JoinAsync(Office);
+
+        h.Channel.Receive(new
+        {
+            type = "blocked_url",
+            sessionId,
+            url = "https://games.example/play?q=my+search",
+            host = sentHost,
+            tabId = 7,
+            occurredAt = "2026-11-11T09:30:00.000Z",
+        });
+
+        var report = await h.Hub.NextReportAsync();
+        Assert.Equal("BlockedUrl", report.Kind);
+        Assert.DoesNotContain("play", report.PayloadJson);
+        Assert.DoesNotContain("search", report.PayloadJson);
+        using var payload = JsonDocument.Parse(report.PayloadJson);
+        Assert.False(payload.RootElement.TryGetProperty("url", out _));
+        Assert.Equal("games.example", payload.RootElement.GetProperty("host").GetString());
     }
 
     [Fact]
@@ -256,12 +323,31 @@ public class ExtensionSessionRelayTests
         var sessionId = await h.JoinAsync(Office);
 
         h.Channel.Receive(new { type = "tamper", sessionId, kind = "made_up" });
-        h.Channel.Receive(new { type = "tamper", sessionId, kind = "inprivate_opened" });
+        // An extension older than #524 still reports its site access itself.
+        h.Channel.Receive(new { type = "tamper", sessionId, kind = "host_permission_revoked" });
 
         var report = await h.Hub.NextReportAsync();
         Assert.Equal("TamperDetected", report.Kind);
-        Assert.Equal("{\"kind\":\"inprivate_opened\"}", report.PayloadJson);
+        Assert.Equal("{\"kind\":\"host_permission_revoked\"}", report.PayloadJson);
+        await Task.Delay(50);
         Assert.Single(h.Hub.Reports);
+    }
+
+    [Fact]
+    public async Task The_extensions_own_inprivate_signal_goes_no_further()
+    {
+        // #535: the agent's own InPrivate witness reports an InPrivate window only
+        // when the student leaves it open; the extension (where it is allowed in
+        // InPrivate) says so the moment the window opens. Passing that on would
+        // tell the teacher of a window closed in time, and twice of one left open.
+        var h = new Harness();
+        h.Channel.RaiseConnected();
+        var sessionId = await h.JoinAsync(Office);
+
+        h.Channel.Receive(new { type = "tamper", sessionId, kind = "inprivate_opened" });
+
+        await Task.Delay(100);
+        Assert.Empty(h.Hub.Reports);
     }
 
     [Fact]
@@ -576,6 +662,7 @@ public class ExtensionSessionRelayTests
         public event EventHandler<Guid>? SessionEnded;
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
         public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+        public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 
         public List<(Guid SessionId, string Kind, string PayloadJson, DateTimeOffset? OccurredAt)> Reports { get; } = new();
         public List<Guid> ExtensionPings { get; } = new();
@@ -584,6 +671,7 @@ public class ExtensionSessionRelayTests
         public void RaiseSessionEnded(Guid sessionId) => SessionEnded?.Invoke(this, sessionId);
         public void RaiseBundlesUpdated(SessionBundlesUpdatedPayload payload) => SessionBundlesUpdated?.Invoke(this, payload);
         public void RaiseAllowlistAmended(AllowlistAmendedPayload payload) => AllowlistAmended?.Invoke(this, payload);
+        public void RaiseUnblockDenied(UnblockDeniedPayload payload) => UnblockDenied?.Invoke(this, payload);
 
         public async Task<(Guid SessionId, string Kind, string PayloadJson, DateTimeOffset? OccurredAt)> NextReportAsync()
         {

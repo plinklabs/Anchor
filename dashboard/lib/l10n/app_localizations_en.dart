@@ -42,6 +42,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get actionApprove => 'Approve';
 
   @override
+  String get actionDeny => 'Deny';
+
+  @override
   String get badgeLive => 'Live';
 
   @override
@@ -435,6 +438,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Could not approve the request. Please try again.';
 
   @override
+  String get sessionDenyError =>
+      'Could not deny the request. Please try again.';
+
+  @override
   String sessionCopiedCode(String code) {
     return 'Copied $code';
   }
@@ -677,6 +684,45 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String feedTamperOutsideSchoolProfile(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name kept an Edge window open outside the school profile.',
+      'other': 'A student kept an Edge window open outside the school profile.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperSchoolProfileMissing(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name is not signed in to Edge with their school account.',
+      'other': 'A student is not signed in to Edge with their school account.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedTamperSchoolProfileWithoutExtension(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': '$name hasn\'t added Anchor to their school profile in Edge.',
+      'other':
+          'A student hasn\'t added Anchor to their school profile in Edge.',
+    });
+    return '$_temp0';
+  }
+
+  @override
+  String feedUnfilteredSite(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named':
+          '$name had $host open in Edge, which isn\'t allowed, and it wasn\'t blocked.',
+      'other':
+          'A student had $host open in Edge, which isn\'t allowed, and it wasn\'t blocked.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String feedTamperOther(String who, String name) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named': 'Tampering detected on $name\'s computer.',
@@ -733,6 +779,15 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String feedDeniedFor(String who, String name, String host) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named': 'Access to $host was denied for $name.',
+      'other': 'Access to $host was denied for a student.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String get sessionStateStale => 'Agent stopped reporting';
 
   @override
@@ -774,17 +829,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sessionPendingRequests => 'Pending requests';
-
-  @override
-  String sessionRequesters(int count, String names) {
-    String _temp0 = intl.Intl.pluralLogic(
-      count,
-      locale: localeName,
-      other: '$count students — $names',
-      one: '1 student — $names',
-    );
-    return '$_temp0';
-  }
 
   @override
   String get sessionMoreApprovalOptions => 'More approval options';
@@ -1416,7 +1460,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pastApprovedExceptions => 'Approved exceptions';
 
   @override
-  String get pastUnapprovedRequests => 'Unapproved requests';
+  String get pastUnansweredRequests => 'Unanswered requests';
 
   @override
   String get pastEventLog => 'Event log';
@@ -1526,6 +1570,28 @@ class AppLocalizationsEn extends AppLocalizations {
       locale: localeName,
       other: '$count websites approved',
       one: '1 website approved',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryDenied(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count requests denied',
+      one: '1 request denied',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String pastSummaryUnfilteredSites(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count websites not blocked',
+      one: '1 website not blocked',
     );
     return '$_temp0';
   }

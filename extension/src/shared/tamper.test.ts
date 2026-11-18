@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyCreatedWindow, isHostAccessLoss } from './tamper';
+import { classifyCreatedWindow } from './tamper';
 
 describe('classifyCreatedWindow', () => {
   it('flags an incognito window as inprivate_opened', () => {
@@ -17,21 +17,5 @@ describe('classifyCreatedWindow', () => {
   it('tolerates null/undefined — the event can fire without a window object', () => {
     expect(classifyCreatedWindow(null)).toBeNull();
     expect(classifyCreatedWindow(undefined)).toBeNull();
-  });
-});
-
-describe('isHostAccessLoss', () => {
-  it('treats a removal carrying origins as host-access loss', () => {
-    expect(isHostAccessLoss({ origins: ['<all_urls>'] })).toBe(true);
-  });
-
-  it('ignores an API-permission-only removal (no origins)', () => {
-    expect(isHostAccessLoss({ origins: [] })).toBe(false);
-    expect(isHostAccessLoss({})).toBe(false);
-  });
-
-  it('tolerates null/undefined defensively', () => {
-    expect(isHostAccessLoss(null)).toBe(false);
-    expect(isHostAccessLoss(undefined)).toBe(false);
   });
 });

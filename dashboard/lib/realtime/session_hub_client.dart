@@ -146,12 +146,15 @@ class SessionHubClient {
     // Roster state signals (#100, #105): a member joined/declined/left, their
     // agent stopped/resumed reporting, or a tamper attempt was detected. The
     // page re-fetches the detail on each so the roster reflects server truth —
-    // same pattern as UnblockRequested.
+    // same pattern as UnblockRequested. And, test phase only (#515), an
+    // off-list site a student's agent saw that the extension didn't block
+    // (#526): for the feed only.
     for (final kind in const [
       'ParticipantStateChanged',
       'HeartbeatLost',
       'AgentReconnected',
       'TamperDetected',
+      'UnfilteredSite',
     ]) {
       connection.on(kind, (args) {
         final payload = args != null && args.isNotEmpty && args.first is Map

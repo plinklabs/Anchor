@@ -952,6 +952,24 @@ public sealed class SessionsController : ControllerBase
             .Select(h => h.ToLowerInvariant())
             .ToHashSet();
 
+        // A denial (#523) answers one student's requests for a host up to then,
+        // not for good: a request they send after their latest denial is
+        // pending again. Requests and denials are both stamped by this
+        // server's clock (ReportEvent stamps a request as it arrives), so the
+        // two compare whatever the student's own clock says.
+        var latestDenial = new Dictionary<(Guid, string), DateTimeOffset>();
+        foreach (var denial in await _db.Events.AsNoTracking()
+                     .Where(e => e.SessionId == id && e.Kind == EventKind.UnblockDenied)
+                     .Select(e => new { e.UserId, e.PayloadJson, e.OccurredAt })
+                     .ToListAsync(cancellationToken))
+        {
+            var deniedHost = ExtractHostFromPayload(denial.PayloadJson);
+            if (deniedHost is null) continue;
+            var key = (denial.UserId, deniedHost);
+            if (!latestDenial.TryGetValue(key, out var known) || denial.OccurredAt > known)
+                latestDenial[key] = denial.OccurredAt;
+        }
+
         var byHost = new Dictionary<string, List<UnblockRequestRequester>>(StringComparer.Ordinal);
         var hostFirstSeen = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
         var hostLatest = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
@@ -963,6 +981,8 @@ public sealed class SessionsController : ControllerBase
             if (host is null) continue;
             if (classGrantedHosts.Contains(host)) continue;
             if (granted.Contains((row.UserId, host))) continue;
+            if (latestDenial.TryGetValue((row.UserId, host), out var deniedAt) && row.OccurredAt <= deniedAt)
+                continue;
             // Collapse repeat clicks from the same student on the same host —
             // a student spamming the button shouldn't inflate the per-host
             // count beyond one.
@@ -1128,6 +1148,68 @@ public sealed class SessionsController : ControllerBase
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { host, scope }),
             OccurredAt = at,
         };
+
+    /// <summary>
+    /// Turn down one student's pending request for a host (#523). Decisions are
+    /// per student: a classmate who asked for the same host stays pending. The
+    /// denial is stored as an <see cref="EventKind.UnblockDenied"/> event under
+    /// the student, so the request stays off the pending list after a reload,
+    /// and pushed to the student, whose block page then says it was declined.
+    /// It isn't final: a request the student sends after it is pending again.
+    /// </summary>
+    [HttpPost("{id:guid}/unblock-requests/deny")]
+    [Authorize(Policy = AuthorizationPolicies.Teacher)]
+    [ProducesResponseType(typeof(UnblockDenialResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<UnblockDenialResponse>> DenyUnblock(
+        Guid id,
+        [FromBody] UnblockDenialRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!User.TryGetEntraOid(out var entraOid))
+            return Unauthorized();
+
+        var caller = await _users.FindByEntraOidAsync(entraOid, cancellationToken);
+        if (caller is null)
+            return Unauthorized();
+
+        var host = NormaliseHost(request.Host);
+        if (host is null)
+            return ValidationProblem("Host is required and must be a valid hostname.");
+
+        var session = await _db.Sessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, cancellationToken);
+        if (session is null)
+            return NotFound();
+        if (session.TeacherId != caller.Id)
+            return Forbid();
+        if (session.EndedAt is not null)
+            return ValidationProblem("Session has ended.");
+
+        var isParticipant = await _db.SessionParticipants.AsNoTracking().AnyAsync(
+            p => p.SessionId == id && p.UserId == request.UserId, cancellationToken);
+        if (!isParticipant)
+            return ValidationProblem("Target user is not a participant of this session.");
+
+        var now = _clock.GetUtcNow();
+        _db.Events.Add(new Event
+        {
+            SessionId = id,
+            UserId = request.UserId,
+            Kind = EventKind.UnblockDenied,
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(new { host }),
+            OccurredAt = now,
+        });
+        await _db.SaveChangesAsync(cancellationToken);
+
+        await _broadcaster.UnblockDeniedAsync(
+            new UnblockDeniedPayload(id, request.UserId, host, now),
+            cancellationToken);
+
+        return Ok(new UnblockDenialResponse(id, request.UserId, host, now));
+    }
 
     private static string? NormaliseHost(string? raw)
     {
@@ -1304,6 +1386,12 @@ public sealed record UnblockGrantRequest(Guid? UserId, string Host, string? Scop
 /// <see cref="Scope"/> echoes the granted scope (<c>"student"</c>/<c>"class"</c>).
 /// </summary>
 public sealed record UnblockGrantResponse(Guid SessionId, Guid? UserId, string Host, DateTimeOffset GrantedAt, string Scope);
+
+/// <summary>Turn down <see cref="UserId"/>'s pending request for <see cref="Host"/> (#523).</summary>
+public sealed record UnblockDenialRequest(Guid UserId, string Host);
+
+/// <summary>Result of a denial: whose request for which host, and when.</summary>
+public sealed record UnblockDenialResponse(Guid SessionId, Guid UserId, string Host, DateTimeOffset DeniedAt);
 
 public sealed record UnblockRequestSummary(
     string Host,

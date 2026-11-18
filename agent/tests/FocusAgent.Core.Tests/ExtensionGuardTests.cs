@@ -1,4 +1,7 @@
+using FocusAgent.Core.Auth;
+using System.Text.Json;
 using FocusAgent.Core.Dtos;
+using FocusAgent.Core.Extension;
 using FocusAgent.Core.Focus;
 using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
@@ -22,6 +25,11 @@ public class ExtensionGuardTests
     private static readonly TimeSpan Grace = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan Repair = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan Scan = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan SiteAccessReport = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan SchoolScan = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan SchoolReport = TimeSpan.FromSeconds(60);
+    private const string SchoolAddress = "ada.lovelace@student.school.be";
+    private const string SchoolOid = "28c4a3c2-1f0e-4f55-9a7c-6d3f0a1b2c3d";
 
     [Fact]
     public async Task Switching_the_extension_off_with_edge_open_pauses_edge_after_the_grace_period()
@@ -560,6 +568,504 @@ public class ExtensionGuardTests
         Assert.Equal("msedge", h.Guard.BrowserRule.Value);
     }
 
+    // ---- the extension's own settings (#524) --------------------------------
+
+    [Fact]
+    public async Task An_extension_without_site_access_pauses_edge_at_once_without_telling_the_teacher_yet()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+
+        h.Transport.Check(session, allSites: false);
+
+        // It said so itself: no grace period to wait out.
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+        // Not "switched off or removed": the extension is on.
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Site_access_put_back_lifts_the_pause_at_once_and_nothing_reaches_the_teacher()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.Transport.Check(session, allSites: false);
+
+        h.Clock.Advance(SiteAccessReport - TimeSpan.FromSeconds(1));
+        h.Transport.Check(session, allSites: true);
+
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        Assert.Equal(ExtensionPauseReason.ExtensionOff, h.Guard.PauseReason);
+        h.Clock.Advance(SiteAccessReport * 2);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Site_access_not_put_back_in_time_is_told_as_site_access_and_edge_stays_paused()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.Transport.Check(session, allSites: false);
+
+        h.Clock.Advance(SiteAccessReport);
+
+        Assert.Equal(new[] { (session, TamperKinds.HostPermissionRevoked) }, h.Reporter.Calls);
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(1, h.PausedEvents);
+    }
+
+    [Fact]
+    public async Task The_repair_action_opens_edge_and_has_the_extension_open_its_own_page()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.Transport.Check(session, allSites: false);
+        h.Transport.Sent.Clear();
+
+        Assert.True(h.Guard.BeginRepair());
+
+        Assert.Equal(ExtensionGuardState.Repairing, h.Guard.State);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+        var asked = Assert.Single(h.Transport.Sent);
+        using var line = JsonDocument.Parse(asked.Line);
+        Assert.Equal("open_extension_page", line.RootElement.GetProperty("type").GetString());
+        Assert.Equal(session, line.RootElement.GetProperty("sessionId").GetGuid());
+
+        // Put back on the page it opened: the pause is over.
+        h.Transport.Check(session, allSites: true);
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        h.Clock.Advance(Repair * 2);
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+    }
+
+    [Fact]
+    public async Task The_repair_action_for_a_switched_off_extension_asks_no_extension_to_open_a_page()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.Transport.RaiseDisconnected();
+        h.Clock.Advance(Grace);
+        h.Transport.Sent.Clear();
+
+        Assert.True(h.Guard.BeginRepair());
+
+        Assert.Equal(ExtensionPauseReason.ExtensionOff, h.Guard.PauseReason);
+        Assert.Empty(h.Transport.Sent);
+    }
+
+    [Fact]
+    public async Task A_repair_window_that_runs_out_without_site_access_pauses_edge_again_for_it()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.Transport.Check(session, allSites: false);
+        h.Guard.BeginRepair();
+
+        h.Clock.Advance(Repair);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+        Assert.Equal(2, h.PausedEvents);
+        Assert.DoesNotContain(h.Reporter.Calls, c => c.Kind == TamperKinds.ExtensionDisabled);
+    }
+
+    [Fact]
+    public async Task The_extension_switched_off_while_paused_for_site_access_is_paused_and_told_as_switched_off()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.Transport.Check(session, allSites: false);
+
+        h.Transport.RaiseDisconnected();
+        h.Clock.Advance(Grace);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.ExtensionOff, h.Guard.PauseReason);
+        Assert.Equal(new[] { (session, TamperKinds.ExtensionDisabled) }, h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task An_extension_back_after_a_restart_without_site_access_is_paused_for_site_access()
+    {
+        // An option changed on its page restarts the extension: the link drops,
+        // comes back, and the session handed down again brings the check.
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+
+        h.Transport.RaiseDisconnected();
+        h.Clock.Advance(TimeSpan.FromSeconds(1));
+        h.Transport.RaiseConnected();
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        h.Transport.Check(session, allSites: false, inPrivate: true);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+    }
+
+    [Fact]
+    public async Task Paused_for_site_access_then_switched_off_in_an_open_profile_is_paused_and_told_as_switched_off()
+    {
+        using var h = new Harness(profiles: true, selfCheck: true);
+        h.EdgeOnScreen();
+        var (first, second) = await h.JoinWithTwoProfilesAsync();
+        var session = h.Coordinator.JoinedSessionId!.Value;
+        h.Transport.Check(session, allSites: false, from: first);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+
+        h.Transport.RaiseDisconnected(second);
+        h.Profiles.SwitchOff("Profile 1");
+        h.Clock.Advance(Scan * 3);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.ExtensionOff, h.Guard.PauseReason);
+        Assert.Contains((session, TamperKinds.ExtensionDisabled), h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task A_check_without_site_access_that_beats_the_join_pauses_edge_once_the_session_is_joined()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = Guid.NewGuid();
+        h.Transport.Check(session, allSites: false);
+        Assert.Equal(ExtensionGuardState.Off, h.Guard.State);
+
+        await h.JoinAsync(session);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+    }
+
+    [Fact]
+    public async Task An_extension_not_allowed_in_InPrivate_pauses_nothing()
+    {
+        // Off by default on every install: pausing for it would pause every laptop.
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+
+        h.Transport.Check(session, allSites: true, inPrivate: false);
+        h.Clock.Advance(SiteAccessReport * 2);
+
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        Assert.Equal(0, h.PausedEvents);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task With_two_profiles_the_pause_holds_until_every_connected_extension_may_work_on_all_sites()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        var first = new WitnessConnection(1);
+        var second = new WitnessConnection(2);
+        h.Transport.RaiseConnected(first);
+        h.Transport.RaiseConnected(second);
+        var session = await h.JoinAsync();
+
+        h.Transport.Check(session, allSites: false, from: first);
+        h.Transport.Check(session, allSites: false, from: second);
+        h.Transport.Check(session, allSites: true, from: first);
+        Assert.True(h.Guard.IsBrowserPaused);
+
+        // The other profile's last window closes, and its extension with it.
+        h.Transport.RaiseDisconnected(second);
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+    }
+
+    // ---- the school profile (#525) --------------------------------------------
+
+    [Fact]
+    public async Task Without_a_school_profile_edge_is_paused_at_once_without_telling_the_teacher_yet()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+
+        h.FirstSchoolScan();
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+        // Not "switched off or removed": the extension is on.
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Signing_in_during_the_repair_window_lifts_the_pause_and_nothing_reaches_the_teacher()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+
+        // The overlay's button: Edge opens so the student can sign in.
+        Assert.True(h.Guard.BeginRepair());
+        Assert.Equal(ExtensionGuardState.Repairing, h.Guard.State);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+
+        h.Clock.Advance(TimeSpan.FromSeconds(20));
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+        h.Clock.Advance(SchoolScan);
+
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        h.Clock.Advance(Repair + SchoolReport);
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task No_school_profile_in_time_is_told_as_such_and_a_repair_window_that_runs_out_pauses_edge_again()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.True(h.Guard.BeginRepair());
+
+        h.Run(Repair);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(new[] { (session, TamperKinds.SchoolProfileMissing) }, h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task No_school_profile_comes_before_site_access_and_site_access_shows_again_once_there_is_one()
+    {
+        using var h = new Harness(selfCheck: true, schoolProfile: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.FirstSchoolScan();
+        h.Transport.Check(session, allSites: false);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+
+        // The student signs out of Edge: which profile is the school profile decides
+        // which extension matters, so that is what the pause says now.
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.Clock.Advance(SchoolScan);
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+        h.Clock.Advance(SchoolScan);
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSiteAccess, h.Guard.PauseReason);
+    }
+
+    [Fact]
+    public async Task A_device_where_the_extension_never_connected_is_not_paused_for_a_school_profile()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        await h.JoinAsync();
+
+        h.FirstSchoolScan();
+        h.Clock.Advance(SchoolReport * 2);
+
+        Assert.Equal(ExtensionGuardState.Off, h.Guard.State);
+        Assert.Equal(0, h.PausedEvents);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task A_link_back_up_without_a_school_profile_is_paused_for_it()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.Transport.RaiseDisconnected();
+        h.FirstSchoolScan();
+        // The link is down: that is handled first, after its grace period.
+        Assert.Equal(ExtensionGuardState.Waiting, h.Guard.State);
+
+        h.Transport.RaiseConnected();
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+    }
+
+    // ---- the school profile without the extension (#536) ----------------------
+
+    [Fact]
+    public async Task A_school_profile_without_the_extension_pauses_edge_for_that_and_the_button_opens_the_store_listing_in_it()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.Remove("Default");
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+
+        h.FirstSchoolScan();
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+        Assert.Empty(h.Reporter.Calls);
+
+        // The overlay's button: Edge opens at Anchor's store listing, in the profile
+        // signed in with the school account.
+        Assert.True(h.Guard.BeginRepair());
+        Assert.Equal(ExtensionGuardState.Repairing, h.Guard.State);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        Assert.Equal(new[] { ("Default", (string?)EdgeExtensionPolicy.StoreListingUrl) }, h.Launcher.Opened);
+
+        // The student adds Anchor there: the pause is over, and the teacher hears nothing.
+        h.Clock.Advance(TimeSpan.FromSeconds(20));
+        h.Profiles.SwitchOn("Default");
+        h.Clock.Advance(SchoolScan);
+
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        h.Run(Repair + SchoolReport);
+        Assert.Equal(ExtensionGuardState.Present, h.Guard.State);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task The_button_of_the_other_pauses_opens_no_store_listing()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+
+        Assert.True(h.Guard.BeginRepair());
+
+        Assert.Empty(h.Launcher.Opened);
+    }
+
+    [Fact]
+    public async Task Signing_in_to_a_profile_without_the_extension_while_paused_changes_what_the_pause_says()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.Remove("Default");
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+        h.Clock.Advance(SchoolScan);
+
+        // Paused anew, so the overlay says what is missing now.
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        Assert.Equal(2, h.PausedEvents);
+
+        // A scan that finds the same pauses nothing again.
+        h.Clock.Advance(SchoolScan);
+        Assert.Equal(2, h.PausedEvents);
+
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.Clock.Advance(SchoolScan);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(3, h.PausedEvents);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Signing_in_during_the_repair_window_to_a_profile_without_the_extension_pauses_for_that_once_it_runs_out()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.Remove("Default");
+        h.Profiles.WriteLocalState(("Default", "", null));
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.True(h.Guard.BeginRepair());
+
+        h.Clock.Advance(TimeSpan.FromSeconds(20));
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+        h.Clock.Advance(SchoolScan);
+        // The student is in Edge: the repair window runs its course.
+        Assert.Equal(ExtensionGuardState.Repairing, h.Guard.State);
+
+        h.Run(Repair);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+    }
+
+    [Fact]
+    public async Task A_school_profile_still_without_the_extension_is_told_as_such_and_edge_paused_again_after_the_repair_window()
+    {
+        using var h = new Harness(schoolProfile: true);
+        h.Profiles.Remove("Default");
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.True(h.Guard.BeginRepair());
+
+        h.Run(Repair);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        Assert.Equal(new[] { (session, TamperKinds.SchoolProfileWithoutExtension) }, h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Leaving_the_session_while_paused_for_site_access_lifts_the_pause()
+    {
+        var h = new Harness(selfCheck: true);
+        h.EdgeOnScreen();
+        h.Transport.RaiseConnected();
+        var session = await h.JoinAsync();
+        h.Transport.Check(session, allSites: false);
+
+        h.Hub.RaiseSessionEnded(session);
+
+        Assert.Equal(ExtensionGuardState.Off, h.Guard.State);
+        h.Clock.Advance(SiteAccessReport * 2);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    /// <summary>What the repair action opened in which Edge profile (#536).</summary>
+    private sealed class RecordingProfileLauncher : IBrowserProfileLauncher
+    {
+        public List<(string Profile, string? Url)> Opened { get; } = new();
+        public void CloseWindow(nint windowHandle) { }
+        public void OpenProfile(string profile, string? url = null) => Opened.Add((profile, url));
+    }
+
     private sealed class Harness : IDisposable
     {
         public FakeHub Hub { get; } = new();
@@ -572,6 +1078,9 @@ public class ExtensionGuardTests
         public RecordingReporter Reporter { get; } = new();
         public FakeAppIds AppIds { get; } = new();
         public FakeEdgeProfiles Profiles { get; } = new();
+        public ExtensionSelfCheckWatch? SelfCheck { get; }
+        public SchoolProfileGuard? SchoolProfile { get; }
+        public RecordingProfileLauncher Launcher { get; } = new();
         public int PausedEvents { get; private set; }
 
         /// <param name="profiles">
@@ -579,7 +1088,18 @@ public class ExtensionGuardTests
         /// of its own with a Default profile and a Profile 1, both with the
         /// extension on and a window open.
         /// </param>
-        public Harness(bool profiles = false)
+        /// <param name="selfCheck">
+        /// With the watch on what the extension says about its own settings (#524),
+        /// reporting through <see cref="Reporter"/> after <see cref="SiteAccessReport"/>.
+        /// </param>
+        /// <param name="schoolProfile">
+        /// With the guard on the school profile (#525), over the same user data
+        /// folder: a Default profile with the extension on, signed in with the
+        /// school account (rewrite its Local State to sign it out), scanned every
+        /// <see cref="SchoolScan"/> and reporting through <see cref="Reporter"/>
+        /// after <see cref="SchoolReport"/>.
+        /// </param>
+        public Harness(bool profiles = false, bool selfCheck = false, bool schoolProfile = false)
         {
             Coordinator = new SessionCoordinator(
                 Hub,
@@ -592,6 +1112,9 @@ public class ExtensionGuardTests
                 ExtensionGraceSeconds = (int)Grace.TotalSeconds,
                 ExtensionRepairSeconds = (int)Repair.TotalSeconds,
                 ExtensionProfileScanSeconds = (int)Scan.TotalSeconds,
+                ExtensionSiteAccessReportSeconds = (int)SiteAccessReport.TotalSeconds,
+                SchoolProfileScanSeconds = (int)SchoolScan.TotalSeconds,
+                SchoolProfileReportSeconds = (int)SchoolReport.TotalSeconds,
             });
             OpenProfileExtensionWatch? watch = null;
             if (profiles)
@@ -607,6 +1130,25 @@ public class ExtensionGuardTests
                     settings,
                     Clock);
             }
+            if (selfCheck)
+                SelfCheck = new ExtensionSelfCheckWatch(Transport, Coordinator, Reporter, settings, Clock);
+            if (schoolProfile)
+            {
+                Profiles.SwitchOn("Default");
+                Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid));
+                SchoolProfile = new SchoolProfileGuard(
+                    Coordinator,
+                    Witness,
+                    new EdgeSchoolProfileProbe(
+                        Profiles.UserData,
+                        new EdgeOpenProfileExtensionProbe(Profiles.UserData, AppIds, "msedge", new[] { FakeEdgeProfiles.ExtensionId })),
+                    new SchoolProfileGuardTests.FakeWindowReader(),
+                    new SignedInAccount { Current = new SchoolAccount(SchoolAddress, SchoolOid) },
+                    Reporter,
+                    settings,
+                    Options.Create(new WitnessSettings()),
+                    Clock);
+            }
             Guard = new ExtensionGuard(
                 Coordinator,
                 Witness,
@@ -615,7 +1157,10 @@ public class ExtensionGuardTests
                 settings,
                 Options.Create(new WitnessSettings()),
                 watch,
-                Clock);
+                Clock,
+                selfCheck: SelfCheck,
+                schoolProfile: SchoolProfile,
+                browserLauncher: Launcher);
             Guard.BrowserPaused += (_, _) => PausedEvents++;
         }
 
@@ -636,7 +1181,24 @@ public class ExtensionGuardTests
             return (first, second);
         }
 
-        public void Dispose() => Profiles.Dispose();
+        public void Dispose()
+        {
+            SchoolProfile?.Dispose();
+            Profiles.Dispose();
+        }
+
+        /// <summary>The first school-profile scan, one interval after the join (#525).</summary>
+        public void FirstSchoolScan() => Clock.Advance(SchoolScan);
+
+        /// <summary>
+        /// Lets <paramref name="duration"/> pass a second at a time: each scan reads
+        /// the clock, and one long advance would hand them all its end.
+        /// </summary>
+        public void Run(TimeSpan duration)
+        {
+            for (var left = duration; left > TimeSpan.Zero; left -= TimeSpan.FromSeconds(1))
+                Clock.Advance(left < TimeSpan.FromSeconds(1) ? left : TimeSpan.FromSeconds(1));
+        }
 
         public void EdgeOnScreen() =>
             Windows.Windows = new[]
@@ -648,10 +1210,10 @@ public class ExtensionGuardTests
         public void NoEdgeOnScreen() =>
             Windows.Windows = new[] { new OpenWindow(0x10, new AppInfo("winword", null, null)) };
 
-        public async Task<Guid> JoinAsync()
+        public async Task<Guid> JoinAsync(Guid? sessionId = null)
         {
             var payload = new SessionStartedPayload(
-                SessionId: Guid.NewGuid(),
+                SessionId: sessionId ?? Guid.NewGuid(),
                 ClassId: Guid.NewGuid(),
                 StartedAt: DateTimeOffset.UnixEpoch,
                 JoinCode: "123456",
@@ -669,14 +1231,56 @@ public class ExtensionGuardTests
         public IReadOnlyList<OpenWindow> GetOpenWindows() => Windows;
     }
 
-    private sealed class FakeWitnessTransport : IExtensionWitnessTransport
+    /// <summary>
+    /// The witness link: its connections, and (for the self-check, #524) what an
+    /// extension says over it and what the agent sends back.
+    /// </summary>
+    private sealed class FakeWitnessTransport : IExtensionWitnessChannel
     {
         // One Edge profile's extension, unless a test names another.
         private static readonly WitnessConnection Only = new(1);
+        private readonly HashSet<long> _connected = new();
         public event EventHandler<WitnessConnection>? WitnessConnected;
         public event EventHandler<WitnessConnection>? WitnessDisconnected;
-        public void RaiseConnected(WitnessConnection? connection = null) => WitnessConnected?.Invoke(this, connection ?? Only);
-        public void RaiseDisconnected(WitnessConnection? connection = null) => WitnessDisconnected?.Invoke(this, connection ?? Only);
+        public event EventHandler<WitnessMessage>? MessageReceived;
+
+        /// <summary>The lines sent to an extension, with the connection they went to.</summary>
+        public List<(long To, string Line)> Sent { get; } = new();
+
+        public void RaiseConnected(WitnessConnection? connection = null)
+        {
+            connection ??= Only;
+            _connected.Add(connection.Id);
+            WitnessConnected?.Invoke(this, connection);
+        }
+
+        public void RaiseDisconnected(WitnessConnection? connection = null)
+        {
+            connection ??= Only;
+            _connected.Remove(connection.Id);
+            WitnessDisconnected?.Invoke(this, connection);
+        }
+
+        /// <summary>The extension's self-check, as background.ts sends it (#524).</summary>
+        public void Check(Guid sessionId, bool allSites, bool inPrivate = false, WitnessConnection? from = null) =>
+            MessageReceived?.Invoke(this, new WitnessMessage(
+                from ?? Only,
+                JsonSerializer.Serialize(new { type = "self_check", sessionId, allSites, inPrivate })));
+
+        public bool TrySend(WitnessConnection connection, string line)
+        {
+            if (!_connected.Contains(connection.Id)) return false;
+            Sent.Add((connection.Id, line));
+            return true;
+        }
+
+        public int Broadcast(string line)
+        {
+            foreach (var id in _connected)
+                Sent.Add((id, line));
+            return _connected.Count;
+        }
+
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken ct = default) => Task.CompletedTask;
     }
@@ -720,6 +1324,7 @@ public class ExtensionGuardTests
         public event EventHandler<SessionStartedPayload>? SessionStarted;
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
         public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+        public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 #pragma warning restore CS0067
         public event EventHandler<Guid>? SessionEnded;
 
