@@ -41,10 +41,10 @@ export interface ActiveSessionState {
 
 /**
  * Payload reported each time a navigation is blocked; the agent sends it on as
- * EventKind.BlockedUrl (#72, #489).
+ * EventKind.BlockedUrl (#72, #489). The host only, never the URL (#527): a
+ * path or query string can hold search terms and other personal detail.
  */
 export interface BlockedUrlPayload {
-  url: string;
   host: string;
   tabId: number;
   occurredAt: string;

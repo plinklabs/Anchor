@@ -67,17 +67,30 @@ public sealed class ExtensionSessionHandDownTests
                     "the agent to hand down the session it joined");
                 Assert.Contains(Domains(started, "domains"), d => d.Contains("sharepoint.com"));
 
-                // 2. A block in the browser reaches the teacher's session log.
+                // 2. A block in the browser reaches the teacher's session log, by
+                //    its host only (#527). An extension the store hasn't updated
+                //    yet still sends the whole URL: the teacher gets its host.
                 extension.Send(new
                 {
                     type = "blocked_url",
                     sessionId = session.Id,
-                    url = "https://offlist.test/games",
+                    url = "https://older.test/search?q=my+search",
+                    host = "older.test",
+                    tabId = 4,
+                    occurredAt = DateTimeOffset.UtcNow,
+                });
+                await WaitForEventAsync(api, session.Id, "BlockedUrl", "older.test");
+                await AssertBlockedPagesHaveNoUrlAsync(api, session.Id, count: 1);
+                extension.Send(new
+                {
+                    type = "blocked_url",
+                    sessionId = session.Id,
                     host = "offlist.test",
                     tabId = 3,
                     occurredAt = DateTimeOffset.UtcNow,
                 });
                 await WaitForEventAsync(api, session.Id, "BlockedUrl", "offlist.test");
+                await AssertBlockedPagesHaveNoUrlAsync(api, session.Id, count: 2);
 
                 // 3. An unblock request from the block page is answered, and lands on
                 //    the teacher's list; the teacher's approval comes back down.
@@ -312,6 +325,21 @@ public sealed class ExtensionSessionHandDownTests
         Assert.Fail(
             $"No {kind} event mentioning {payloadContains} reached session {sessionId} within {Wait.TotalSeconds:N0}s " +
             $"(events: {string.Join(", ", events.Select(e => e.Kind))}).");
+    }
+
+    /// <summary>
+    /// The session's stored BlockedUrl events, as the teacher's past-session page
+    /// reads them, name no URL: no path, no query string (#527).
+    /// </summary>
+    private static async Task AssertBlockedPagesHaveNoUrlAsync(BackendClient api, Guid sessionId, int count)
+    {
+        var blocked = (await api.GetSessionEventsAsync(sessionId)).Where(e => e.Kind == "BlockedUrl").ToList();
+        Assert.Equal(count, blocked.Count);
+        Assert.All(blocked, e =>
+        {
+            Assert.DoesNotContain("\"url\"", e.PayloadJson);
+            Assert.DoesNotContain("search", e.PayloadJson);
+        });
     }
 
     private static async Task<BackendClient.PendingUnblockRequest> WaitForUnblockRequestAsync(

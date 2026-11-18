@@ -23,8 +23,10 @@ Design rationale lives in [focus-system-design.md](../focus-system-design.md)
 Phase 3, v1 — URL filter + block page (#72) layered on top of the scaffold
 from #71. The extension caches the allowlist of the session the agent hands it,
 redirects off-list navigations to the bundled block page, and hands each block
-to the agent, which reports it as a `BlockedUrl` event. "Request access" on the
-block page goes to the teacher the same way (#73).
+to the agent, which reports it as a `BlockedUrl` event. The report names the
+blocked page's host only, never its URL (#527); the block page shows the student
+the whole URL, on their own device. "Request access" on the block page goes to
+the teacher the same way (#73).
 
 Out of scope for v1 (separate issues):
 
@@ -424,7 +426,7 @@ seeded teacher/student data in place:
 4. Open a new tab and visit `https://outlook.office.com` — loads normally.
 5. Open another tab and visit `https://reddit.com` — the tab redirects to the
    block page with the blocked URL displayed. The dashboard event feed receives
-   a `BlockedUrl` event within ~1 second.
+   a `BlockedUrl` event within ~1 second, naming the host only (#527).
 6. End the session from the dashboard. The service worker logs `active session
    cleared`. Any URL loads normally again.
 
@@ -474,8 +476,9 @@ and the [`nativeMessaging`](src/manifest.json) permission). Two things ride on i
   teacher turns a request down (the block page for that host says so and lets
   the student ask again, #523), `session_ended` when it ends or
   the student leaves it, and on every connect the current session or
-  `no_session`. The extension sends back `blocked_url`, `unblock_request`
-  (answered with `unblock_request_result`) and `tamper`, which the agent sends
+  `no_session`. The extension sends back `blocked_url` (the blocked page's host
+  only, never its URL, #527), `unblock_request` (answered with
+  `unblock_request_result`) and `tamper`, which the agent sends
   with its own connection; it also pings the backend for the extension while the
   link is up, so a silent extension still shows (#149).
 

@@ -442,6 +442,11 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             throw new HubException($"Unknown event kind '{request.Kind}'.");
 
         var payloadJson = string.IsNullOrWhiteSpace(request.PayloadJson) ? "{}" : request.PayloadJson!;
+        // A blocked page is kept by its host only (#527). Agents already in the
+        // field still send its whole URL, which can hold search terms and other
+        // personal detail the teacher doesn't need.
+        if (kind == EventKind.BlockedUrl)
+            payloadJson = BlockedUrlPayloadWithoutUrl(payloadJson);
         // An unblock request is stamped as it arrives, by this server's clock,
         // whatever time the agent sent with it: the pending list sets it against
         // the teacher's denials (#523), which are stamped here too. A student
@@ -566,6 +571,43 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     }
 
     private sealed record UnblockRequestPayloadShape(string Url, string Host);
+
+    /// <summary>
+    /// A BlockedUrl payload as it is stored (#527): <c>{"host":"…"}</c> and the
+    /// tab and time an agent reports with it, never the URL. The host is the one
+    /// the payload names, or else its URL's. Anything else in the payload is
+    /// left out, and one that doesn't parse keeps nothing: the URL could be in it.
+    /// </summary>
+    private static string BlockedUrlPayloadWithoutUrl(string payloadJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return "{}";
+
+            static string? StringOf(System.Text.Json.JsonElement e, string name) =>
+                e.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? v.GetString()
+                    : null;
+
+            var host = StringOf(root, "host")?.Trim();
+            if (string.IsNullOrEmpty(host) && Uri.TryCreate(StringOf(root, "url"), UriKind.Absolute, out var uri))
+                host = uri.Host;
+
+            var kept = new System.Text.Json.Nodes.JsonObject { ["host"] = (host ?? string.Empty).ToLowerInvariant() };
+            if (root.TryGetProperty("tabId", out var tabId) && tabId.ValueKind == System.Text.Json.JsonValueKind.Number &&
+                tabId.TryGetInt32(out var tab))
+                kept["tabId"] = tab;
+            if (StringOf(root, "occurredAt") is { } at)
+                kept["occurredAt"] = at;
+            return kept.ToJsonString();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return "{}";
+        }
+    }
 
     /// <summary>
     /// Pulls the tamper sub-kind out of a TamperDetected payload

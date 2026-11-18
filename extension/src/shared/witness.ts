@@ -63,9 +63,12 @@ export interface UnblockRequestResult {
   error?: string;
 }
 
-/** What the extension sends the agent to report (#489). */
+/**
+ * What the extension sends the agent to report (#489). A blocked page is
+ * reported by its host only, never its URL (#527).
+ */
 export type ExtensionReport =
-  | { type: 'blocked_url'; sessionId: string; url: string; host: string; tabId: number; occurredAt: string }
+  | { type: 'blocked_url'; sessionId: string; host: string; tabId: number; occurredAt: string }
   | { type: 'tamper'; sessionId: string; kind: string };
 
 /** An unblock request, before the client gives it a request id. */

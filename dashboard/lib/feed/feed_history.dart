@@ -159,6 +159,28 @@ String storedEventSentence(
   return l10n.feedOther;
 }
 
+/// [stored] as the backend stored it, for troubleshooting: its kind and its
+/// payload, which the past session page shows on a lingering hover (#498).
+///
+/// A blocked page shows by its host only, never its URL (#527): a path or
+/// query string can hold search terms and other personal detail the teacher
+/// doesn't need, and the backend still keeps rows from agents that sent the
+/// URL.
+String storedEventRaw(SessionRecentEvent stored) {
+  if (stored.kind != 'BlockedUrl') {
+    return stored.payloadJson.isEmpty
+        ? stored.kind
+        : '${stored.kind}\n${stored.payloadJson}';
+  }
+  final Map<String, dynamic> payload = _decode(stored.payloadJson);
+  final Map<String, dynamic> shown = <String, dynamic>{
+    'host': ?_hostOf(payload),
+    if (payload['tabId'] case final num tabId) 'tabId': tabId,
+    if (payload['occurredAt'] case final String at) 'occurredAt': at,
+  };
+  return shown.isEmpty ? stored.kind : '${stored.kind}\n${jsonEncode(shown)}';
+}
+
 /// What a student did in a session, as the past session page's activity
 /// summary lists it after their name (#498): [summaries], the backend's count
 /// of each kind of event the student has, as plain phrases ("12 app

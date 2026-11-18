@@ -26,13 +26,14 @@ import 'support/e2e_binding.dart';
 // muted register — a calm "Ended" outline badge, never the magenta LIVE spark.
 // And, like the live feed (#491), it reads in plain sentences (#498): its
 // event log and activity summary never show an event's raw kind or payload,
-// which wait in a tooltip for troubleshooting.
+// which wait in a tooltip for troubleshooting. A blocked page shows there by
+// its host only (#527), though an older agent stored its whole URL.
 
 final _startedAt = DateTime(2026, 6, 12, 9, 15);
 final _endedAt = DateTime(2026, 6, 12, 10, 5);
 const _sessionId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-const _blockedPayload =
-    '{"url":"https://chat.example.com/c/1","host":"chat.example.com"}';
+const _blockedUrl = 'https://chat.example.com/c/1?q=my+search';
+const _blockedPayload = '{"url":"$_blockedUrl","host":"chat.example.com"}';
 const _blockedSentence =
     "Ada Lovelace tried to open chat.example.com, which isn't allowed.";
 
@@ -253,14 +254,20 @@ void main() {
         expect(find.textContaining(raw), findsNothing, reason: raw);
       }
 
-      // The raw event waits on a lingering hover, for troubleshooting.
+      // The raw event waits on a lingering hover, for troubleshooting: the
+      // blocked page by its host, never its URL (#527).
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
       addTearDown(mouse.removePointer);
       await mouse.moveTo(tester.getCenter(find.text(_blockedSentence)));
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
-      expect(find.text('BlockedUrl\n$_blockedPayload'), findsOneWidget);
+      expect(
+        find.text('BlockedUrl\n{"host":"chat.example.com"}'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('/c/1'), findsNothing);
+      expect(find.textContaining('my+search'), findsNothing);
       await mouse.moveTo(Offset.zero);
       await tester.pumpAndSettle();
 

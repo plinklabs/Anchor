@@ -810,6 +810,44 @@ void main() {
       );
     });
 
+    // #527: the troubleshooting tooltip showed a blocked page's whole URL, as
+    // older agents stored it, path and query string included.
+    test('the raw event shows a blocked page by its host only', () {
+      String raw(String kind, String payloadJson) =>
+          storedEventRaw(_stored(kind, _min(1), payloadJson: payloadJson));
+
+      expect(
+        raw(
+          'BlockedUrl',
+          '{"url":"https://chat.example.com/c/1?q=my+search",'
+              '"host":"chat.example.com","tabId":7,'
+              '"occurredAt":"2026-11-11T08:26:00+00:00"}',
+        ),
+        'BlockedUrl\n{"host":"chat.example.com","tabId":7,'
+        '"occurredAt":"2026-11-11T08:26:00+00:00"}',
+      );
+      // An agent that sent no host: the URL's, and nothing else of it.
+      expect(
+        raw('BlockedUrl', '{"url":"https://Games.Example.com/play?q=x"}'),
+        'BlockedUrl\n{"host":"games.example.com"}',
+      );
+      expect(
+        raw('BlockedUrl', '{"host":"chat.example.com"}'),
+        'BlockedUrl\n{"host":"chat.example.com"}',
+      );
+      expect(
+        raw('BlockedUrl', '"https://chat.example.com/c/1?q=my+search"'),
+        'BlockedUrl',
+      );
+      expect(raw('BlockedUrl', ''), 'BlockedUrl');
+      // Every other kind as the backend stored it.
+      expect(
+        raw('UnblockRequest', '{"url":"https://youtube.com/watch","host":"x"}'),
+        'UnblockRequest\n{"url":"https://youtube.com/watch","host":"x"}',
+      );
+      expect(raw('HeartbeatLost', ''), 'HeartbeatLost');
+    });
+
     test('an approval says whom it was for', () {
       expect(
         read(

@@ -417,17 +417,19 @@ async function redirectToBlockPage(tabId: number, blockedUrl: string, session: A
 }
 
 // The agent sends it on to the teacher's session log as a BlockedUrl event.
+// The host only, never the URL (#527): a path or query string can hold search
+// terms and other personal detail the teacher doesn't need. The block page
+// still shows the student the whole URL, on their own device.
 function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: string): void {
   let host = '';
   try {
     host = new URL(blockedUrl).hostname;
   } catch {
-    // Unparseable — leave host empty; the URL itself is still informative.
+    // Unparseable: the block is still reported, as "a website".
   }
   witness?.report({
     type: 'blocked_url',
     sessionId,
-    url: blockedUrl,
     host,
     tabId,
     occurredAt: new Date().toISOString(),

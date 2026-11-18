@@ -47,7 +47,10 @@ public static class ExtensionMessages
 
     // ---- extension → agent -------------------------------------------------
 
-    /// <summary>The extension blocked a navigation; reported as a <c>BlockedUrl</c> event.</summary>
+    /// <summary>
+    /// The extension blocked a navigation; reported as a <c>BlockedUrl</c> event
+    /// that names the host only, never the URL (#527).
+    /// </summary>
     public const string BlockedUrl = "blocked_url";
 
     /// <summary>The student asked for access from the block page; reported as an <c>UnblockRequest</c> event.</summary>

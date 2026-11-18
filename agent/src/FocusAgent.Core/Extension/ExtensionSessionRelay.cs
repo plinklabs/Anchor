@@ -30,9 +30,9 @@ namespace FocusAgent.Core.Extension;
 /// again, or <see cref="ExtensionMessages.NoSession"/>. Every Edge profile runs
 /// its own copy of the extension over its own connection (#517): each gets the
 /// state when it connects, and every change goes to all of them.</item>
-/// <item>extension → agent: blocked URLs, unblock requests (answered with
-/// <see cref="ExtensionMessages.UnblockRequestResult"/>, to the connection that
-/// asked) and the extension's own
+/// <item>extension → agent: blocked pages (by their host only, #527), unblock
+/// requests (answered with <see cref="ExtensionMessages.UnblockRequestResult"/>,
+/// to the connection that asked) and the extension's own
 /// tamper signals, sent on as <c>ReportEvent</c> calls for the joined session.</item>
 /// <item>The extension's liveness ping (<c>ExtensionHeartbeat</c>, #149), sent
 /// for it while at least one witness link is up, so <c>extension_silent</c> keeps
@@ -331,14 +331,16 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     private async Task ReportBlockedUrlAsync(JsonElement message)
     {
         var sessionId = JoinedSessionFor(message, ExtensionMessages.BlockedUrl);
-        var url = GetString(message, "url");
-        if (sessionId is null || string.IsNullOrWhiteSpace(url)) return;
+        if (sessionId is null) return;
 
         var occurredAt = DateTimeOffset.TryParse(GetString(message, "occurredAt"), out var at) ? at : _clock.GetUtcNow();
+        // The host only, never the URL (#527): a path or query string can hold
+        // search terms and other personal detail the teacher doesn't need. An
+        // extension the store hasn't updated yet still sends the URL; it goes no
+        // further than this.
         var payload = Serialize(new
         {
-            url,
-            host = HostOf(message, url),
+            host = HostOf(message, GetString(message, "url")),
             tabId = message.TryGetProperty("tabId", out var tab) && tab.TryGetInt32(out var tabId) ? tabId : (int?)null,
             occurredAt,
         });
@@ -430,7 +432,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         return joined;
     }
 
-    private static string HostOf(JsonElement message, string url)
+    private static string HostOf(JsonElement message, string? url)
     {
         var host = GetString(message, "host");
         if (!string.IsNullOrWhiteSpace(host)) return host;

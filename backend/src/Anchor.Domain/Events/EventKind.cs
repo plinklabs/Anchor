@@ -9,6 +9,12 @@ namespace Anchor.Domain.Events;
 public enum EventKind
 {
     ForegroundChange,
+
+    /// <summary>
+    /// The extension blocked a page during a session, reported by the agent.
+    /// Stored by the page's host only — <c>{"host":"…","tabId":…,"occurredAt":"…"}</c>
+    /// — never its URL (#527), whatever an older agent sends.
+    /// </summary>
     BlockedUrl,
     UnblockRequest,
     HeartbeatLost,

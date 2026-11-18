@@ -66,6 +66,48 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         Assert.Equal("{\"app\":\"chrome\"}", @event.PayloadJson);
     }
 
+    /// <summary>
+    /// #527: a blocked page is stored by its host only. Agents still in the
+    /// field send its whole URL, path and query string included, and some sent
+    /// it with no host; what is stored names the host and nothing of the URL.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        """{"url":"https://Chat.Example.com/c/123?q=my+search","host":"chat.example.com","tabId":7,"occurredAt":"2026-11-18T09:30:00+00:00"}""",
+        """{"host":"chat.example.com","tabId":7,"occurredAt":"2026-11-18T09:30:00+00:00"}""")]
+    [InlineData(
+        """{"url":"https://Chat.Example.com/c/123?q=my+search","host":"","tabId":7}""",
+        """{"host":"chat.example.com","tabId":7}""")]
+    [InlineData(
+        """{"host":"chat.example.com","tabId":7,"occurredAt":"2026-11-18T09:30:00+00:00"}""",
+        """{"host":"chat.example.com","tabId":7,"occurredAt":"2026-11-18T09:30:00+00:00"}""")]
+    [InlineData("""{"url":"not a url /c/123?q=my+search"}""", """{"host":""}""")]
+    [InlineData("""https://chat.example.com/c/123?q=my+search""", "{}")]
+    [InlineData("""["https://chat.example.com/c/123?q=my+search"]""", "{}")]
+    public async Task ReportEvent_blocked_url_is_stored_by_its_host_without_the_url(string sent, string stored)
+    {
+        var (student, session) = await SeedSessionWithStudentAsync();
+
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await connection.InvokeAsync<JoinSessionResult>(
+            "JoinSession", new JoinSessionRequest(session.Id, JoinCode: null));
+
+        await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
+            session.Id, nameof(EventKind.BlockedUrl), sent, OccurredAt: null));
+
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var @event = await db.Events.AsNoTracking()
+            .SingleAsync(e => e.SessionId == session.Id && e.UserId == student.Id);
+        Assert.Equal(EventKind.BlockedUrl, @event.Kind);
+        Assert.Equal(
+            System.Text.Json.Nodes.JsonNode.Parse(stored)!.ToJsonString(),
+            System.Text.Json.Nodes.JsonNode.Parse(@event.PayloadJson)!.ToJsonString());
+        Assert.DoesNotContain("/c/123", @event.PayloadJson);
+        Assert.DoesNotContain("search", @event.PayloadJson);
+    }
+
     [Fact]
     public async Task Non_participant_cannot_report_event()
     {

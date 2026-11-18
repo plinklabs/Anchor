@@ -571,10 +571,8 @@ class _EventRow extends StatelessWidget {
   final String sentence;
 
   /// The event as the backend stored it, for troubleshooting: on a lingering
-  /// hover, out of the teacher's way.
-  String get _raw => event.payloadJson.isEmpty
-      ? event.kind
-      : '${event.kind}\n${event.payloadJson}';
+  /// hover, out of the teacher's way. A blocked page by its host only (#527).
+  String get _raw => storedEventRaw(event);
 
   @override
   Widget build(BuildContext context) {

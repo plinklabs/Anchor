@@ -298,11 +298,25 @@ void main() {
       expect(find.textContaining(raw), findsNothing, reason: raw);
     }
 
-    // It is in a tooltip, for troubleshooting.
+    // It is in a tooltip, for troubleshooting: a blocked page by its host
+    // only, though an older agent stored its URL too (#527).
+    expect(
+      find.byTooltip('BlockedUrl\n{"host":"chat.example.com"}'),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Tooltip &&
+            (w.message ?? '').contains('https://chat.example.com/c'),
+      ),
+      findsNothing,
+    );
     expect(
       find.byTooltip(
-        'BlockedUrl\n'
-        '{"url":"https://chat.example.com/c","host":"chat.example.com"}',
+        'ForegroundChange\n'
+        '{"processName":"WINWORD","publisher":"Microsoft Corporation",'
+        '"blocked":false}',
       ),
       findsOneWidget,
     );

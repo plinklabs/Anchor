@@ -203,11 +203,11 @@ public class ExtensionSessionRelayTests
         h.Channel.RaiseConnected();
         var sessionId = await h.JoinAsync(Office);
 
+        // The extension reports the host only (#527).
         h.Channel.Receive(new
         {
             type = "blocked_url",
             sessionId,
-            url = "https://games.example/play",
             host = "games.example",
             tabId = 7,
             occurredAt = "2026-11-11T09:30:00.000Z",
@@ -218,9 +218,40 @@ public class ExtensionSessionRelayTests
         Assert.Equal("BlockedUrl", report.Kind);
         Assert.Equal(DateTimeOffset.Parse("2026-11-11T09:30:00Z"), report.OccurredAt);
         using var payload = JsonDocument.Parse(report.PayloadJson);
-        Assert.Equal("https://games.example/play", payload.RootElement.GetProperty("url").GetString());
         Assert.Equal("games.example", payload.RootElement.GetProperty("host").GetString());
         Assert.Equal(7, payload.RootElement.GetProperty("tabId").GetInt32());
+        Assert.False(payload.RootElement.TryGetProperty("url", out _));
+    }
+
+    [Theory]
+    [InlineData("games.example")]
+    [InlineData("")]
+    public async Task A_blocked_url_from_an_older_extension_is_reported_by_its_host_without_the_url(string sentHost)
+    {
+        // #527: an extension the store hasn't updated yet still sends the whole
+        // URL, path and query string included. The agent sends the teacher the
+        // host only, and works it out from the URL when the report has none.
+        var h = new Harness();
+        h.Channel.RaiseConnected();
+        var sessionId = await h.JoinAsync(Office);
+
+        h.Channel.Receive(new
+        {
+            type = "blocked_url",
+            sessionId,
+            url = "https://games.example/play?q=my+search",
+            host = sentHost,
+            tabId = 7,
+            occurredAt = "2026-11-11T09:30:00.000Z",
+        });
+
+        var report = await h.Hub.NextReportAsync();
+        Assert.Equal("BlockedUrl", report.Kind);
+        Assert.DoesNotContain("play", report.PayloadJson);
+        Assert.DoesNotContain("search", report.PayloadJson);
+        using var payload = JsonDocument.Parse(report.PayloadJson);
+        Assert.False(payload.RootElement.TryGetProperty("url", out _));
+        Assert.Equal("games.example", payload.RootElement.GetProperty("host").GetString());
     }
 
     [Fact]

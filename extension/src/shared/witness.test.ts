@@ -236,7 +236,6 @@ describe('WitnessClient', () => {
     const report = {
       type: 'blocked_url' as const,
       sessionId: 's1',
-      url: 'https://offlist.test/',
       host: 'offlist.test',
       tabId: 4,
       occurredAt: '2026-11-11T08:00:00Z',
