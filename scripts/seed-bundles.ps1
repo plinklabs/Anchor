@@ -91,7 +91,8 @@ Set-StrictMode -Version Latest
 # The real production bundles, mirroring DevDataSeeder.EnsureDevBundlesAsync but
 # deliberately EXCLUDING the dev-only `Notepad (dev)` fixture (an app-bearing
 # bundle that exists only so the headless verify-bundle-switch script can watch
-# the agent rebuild its app matcher — it has no place in a real catalogue, #292).
+# the agent rebuild its app matcher — it has no place in a real catalogue, #292)
+# and the agent e2e's `Edge stand-in (dev)` fixture (#549).
 # Kind / MatchType are stored as the enum *name* strings (Domain/App,
 # Exact/Wildcard/Suffix/SignedPublisher) — see BundleEntryConfiguration's
 # HasConversion<string>(). All entries below are domains, so Kind is Domain.
