@@ -29,7 +29,8 @@ namespace FocusAgent.IntegrationTests;
 /// while Windows still holds the log of the agent the last spec killed, so the next
 /// run also deletes the folders of runs whose test host is gone. To keep the logs of
 /// a local run, set <c>Diagnostics__LogDirectory</c> before <c>dotnet test</c>: the
-/// suite then logs to that folder and leaves it in place.
+/// suite then logs to that folder and leaves it in place. Agent E2E in CI presets a
+/// folder under <c>TestResults/</c>, so its uploaded results carry the logs (#548).
 /// </para>
 /// </summary>
 internal static class AgentTestLogs
