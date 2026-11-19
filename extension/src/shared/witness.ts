@@ -16,17 +16,17 @@
 //   account, hands the session it joined down this link (`session_started`, the
 //   allowlist changes, a declined request, `session_ended`, and the current state
 //   on every connect),
-//   and the extension hands back what it reports (blocked URLs, unblock requests,
-//   its in-browser tamper signals), which the agent sends with its own connection.
+//   and the extension hands back what it reports (blocked URLs, unblock
+//   requests), which the agent sends with its own connection.
 // - The extension tells the agent what it reads about its own settings
 //   (`self_check`, #524) on every session it is handed and whenever its
 //   permissions change, and the agent can ask it to open its own settings page
 //   (`open_extension_page`), which nothing outside the browser can open.
 //
-// Same split as tamper.ts / host-matcher.ts: the pure parsing + backoff helpers
-// live here and are unit-tested; the chrome.runtime wiring is injected so the
-// WitnessClient can be driven with a fake port in tests. The message names match
-// FocusAgent.Core.Extension.ExtensionMessages on the agent side.
+// Same split as self-check.ts / host-matcher.ts: the pure parsing + backoff
+// helpers live here and are unit-tested; the chrome.runtime wiring is injected
+// so the WitnessClient can be driven with a fake port in tests. The message names
+// match FocusAgent.Core.Extension.ExtensionMessages on the agent side.
 
 import { logger } from './logger';
 import type { AllowedDomainDto, SessionStartedPayload } from './types';
@@ -76,11 +76,13 @@ export interface UnblockRequestResult {
  * What the extension sends the agent to report (#489). A blocked page is
  * reported by its host only, never its URL (#527). `self_check` is what the
  * extension reads about its own settings during a session (#524, see
- * self-check.ts); the agent pauses Edge while `allSites` is false.
+ * self-check.ts); the agent pauses Edge while `allSites` is false. No `tamper`
+ * report any more (#539): its last kind, `inprivate_opened`, is the agent's own
+ * InPrivate witness's to report (#535), and the agent drops it from the older
+ * extensions that still send it.
  */
 export type ExtensionReport =
   | { type: 'blocked_url'; sessionId: string; host: string; tabId: number; occurredAt: string }
-  | { type: 'tamper'; sessionId: string; kind: string }
   | { type: 'self_check'; sessionId: string; allSites: boolean; inPrivate: boolean };
 
 /** An unblock request, before the client gives it a request id. */
@@ -308,7 +310,8 @@ export class WitnessClient {
    * Hands a report to the agent, which sends it with its own connection.
    * Best-effort like the reports always were: returns false, and drops the
    * report, when no agent is connected — a block re-reported later would be
-   * noisier than useful, and a tamper signal only matters live.
+   * noisier than useful, and a self-check is sent again on the next session the
+   * agent hands down.
    */
   report(message: ExtensionReport): boolean {
     // A port the host hasn't spoken on yet is still worth posting to: a worker

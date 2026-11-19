@@ -1,6 +1,6 @@
 // The extension's check of its own settings (#524). The chrome.* wiring lives in
 // background.ts; the decision logic lives here so it can be unit-tested without a
-// chrome shim — same split as tamper.ts / host-matcher.ts.
+// chrome shim — same split as host-matcher.ts / tab-scan.ts.
 //
 // A student can change some of Anchor's settings on its page in Edge
 // (edge://extensions → Anchor → Details) before a session starts. Nothing fires

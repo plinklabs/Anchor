@@ -32,10 +32,11 @@ namespace FocusAgent.Core.Extension;
 /// state when it connects, and every change goes to all of them.</item>
 /// <item>extension → agent: blocked pages (by their host only, #527), unblock
 /// requests (answered with <see cref="ExtensionMessages.UnblockRequestResult"/>,
-/// to the connection that asked) and the extension's own
-/// tamper signals, sent on as <c>ReportEvent</c> calls for the joined session,
-/// except <c>inprivate_opened</c>, which is the agent's own witness's to report
-/// (<see cref="InPrivateWitnessMonitor"/>, #535).
+/// to the connection that asked), sent on as <c>ReportEvent</c> calls for the
+/// joined session, and the tamper signals an extension older than #539 still
+/// sends: <c>host_permission_revoked</c> (from one older than #524) goes on,
+/// <c>inprivate_opened</c> doesn't, as that is the agent's own witness's to
+/// report (<see cref="InPrivateWitnessMonitor"/>, #535).
 /// What the extension says about its own settings
 /// (<see cref="ExtensionMessages.SelfCheck"/>, #524) is
 /// <see cref="ExtensionSelfCheckWatch"/>'s to read.</item>
@@ -56,16 +57,18 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     private const string UnblockRequestKind = "UnblockRequest";
     private const string TamperDetectedKind = "TamperDetected";
 
-    // The in-browser tamper kinds the extension witnesses itself (#105) that still
+    // The in-browser tamper kinds an extension witnesses itself (#105) that still
     // reach the teacher. Anything else from the link is dropped rather than shown
-    // on the teacher's roster. Since #524 the extension hands its site access to
-    // the agent as a self-check instead (ExtensionSelfCheckWatch); one older than
-    // that still reports host_permission_revoked itself, and it still reaches the
-    // teacher. The extension's inprivate_opened (only sent where it is allowed in
-    // InPrivate) goes no further since #535: the agent's own InPrivate witness sees
-    // every InPrivate window, and tells the teacher only of one the student leaves
-    // open (InPrivateWitnessMonitor). Passing the extension's on would tell the
-    // teacher at once, of a window closed in time too, and twice.
+    // on the teacher's roster. Only extensions older than #539 send tamper at all,
+    // so this is for the ones still in the field. Since #524 the extension hands
+    // its site access to the agent as a self-check instead
+    // (ExtensionSelfCheckWatch); one older than that still reports
+    // host_permission_revoked itself, and it still reaches the teacher. The
+    // extension's inprivate_opened (only sent where it is allowed in InPrivate, and
+    // not since #539) goes no further since #535: the agent's own InPrivate witness
+    // sees every InPrivate window, and tells the teacher only of one the student
+    // leaves open (InPrivateWitnessMonitor). Passing the extension's on would tell
+    // the teacher at once, of a window closed in time too, and twice.
     private static readonly HashSet<string> ExtensionTamperKinds =
         new(StringComparer.Ordinal) { TamperKinds.HostPermissionRevoked };
 

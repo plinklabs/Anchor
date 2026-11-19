@@ -315,6 +315,7 @@ so no spec touches the public internet):
 | `end-after-reconnect` | an end the extension missed while its SW was stopped still releases its tabs (#354) |
 | `unblock-request` | "Request access" reaches the agent, and its answer — or its absence — shows on the block page (#73) |
 | `self-check` | the extension tells the agent what its settings allow when a session starts and as "Site access" / "Allow in InPrivate" change on its own page in Edge, and opens that page when the agent asks (#524) |
+| `no-inprivate-report` | an InPrivate window opened during a session is filtered, and the extension sends the agent no report of it: the agent's own InPrivate witness reports it (#535, #539) |
 
 **Hermetic against an on-box agent (#332).** On a developer machine the installed
 Anchor agent registers the witness native-messaging host *permanently*
@@ -436,25 +437,24 @@ seeded teacher/student data in place:
 Soft enforcement (design §5.4): we can't stop a student reconfiguring or
 sidestepping the extension via Edge's own `edge://extensions` page — no extension
 can hide that page, and Anchor deliberately uses **no enterprise policy** (it's
-BYOD). Instead the extension makes tampering **visible to the teacher**: during an
-active session it hands a tamper signal to the agent, which reports it as a
-`TamperDetected` event (an `EventKind` on the backend); the dashboard surfaces it
-as a flag on the student's live-roster row (#105). The flag is computed
-server-side, so it survives a dashboard reload.
+BYOD). Instead tampering is made **visible to the teacher**: during an active
+session the agent reports it as a `TamperDetected` event (an `EventKind` on the
+backend); the dashboard surfaces it as a flag on the student's live-roster row
+(#105). The flag is computed server-side, so it survives a dashboard reload.
 
-What the extension itself can witness while running:
+The extension sends no tamper signal of its own. It tells the agent what its
+own settings allow (`self_check`, below), and the agent decides what that means.
+InPrivate windows are the agent's to catch: its on-box witness (#148) sees every
+InPrivate window by its title, whether or not the extension is allowed in
+InPrivate. During a session such a window is paused at once (#525), and the
+teacher hears of it only when it is still open after
+`Session:SchoolProfileReportSeconds` (60 s, #535).
 
-| Signal | Mechanism | Reported `kind` |
-| ------ | --------- | --------------- |
-| InPrivate window opened | `chrome.windows.onCreated` (`incognito: true`) | `inprivate_opened` |
-
-InPrivate detection is **best-effort**: the extension only sees incognito windows
-once it's been allowed in InPrivate — which is also the case where it still
-filters them — so the *reliable* InPrivate signal comes from the agent acting as
-an on-box witness (#148). Since #535 the agent doesn't pass the extension's
-`inprivate_opened` on: an InPrivate window is paused at once during a session
-(#525), and the teacher hears of it only when it is still open after
-`Session:SchoolProfileReportSeconds` (60 s), from the agent's own witness.
+The extension used to report every InPrivate window it saw the moment it opened
+(`chrome.windows.onCreated` → `inprivate_opened`), but it only saw them once it
+was allowed in InPrivate. Since #539 the extension doesn't send it; since #535
+the agent drops it, which it still does for an extension the store hasn't
+updated yet. The `no-inprivate-report` spec pins that the extension stays quiet.
 
 ### Its own settings (#524)
 
@@ -508,10 +508,12 @@ and the [`nativeMessaging`](src/manifest.json) permission). Two things ride on i
   the student ask again, #523), `session_ended` when it ends or
   the student leaves it, and on every connect the current session or
   `no_session`. The extension sends back `blocked_url` (the blocked page's host
-  only, never its URL, #527), `unblock_request` (answered with
-  `unblock_request_result`) and `tamper`, which the agent sends
-  with its own connection; it also pings the backend for the extension while the
-  link is up, so a silent extension still shows (#149).
+  only, never its URL, #527) and `unblock_request` (answered with
+  `unblock_request_result`), which the agent sends with its own connection; it
+  also pings the backend for the extension while the link is up, so a silent
+  extension still shows (#149). An extension older than #539 also sends
+  `tamper`; the agent passes on only its `host_permission_revoked` (one older
+  than #524) and drops its `inprivate_opened` (#535).
 - **The extension says what its settings allow (#524).** `self_check` on every
   session it is handed and on every permission change; the agent pauses Edge
   while `allSites` is false, and sends `open_extension_page` when the student
