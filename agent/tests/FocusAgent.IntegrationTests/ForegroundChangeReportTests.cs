@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
 
@@ -37,16 +36,9 @@ public sealed class ForegroundChangeReportTests
     {
         var api = new BackendClient(_backend.Url);
 
-        // Win11's notepad is a tabbed launcher, so kill leftovers first to
-        // guarantee a fresh window.
-        KillNotepad();
-        using var notepad = Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })
-            ?? throw new InvalidOperationException("Failed to launch notepad.");
+        var hwnd = await TestNotepad.OpenOnPrimaryMonitorAsync();
         try
         {
-            var hwnd = await WaitForNotepadWindowAsync(TimeSpan.FromSeconds(10));
-            Assert.True(hwnd != IntPtr.Zero, "Notepad did not present a top-level window within 10s.");
-
             await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
             await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
 
@@ -62,7 +54,8 @@ public sealed class ForegroundChangeReportTests
                     $"Agent did not auto-join within 8s (joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
                 Assert.True(
                     await WaitForIconicAsync(hwnd, TimeSpan.FromSeconds(10)),
-                    "Agent never minimized the off-list Notepad after the session started (#104 sweep).");
+                    "Agent never minimized the off-list Notepad after the session started (#104 sweep); " +
+                    $"Notepad is {WindowCapture.DescribePlacement(hwnd)}.");
 
                 // Restoring it is a switch to Notepad: the agent re-minimizes it
                 // and reports the blocked foreground change.
@@ -70,7 +63,8 @@ public sealed class ForegroundChangeReportTests
                 var reported = await WaitForNotepadReportAsync(api, session.Id, TimeSpan.FromSeconds(10));
                 Assert.True(
                     reported is not null,
-                    "No ForegroundChange for Notepad reached the backend within 10s of restoring it. " +
+                    "No ForegroundChange for Notepad reached the backend within 10s of restoring it " +
+                    $"(Notepad: {WindowCapture.DescribePlacement(hwnd)}). " +
                     $"Events: {Describe(await api.GetSessionEventsAsync(session.Id))}.");
 
                 using var payload = JsonDocument.Parse(reported!.PayloadJson);
@@ -88,7 +82,7 @@ public sealed class ForegroundChangeReportTests
         }
         finally
         {
-            KillNotepad();
+            TestNotepad.Kill();
         }
     }
 
@@ -129,28 +123,5 @@ public sealed class ForegroundChangeReportTests
             await Task.Delay(100);
         }
         return false;
-    }
-
-    private static async Task<IntPtr> WaitForNotepadWindowAsync(TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            var hwnd = WindowCapture.FindMainWindowByProcessName("notepad");
-            if (hwnd != IntPtr.Zero) return hwnd;
-            await Task.Delay(200);
-        }
-        return IntPtr.Zero;
-    }
-
-    private static void KillNotepad()
-    {
-        foreach (var p in Process.GetProcessesByName("notepad"))
-        {
-            using (p)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            }
-        }
     }
 }

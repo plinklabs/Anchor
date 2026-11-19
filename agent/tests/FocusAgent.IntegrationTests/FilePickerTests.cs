@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
 
@@ -41,18 +40,10 @@ public sealed class FilePickerTests
     {
         var api = new BackendClient(_backend.Url);
 
-        // A fresh window must be up before the session starts (Win11 notepad is a
-        // tabbed launcher, so kill leftovers first to guarantee a new window).
-        KillNotepad();
-        using (Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })
-               ?? throw new InvalidOperationException("Failed to launch notepad."))
-        {
-        }
+        // A fresh window must be up before the session starts.
+        var app = await TestNotepad.OpenOnPrimaryMonitorAsync();
         try
         {
-            var app = await WaitForNotepadWindowAsync(TimeSpan.FromSeconds(10));
-            Assert.True(app != IntPtr.Zero, "Notepad did not present a top-level window within 10s.");
-
             await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
             await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
 
@@ -67,7 +58,10 @@ public sealed class FilePickerTests
                     joined?.JoinedSessionId == session.Id && AllowsApp(joined),
                     $"Agent did not join with '{TestConfig.AppProcessName}' allowed within 10s " +
                     $"(joinedSessionId: {joined?.JoinedSessionId?.ToString() ?? "<none>"}).");
-                Assert.False(WindowCapture.IsIconic(app), "The allowed app was minimized at session start.");
+                Assert.False(
+                    WindowCapture.IsIconic(app),
+                    $"The allowed app was minimized at session start (Notepad: {WindowCapture.DescribePlacement(app)}). " +
+                    TestNotepad.TakenDownFromOutside);
 
                 // 1. The student clicks an upload button: the app opens the file picker,
                 //    and it stays on screen.
@@ -111,7 +105,7 @@ public sealed class FilePickerTests
         }
         finally
         {
-            KillNotepad();
+            TestNotepad.Kill();
         }
     }
 
@@ -211,26 +205,4 @@ public sealed class FilePickerTests
                string.Equals(name.GetString(), processName, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task<IntPtr> WaitForNotepadWindowAsync(TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            var hwnd = WindowCapture.FindMainWindowByProcessName("notepad");
-            if (hwnd != IntPtr.Zero) return hwnd;
-            await Task.Delay(200);
-        }
-        return IntPtr.Zero;
-    }
-
-    private static void KillNotepad()
-    {
-        foreach (var p in Process.GetProcessesByName("notepad"))
-        {
-            using (p)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            }
-        }
-    }
 }

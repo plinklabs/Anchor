@@ -765,10 +765,10 @@ public sealed class ExtensionOffFallbackTests
 /// launched with a private witness pipe and short pause timings, a fake extension
 /// connected on that pipe, and a session joined with Notepad allowed.
 ///
-/// The stand-in is put on the primary monitor: Notepad opens where it was last,
-/// which can be a second screen someone is working on while the suite runs, and
-/// their clicks there cover or minimize it (#538). A step that needs the browser
-/// on screen when the guard's timer runs out calls
+/// The stand-in is put on the primary monitor (<see cref="TestNotepad"/>): Notepad
+/// opens where it was last, which can be a second screen someone is working on
+/// while the suite runs, and their clicks there cover or minimize it (#538). A step
+/// that needs the browser on screen when the guard's timer runs out calls
 /// <see cref="EnsureBrowserOnScreenAsync"/> first.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -811,20 +811,12 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
             "left behind; this agent would rejoin them on connect and sweep the stand-in browser. " +
             "End every session a spec starts.");
 
-        // A fresh window must be up before the session starts (Win11 notepad is a
-        // tabbed launcher, so kill leftovers first to guarantee a new window).
-        KillNotepad();
-        using (Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })
-               ?? throw new InvalidOperationException("Failed to launch notepad."))
-        {
-        }
-        var hwnd = await WaitForNotepadWindowAsync(TimeSpan.FromSeconds(10));
-        Assert.True(hwnd != IntPtr.Zero, "Notepad did not present a top-level window within 10s.");
+        // A fresh window must be up before the session starts.
+        var hwnd = await TestNotepad.OpenOnPrimaryMonitorAsync();
 
         var run = new BrowserPauseRun(api, new FakeExtensionWitness(pipeName), hwnd);
         try
         {
-            await run.EnsureBrowserOnScreenAsync(always: true);
             run._agent = AgentProcess.Launch(
                 backendUrl,
                 TestConfig.StudentOid,
@@ -894,23 +886,13 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
     /// timer runs out: nothing in the run takes it down then, but someone using
     /// this desktop can, and the guard would go Dormant instead of pausing it
     /// (#538). Brings it back without activating it, on the primary monitor, and
-    /// asserts it is there. Leaves it alone when it is there already, or with
-    /// <paramref name="always"/> puts it in the same place every run.
+    /// asserts it is there. Leaves it alone when it is there already.
     /// </summary>
-    public async Task EnsureBrowserOnScreenAsync(bool always = false)
-    {
-        var hwnd = BrowserWindow;
-        bool InPlace() => WindowCapture.IsOnScreen(hwnd) && WindowCapture.IsOnPrimaryMonitor(hwnd);
-
-        if (always || !InPlace())
-            WindowCapture.ShowOnPrimaryMonitor(hwnd);
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
-        while (!InPlace() && DateTime.UtcNow < deadline)
-            await Task.Delay(100);
+    public async Task EnsureBrowserOnScreenAsync() =>
         Assert.True(
-            InPlace(),
-            $"The stand-in browser could not be put on screen on the primary monitor ({WindowCapture.DescribePlacement(hwnd)}).");
-    }
+            await WindowCapture.PutOnPrimaryMonitorAsync(BrowserWindow),
+            "The stand-in browser could not be put on screen on the primary monitor " +
+            $"({WindowCapture.DescribePlacement(BrowserWindow)}).");
 
     /// <summary>Poll until <paramref name="hwnd"/>'s iconic state matches, or time out.</summary>
     public static async Task<bool> WaitForIconicAsync(IntPtr hwnd, bool expected, TimeSpan timeout)
@@ -934,34 +916,11 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
         await Extension.DisposeAsync();
         if (_agent is not null)
             await _agent.DisposeAsync();
-        KillNotepad();
-    }
-
-    private static async Task<IntPtr> WaitForNotepadWindowAsync(TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            var hwnd = WindowCapture.FindMainWindowByProcessName("notepad");
-            if (hwnd != IntPtr.Zero) return hwnd;
-            await Task.Delay(200);
-        }
-        return IntPtr.Zero;
+        TestNotepad.Kill();
     }
 
     /// <summary>The student closes the browser altogether: no window of it is left (#518).</summary>
-    public static void CloseBrowser() => KillNotepad();
-
-    private static void KillNotepad()
-    {
-        foreach (var p in Process.GetProcessesByName("notepad"))
-        {
-            using (p)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            }
-        }
-    }
+    public static void CloseBrowser() => TestNotepad.Kill();
 }
 
 /// <summary>

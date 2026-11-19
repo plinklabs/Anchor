@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
 
@@ -80,7 +79,7 @@ public sealed class FocusFallbackTests
                 await WaitUntilAsync(
                     () => WindowCapture.IsIconic(offList) && !WindowCapture.IsIconic(notepad), TimeSpan.FromSeconds(5)),
                 "After blocking the off-list app the agent did not bring back the student's allowed app " +
-                $"(off-list app minimized: {WindowCapture.IsIconic(offList)}, Notepad minimized: {WindowCapture.IsIconic(notepad)}, " +
+                $"(off-list app minimized: {WindowCapture.IsIconic(offList)}, Notepad: {WindowCapture.DescribePlacement(notepad)}, " +
                 $"foreground: {WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}). " +
                 "The taskbar is no window to hand focus back to (#437).");
         });
@@ -108,7 +107,7 @@ public sealed class FocusFallbackTests
                     () => WindowCapture.IsIconic(offList) && WindowCapture.ForegroundWindow() == notepad,
                     TimeSpan.FromSeconds(5)),
                 "After blocking the off-list app the student's allowed app did not get the keyboard back " +
-                $"(off-list app minimized: {WindowCapture.IsIconic(offList)}, foreground: " +
+                $"(off-list app minimized: {WindowCapture.IsIconic(offList)}, Notepad: {WindowCapture.DescribePlacement(notepad)}, foreground: " +
                 $"{WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())} " +
                 $"[{WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}]). " +
                 "Whatever they type goes to the minimized off-list app (#438).");
@@ -195,7 +194,7 @@ public sealed class FocusFallbackTests
                     () => !WindowCapture.IsIconic(notepad) && WindowCapture.GetWindowScreenRect(notepad).Left > MinimizedPosition,
                     TimeSpan.FromSeconds(3)),
                 "The student's allowed app did not come back once it responded again " +
-                $"(Notepad minimized: {WindowCapture.IsIconic(notepad)}). Latest foreground reports, newest first: " +
+                $"(Notepad: {WindowCapture.DescribePlacement(notepad)}). Latest foreground reports, newest first: " +
                 $"{await DescribeLatestReportsAsync(api, sessionId)}.");
         });
     }
@@ -207,16 +206,9 @@ public sealed class FocusFallbackTests
 
         // Notepad is open but put away before the session, so the student has not
         // used an allowed app yet: a block shows the overlay, which lists Notepad.
-        // Win11 notepad is a tabbed launcher, so kill leftovers to get a new window.
-        KillNotepad();
-        using (Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })
-               ?? throw new InvalidOperationException("Failed to launch notepad."))
-        {
-        }
+        var notepad = await TestNotepad.OpenOnPrimaryMonitorAsync();
         try
         {
-            var notepad = await WaitForNotepadWindowAsync(TimeSpan.FromSeconds(10));
-            Assert.True(notepad != IntPtr.Zero, "Notepad did not present a top-level window within 10s.");
             WindowCapture.MinimizeWithoutActivating(notepad);
             Assert.True(await WaitUntilAsync(() => WindowCapture.IsIconic(notepad), TimeSpan.FromSeconds(3)),
                 "Notepad could not be minimized.");
@@ -323,7 +315,7 @@ public sealed class FocusFallbackTests
                         () => !WindowCapture.IsIconic(notepad) && WindowCapture.GetWindowScreenRect(notepad).Left > MinimizedPosition,
                         TimeSpan.FromSeconds(3)),
                     "The allowed app the student picked on the overlay did not come back once it responded again " +
-                    $"(Notepad minimized: {WindowCapture.IsIconic(notepad)}). Foreground: {sampler.Describe()}");
+                    $"(Notepad: {WindowCapture.DescribePlacement(notepad)}). Foreground: {sampler.Describe()}");
             }
             finally
             {
@@ -332,7 +324,7 @@ public sealed class FocusFallbackTests
         }
         finally
         {
-            KillNotepad();
+            TestNotepad.Kill();
         }
     }
 
@@ -445,17 +437,10 @@ public sealed class FocusFallbackTests
     {
         var api = new BackendClient(_backend.Url);
 
-        // A fresh window must be up before the session starts (Win11 notepad is a
-        // tabbed launcher, so kill leftovers first to guarantee a new window).
-        KillNotepad();
-        using (Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })
-               ?? throw new InvalidOperationException("Failed to launch notepad."))
-        {
-        }
+        // A fresh window must be up before the session starts.
+        var notepad = await TestNotepad.OpenOnPrimaryMonitorAsync();
         try
         {
-            var notepad = await WaitForNotepadWindowAsync(TimeSpan.FromSeconds(10));
-            Assert.True(notepad != IntPtr.Zero, "Notepad did not present a top-level window within 10s.");
             using var offList = await OffListWindow.OpenAsync("Anchor e2e off-list app", TimeSpan.FromSeconds(10));
 
             await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
@@ -475,7 +460,10 @@ public sealed class FocusFallbackTests
                 Assert.True(
                     await WaitUntilAsync(() => WindowCapture.IsIconic(offList.Handle), TimeSpan.FromSeconds(10)),
                     "The session-start sweep did not minimize the off-list window (#104).");
-                Assert.False(WindowCapture.IsIconic(notepad), "The allowed Notepad was minimized at session start.");
+                Assert.False(
+                    WindowCapture.IsIconic(notepad),
+                    $"The allowed Notepad was minimized at session start ({WindowCapture.DescribePlacement(notepad)}). " +
+                    TestNotepad.TakenDownFromOutside);
 
                 // The student works in Notepad: bring it back from minimized without
                 // activating it, so the agent judges it while the foreground stays put.
@@ -496,7 +484,7 @@ public sealed class FocusFallbackTests
         }
         finally
         {
-            KillNotepad();
+            TestNotepad.Kill();
         }
     }
 
@@ -593,28 +581,5 @@ public sealed class FocusFallbackTests
             await Task.Delay(100);
         }
         return condition();
-    }
-
-    private static async Task<IntPtr> WaitForNotepadWindowAsync(TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            var hwnd = WindowCapture.FindMainWindowByProcessName("notepad");
-            if (hwnd != IntPtr.Zero) return hwnd;
-            await Task.Delay(200);
-        }
-        return IntPtr.Zero;
-    }
-
-    private static void KillNotepad()
-    {
-        foreach (var p in Process.GetProcessesByName("notepad"))
-        {
-            using (p)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            }
-        }
     }
 }

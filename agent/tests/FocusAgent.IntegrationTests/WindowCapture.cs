@@ -286,6 +286,43 @@ internal static class WindowCapture
     }
 
     /// <summary>
+    /// <see cref="ShowOnPrimaryMonitor"/> unless <paramref name="hwnd"/> is on screen
+    /// on the primary monitor already, or always with <paramref name="always"/> so a
+    /// window a spec just opened is in the same place every run. True once it is
+    /// there, false when it is not within 3 s: the caller fails the spec with
+    /// <see cref="DescribePlacement"/> (#538, #542).
+    /// </summary>
+    public static async Task<bool> PutOnPrimaryMonitorAsync(IntPtr hwnd, bool always = false)
+    {
+        bool InPlace() => IsOnScreen(hwnd) && IsOnPrimaryMonitor(hwnd);
+
+        if (always || !InPlace())
+            ShowOnPrimaryMonitor(hwnd);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (!InPlace() && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        return InPlace();
+    }
+
+    /// <summary>
+    /// The primary monitor's work area (without the taskbar) in physical pixels,
+    /// and its display scale (1.0 = 96 DPI): where a window that a spec starts
+    /// itself belongs, for an app that takes its window's place on its command
+    /// line (#542).
+    /// </summary>
+    public static (ScreenRect WorkArea, double Scale) GetPrimaryWorkArea()
+    {
+        var monitor = MonitorFromPoint(default, MonitorDefaultToPrimary);
+        var info = new MonitorInfo { cbSize = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfoW(monitor, ref info))
+            throw new InvalidOperationException("GetMonitorInfo failed for the primary monitor.");
+        if (GetDpiForMonitor(monitor, MdtEffectiveDpi, out var dpi, out _) != 0 || dpi == 0)
+            throw new InvalidOperationException("GetDpiForMonitor failed for the primary monitor.");
+        var work = info.rcWork;
+        return (new ScreenRect(work.Left, work.Top, work.Right - work.Left, work.Bottom - work.Top), dpi / 96.0);
+    }
+
+    /// <summary>
     /// Where <paramref name="hwnd"/> is, for a failure message: closed, minimized,
     /// hidden or on screen, and on which monitor (#538).
     /// </summary>
@@ -941,6 +978,11 @@ internal static class WindowCapture
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromPoint(Point32 pt, uint dwFlags);
+
+    private const int MdtEffectiveDpi = 0;
+
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

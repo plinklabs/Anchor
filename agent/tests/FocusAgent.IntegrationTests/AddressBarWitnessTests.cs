@@ -184,7 +184,7 @@ internal sealed class AddressBarRun : IAsyncDisposable
             await run._extension.ConnectAsync();
             await run.WaitForAsync(s => s.ExtensionGuard?.WitnessConnected == true, TimeSpan.FromSeconds(10), "the witness to connect");
 
-            run.LaunchEdge(edgeExe!, run.Site.Url("127.0.0.1", "/allowed"));
+            await run.LaunchEdgeAsync(edgeExe!, run.Site.Url("127.0.0.1", "/allowed"));
 
             var classId = await api.FindClassIdAsync();
             var session = await api.StartSessionAsync(classId);
@@ -231,7 +231,8 @@ internal sealed class AddressBarRun : IAsyncDisposable
         }
         var last = FindEdgeWindow();
         Assert.Fail(
-            $"Edge did not show {url} in front (window: '{(last == IntPtr.Zero ? "<none>" : TitleOf(last))}', " +
+            $"Edge did not show {url} in front (window: " +
+            $"{(last == IntPtr.Zero ? "<none>" : $"'{TitleOf(last)}', {WindowCapture.DescribePlacement(last)}")}, " +
             $"foreground: {WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())}). " +
             "Run again without touching the desktop.");
     }
@@ -290,23 +291,44 @@ internal sealed class AddressBarRun : IAsyncDisposable
             await _api.EndSessionAsync(id);
     }
 
-    private void LaunchEdge(string edgeExe, string url)
+    private async Task LaunchEdgeAsync(string edgeExe, string url)
     {
         Directory.CreateDirectory(EdgeUserData);
         _edgeExe = edgeExe;
-        _edgeLauncher = StartEdge(edgeExe, url);
+        _edgeLauncher = StartEdge(edgeExe, url, PrimaryMonitorWindowArguments());
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
         while (FindEdgeWindow() == IntPtr.Zero && DateTime.UtcNow < deadline)
-            Thread.Sleep(200);
+            await Task.Delay(200);
         var window = FindEdgeWindow();
         Assert.True(window != IntPtr.Zero, "Edge opened no window of its Default profile within 30 s.");
         // Edge may start over in a process of its own (it relaunched itself from
         // the test host, --edge-skip-compat-layer-relaunch): the browser is the
         // process that shows the window.
         _edgeBrowser = Process.GetProcessById(WindowCapture.ProcessIdOf(window));
+        Assert.True(
+            await WindowCapture.PutOnPrimaryMonitorAsync(window),
+            $"The spec's Edge window could not be put on screen on the primary monitor ({WindowCapture.DescribePlacement(window)}).");
     }
 
-    private Process StartEdge(string edgeExe, string url)
+    /// <summary>
+    /// Where Edge opens its window: inside the primary monitor's work area (#542).
+    /// Left to itself it opens where Windows puts it, which can be a second screen
+    /// someone works on while the suite runs, where their clicks cover or minimize
+    /// it. Edge reads these in DIPs, and the primary monitor's top left is (0, 0)
+    /// in DIPs and pixels alike.
+    /// </summary>
+    private static string[] PrimaryMonitorWindowArguments()
+    {
+        const int margin = 50;
+        var (work, scale) = WindowCapture.GetPrimaryWorkArea();
+        var left = (int)(work.Left / scale) + margin;
+        var top = (int)(work.Top / scale) + margin;
+        var width = Math.Min(1280, (int)(work.Width / scale) - 2 * margin);
+        var height = Math.Min(900, (int)(work.Height / scale) - 2 * margin);
+        return [$"--window-position={left},{top}", $"--window-size={width},{height}"];
+    }
+
+    private Process StartEdge(string edgeExe, string url, IEnumerable<string>? windowArguments = null)
     {
         var psi = new ProcessStartInfo(edgeExe) { UseShellExecute = false };
         psi.ArgumentList.Add($"--user-data-dir={EdgeUserData}");
@@ -315,6 +337,8 @@ internal sealed class AddressBarRun : IAsyncDisposable
         psi.ArgumentList.Add("--disable-sync");
         psi.ArgumentList.Add("--lang=en-US");
         psi.ArgumentList.Add($"--host-resolver-rules={string.Join(",", LoopbackSite.Hosts.Select(h => $"MAP {h} 127.0.0.1"))}");
+        foreach (var argument in windowArguments ?? [])
+            psi.ArgumentList.Add(argument);
         psi.ArgumentList.Add(url);
         // An Anchor extension Edge policy installs here connects its native host to
         // this pipe, where no agent listens: it never gets a session (#489).
