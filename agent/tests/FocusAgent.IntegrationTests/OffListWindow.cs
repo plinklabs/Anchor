@@ -211,6 +211,9 @@ internal sealed class OffListWindow : IDisposable
                 }
             }
 
+            // At a fixed place on the primary monitor, whose top left is always
+            // (0, 0): never on a second screen someone works on while the suite
+            // runs, where their clicks would cover or minimize it (#538).
             var hwnd = CreateWindowExW(
                 0, ClassName, _title, WsOverlappedWindow,
                 200, 200, 480, 320, IntPtr.Zero, IntPtr.Zero, instance, IntPtr.Zero);

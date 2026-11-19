@@ -130,6 +130,7 @@ public sealed class FilePickerTests
 
         // The extension is switched off: the browser is paused, and its picker goes
         // down with it.
+        await run.EnsureBrowserOnScreenAsync();
         await run.Extension.DisconnectAsync();
         await run.WaitForGuardAsync(
             g => g.State == "Paused", BrowserPauseRun.Grace + TimeSpan.FromSeconds(5), "the browser to be paused");

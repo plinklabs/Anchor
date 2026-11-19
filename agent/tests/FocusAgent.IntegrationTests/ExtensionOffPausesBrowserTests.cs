@@ -135,6 +135,7 @@ public sealed class ExtensionOffReMinimizeTests
         using var sampler = new ForegroundSampler(run.Agent.Pid);
         sampler.Name(hwnd, "browser");
 
+        await run.EnsureBrowserOnScreenAsync();
         await run.Extension.DisconnectAsync();
         await run.WaitForGuardAsync(
             g => g.State == "Paused", BrowserPauseRun.Grace + TimeSpan.FromSeconds(5), "the browser to be paused");
@@ -427,6 +428,7 @@ public sealed class ExtensionOffKeyboardTests
     private async Task PauseWhileTheStudentIsInTheBrowserAsync(BrowserPauseRun run, ForegroundSampler sampler)
     {
         sampler.Mark("switching the extension off");
+        await run.EnsureBrowserOnScreenAsync();
         Assert.True(
             WindowCapture.BringToForeground(run.BrowserWindow),
             $"The stand-in browser could not be brought to the foreground (foreground: {DescribeForeground()}).");
@@ -762,6 +764,12 @@ public sealed class ExtensionOffFallbackTests
 /// One #427 scenario: a fresh Notepad standing in for the browser, the agent
 /// launched with a private witness pipe and short pause timings, a fake extension
 /// connected on that pipe, and a session joined with Notepad allowed.
+///
+/// The stand-in is put on the primary monitor: Notepad opens where it was last,
+/// which can be a second screen someone is working on while the suite runs, and
+/// their clicks there cover or minimize it (#538). A step that needs the browser
+/// on screen when the guard's timer runs out calls
+/// <see cref="EnsureBrowserOnScreenAsync"/> first.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class BrowserPauseRun : IAsyncDisposable
@@ -816,6 +824,7 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
         var run = new BrowserPauseRun(api, new FakeExtensionWitness(pipeName), hwnd);
         try
         {
+            await run.EnsureBrowserOnScreenAsync(always: true);
             run._agent = AgentProcess.Launch(
                 backendUrl,
                 TestConfig.StudentOid,
@@ -858,15 +867,49 @@ internal sealed class BrowserPauseRun : IAsyncDisposable
         }
     }
 
-    /// <summary>Poll /status until the guard matches, or fail naming what was awaited.</summary>
+    /// <summary>
+    /// Poll /status until the guard matches, or fail naming what was awaited and
+    /// where the stand-in browser is: the guard pauses only a browser with a window
+    /// on screen when its timer runs out, and goes Dormant otherwise (#538).
+    /// </summary>
     public async Task WaitForGuardAsync(Func<ExtensionGuardSnapshot, bool> predicate, TimeSpan timeout, string what)
     {
         var last = await Agent.WaitForAsync(s => s.ExtensionGuard is { } g && predicate(g), timeout);
-        Assert.True(
-            last?.ExtensionGuard is { } g && predicate(g),
+        if (last?.ExtensionGuard is { } guard && predicate(guard)) return;
+
+        var state = last?.ExtensionGuard?.State;
+        var offScreen = state == "Dormant" && WindowCapture.IsWindow(BrowserWindow) && !WindowCapture.IsOnScreen(BrowserWindow)
+            ? " The guard goes Dormant, not Paused, when its timer runs out with no browser window on screen, and the " +
+              "stand-in is off screen: if the agent did not take it down, something outside the run did, such as " +
+              "someone using this desktop (#538)."
+            : "";
+        Assert.Fail(
             $"Timed out after {timeout.TotalSeconds:N0}s waiting for {what} " +
             $"(witnessConnected: {last?.ExtensionGuard?.WitnessConnected.ToString() ?? "<none>"}, " +
-            $"state: {last?.ExtensionGuard?.State ?? "<none>"}).");
+            $"state: {state ?? "<none>"}; stand-in browser: {WindowCapture.DescribePlacement(BrowserWindow)}).{offScreen}");
+    }
+
+    /// <summary>
+    /// Before a step that needs the stand-in browser on screen when the guard's
+    /// timer runs out: nothing in the run takes it down then, but someone using
+    /// this desktop can, and the guard would go Dormant instead of pausing it
+    /// (#538). Brings it back without activating it, on the primary monitor, and
+    /// asserts it is there. Leaves it alone when it is there already, or with
+    /// <paramref name="always"/> puts it in the same place every run.
+    /// </summary>
+    public async Task EnsureBrowserOnScreenAsync(bool always = false)
+    {
+        var hwnd = BrowserWindow;
+        bool InPlace() => WindowCapture.IsOnScreen(hwnd) && WindowCapture.IsOnPrimaryMonitor(hwnd);
+
+        if (always || !InPlace())
+            WindowCapture.ShowOnPrimaryMonitor(hwnd);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (!InPlace() && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        Assert.True(
+            InPlace(),
+            $"The stand-in browser could not be put on screen on the primary monitor ({WindowCapture.DescribePlacement(hwnd)}).");
     }
 
     /// <summary>Poll until <paramref name="hwnd"/>'s iconic state matches, or time out.</summary>

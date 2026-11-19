@@ -48,6 +48,9 @@ public sealed class ExtensionOffTeacherReportTests
 
         // 2. Switched off with the browser open: nothing on the drop itself, and
         //    one report once the grace period ran out and the browser is paused.
+        //    Open means on screen when the grace period runs out, and someone using
+        //    this desktop may have taken the stand-in off it meanwhile (#538).
+        await run.EnsureBrowserOnScreenAsync();
         await run.Extension.DisconnectAsync();
         await run.WaitForGuardAsync(g => !g.WitnessConnected, TimeSpan.FromSeconds(5), "the witness to drop");
         Assert.Equal(0, await ExtensionOffReports.CountAsync(api, run.SessionId));
