@@ -6,9 +6,12 @@ agent-as-witness tamper detection (#146 part 1).
 ## Why it exists
 
 Soft enforcement (design §5.4) makes tampering *visible* rather than preventing
-it. #105 shipped the in-browser half: the extension reports what it can witness
-while running (InPrivate, site-access downgrade). But the extension **cannot
-witness its own disablement or removal** — once it's off, it can't send anything.
+it. #105 shipped an in-browser half: the extension reported what it could witness
+while running (InPrivate, site-access downgrade). Both have since moved to the
+agent: the extension hands its settings over as `self_check` (#524), and the
+agent's own InPrivate witness reports InPrivate windows (#148, #535, #539). And
+the extension **cannot witness its own disablement or removal** — once it's off,
+it can't send anything.
 
 The on-box FocusAgent is the witness for that gap. The two components watch each
 other over a native-messaging link, with **no enterprise/Edge policy** (BYOD):
@@ -65,8 +68,8 @@ monitor and the relay use to tell them apart.
 Since #489 the link also carries the **session**: the agent is the extension's
 only identity. It hands the joined session down (and every allowlist change, and
 the session's end), and the extension hands back what it reports — blocked URLs,
-unblock requests, its in-browser tamper signals — which the agent sends with its
-own backend connection. The extension has no sign-in and no hub connection.
+unblock requests — which the agent sends with its own backend connection. The
+extension has no sign-in and no hub connection.
 
 The host itself is a thin bridge: browser **stdio** ↔ agent **named pipe**. The
 decision logic lives in the unit-tested `ExtensionWitnessMonitor` and
@@ -88,7 +91,9 @@ unit-tested with `MemoryStream`s.
   `witness.ts`): agent → extension `session_started`, `no_session`,
   `allowlist_replaced`, `allowlist_amended`, `unblock_denied`, `session_ended`,
   `unblock_request_result`, `open_extension_page`; extension → agent `ping`,
-  `blocked_url`, `unblock_request`, `tamper`, `self_check` (#524). The agent sends the current session (or
+  `blocked_url`, `unblock_request`, `self_check` (#524), and from an extension
+  older than #539 `tamper` (its `host_permission_revoked` goes on, its
+  `inprivate_opened` is dropped, #535). The agent sends the current session (or
   `no_session`) to each connection when it connects, sends every change to all
   of them, and answers an `unblock_request` on the connection that asked.
 

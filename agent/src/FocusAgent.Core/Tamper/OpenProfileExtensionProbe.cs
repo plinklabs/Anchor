@@ -204,8 +204,9 @@ public sealed class EdgeOpenProfileExtensionProbe : IOpenProfileExtensionProbe
     /// data folder and the profile folder, joined by a dot, with everything but
     /// ASCII letters, digits and dots dropped (<c>MSEdge.UserData.Profile1</c>).
     /// The Default profile of the default user data folder is plain <c>MSEdge</c>.
-    /// An app window (an installed site) has an ID of its own that starts with the
-    /// app's, so it never counts as the profile being open in the browser.
+    /// An app window (an installed site) carries its package's ID instead
+    /// (<c>localhost-AB457204_ebq0fnkrwaj2c!App</c>, #537), so it never counts as
+    /// the profile being open in the browser.
     /// </summary>
     public static IReadOnlyList<string> WindowAppIds(string userDataFolder, string profile)
     {

@@ -15,9 +15,8 @@
 
 import { test, expect } from '../fixtures.ts';
 import { BASELINE, BROWSER_CHANNEL } from '../config.ts';
+import { allowInPrivate, openExtensionSettings, setSiteAccess } from '../extension-settings.ts';
 import type { FakeAgent, ReceivedMessage } from '../fake-agent.ts';
-import type { LoadedExtension } from '../extension.ts';
-import type { Page } from '@playwright/test';
 
 // The controls are Edge's own extension page; Chrome's differ.
 test.skip(!BROWSER_CHANNEL.startsWith('msedge'), "drives Edge's own extension settings page");
@@ -74,23 +73,4 @@ test('outside a session the extension checks nothing, and opens no page', async 
 
 async function nextSelfCheck(agent: FakeAgent, from: number, timeout = 15_000): Promise<ReceivedMessage> {
   return agent.waitForMessage((m) => m.type === 'self_check', timeout, from);
-}
-
-async function openExtensionSettings(ext: LoadedExtension): Promise<Page> {
-  const page = await ext.context.newPage();
-  // Edge opens chrome:// pages as edge:// ones.
-  await page.goto(`chrome://extensions/?id=${ext.extensionId}`);
-  await expect(page.getByRole('combobox')).toHaveText(/On all sites|On click|On specific sites/);
-  return page;
-}
-
-/** The "Site access" dropdown on the extension's page, as the student uses it. */
-async function setSiteAccess(page: Page, value: 'ON_CLICK' | 'ON_ALL_SITES'): Promise<void> {
-  await page.getByRole('combobox').click();
-  await page.locator(`fluent-option[value="${value}"]`).click();
-}
-
-/** The "Allow in InPrivate" switch on the extension's page, as the student uses it. */
-async function allowInPrivate(page: Page): Promise<void> {
-  await page.locator('fluent-switch:right-of(:text-is("Allow in InPrivate"))').first().click();
 }

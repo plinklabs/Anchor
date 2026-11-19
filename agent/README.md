@@ -328,10 +328,13 @@ them are served at once (#517). The same link is how the agent notices the
 extension going away; the teacher is told ("switched off or removed") only once
 it has stayed gone past the grace period with Edge open, or is switched off in a
 profile that is still open, not when it restarts or Edge or a profile is closed
-(#518, `ExtensionGuard`). The extension hands back blocked URLs, unblock requests and its
-tamper signals, which the agent reports with its own connection
-(`ExtensionSessionRelay`). Only the registered host can reach the extension's
-port, so an arbitrary web page can't start or end a session. Protocol: see
+(#518, `ExtensionGuard`). The extension hands back blocked URLs and unblock
+requests, which the agent reports with its own connection
+(`ExtensionSessionRelay`), and what its own settings allow (#524). It sends no
+tamper signal of its own since #539; an older one's `inprivate_opened` is
+dropped, as the agent's InPrivate witness reports InPrivate windows (#535).
+Only the registered host can reach the extension's port, so an arbitrary web
+page can't start or end a session. Protocol: see
 [`src/FocusAgent.WitnessHost/README.md`](src/FocusAgent.WitnessHost/README.md).
 
 ### Single-machine dev verification

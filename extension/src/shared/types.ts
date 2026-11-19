@@ -61,19 +61,6 @@ export interface UnblockRequestPayload {
 }
 
 /**
- * The kind of tamper the extension can witness in-browser (#105):
- * `inprivate_opened` — an InPrivate window was created during a session. The
- * agent sends it on as the `kind` of a TamperDetected event (#489), which the
- * backend surfaces verbatim on the teacher's roster. What the extension can't
- * witness about itself (`extension_disabled`) the agent reports. "Site access"
- * turned down from "On all sites" (`host_permission_revoked`) the extension used
- * to report here too; it now hands its settings to the agent (`self_check`,
- * #524), which pauses Edge and tells the teacher only if the student doesn't put
- * it back.
- */
-export type TamperKind = 'inprivate_opened';
-
-/**
  * Wire format for chrome.runtime messages exchanged between the background
  * service worker and the block page. Kept in one discriminated union so a
  * recipient can switch on `kind` without speculating about the shape.

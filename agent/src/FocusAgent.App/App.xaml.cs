@@ -1359,9 +1359,7 @@ public partial class App : Application
     /// </summary>
     private static string BrowserUserDataFolder(WitnessSettings witness) =>
         string.IsNullOrWhiteSpace(witness.BrowserUserDataFolder)
-            ? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Microsoft", "Edge", "User Data")
+            ? EdgeWebAppPackages.EdgeDefaultUserDataFolder
             : witness.BrowserUserDataFolder.Trim();
 
     /// <summary>
@@ -1580,10 +1578,22 @@ public partial class App : Application
         builder.Services.AddSingleton<IBrowserProfileLauncher>(sp => new BrowserProfileLauncher(
             sp.GetRequiredService<IOptions<WitnessSettings>>().Value.BrowserProcessName,
             sp.GetRequiredService<ILogger<BrowserProfileLauncher>>()));
+        // #537 -- a site installed as an app has windows of its own, which carry the
+        // app's package's AppUserModelID in every profile: the package names the
+        // app, and Edge's Local State the profiles it is installed in.
+        builder.Services.AddSingleton<IEdgeWebApps>(sp =>
+        {
+            var packages = sp.GetRequiredService<IOptions<WitnessSettings>>().Value.BrowserAppPackagesFolder;
+            Func<string, string?> folderOf = string.IsNullOrWhiteSpace(packages)
+                ? InstalledPackages.FolderOf
+                : family => Path.Combine(packages.Trim(), family);
+            return new EdgeWebAppPackages(folderOf, log: sp.GetRequiredService<ILogger<EdgeWebAppPackages>>());
+        });
         builder.Services.AddSingleton(sp => new EdgeSchoolProfileProbe(
             BrowserUserDataFolder(sp.GetRequiredService<IOptions<WitnessSettings>>().Value),
             sp.GetRequiredService<IOpenProfileExtensionProbe>(),
-            sp.GetRequiredService<ILogger<EdgeSchoolProfileProbe>>()));
+            sp.GetRequiredService<ILogger<EdgeSchoolProfileProbe>>(),
+            sp.GetRequiredService<IEdgeWebApps>()));
         builder.Services.AddSingleton<SchoolProfileGuard>();
         // #526 -- test phase only (#515): a second witness of what the extension
         // lets through. During a session the agent reads the address bar of the

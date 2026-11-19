@@ -65,9 +65,12 @@ public static class ExtensionMessages
     public const string UnblockRequest = "unblock_request";
 
     /// <summary>
-    /// The extension witnessed tampering in the browser (an InPrivate window; an
-    /// extension older than #524 also its host access revoked); reported as a
-    /// <c>TamperDetected</c> event (#105).
+    /// Tampering an extension older than #539 witnessed in the browser. One older
+    /// than #524 reports its host access revoked, which goes on as a
+    /// <c>TamperDetected</c> event (#105); the InPrivate windows it reports go no
+    /// further (#535), as the agent's own InPrivate witness reports them. The
+    /// extension sends no <c>tamper</c> since #539, so this is only accepted for
+    /// the older ones still in the field.
     /// </summary>
     public const string Tamper = "tamper";
 

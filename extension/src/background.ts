@@ -3,7 +3,6 @@ import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { selectTabsToRestore } from './shared/tab-restore';
 import { ALL_SITES, extensionPageUrl, runSelfCheck } from './shared/self-check';
-import { classifyCreatedWindow } from './shared/tamper';
 import { WitnessClient, WITNESS_HOST_NAME, type AgentMessage } from './shared/witness';
 import {
   clearActiveSession,
@@ -17,7 +16,6 @@ import type {
   AllowedDomainDto,
   ExtensionRuntimeMessage,
   SessionStartedPayload,
-  TamperKind,
   UnblockRequestPayload,
 } from './shared/types';
 
@@ -444,33 +442,6 @@ function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: string):
 }
 
 // ---------------------------------------------------------------------------
-// Tamper detection (#105, #146)
-// ---------------------------------------------------------------------------
-// Soft enforcement (design §5.4): make tampering visible to the teacher rather
-// than trying to prevent it. This listener catches what the extension can
-// witness itself while running, and hands it to the agent to report; the agent
-// covers what the extension cannot witness about itself (disabled/removed). The
-// extension's own settings go to the agent as a self-check (below).
-
-chrome.windows.onCreated.addListener((window) => {
-  const kind = classifyCreatedWindow(window);
-  if (kind) void reportTamperIfInSession(kind);
-});
-
-async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
-  // Tampering is only actionable while a session is enforcing — outside one the
-  // student may browse and reconfigure freely, so an InPrivate window or a
-  // permission change isn't a violation (#105, "during session").
-  const session = await getActiveSession();
-  if (!session) {
-    log.debug('tamper signal ignored — no active session', { kind });
-    return;
-  }
-  log.warn('tamper detected', { kind, sessionId: session.sessionId });
-  witness?.report({ type: 'tamper', sessionId: session.sessionId, kind });
-}
-
-// ---------------------------------------------------------------------------
 // Self-check (#524)
 // ---------------------------------------------------------------------------
 // The extension reads its own settings and the agent decides what they mean: it
@@ -482,6 +453,14 @@ async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
 // reconnect: "Allow in InPrivate" restarts the extension, so that is how its
 // change comes in) and whenever the permissions change ("Site access" doesn't
 // restart it). So fixing it needs no restart of Edge or of the session.
+//
+// Beyond its own settings the extension reports no tampering. What it can't
+// witness about itself (switched off, removed) and InPrivate windows are the
+// agent's (#146, #148): the agent pauses an InPrivate window during a session
+// and tells the teacher only of one still open after a minute (#535). The
+// extension used to report every InPrivate window it saw the moment it opened;
+// the agent stopped passing that on in #535, and the extension stopped sending
+// it in #539.
 
 chrome.permissions.onRemoved.addListener(() => void reportSelfCheckIfInSession());
 chrome.permissions.onAdded.addListener(() => void reportSelfCheckIfInSession());
