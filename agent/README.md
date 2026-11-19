@@ -128,7 +128,10 @@ keeps its own logs (#463): the suite sets `Diagnostics__LogDirectory`, which the
 agent honours on any dev launch, crash log and self-tests included. Set
 `Diagnostics__LogDirectory` yourself before `dotnet test` to keep the logs of a
 run in a folder of your choice. The suite runs in CI on a Windows runner via
-[`.github/workflows/agent-e2e.yml`](../.github/workflows/agent-e2e.yml).
+[`.github/workflows/agent-e2e.yml`](../.github/workflows/agent-e2e.yml), which
+does just that (#548): the run's `agent-e2e-results` artifact holds the trx
+files, the visual PNGs and the agents' logs, under `agent-logs/state` and
+`agent-logs/visual`.
 
 ### Published package (#403)
 

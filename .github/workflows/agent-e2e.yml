@@ -65,7 +65,16 @@ jobs:
       # State paths (#131): session lifecycle / bundles / heartbeat / join-by-code,
       # asserted against the agent's JSON /status. Low-flake — this is the
       # blocking gate. Excludes the Visual category, which runs non-blocking below.
+      #
+      # Diagnostics__LogDirectory (#548): the agents this step launches log to
+      # TestResults/agent-logs/state (the Visual step's to .../visual), so the
+      # upload below carries their logs next to the trx files. Left unset, the
+      # suite logs to a folder under %TEMP% and deletes it when the run ends
+      # (AgentTestLogs, #463); a preset folder it keeps. Only LogUploadTests
+      # logs to a folder of its own.
       - name: Run agent e2e suite (state paths)
+        env:
+          Diagnostics__LogDirectory: ${{ github.workspace }}\agent\tests\FocusAgent.IntegrationTests\TestResults\agent-logs\state
         run: dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj -c Debug --filter "Category!=Visual" --logger "trx;LogFileName=agent-e2e.trx"
 
       # Visual enforcement (#133): the overlay + join-toast WinUI surfaces,
@@ -75,10 +84,12 @@ jobs:
       # (continue-on-error) and run even if the state suite failed, so we can
       # characterize the flake rate over several runs before promoting it to a
       # blocking gate. The captured PNGs land in TestResults/ and are uploaded
-      # below for eyeball triage.
+      # below for eyeball triage, with the agents' logs (#548, as above).
       - name: Run visual enforcement e2e (non-blocking, flake characterization)
         if: ${{ !cancelled() }}
         continue-on-error: true
+        env:
+          Diagnostics__LogDirectory: ${{ github.workspace }}\agent\tests\FocusAgent.IntegrationTests\TestResults\agent-logs\visual
         run: dotnet test agent/tests/FocusAgent.IntegrationTests/FocusAgent.IntegrationTests.csproj -c Debug --filter "Category=Visual" --logger "trx;LogFileName=agent-visual-e2e.trx"
 
       - name: Upload test results
