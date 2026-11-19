@@ -827,6 +827,7 @@ public class SessionCoordinatorTests
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
 #pragma warning disable CS0067 // Not raised by these tests.
         public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+        public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 #pragma warning restore CS0067
 
         public void RaiseBundlesUpdated(SessionBundlesUpdatedPayload payload) =>

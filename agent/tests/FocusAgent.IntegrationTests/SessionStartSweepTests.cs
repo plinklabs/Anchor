@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.Versioning;
 
 namespace FocusAgent.IntegrationTests;
@@ -83,19 +82,21 @@ public sealed class SessionStartSweepTests
         var api = new BackendClient(_backend.Url);
 
         // A fresh off-list window must be up *before* the session starts — the
-        // whole point of #104 is the app that predates enforcement. Win11 notepad
-        // is a tabbed launcher, so kill leftovers first to guarantee a new window.
-        KillNotepad();
-        using var notepad = Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })
-            ?? throw new InvalidOperationException("Failed to launch notepad.");
+        // whole point of #104 is the app that predates enforcement.
+        var hwnd = await TestNotepad.OpenOnPrimaryMonitorAsync();
         try
         {
-            Assert.True(
-                await WaitForNotepadWindowAsync(TimeSpan.FromSeconds(10)),
-                "Notepad did not present a top-level window within 10s.");
-
             await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
             await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+
+            // The sweep lists only the windows on screen when it runs: the agent
+            // skips minimized ones (WindowEnumerator). A Notepad minimized from
+            // outside the run before then is not in its list, so it cannot make this
+            // spec pass. Say so here rather than fail later as a sweep that missed it.
+            Assert.True(
+                WindowCapture.IsOnScreen(hwnd),
+                $"Notepad was not on screen as the session was about to start ({WindowCapture.DescribePlacement(hwnd)}), " +
+                $"so there is nothing for the sweep to minimize. {TestNotepad.TakenDownFromOutside}");
 
             var classId = await api.FindClassIdAsync();
             // No bundles → notepad is off-list (only the baseline survives).
@@ -117,7 +118,9 @@ public sealed class SessionStartSweepTests
                 Assert.True(
                     minimized.Any(p => p.Equals("notepad", StringComparison.OrdinalIgnoreCase)),
                     $"Session-start sweep did not minimize notepad. examined={sweep.WindowsExamined}, " +
-                    $"minimized=[{string.Join(", ", minimized)}].");
+                    $"minimized=[{string.Join(", ", minimized)}]; Notepad is {WindowCapture.DescribePlacement(hwnd)}. " +
+                    "The sweep skips a window that is minimized already: if Notepad went down before the sweep ran " +
+                    "and the agent did not take it down, something outside the run did, such as someone using this desktop.");
             }
             finally
             {
@@ -126,7 +129,7 @@ public sealed class SessionStartSweepTests
         }
         finally
         {
-            KillNotepad();
+            TestNotepad.Kill();
         }
     }
 
@@ -195,37 +198,5 @@ public sealed class SessionStartSweepTests
             await Task.Delay(100);
         }
         return condition();
-    }
-
-    private static async Task<bool> WaitForNotepadWindowAsync(TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            // GetProcessesByName returns fresh handles each call, so MainWindowHandle
-            // isn't stale-cached. Win11 may spawn the visible window under a pid that
-            // differs from the launcher we started — match by name, not by pid.
-            foreach (var p in Process.GetProcessesByName("notepad"))
-            {
-                using (p)
-                {
-                    if (p.MainWindowHandle != IntPtr.Zero)
-                        return true;
-                }
-            }
-            await Task.Delay(200);
-        }
-        return false;
-    }
-
-    private static void KillNotepad()
-    {
-        foreach (var p in Process.GetProcessesByName("notepad"))
-        {
-            using (p)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            }
-        }
     }
 }

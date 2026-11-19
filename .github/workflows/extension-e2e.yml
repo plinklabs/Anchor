@@ -2,7 +2,8 @@ name: Extension E2E
 
 # The harness runs the extension against the real native-messaging host
 # (agent/src/FocusAgent.WitnessHost, which builds against FocusAgent.Core) and a
-# stand-in for the agent; no backend (#489). So those are the paths it watches.
+# stand-in for the agent; no backend (#489). So those are the paths it watches,
+# plus the session baseline the specs hand down as the backend does (#516).
 on:
   push:
     branches: [main]
@@ -10,12 +11,14 @@ on:
       - 'extension/**'
       - 'agent/src/FocusAgent.WitnessHost/**'
       - 'agent/src/FocusAgent.Core/**'
+      - 'contracts/session-baseline.json'
       - '.github/workflows/extension-e2e.yml'
   pull_request:
     paths:
       - 'extension/**'
       - 'agent/src/FocusAgent.WitnessHost/**'
       - 'agent/src/FocusAgent.Core/**'
+      - 'contracts/session-baseline.json'
       - '.github/workflows/extension-e2e.yml'
 
 concurrency:

@@ -442,7 +442,24 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             throw new HubException($"Unknown event kind '{request.Kind}'.");
 
         var payloadJson = string.IsNullOrWhiteSpace(request.PayloadJson) ? "{}" : request.PayloadJson!;
-        var occurredAt = request.OccurredAt ?? _clock.GetUtcNow();
+        // A blocked page is kept by its host only (#527). Agents already in the
+        // field still send its whole URL, which can hold search terms and other
+        // personal detail the teacher doesn't need.
+        if (kind == EventKind.BlockedUrl)
+            payloadJson = BlockedUrlPayloadWithoutUrl(payloadJson);
+        // Test phase only (#515): an off-list site the extension let through
+        // (#526) is kept by its host and nothing else, as a blocked page is.
+        string? unfilteredHost = null;
+        if (kind == EventKind.UnfilteredSite)
+            (payloadJson, unfilteredHost) = UnfilteredSitePayloadHostOnly(payloadJson);
+        // An unblock request is stamped as it arrives, by this server's clock,
+        // whatever time the agent sent with it: the pending list sets it against
+        // the teacher's denials (#523), which are stamped here too. A student
+        // laptop whose clock runs behind would otherwise date a request it sent
+        // after a denial before it, and the request would never show.
+        var occurredAt = kind == EventKind.UnblockRequest
+            ? _clock.GetUtcNow()
+            : request.OccurredAt ?? _clock.GetUtcNow();
 
         var @event = new Event
         {
@@ -496,6 +513,18 @@ public sealed class SessionHub : Hub<ISessionHubClient>
                     ExtractTamperKind(payloadJson),
                     occurredAt),
                 ct);
+        }
+        // UnfilteredSite (#526, test phase only, #515): pushed to the teacher's
+        // live page so they can look while the site is still open. Without a
+        // host there is nothing to show; the stored row is all there is then.
+        else if (kind == EventKind.UnfilteredSite)
+        {
+            if (!string.IsNullOrEmpty(unfilteredHost))
+            {
+                await _broadcaster.UnfilteredSiteAsync(
+                    new UnfilteredSitePayload(request.SessionId, user.Id, user.DisplayName, unfilteredHost, occurredAt),
+                    ct);
+            }
         }
         // AgentKilled (#110): the student deliberately quit the agent mid-session.
         // Mark the participant left so the roster resolves to Left immediately —
@@ -559,6 +588,74 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     }
 
     private sealed record UnblockRequestPayloadShape(string Url, string Host);
+
+    /// <summary>
+    /// A BlockedUrl payload as it is stored (#527): <c>{"host":"…"}</c> and the
+    /// tab and time an agent reports with it, never the URL. The host is the one
+    /// the payload names, or else its URL's. Anything else in the payload is
+    /// left out, and one that doesn't parse keeps nothing: the URL could be in it.
+    /// </summary>
+    private static string BlockedUrlPayloadWithoutUrl(string payloadJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return "{}";
+
+            static string? StringOf(System.Text.Json.JsonElement e, string name) =>
+                e.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? v.GetString()
+                    : null;
+
+            var host = StringOf(root, "host")?.Trim();
+            if (string.IsNullOrEmpty(host) && Uri.TryCreate(StringOf(root, "url"), UriKind.Absolute, out var uri))
+                host = uri.Host;
+
+            var kept = new System.Text.Json.Nodes.JsonObject { ["host"] = (host ?? string.Empty).ToLowerInvariant() };
+            if (root.TryGetProperty("tabId", out var tabId) && tabId.ValueKind == System.Text.Json.JsonValueKind.Number &&
+                tabId.TryGetInt32(out var tab))
+                kept["tabId"] = tab;
+            if (StringOf(root, "occurredAt") is { } at)
+                kept["occurredAt"] = at;
+            return kept.ToJsonString();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return "{}";
+        }
+    }
+
+    /// <summary>
+    /// An UnfilteredSite payload as it is stored (#526): <c>{"host":"…"}</c> and
+    /// nothing else, and that host. The agent sends the host alone; whatever
+    /// else a payload carries is left out, a host that comes with a path or query
+    /// string is cut down to the host, and one that doesn't parse keeps nothing.
+    /// </summary>
+    private static (string PayloadJson, string Host) UnfilteredSitePayloadHostOnly(string payloadJson)
+    {
+        var host = string.Empty;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+            var root = doc.RootElement;
+            if (root.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                root.TryGetProperty("host", out var h) && h.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                var value = h.GetString()?.Trim() ?? string.Empty;
+                if (value.Length > 0 && !value.Contains("://", StringComparison.Ordinal))
+                    value = "http://" + value;
+                if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+                    host = uri.IdnHost.ToLowerInvariant();
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Nothing kept.
+        }
+
+        return (new System.Text.Json.Nodes.JsonObject { ["host"] = host }.ToJsonString(), host);
+    }
 
     /// <summary>
     /// Pulls the tamper sub-kind out of a TamperDetected payload

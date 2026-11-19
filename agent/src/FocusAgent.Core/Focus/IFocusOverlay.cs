@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using FocusAgent.Core.Tamper;
 
 namespace FocusAgent.Core.Focus;
 
@@ -64,6 +65,29 @@ public interface IFocusOverlay
 /// <param name="TurnBackOn">
 /// Opens the repair window. Called before <paramref name="Browser"/> is brought
 /// forward, so its foreground change already finds it allowed. Returns false when
-/// the browser isn't paused any more (the extension came back meanwhile).
+/// the browser isn't paused any more (the extension came back meanwhile). For
+/// <see cref="ExtensionPauseReason.NoSiteAccess"/> it also has the extension open
+/// its own settings page (#524), and for
+/// <see cref="ExtensionPauseReason.SchoolProfileWithoutExtension"/> it opens the
+/// store listing in the school profile (#536).
 /// </param>
-public sealed record BrowserPausedPrompt(AllowedAppRule Browser, TimeSpan RepairWindow, Func<bool> TurnBackOn);
+/// <param name="Reason">
+/// Why the browser is paused: what the overlay tells the student and what its
+/// action is for — the extension switched off, its site access taken away (#524),
+/// no Edge profile signed in with the school account, or (for one window) a window
+/// outside the school profile (#525), or the school profile without the extension
+/// (#536). For <see cref="ExtensionPauseReason.OutsideSchoolProfile"/> and
+/// <see cref="ExtensionPauseReason.SchoolProfileWithoutExtension"/>,
+/// <paramref name="TurnBackOn"/> opens the school profile's window itself, so the
+/// overlay brings no Edge window forward after it: that could be another profile's.
+/// </param>
+/// <param name="Account">
+/// The school account Edge must be signed in with, which the pause for
+/// <see cref="ExtensionPauseReason.NoSchoolProfile"/> names (#525).
+/// </param>
+public sealed record BrowserPausedPrompt(
+    AllowedAppRule Browser,
+    TimeSpan RepairWindow,
+    Func<bool> TurnBackOn,
+    ExtensionPauseReason Reason = ExtensionPauseReason.ExtensionOff,
+    string? Account = null);

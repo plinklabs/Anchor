@@ -43,10 +43,8 @@
               WAM/broker sign-in: the broker redirect URI
               ms-appx-web://Microsoft.AAD.BrokerPlugin/<appId>, "allow public
               client flows", and the API `access_as_user` permission). The
-              browser extension reuses this same app to sign the student in
-              (#289), so it also gets the fixed
-              https://<extension-id>.chromiumapp.org/ Web redirect URI and
-              implicit access-token issuance for chrome.identity.launchWebAuthFlow.
+              browser extension needs no app registration: it doesn't sign in,
+              the agent hands it the session (#489).
          All are looked up by display name first, so re-runs reuse them.
       4. Deploy infra/main.bicep into the resource group, passing the Entra
          tenant/client IDs so the App Service application settings are wired.
@@ -234,6 +232,7 @@
         Invoke-ScriptAnalyzer scripts/setup.ps1
         pwsh -NoProfile -Command "[void][ScriptBlock]::Create((Get-Content -Raw scripts/setup.ps1))"
         ./scripts/setup.ps1 -UniqueSuffix test -WhatIf -NonInteractive
+        ./scripts/ci/test-setup-dry-run.ps1
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 # This is an interactive operator script: coloured, host-facing progress output
@@ -650,93 +649,6 @@ function Test-PermissionGranted {
     return $false
 }
 
-# The app's **Web** platform block (redirectUris + implicitGrantSettings), or
-# $null when the app doesn't exist / can't be read.
-function Get-AppWebPlatform {
-    param([string]$AppId)
-    $json = Invoke-AzRead @('ad', 'app', 'show', '--id', $AppId, '--query', 'web', '-o', 'json')
-    if (-not $json) { return $null }
-    return ($json | ConvertFrom-Json)
-}
-
-# The Web platform's redirect URIs as a (possibly empty) array. StrictMode-safe:
-# `az` omits/blanks the property on an app that has no web platform at all.
-function Get-WebRedirectUri {
-    param($Web)
-    if ($null -eq $Web) { return @() }
-    if ($Web.PSObject.Properties.Name -notcontains 'redirectUris') { return @() }
-    if (-not $Web.redirectUris) { return @() }
-    return @($Web.redirectUris)
-}
-
-# True when an app's Web platform already carries $RedirectUri *and* has implicit
-# access-token issuance switched on — the exact pair the browser extension's
-# implicit flow needs (extension/src/shared/auth.ts). Read-only and tolerant: a
-# missing app / unreadable JSON reads as "not configured" ($false).
-function Test-ExtensionWebPlatform {
-    param([string]$AppId, [string]$RedirectUri)
-    $web = Get-AppWebPlatform -AppId $AppId
-    if ($null -eq $web) { return $false }
-
-    $hasRedirect = (Get-WebRedirectUri -Web $web) -contains $RedirectUri
-
-    $issuesTokens = $false
-    if (($web.PSObject.Properties.Name -contains 'implicitGrantSettings') -and $web.implicitGrantSettings) {
-        $issuesTokens = (Test-Prop $web.implicitGrantSettings 'enableAccessTokenIssuance' $true)
-    }
-
-    return ($hasRedirect -and $issuesTokens)
-}
-
-# Converge the agent app's Web platform onto what the browser extension needs,
-# then VERIFY the change actually landed (#331).
-#
-# The extension signs the student in with the OAuth2 *implicit* flow, so Entra
-# rejects it with `AADSTS700051: response_type 'token' is not enabled for the
-# application` unless the registration carries the chromiumapp.org redirect URI
-# as a Web platform AND has enableAccessTokenIssuance set. That failure surfaces
-# far from here — in a student's face, on a production box — so a silent
-# non-convergence is expensive: `az ad app update` exits 0 whether or not the
-# Graph patch took, and an app that was created by hand or adopted from before
-# this step existed is exactly the case that needs it most (same class of gap as
-# the Graph permission one, #281). Hence read → patch only when off → read back,
-# and route a still-wrong state through Write-Manual with the exact command.
-#
-# `--web-redirect-uris` *replaces* the whole set, so the existing URIs are read
-# and handed back alongside ours — an adopted registration that carries other
-# web redirects keeps them.
-function Set-ExtensionWebPlatform {
-    [CmdletBinding(SupportsShouldProcess)]
-    param([string]$AppId, [string]$RedirectUri)
-    if (-not $AppId -or $AppId -match '<') { return }
-
-    $web = Get-AppWebPlatform -AppId $AppId
-    if (Test-ExtensionWebPlatform -AppId $AppId -RedirectUri $RedirectUri) {
-        Write-Host '    Extension redirect URI + implicit access tokens already set — skipping.'
-        return
-    }
-
-    $uris = @(Get-WebRedirectUri -Web $web)
-    if ($uris -notcontains $RedirectUri) { $uris += $RedirectUri }
-
-    Invoke-Native -Exe 'az' -ArgList (@('ad', 'app', 'update', '--id', $AppId, '--web-redirect-uris') +
-        $uris + @('--enable-access-token-issuance', 'true', '-o', 'none')) `
-        -Target $AppId -Action 'add extension chromiumapp.org redirect URI + enable implicit access tokens'
-
-    # Nothing was changed under -WhatIf, so there is nothing to read back.
-    if ($WhatIfPreference) { return }
-
-    if (Test-ExtensionWebPlatform -AppId $AppId -RedirectUri $RedirectUri) {
-        Write-Host '    Verified: extension redirect URI + implicit access tokens are set.'
-        return
-    }
-
-    Write-Manual ("Agent app $AppId still lacks the extension's Web redirect URI ($RedirectUri) and/or implicit access-token issuance " +
-        "after the update — student sign-in from the browser extension will fail with AADSTS700051 and keep re-opening a sign-in window. " +
-        "Check with 'az ad app show --id $AppId --query web' and fix with: " +
-        "az ad app update --id $AppId --web-redirect-uris $RedirectUri --enable-access-token-issuance true")
-}
-
 # Ensure a service principal (enterprise app) exists for an app registration.
 # `az ad app create` only creates the application *object*; without an SP in the
 # tenant the app is not a consentable "service", so granting admin consent to a
@@ -754,43 +666,58 @@ function Add-ServicePrincipal {
         -Target $AppId -Action "create service principal for $Label"
 }
 
-# Ensure the deploy service principal holds **Website Contributor** on the target
-# App Service — the least-privilege role azure/webapps-deploy needs over OIDC
-# (#274). Idempotent: skips when the assignment already exists. Created through
+# Ensure the deploy service principal holds a built-in role on one resource. It
+# needs two, each scoped to a single resource (least privilege):
+#   - **Website Contributor** on the App Service, which azure/webapps-deploy
+#     needs over OIDC (#274);
+#   - **SQL Server Contributor** on the SQL server, so backend-deploy.yml can add
+#     (and remove) a firewall rule for its runner before it migrates (#504).
+# Idempotent: skips when the assignment already exists. Created through
 # `az rest` (the ARM REST API) rather than `az role assignment create`, because
 # that command fails with "MissingSubscription" whenever --scope is a full
 # resource id on the az CLI build used here; the REST PUT carries the scope in
 # the URL and is unaffected. Existence is checked with `... list --all --assignee`
 # (which works) and filtered in PowerShell to avoid passing a quote-heavy
 # JMESPath through the Windows az.cmd re-parse.
-function Set-AppServiceDeployRole {
-    # SupportsShouldProcess so -WhatIf flows through; the actual mutation (the
-    # `az rest` PUT) is gated by Invoke-Native's own ShouldProcess.
+function Set-DeployRole {
+    # SupportsShouldProcess so -WhatIf flows through: the lookups still run, the
+    # `az rest` PUT doesn't (see the dry-run check below).
     [CmdletBinding(SupportsShouldProcess)]
-    param([string]$AppId, [string]$SubscriptionId, [string]$ResourceGroupName, [string]$SiteName)
+    param(
+        [string]$AppId, [string]$SubscriptionId, [string]$ResourceGroupName,
+        [string]$ResourceType,       # e.g. Microsoft.Web/sites
+        [string]$ResourceName,
+        [string]$RoleName,           # as `az role assignment list` names it
+        [string]$RoleDefinitionId    # the built-in role's well-known id
+    )
     if (-not $AppId -or $AppId -match '<') { return }
-    $roleDefId = 'de139f84-1756-47ae-9be6-808fbbe84772'   # Website Contributor (well-known)
-    $siteScope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$SiteName"
+    $scope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/$ResourceType/$ResourceName"
 
     $spId = Invoke-AzRead @('ad', 'sp', 'show', '--id', $AppId, '--query', 'id', '-o', 'tsv')
     if (-not $spId) {
-        Write-Manual "Deploy SP not found for $AppId — cannot assign Website Contributor. Re-run without -SkipEntra."
+        Write-Manual "Deploy SP not found for $AppId — cannot assign $RoleName. Re-run without -SkipEntra."
         return
     }
 
     $existingJson = Invoke-AzRead @('role', 'assignment', 'list', '--all', '--assignee', $AppId, '-o', 'json')
     if ($existingJson) {
         foreach ($ra in ($existingJson | ConvertFrom-Json)) {
-            if ((Test-Prop $ra 'roleDefinitionName' 'Website Contributor') -and (Test-Prop $ra 'scope' $siteScope)) {
-                Write-Host '    Deploy SP already has Website Contributor on the App Service — skipping.'
+            if ((Test-Prop $ra 'roleDefinitionName' $RoleName) -and (Test-Prop $ra 'scope' $scope)) {
+                Write-Host "    Deploy SP already has $RoleName on $ResourceName — skipping."
                 return
             }
         }
     }
 
+    # Under -WhatIf, New-TemporaryFile creates nothing and returns $null, so the
+    # dry run stops here rather than at Set-Content.
+    if (-not $PSCmdlet.ShouldProcess($ResourceName, "assign $RoleName to the deploy SP")) {
+        Write-Host "    DRYRUN  PUT $scope/providers/Microsoft.Authorization/roleAssignments/<new-guid> ($RoleName)" -ForegroundColor DarkGray
+        return
+    }
     $raGuid = [guid]::NewGuid().ToString()
     $body = @{ properties = @{
-            roleDefinitionId = "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$roleDefId"
+            roleDefinitionId = "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$RoleDefinitionId"
             principalId      = $spId
             principalType    = 'ServicePrincipal'
         } } | ConvertTo-Json -Depth 5 -Compress
@@ -798,11 +725,57 @@ function Set-AppServiceDeployRole {
     try {
         Set-Content -LiteralPath $bodyTmp -Value $body -Encoding UTF8
         Invoke-Native -Exe 'az' -ArgList @('rest', '--method', 'PUT',
-            '--uri', "https://management.azure.com$siteScope/providers/Microsoft.Authorization/roleAssignments/${raGuid}?api-version=2022-04-01",
+            '--uri', "https://management.azure.com$scope/providers/Microsoft.Authorization/roleAssignments/${raGuid}?api-version=2022-04-01",
             '--body', "@$bodyTmp", '-o', 'none') `
-            -Target $SiteName -Action 'assign Website Contributor to the deploy SP'
+            -Target $ResourceName -Action "assign $RoleName to the deploy SP"
     }
     finally { Remove-Item -LiteralPath $bodyTmp -Force -ErrorAction SilentlyContinue }
+}
+
+# Ensure the deploy app has the federated credential backend-deploy.yml logs in
+# with over OIDC (#274): issuer GitHub Actions, subject
+# repo:<owner>/<repo>:environment:production, matching the workflow's
+# `environment: production`. Idempotent: skips when a credential with that
+# subject exists. Parameters go through a temp file so the Windows az.cmd
+# re-parse can't mangle the JSON.
+function Add-DeployFederatedCredential {
+    # SupportsShouldProcess so -WhatIf flows through: the lookup still runs, the
+    # create doesn't (see the dry-run check below).
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$AppId, [string]$Repo)
+    if (-not $AppId -or $AppId -match '<') { return }
+    $subject = "repo:${Repo}:environment:production"
+
+    $ficJson = Invoke-AzRead @('ad', 'app', 'federated-credential', 'list', '--id', $AppId, '-o', 'json')
+    if ($ficJson) {
+        foreach ($fc in ($ficJson | ConvertFrom-Json)) {
+            if (Test-Prop $fc 'subject' $subject) {
+                Write-Host "    Federated credential for '$subject' already exists — skipping."
+                return
+            }
+        }
+    }
+
+    # Under -WhatIf, New-TemporaryFile creates nothing and returns $null, so the
+    # dry run stops here rather than at Set-Content (#528).
+    if (-not $PSCmdlet.ShouldProcess($AppId, "add federated credential ($subject)")) {
+        Write-Host "    DRYRUN  az ad app federated-credential create --id $AppId (subject $subject)" -ForegroundColor DarkGray
+        return
+    }
+    $fic = @{
+        name        = 'github-anchor-production'
+        issuer      = 'https://token.actions.githubusercontent.com'
+        subject     = $subject
+        audiences   = @('api://AzureADTokenExchange')
+        description = 'GitHub Actions backend-deploy (production) OIDC'
+    } | ConvertTo-Json -Depth 4 -Compress
+    $ficTmp = New-TemporaryFile
+    try {
+        Set-Content -LiteralPath $ficTmp -Value $fic -Encoding UTF8
+        Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'federated-credential', 'create', '--id', $AppId, '--parameters', "@$ficTmp", '-o', 'none') `
+            -Target $AppId -Action "add federated credential ($subject)"
+    }
+    finally { Remove-Item -LiteralPath $ficTmp -Force -ErrorAction SilentlyContinue }
 }
 
 # Ensure the API app registration defines the Entra app roles that drive
@@ -1445,22 +1418,6 @@ if (-not $SkipEntra) {
             '--public-client-redirect-uris', $brokerRedirect, '-o', 'none') `
             -Target $agentClientId -Action 'enable public client flows + set WAM broker redirect URI'
 
-        # The browser extension reuses this same app registration to sign the
-        # student in (#289): it can't use the WAM broker, so it rides Edge's
-        # Office 365 session via chrome.identity.launchWebAuthFlow, which redirects
-        # to a fixed https://<extension-id>.chromiumapp.org/ URL. That needs a Web
-        # platform redirect URI plus implicit access-token issuance (the extension
-        # uses the implicit flow to avoid the SPA token-endpoint CORS problem). The
-        # extension id is pinned by the manifest key, so this redirect is the same
-        # constant for every deployment — see extension/README.md ("Stable
-        # extension ID") and EdgeExtensionPolicy.ExtensionId in the agent.
-        # Set *and verified* (#331): an app that already existed is the case most
-        # likely to be missing it, and the symptom only shows up as AADSTS700051
-        # in a student's browser.
-        $extensionId = 'dnkimhodjfogjibnbbfdjdapgmmiojio'
-        $extensionRedirect = "https://$extensionId.chromiumapp.org/"
-        Set-ExtensionWebPlatform -AppId $agentClientId -RedirectUri $extensionRedirect
-
         # Request the API's access_as_user scope so the agent can obtain a token
         # for the backend (skip if already granted so a re-run doesn't duplicate).
         if ($apiClientId -and $scopeId) {
@@ -1559,6 +1516,7 @@ $appServiceName = Get-Output $outputs 'appServiceName' "anchor-api-$UniqueSuffix
 $appServiceUrl = Get-Output $outputs 'appServiceUrl'  "https://anchor-api-$UniqueSuffix.azurewebsites.net"
 $staticWebAppName = Get-Output $outputs 'staticWebAppName' 'anchor-dashboard'
 $swaUrl = Get-Output $outputs 'swaUrl' 'https://<swa-host>'
+$sqlServerName = Get-Output $outputs 'sqlServerName' $sqlServerNameGuess
 $outEntraTenant = Get-Output $outputs 'entraTenantId' $tenantId
 $outEntraClient = Get-Output $outputs 'entraClientId' $apiClientId
 $outEntraAudience = Get-Output $outputs 'entraAudience' "api://$apiClientId"
@@ -1567,6 +1525,7 @@ Write-Host "    appServiceName : $appServiceName"
 Write-Host "    appServiceUrl  : $appServiceUrl"
 Write-Host "    staticWebApp   : $staticWebAppName"
 Write-Host "    swaUrl         : $swaUrl"
+Write-Host "    sqlServerName  : $sqlServerName"
 Write-Host "    entraTenantId  : $outEntraTenant"
 Write-Host "    entraClientId  : $outEntraClient"
 Write-Host "    entraAudience  : $outEntraAudience"
@@ -1648,10 +1607,12 @@ if (-not $SkipEntra -and -not $WhatIfPreference -and ($appServiceName -notmatch 
 # ── Step 5b: deploy identity (OIDC federated credentials) ─────────────────────
 # backend-deploy.yml authenticates to Azure with OIDC (azure/login), not a
 # publish-profile secret (#274): a dedicated app registration ("Anchor Deploy")
-# holds Website Contributor on the App Service, and a federated credential lets
-# the GitHub Actions job — subject repo:<owner>/<repo>:environment:production,
-# matching the workflow's `environment: production` — exchange its id-token for an
-# Azure token, with no long-lived secret to leak or mis-set. $deployClientId is
+# holds Website Contributor on the App Service and SQL Server Contributor on the
+# SQL server (for the deploy's temporary firewall rule, #504), and a federated
+# credential lets the GitHub Actions job — subject
+# repo:<owner>/<repo>:environment:production, matching the workflow's
+# `environment: production` — exchange its id-token for an Azure token, with no
+# long-lived secret to leak or mis-set. $deployClientId is
 # set outside the -SkipEntra guard so the GitHub step can wire AZURE_CLIENT_ID
 # under StrictMode even when app registrations are managed out of band.
 $deployClientId = $DeployClientId
@@ -1683,39 +1644,24 @@ if (-not $SkipEntra) {
         # Website Contributor on the App Service. Needs the resolved name; under a
         # -WhatIf / -SkipInfra dry run it stays a placeholder, so guard on it.
         if ($appServiceName -notmatch '<') {
-            Set-AppServiceDeployRole -AppId $deployClientId -SubscriptionId $acct.id -ResourceGroupName $ResourceGroup -SiteName $appServiceName
+            Set-DeployRole -AppId $deployClientId -SubscriptionId $acct.id -ResourceGroupName $ResourceGroup `
+                -ResourceType 'Microsoft.Web/sites' -ResourceName $appServiceName `
+                -RoleName 'Website Contributor' -RoleDefinitionId 'de139f84-1756-47ae-9be6-808fbbe84772'
         }
+
+        # SQL Server Contributor on the SQL server, so backend-deploy.yml can let
+        # its runner through the SQL firewall to migrate (#504). Without it the
+        # deploy stops at "Open SQL firewall for this runner". The template can
+        # make the same assignment (deployPrincipalId), but it is deployed before
+        # this identity exists, so the script makes it here.
+        Set-DeployRole -AppId $deployClientId -SubscriptionId $acct.id -ResourceGroupName $ResourceGroup `
+            -ResourceType 'Microsoft.Sql/servers' -ResourceName $sqlServerName `
+            -RoleName 'SQL Server Contributor' -RoleDefinitionId '6d8ee4ec-f05a-4a1d-8b00-a9b17e38b437'
 
         # Federated credential for the GitHub environment. The subject needs the
         # repo, which is only resolved when GitHub wiring is in play.
         if (-not $SkipGitHub -and $Repo) {
-            $ficSubject = "repo:${Repo}:environment:production"
-            $haveFic = $false
-            $ficJson = Invoke-AzRead @('ad', 'app', 'federated-credential', 'list', '--id', $deployClientId, '-o', 'json')
-            if ($ficJson) {
-                foreach ($fc in ($ficJson | ConvertFrom-Json)) {
-                    if (Test-Prop $fc 'subject' $ficSubject) { $haveFic = $true; break }
-                }
-            }
-            if ($haveFic) {
-                Write-Host "    Federated credential for '$ficSubject' already exists — skipping."
-            }
-            else {
-                $fic = @{
-                    name        = 'github-anchor-production'
-                    issuer      = 'https://token.actions.githubusercontent.com'
-                    subject     = $ficSubject
-                    audiences   = @('api://AzureADTokenExchange')
-                    description = 'GitHub Actions backend-deploy (production) OIDC'
-                } | ConvertTo-Json -Depth 4 -Compress
-                $ficTmp = New-TemporaryFile
-                try {
-                    Set-Content -LiteralPath $ficTmp -Value $fic -Encoding UTF8
-                    Invoke-Native -Exe 'az' -ArgList @('ad', 'app', 'federated-credential', 'create', '--id', $deployClientId, '--parameters', "@$ficTmp", '-o', 'none') `
-                        -Target $deployClientId -Action "add federated credential ($ficSubject)"
-                }
-                finally { Remove-Item -LiteralPath $ficTmp -Force -ErrorAction SilentlyContinue }
-            }
+            Add-DeployFederatedCredential -AppId $deployClientId -Repo $Repo
         }
         else {
             Write-Manual 'Repo not resolved (-SkipGitHub) — federated credential not created. Add one with subject repo:<owner>/<repo>:environment:production on the deploy app, or the OIDC deploy cannot authenticate.'

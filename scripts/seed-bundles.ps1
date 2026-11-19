@@ -96,6 +96,8 @@ Set-StrictMode -Version Latest
 # Exact/Wildcard/Suffix/SignedPublisher) — see BundleEntryConfiguration's
 # HasConversion<string>(). All entries below are domains, so Kind is Domain.
 $ExampleBundles = @(
+    # The session baseline holds only the sign-in hosts (#516), so this bundle is
+    # what opens Office, Outlook, Teams, Copilot and the rest of Microsoft's web.
     @{
         Name    = 'Microsoft 365'
         Entries = @(
@@ -107,6 +109,21 @@ $ExampleBundles = @(
             @{ Value = '*.sharepoint.com'; MatchType = 'Wildcard'; Kind = 'Domain' }
             @{ Value = 'outlook.office.com'; MatchType = 'Exact'; Kind = 'Domain' }
             @{ Value = 'teams.microsoft.com'; MatchType = 'Exact'; Kind = 'Domain' }
+            # Where Microsoft 365 on the web lives now (#531): the home page and
+            # Outlook, Teams, Word, Forms ... on *.cloud.microsoft, and
+            # www.microsoft365.com, which redirects there and which sign-in
+            # returns to. A deployment seeded before #531 gets these two from
+            # the Microsoft365BundleNewWebDomains migration.
+            @{ Value = '*.cloud.microsoft'; MatchType = 'Wildcard'; Kind = 'Domain' }
+            @{ Value = '*.microsoft365.com'; MatchType = 'Wildcard'; Kind = 'Domain' }
+            # The shortcuts a student types (#532), which redirect on to Outlook
+            # and onedrive.live.com; the extension judges a navigation by its
+            # first URL. Exact, so the rest of *.outlook.com (Safe Links among
+            # it) stays closed. Same migration as #531's two.
+            @{ Value = 'outlook.com'; MatchType = 'Exact'; Kind = 'Domain' }
+            @{ Value = 'www.outlook.com'; MatchType = 'Exact'; Kind = 'Domain' }
+            @{ Value = 'onedrive.com'; MatchType = 'Exact'; Kind = 'Domain' }
+            @{ Value = 'www.onedrive.com'; MatchType = 'Exact'; Kind = 'Domain' }
         )
     },
     @{

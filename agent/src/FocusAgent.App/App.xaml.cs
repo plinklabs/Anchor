@@ -227,6 +227,9 @@ public partial class App : Application
             // (and its only way to report). Resolved before the pipe starts listening
             // so the first extension to connect gets the current state handed down.
             _ = _host.Services.GetRequiredService<ExtensionSessionRelay>();
+            // #524: what the extension says about its own settings (its site
+            // access), read off the same link from its first message on.
+            var selfCheck = _host.Services.GetRequiredService<ExtensionSelfCheckWatch>();
             _ = witnessMonitor.StartAsync();
             // #427: and the guard that pauses Edge while the witness stays down in a
             // session — resolved now so its SessionJoined / ConnectionChanged
@@ -234,6 +237,13 @@ public partial class App : Application
             var extensionGuard = _host.Services.GetRequiredService<ExtensionGuard>();
             // #518: what the guard reads the open Edge profiles through.
             var openProfiles = _host.Services.GetRequiredService<OpenProfileExtensionWatch>();
+            // #525: during a session only the Edge profile signed in with the school
+            // account may be used; the guard above already depends on it.
+            var schoolProfile = _host.Services.GetRequiredService<SchoolProfileGuard>();
+            // #526 (test phase only, #515): the agent reads the address bar of the
+            // school profile's foreground Edge window during a session, a second
+            // witness of what the extension lets through.
+            var addressBar = _host.Services.GetRequiredService<AddressBarWitness>();
             // #211 + #405: self-register the Edge extension. With no force-install
             // policy under HKLM or HKCU (and no earlier "not now"), explain the step
             // and add the HKLM entry through one UAC prompt; then (the witness pipe
@@ -253,22 +263,11 @@ public partial class App : Application
             // and the session hand-down (#489) both ride on. In dev this is the
             // register-witness-host.ps1 script's job; the release installer never did
             // the equivalent, so the agent does it itself at startup (idempotent),
-            // mirroring the force-install policy write above. Also hands the host the
-            // agent's Backend:BaseUrl and the deployment's Entra tenant/client/scope
-            // (#204/#289): an extension from before #489 still signs in and connects to
-            // the hub itself and needs both, until the store has updated it. Current
-            // extensions ignore them. Best-effort, off the UI thread.
-            var backendBaseUrl = _host.Services.GetRequiredService<IOptions<BackendSettings>>().Value.BaseUrl;
-            var auth = _host.Services.GetRequiredService<IOptions<AuthSettings>>().Value;
-            var witnessAuth = !string.IsNullOrWhiteSpace(auth.TenantId)
-                              && !string.IsNullOrWhiteSpace(auth.ClientId)
-                              && !string.IsNullOrWhiteSpace(auth.Scope)
-                ? new WitnessAuthConfig(auth.TenantId, auth.ClientId, auth.Scope)
-                : null;
-            // #497: the host lets each of Anchor's extension IDs connect, the
+            // mirroring the force-install policy write above. Best-effort, off the UI
+            // thread. #497: the host lets each of Anchor's extension IDs connect, the
             // self-hosted test-ring build's included.
             var extensionIds = _host.Services.GetRequiredService<ExtensionPolicyParts>().Ids;
-            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(backendBaseUrl, witnessAuth, extensionIds));
+            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(extensionIds));
             // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
             // SessionLeft subscriptions are wired before the first session — the
             // poll loop starts on join and reports any open Edge InPrivate window.
@@ -321,6 +320,7 @@ public partial class App : Application
             if (Program.StatusEndpointPort is int port)
             {
                 var focusOverlay = _host.Services.GetRequiredService<IFocusOverlay>() as WinUiFocusOverlay;
+                var profileLauncher = _host.Services.GetRequiredService<IBrowserProfileLauncher>() as BrowserProfileLauncher;
                 var sleepClock = _host.Services.GetService<SimulatedSleepClock>();
                 _statusEndpoint = new StatusEndpoint(
                     _connection,
@@ -363,6 +363,11 @@ public partial class App : Application
                         state = extensionGuard.State.ToString(),
                         // #518: open Edge profiles with the extension switched off.
                         profilesWithExtensionOff = openProfiles.Profiles,
+                        // #524: why Edge is paused, and what the extension says
+                        // about its own settings.
+                        pauseReason = extensionGuard.PauseReason.ToString(),
+                        siteAccessLost = selfCheck.SiteAccessLost,
+                        inPrivateAllowed = selfCheck.InPrivateAllowed,
                     },
                     onTurnExtensionBackOn: _focus.TurnExtensionBackOn,
                     // #452: which overlay the student is on, if any.
@@ -371,6 +376,29 @@ public partial class App : Application
                     onClickOverlayApp: app => focusOverlay?.ClickAllowedApp(app) ?? false,
                     // #449: the downloaded update the next start applies, if any.
                     pendingUpdate: () => _updateService?.PendingVersion,
+                    // #525: where the school profile stands, and the overlay's "go
+                    // to my school profile" action. #536: the profile signed in with
+                    // the school account that lacks the extension, and what the
+                    // overlay's buttons last opened in which profile.
+                    schoolProfile: () => new
+                    {
+                        status = schoolProfile.Status.ToString(),
+                        profile = schoolProfile.Profile,
+                        outsideWindows = schoolProfile.OutsideWindows.Select(w => (long)w).ToArray(),
+                        withoutExtension = schoolProfile.ProfileWithoutExtension,
+                        lastOpened = profileLauncher?.LastOpened is { } opened
+                            ? new { profile = opened.Profile, url = opened.Url }
+                            : null,
+                    },
+                    onGoToSchoolProfile: _focus.GoToSchoolProfile,
+                    // #526: whether the address bar is being read, how often it
+                    // was, and the off-list hosts reported in this session.
+                    addressBar: () => new
+                    {
+                        watching = addressBar.Watching,
+                        reads = addressBar.Reads,
+                        reported = addressBar.Reported,
+                    },
                     // #456: when the last update check ran, a check on demand, and
                     // time asleep: the update clock jumps, the timers don't.
                     lastUpdateCheck: () => _updateService?.LastCheckStartedAt,
@@ -820,14 +848,26 @@ public partial class App : Application
         };
 
         // #427: --overlay-paused shows the paused-Edge variant instead (the
-        // allowed-app rows then stand for the apps a student carries on with).
-        if (Program.OverlayPaused)
+        // allowed-app rows then stand for the apps a student carries on with);
+        // #524: --overlay-site-access its variant for the extension's site access;
+        // #525: --overlay-school-account the one for no profile signed in with the
+        // school account, --overlay-school-profile the one for a window outside it;
+        // #536: --overlay-school-extension the one for a school profile without the
+        // extension.
+        if (Program.OverlayPaused || Program.OverlaySiteAccess || Program.OverlaySchoolAccount
+            || Program.OverlaySchoolProfile || Program.OverlaySchoolExtension)
             overlay.ShowBrowserPaused(
                 rules,
                 new BrowserPausedPrompt(
                     new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
                     TimeSpan.FromSeconds(60),
-                    () => false),
+                    () => false,
+                    Program.OverlaySiteAccess ? ExtensionPauseReason.NoSiteAccess
+                    : Program.OverlaySchoolAccount ? ExtensionPauseReason.NoSchoolProfile
+                    : Program.OverlaySchoolProfile ? ExtensionPauseReason.OutsideSchoolProfile
+                    : Program.OverlaySchoolExtension ? ExtensionPauseReason.SchoolProfileWithoutExtension
+                    : ExtensionPauseReason.ExtensionOff,
+                    Account: SelfTestDemoContent.SchoolAccount),
                 pausedWindowHandle: IntPtr.Zero);
         else
             overlay.Show(rules, blockedAppName: SelfTestDemoContent.BlockedAppName, blockedWindowHandle: IntPtr.Zero);
@@ -1148,6 +1188,48 @@ public partial class App : Application
             Add("window.overlay_paused_message", message);
             Add("window.overlay_paused_action", action);
             Add("window.overlay_paused_hint", hint);
+
+            // #524: the same overlay when Edge is paused because the extension
+            // may not work on all sites.
+            overlay.UpdateBrowserPausedContent(
+                Array.Empty<AllowedAppRule>(),
+                new BrowserPausedPrompt(
+                    new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
+                    TimeSpan.FromSeconds(60),
+                    () => false,
+                    ExtensionPauseReason.NoSiteAccess));
+            (headline, message, action, hint) = overlay.BrowserPausedProbe();
+            Add("window.overlay_siteaccess_headline", headline);
+            Add("window.overlay_siteaccess_message", message);
+            Add("window.overlay_siteaccess_action", action);
+            Add("window.overlay_siteaccess_hint", hint);
+
+            // #525: Edge paused because no profile is signed in with the school
+            // account, naming it, and one Edge window paused because it is outside
+            // the school profile; #536: Edge paused because the profile signed in
+            // with the school account doesn't have the extension.
+            foreach (var (reason, key) in new[]
+                     {
+                         (ExtensionPauseReason.NoSchoolProfile, "schoolaccount"),
+                         (ExtensionPauseReason.OutsideSchoolProfile, "schoolprofile"),
+                         (ExtensionPauseReason.SchoolProfileWithoutExtension, "schoolextension"),
+                     })
+            {
+                overlay.UpdateBrowserPausedContent(
+                    Array.Empty<AllowedAppRule>(),
+                    new BrowserPausedPrompt(
+                        new AllowedAppRule { MatchKind = AllowedAppMatchKind.ProcessName, Value = "msedge" },
+                        TimeSpan.FromSeconds(60),
+                        () => false,
+                        reason,
+                        Account: SelfTestDemoContent.SchoolAccount));
+                (headline, message, action, hint) = overlay.BrowserPausedProbe();
+                // One line per value: the message has a line break of its own.
+                Add($"window.overlay_{key}_headline", headline);
+                Add($"window.overlay_{key}_message", message.Replace("\r", "").Replace("\n", " | "));
+                Add($"window.overlay_{key}_action", action);
+                Add($"window.overlay_{key}_hint", hint);
+            }
             overlay.Close();
         }
         catch (Exception ex)
@@ -1269,6 +1351,16 @@ public partial class App : Application
         Environment.ExitCode = ok ? 0 : 1;
         Exit();
     }
+
+    /// <summary>
+    /// Edge's <c>User Data</c> folder, whose profiles the agent reads (#518, #525):
+    /// <see cref="WitnessSettings.BrowserUserDataFolder"/>, or Edge's own under
+    /// <c>%LOCALAPPDATA%</c>.
+    /// </summary>
+    private static string BrowserUserDataFolder(WitnessSettings witness) =>
+        string.IsNullOrWhiteSpace(witness.BrowserUserDataFolder)
+            ? EdgeWebAppPackages.EdgeDefaultUserDataFolder
+            : witness.BrowserUserDataFolder.Trim();
 
     /// <summary>
     /// The hosting environment name that selects the per-deployment config layer
@@ -1406,6 +1498,9 @@ public partial class App : Application
         else
             builder.Services.AddSingleton<ISessionUiHost, WinUiSessionUiHost>();
         builder.Services.AddSingleton<SessionCoordinator>();
+        // #525: the account the agent signed in with, which the school profile in
+        // Edge must be signed in with too. The connection manager sets it.
+        builder.Services.AddSingleton<SignedInAccount>();
         builder.Services.AddSingleton<SessionHeartbeatService>();
         // #54 -- post-restart session rehydration: REST client + the service
         // that fans backend results into SessionCoordinator.RejoinAsync.
@@ -1460,23 +1555,75 @@ public partial class App : Application
         // it from Edge itself: which profiles have a window open (their windows'
         // AppUserModelIDs) and whether the extension is on there (the profile's
         // preferences).
-        builder.Services.AddSingleton<IBrowserWindowAppIds, BrowserWindowAppIds>();
+        builder.Services.AddSingleton<BrowserWindowAppIds>();
+        builder.Services.AddSingleton<IBrowserWindowAppIds>(sp => sp.GetRequiredService<BrowserWindowAppIds>());
         builder.Services.AddSingleton<IOpenProfileExtensionProbe>(sp =>
         {
             var witness = sp.GetRequiredService<IOptions<WitnessSettings>>().Value;
-            var userData = string.IsNullOrWhiteSpace(witness.BrowserUserDataFolder)
-                ? Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Microsoft", "Edge", "User Data")
-                : witness.BrowserUserDataFolder.Trim();
             return new EdgeOpenProfileExtensionProbe(
-                userData,
+                BrowserUserDataFolder(witness),
                 sp.GetRequiredService<IBrowserWindowAppIds>(),
                 witness.BrowserProcessName,
                 sp.GetRequiredService<ExtensionPolicyParts>().Ids.All,
                 sp.GetRequiredService<ILogger<EdgeOpenProfileExtensionProbe>>());
         });
         builder.Services.AddSingleton<OpenProfileExtensionWatch>();
+        // #525 -- during a session only the Edge profile signed in with the school
+        // account may be used. The probe finds it in Edge's Local State and tells
+        // which profile a window belongs to by its AppUserModelID (and title, for
+        // InPrivate); the guard looks every few seconds, has the extension guard
+        // pause Edge while there is no such profile, and hands the windows outside
+        // it to the focus controller, which pauses them one by one.
+        builder.Services.AddSingleton<IBrowserWindowReader>(sp => sp.GetRequiredService<BrowserWindowAppIds>());
+        builder.Services.AddSingleton<IBrowserProfileLauncher>(sp => new BrowserProfileLauncher(
+            sp.GetRequiredService<IOptions<WitnessSettings>>().Value.BrowserProcessName,
+            sp.GetRequiredService<ILogger<BrowserProfileLauncher>>()));
+        // #537 -- a site installed as an app has windows of its own, which carry the
+        // app's package's AppUserModelID in every profile: the package names the
+        // app, and Edge's Local State the profiles it is installed in.
+        builder.Services.AddSingleton<IEdgeWebApps>(sp =>
+        {
+            var packages = sp.GetRequiredService<IOptions<WitnessSettings>>().Value.BrowserAppPackagesFolder;
+            Func<string, string?> folderOf = string.IsNullOrWhiteSpace(packages)
+                ? InstalledPackages.FolderOf
+                : family => Path.Combine(packages.Trim(), family);
+            return new EdgeWebAppPackages(folderOf, log: sp.GetRequiredService<ILogger<EdgeWebAppPackages>>());
+        });
+        builder.Services.AddSingleton(sp => new EdgeSchoolProfileProbe(
+            BrowserUserDataFolder(sp.GetRequiredService<IOptions<WitnessSettings>>().Value),
+            sp.GetRequiredService<IOpenProfileExtensionProbe>(),
+            sp.GetRequiredService<ILogger<EdgeSchoolProfileProbe>>(),
+            sp.GetRequiredService<IEdgeWebApps>()));
+        builder.Services.AddSingleton<SchoolProfileGuard>();
+        // #526 -- test phase only (#515): a second witness of what the extension
+        // lets through. During a session the agent reads the address bar of the
+        // school profile's foreground Edge window (UI Automation), holds its host
+        // against the allowlist the extension was handed, and reports an off-list
+        // host that stays up past a short grace, once, by its host only.
+        builder.Services.AddSingleton<IAddressBarReader>(sp => new EdgeAddressBarReader(
+            sp.GetRequiredService<IAppIdentifier>(),
+            sp.GetRequiredService<ILogger<EdgeAddressBarReader>>()));
+        builder.Services.AddSingleton(sp =>
+        {
+            var schoolProfile = sp.GetRequiredService<SchoolProfileGuard>();
+            var relay = sp.GetRequiredService<ExtensionSessionRelay>();
+            return new AddressBarWitness(
+                sp.GetRequiredService<SessionCoordinator>(),
+                sp.GetRequiredService<IAddressBarReader>(),
+                schoolProfile.IsSchoolProfileWindow,
+                () => relay.Domains,
+                sp.GetRequiredService<ISessionHubConnection>(),
+                sp.GetRequiredService<IOptions<SessionSettings>>(),
+                sp.GetRequiredService<IOptions<WitnessSettings>>(),
+                log: sp.GetRequiredService<ILogger<AddressBarWitness>>());
+        });
+        // #524 -- the extension can be on and still not filter everything: a
+        // student can turn its "Site access" down on its page in Edge, before the
+        // session, which fires nothing. The extension reads its own settings on
+        // every session it is handed and on every change and says so over the link;
+        // the guard pauses Edge while it may not work on all sites, and this watch
+        // tells the teacher if the student doesn't put it back.
+        builder.Services.AddSingleton<ExtensionSelfCheckWatch>();
         // #427 -- the report alone left Edge an unfiltered browser while the
         // extension was off. The guard pauses Edge once the witness has stayed down
         // past a short grace period during a joined session with Edge on screen, or
@@ -1493,9 +1640,10 @@ public partial class App : Application
 
         // #148 -- agent-side robust InPrivate detection. The scanner enumerates
         // live Edge windows; the monitor polls it while in a joined session and
-        // reports TamperDetected{inprivate_opened} for each newly-seen InPrivate
-        // window. --simulate-inprivate (dev only) swaps a synthetic scanner so the
-        // headless e2e can drive the path without a real InPrivate window.
+        // reports TamperDetected{inprivate_opened} for each InPrivate window still
+        // open after Session:SchoolProfileReportSeconds (#535). --simulate-inprivate
+        // (dev only) swaps a synthetic scanner so the headless e2e can drive the
+        // path without a real InPrivate window.
         if (Program.SimulateInPrivate)
             builder.Services.AddSingleton<IBrowserWindowScanner, SimulatedInPrivateScanner>();
         else

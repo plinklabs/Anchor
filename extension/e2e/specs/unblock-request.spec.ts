@@ -40,6 +40,40 @@ test('a request for access reaches the agent, and the block page says it was sen
   await expect(page.locator('[data-status]')).toContainText('Requested');
 });
 
+// #523: the teacher turns the request down. The block page says so instead of
+// "waiting for teacher", and lets the student ask again; the page stays blocked.
+test('a declined request says so on the block page, and the student can ask again', async ({
+  ext,
+  agent,
+  staticServer,
+}) => {
+  const { page, sessionId, url } = await blockedPage(ext, agent, staticServer);
+  const request = page.locator('[data-action="request"]');
+  await request.click();
+  await expect(page.locator('[data-status]')).toContainText('Requested');
+  await expect(request).toBeDisabled();
+  const asked = agent.received.length;
+
+  // A denial for another host leaves this page waiting.
+  agent.denyUnblock('elsewhere.test');
+  await ext.waitForLogCount('unblock request denied', 1);
+  await expect(page.locator('[data-status]')).toContainText('Requested');
+  await expect(request).toBeDisabled();
+
+  agent.denyUnblock(OFFLIST_HOST);
+
+  await expect(page.locator('[data-status]')).toHaveText(
+    'Your teacher declined this request. Ask again if you still need the site.',
+  );
+  await expect(request).toBeEnabled();
+  expect(new URL(page.url()).pathname).toBe('/block-page.html');
+
+  await request.click();
+  const again = await agent.waitForMessage((m) => m.type === 'unblock_request', 15_000, asked);
+  expect(again).toMatchObject({ sessionId, url, host: OFFLIST_HOST });
+  await expect(page.locator('[data-status]')).toContainText('Requested');
+});
+
 test('a request the agent could not send says why, and can be tried again', async ({
   ext,
   agent,

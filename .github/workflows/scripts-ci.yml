@@ -7,7 +7,9 @@ name: Scripts CI
 # scripts/ci/check-ps-scripts.ps1, so `pwsh scripts/ci/check-ps-scripts.ps1`
 # gives the same result locally. scripts/ci/test-check-ps-scripts.ps1 first
 # proves each rule still fails a fixture that breaks it, so a checker that
-# passes everything fails here instead.
+# passes everything fails here instead. scripts/ci/test-setup-dry-run.ps1 runs
+# setup.ps1's deploy-identity helpers against a stub az, in a dry run and for
+# real (#528).
 #
 # The script checks every tracked PowerShell file, not just the changed ones,
 # so the path filter catches a PowerShell file wherever it lives: the two
@@ -49,3 +51,9 @@ jobs:
       - name: Check PowerShell scripts
         shell: pwsh
         run: ./scripts/ci/check-ps-scripts.ps1
+
+      # setup.ps1's deploy-identity helpers against a stub az: `-WhatIf` must
+      # print their plan instead of crashing on a temp file (#504, #528).
+      - name: Dry-run setup.ps1's deploy-identity helpers
+        shell: pwsh
+        run: ./scripts/ci/test-setup-dry-run.ps1

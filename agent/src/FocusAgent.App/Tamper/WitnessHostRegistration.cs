@@ -29,14 +29,13 @@ internal static class WitnessHostRegistration
     /// <summary>
     /// Register the host (idempotent). Used by the dev CLI mode, which supplies an
     /// explicit throwaway key + host exe path so the test never touches the live Edge
-    /// key. Returns whether a write happened. Auth config is dev-omitted here — the dev
-    /// CLI path registers for the dev impersonation flow, not real student auth (#289).
-    /// <paramref name="extensionIds"/> are the extensions the host lets connect (#497);
-    /// null: <see cref="AnchorExtensionIds.Configured"/>.
+    /// key. Returns whether a write happened. <paramref name="extensionIds"/> are the
+    /// extensions the host lets connect (#497); null:
+    /// <see cref="AnchorExtensionIds.Configured"/>.
     /// </summary>
     public static bool EnsureRegistered(
-        string? keyOverride, string hostExePath, string backendUrl, AnchorExtensionIds? extensionIds = null) =>
-        Build(keyOverride, extensionIds).EnsureRegistered(hostExePath, backendUrl);
+        string? keyOverride, string hostExePath, AnchorExtensionIds? extensionIds = null) =>
+        Build(keyOverride, extensionIds).EnsureRegistered(hostExePath);
 
     /// <summary>Remove the host registration. Used by the dev CLI mode.</summary>
     public static void RemoveRegistration(string? keyOverride) =>
@@ -55,18 +54,12 @@ internal static class WitnessHostRegistration
     /// Best-effort: the witness link is a tamper signal, never load-bearing for the
     /// agent itself, so a failure here must never block startup.
     /// </summary>
-    /// <param name="auth">
-    /// The deployment's Entra config (#289), handed to the host so the extension can
-    /// acquire a real student token in release. Null in dev (the extension then uses
-    /// the dev impersonation shortcut).
-    /// </param>
     /// <param name="extensionIds">
     /// The extensions the host lets connect (#497): the store build's, plus the
     /// self-hosted test-ring build's once one is configured. Null:
     /// <see cref="AnchorExtensionIds.Configured"/>.
     /// </param>
-    public static void RegisterForStartup(
-        string backendUrl, WitnessAuthConfig? auth = null, AnchorExtensionIds? extensionIds = null)
+    public static void RegisterForStartup(AnchorExtensionIds? extensionIds = null)
     {
         try
         {
@@ -79,7 +72,7 @@ internal static class WitnessHostRegistration
                 return;
             }
 
-            Build(keyOverride: null, extensionIds).EnsureRegistered(hostExePath, backendUrl, auth);
+            Build(keyOverride: null, extensionIds).EnsureRegistered(hostExePath);
         }
         catch
         {

@@ -24,15 +24,22 @@ namespace FocusAgent.Core.Extension;
 /// the student has joined (so a declined session never reaches the extension),
 /// <see cref="ExtensionMessages.AllowlistReplaced"/> on a bundle change,
 /// <see cref="ExtensionMessages.AllowlistAmended"/> on an approved unblock
-/// request, <see cref="ExtensionMessages.SessionEnded"/> when the session ends or
+/// request, <see cref="ExtensionMessages.UnblockDenied"/> on a denied one (#523),
+/// <see cref="ExtensionMessages.SessionEnded"/> when the session ends or
 /// the student leaves it, and on every witness (re)connect the current session
 /// again, or <see cref="ExtensionMessages.NoSession"/>. Every Edge profile runs
 /// its own copy of the extension over its own connection (#517): each gets the
 /// state when it connects, and every change goes to all of them.</item>
-/// <item>extension → agent: blocked URLs, unblock requests (answered with
-/// <see cref="ExtensionMessages.UnblockRequestResult"/>, to the connection that
-/// asked) and the extension's own
-/// tamper signals, sent on as <c>ReportEvent</c> calls for the joined session.</item>
+/// <item>extension → agent: blocked pages (by their host only, #527), unblock
+/// requests (answered with <see cref="ExtensionMessages.UnblockRequestResult"/>,
+/// to the connection that asked), sent on as <c>ReportEvent</c> calls for the
+/// joined session, and the tamper signals an extension older than #539 still
+/// sends: <c>host_permission_revoked</c> (from one older than #524) goes on,
+/// <c>inprivate_opened</c> doesn't, as that is the agent's own witness's to
+/// report (<see cref="InPrivateWitnessMonitor"/>, #535).
+/// What the extension says about its own settings
+/// (<see cref="ExtensionMessages.SelfCheck"/>, #524) is
+/// <see cref="ExtensionSelfCheckWatch"/>'s to read.</item>
 /// <item>The extension's liveness ping (<c>ExtensionHeartbeat</c>, #149), sent
 /// for it while at least one witness link is up, so <c>extension_silent</c> keeps
 /// working.</item>
@@ -50,10 +57,20 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     private const string UnblockRequestKind = "UnblockRequest";
     private const string TamperDetectedKind = "TamperDetected";
 
-    // The in-browser tamper kinds the extension witnesses itself (#105). Anything
-    // else from the link is dropped rather than shown on the teacher's roster.
+    // The in-browser tamper kinds an extension witnesses itself (#105) that still
+    // reach the teacher. Anything else from the link is dropped rather than shown
+    // on the teacher's roster. Only extensions older than #539 send tamper at all,
+    // so this is for the ones still in the field. Since #524 the extension hands
+    // its site access to the agent as a self-check instead
+    // (ExtensionSelfCheckWatch); one older than that still reports
+    // host_permission_revoked itself, and it still reaches the teacher. The
+    // extension's inprivate_opened (only sent where it is allowed in InPrivate, and
+    // not since #539) goes no further since #535: the agent's own InPrivate witness
+    // sees every InPrivate window, and tells the teacher only of one the student
+    // leaves open (InPrivateWitnessMonitor). Passing the extension's on would tell
+    // the teacher at once, of a window closed in time too, and twice.
     private static readonly HashSet<string> ExtensionTamperKinds =
-        new(StringComparer.Ordinal) { "inprivate_opened", "host_permission_revoked" };
+        new(StringComparer.Ordinal) { TamperKinds.HostPermissionRevoked };
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
@@ -93,6 +110,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _coordinator.SessionLeft += OnSessionLeft;
         _coordinator.SessionAllowlistUpdated += OnAllowlistUpdated;
         _hub.AllowlistAmended += OnAllowlistAmended;
+        _hub.UnblockDenied += OnUnblockDenied;
         _witness.WitnessConnected += OnWitnessConnected;
         _witness.WitnessDisconnected += OnWitnessDisconnected;
         _witness.MessageReceived += OnMessageReceived;
@@ -196,6 +214,31 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _log.LogInformation(
             "Handed the extension {DomainCount} domains granted in session {SessionId}.",
             payload.AddedDomains.Count, payload.SessionId);
+    }
+
+    // Every profile: the student may have asked from any of them, and only the
+    // block page for the host acts on it. Not part of the connect snapshot: a
+    // block page opened after the denial has nothing pending to decline.
+    private void OnUnblockDenied(object? sender, UnblockDeniedPayload payload)
+    {
+        int sent;
+        lock (_gate)
+        {
+            if (_session?.SessionId != payload.SessionId)
+            {
+                _log.LogDebug("Ignoring UnblockDenied for {SessionId}: not the joined session.", payload.SessionId);
+                return;
+            }
+            sent = _witness.Broadcast(Serialize(new
+            {
+                type = ExtensionMessages.UnblockDenied,
+                sessionId = payload.SessionId,
+                host = payload.Host,
+            }));
+        }
+        _log.LogInformation(
+            "Told the extension the teacher declined {Host} in session {SessionId}: {Outcome}.",
+            payload.Host, payload.SessionId, sent > 0 ? $"sent to {sent}" : "no extension connected");
     }
 
     private void OnWitnessConnected(object? sender, WitnessConnection connection)
@@ -304,14 +347,16 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     private async Task ReportBlockedUrlAsync(JsonElement message)
     {
         var sessionId = JoinedSessionFor(message, ExtensionMessages.BlockedUrl);
-        var url = GetString(message, "url");
-        if (sessionId is null || string.IsNullOrWhiteSpace(url)) return;
+        if (sessionId is null) return;
 
         var occurredAt = DateTimeOffset.TryParse(GetString(message, "occurredAt"), out var at) ? at : _clock.GetUtcNow();
+        // The host only, never the URL (#527): a path or query string can hold
+        // search terms and other personal detail the teacher doesn't need. An
+        // extension the store hasn't updated yet still sends the URL; it goes no
+        // further than this.
         var payload = Serialize(new
         {
-            url,
-            host = HostOf(message, url),
+            host = HostOf(message, GetString(message, "url")),
             tabId = message.TryGetProperty("tabId", out var tab) && tab.TryGetInt32(out var tabId) ? tabId : (int?)null,
             occurredAt,
         });
@@ -372,7 +417,15 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     {
         var kind = GetString(message, "kind");
         var sessionId = JoinedSessionFor(message, ExtensionMessages.Tamper);
-        if (sessionId is null || kind is null || !ExtensionTamperKinds.Contains(kind)) return;
+        if (sessionId is null || kind is null) return;
+        if (kind == TamperKinds.InPrivateOpened)
+        {
+            _log.LogInformation(
+                "Extension witnessed {Kind} in session {SessionId}; the agent's InPrivate witness reports it if left open.",
+                kind, sessionId);
+            return;
+        }
+        if (!ExtensionTamperKinds.Contains(kind)) return;
 
         try
         {
@@ -403,7 +456,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         return joined;
     }
 
-    private static string HostOf(JsonElement message, string url)
+    private static string HostOf(JsonElement message, string? url)
     {
         var host = GetString(message, "host");
         if (!string.IsNullOrWhiteSpace(host)) return host;
@@ -424,6 +477,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _coordinator.SessionLeft -= OnSessionLeft;
         _coordinator.SessionAllowlistUpdated -= OnAllowlistUpdated;
         _hub.AllowlistAmended -= OnAllowlistAmended;
+        _hub.UnblockDenied -= OnUnblockDenied;
         _witness.WitnessConnected -= OnWitnessConnected;
         _witness.WitnessDisconnected -= OnWitnessDisconnected;
         _witness.MessageReceived -= OnMessageReceived;

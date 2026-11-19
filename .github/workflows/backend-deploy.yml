@@ -15,21 +15,34 @@ name: Backend Deploy
 # federated credential on the `anchor-deploy` app registration (subject
 # `repo:<owner>/<repo>:environment:production`, matching this job's `environment`
 # below), and webapps-deploy then deploys with that token. The SP holds only
-# **Website Contributor** on the target App Service. This replaced the old
-# AZURE_WEBAPP_PUBLISH_PROFILE secret, which could not work once SCM basic-auth
-# publishing was disabled on the App Service (#274). The client/tenant/sub IDs
-# and the App Service name come from repo Actions variables so a fork deploys to
-# its own `anchor-api-<school>` resource with no source edits, mirroring the
-# dashboard-deploy convention (#202); `scripts/setup.ps1` provisions them.
+# **Website Contributor** on the target App Service and **SQL Server
+# Contributor** on the SQL server (for the firewall rule below). This replaced
+# the old AZURE_WEBAPP_PUBLISH_PROFILE secret, which could not work once SCM
+# basic-auth publishing was disabled on the App Service (#274). The
+# client/tenant/sub IDs and the App Service name come from repo Actions
+# variables so a fork deploys to its own `anchor-api-<school>` resource with no
+# source edits, mirroring the dashboard-deploy convention (#202);
+# `scripts/setup.ps1` provisions them.
 #
 # Database migrations run HERE, before the new build goes live — not at app
 # startup (#344). An EF Core migrations bundle is applied to the production
 # database first; if it fails, the job stops before the deploy step and the
-# running build keeps serving. No extra secret or role is needed: the bundle
-# connects with the App Service's own `DefaultConnection` string, which the
-# deploy identity can read through its Website Contributor role, and GitHub's
-# Ubuntu runners run in Azure, so the SQL server's "Allow Azure services" rule
-# (AllowAzureServices in infra/main.bicep) admits them.
+# running build keeps serving. No extra secret is needed: the bundle connects
+# with the App Service's own `DefaultConnection` string, which the deploy
+# identity can read through its Website Contributor role.
+#
+# The runner reaches Azure SQL through a firewall rule for its own public IP,
+# not through the SQL server's "Allow Azure services" rule (AllowAzureServices
+# in infra/main.bicep, which the App Service needs). GitHub's hosted runners
+# aren't always in Azure: on 2026-11-16 one on 3.41.210.118 was refused and the
+# deploy stopped (#504). So the job adds a rule named after the run id just
+# before migrating and removes it in a last `if: always()` step, which runs
+# after a failure or a cancel too. A rerun reuses the name, so it also removes
+# a rule an earlier attempt left. Writing the rule needs
+# Microsoft.Sql/servers/firewallRules/write on the server: the deploy identity
+# holds SQL Server Contributor there (scripts/setup.ps1, or the template's
+# deployPrincipalId parameter). Without it the step fails with an error that
+# names the permission; docs/RELEASE.md has the command that grants it.
 
 on:
   workflow_run:
@@ -94,22 +107,79 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      # Applies pending migrations (none → no-op) before the deploy, so a
-      # failure stops the job here and the running build is left untouched.
-      - name: Apply database migrations
+      # Lets this runner through the SQL firewall for the migrations (#504, see
+      # the header). The outputs are written only once the rule exists, so the
+      # last step has nothing to remove when this one fails.
+      - name: Open SQL firewall for this runner
+        id: sql-firewall
         env:
           WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+          RULE_NAME: gh-backend-deploy-${{ github.run_id }}
         run: |
           set -euo pipefail
-          # The deploy identity only sees this site, so look its resource
-          # group up by name (as azure/webapps-deploy does).
+          # The deploy identity only sees this site and its SQL server, so look
+          # the resource group up by name (as azure/webapps-deploy does). The
+          # template puts the SQL server in the same group.
           rg=$(az resource list --name "$WEBAPP_NAME" --resource-type Microsoft.Web/sites \
             --query "[0].resourceGroup" -o tsv)
           if [ -z "$rg" ]; then
             echo "::error::App Service '$WEBAPP_NAME' not found (check vars.AZURE_WEBAPP_NAME and the deploy identity's role)"
             exit 1
           fi
-          conn=$(az webapp config connection-string list -g "$rg" -n "$WEBAPP_NAME" \
+          # The server the migrations connect to: <server> in the connection
+          # string's Server=tcp:<server>.database.windows.net,1433. Read straight
+          # from the pipe, so the string (it holds the SQL password) never sits
+          # in a variable.
+          server=$(az webapp config connection-string list -g "$rg" -n "$WEBAPP_NAME" \
+              --query "[?name=='DefaultConnection'].value | [0]" -o tsv \
+            | tr ';' '\n' \
+            | sed -n -E 's/^[[:space:]]*(server|data source)[[:space:]]*=[[:space:]]*(tcp:)?([^.,]+).*/\3/Ip' \
+            | head -n 1) || true
+          server=${server,,}
+          if ! [[ $server =~ ^[a-z0-9-]+$ ]]; then
+            echo "::error::Could not read the SQL server name from the DefaultConnection connection string of App Service '$WEBAPP_NAME'"
+            exit 1
+          fi
+          # The runner's public IPv4 address. A second service, so one being
+          # down doesn't stop the deploy.
+          ip=
+          for url in https://api.ipify.org https://checkip.amazonaws.com; do
+            candidate=$(curl -fsS --max-time 10 --retry 2 "$url" | tr -d '[:space:]') || continue
+            if [[ $candidate =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+              ip=$candidate
+              break
+            fi
+          done
+          if [ -z "$ip" ]; then
+            echo "::error::Could not read this runner's public IPv4 address from api.ipify.org or checkip.amazonaws.com"
+            exit 1
+          fi
+          if ! out=$(az sql server firewall-rule create --resource-group "$rg" --server "$server" \
+              --name "$RULE_NAME" --start-ip-address "$ip" --end-ip-address "$ip" -o none 2>&1); then
+            printf '%s\n' "$out"
+            if grep -q 'AuthorizationFailed' <<<"$out"; then
+              echo "::error::The deploy identity may not add firewall rules to SQL server '$server': it needs Microsoft.Sql/servers/firewallRules/write there. Give it the SQL Server Contributor role on that server (see 'How the backend deploy is gated' in docs/RELEASE.md, #504)."
+            else
+              echo "::error::Could not add SQL firewall rule '$RULE_NAME' for $ip to SQL server '$server'"
+            fi
+            exit 1
+          fi
+          {
+            echo "resource-group=$rg"
+            echo "server=$server"
+            echo "rule=$RULE_NAME"
+          } >> "$GITHUB_OUTPUT"
+          echo "SQL server '$server' admits $ip until the last step removes rule '$RULE_NAME'."
+
+      # Applies pending migrations (none → no-op) before the deploy, so a
+      # failure stops the job here and the running build is left untouched.
+      - name: Apply database migrations
+        env:
+          WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+          RESOURCE_GROUP: ${{ steps.sql-firewall.outputs.resource-group }}
+        run: |
+          set -euo pipefail
+          conn=$(az webapp config connection-string list -g "$RESOURCE_GROUP" -n "$WEBAPP_NAME" \
             --query "[?name=='DefaultConnection'].value | [0]" -o tsv)
           if [ -z "$conn" ]; then
             echo "::error::App Service '$WEBAPP_NAME' has no DefaultConnection connection string"
@@ -127,3 +197,21 @@ jobs:
         with:
           app-name: ${{ vars.AZURE_WEBAPP_NAME }}
           package: ${{ runner.temp }}/publish
+
+      # Runs after a failed or cancelled step too, so the rule never outlives
+      # the run. Skipped when the first step added none. A failure here leaves
+      # the deploy in place but turns the run red, with the command to run.
+      - name: Close SQL firewall
+        if: always() && steps.sql-firewall.outputs.rule != ''
+        env:
+          RESOURCE_GROUP: ${{ steps.sql-firewall.outputs.resource-group }}
+          SQL_SERVER: ${{ steps.sql-firewall.outputs.server }}
+          RULE_NAME: ${{ steps.sql-firewall.outputs.rule }}
+        run: |
+          set -euo pipefail
+          if ! az sql server firewall-rule delete --resource-group "$RESOURCE_GROUP" \
+              --server "$SQL_SERVER" --name "$RULE_NAME" -o none; then
+            echo "::error::Could not remove SQL firewall rule '$RULE_NAME' from SQL server '$SQL_SERVER'. Remove it by hand: az sql server firewall-rule delete -g $RESOURCE_GROUP -s $SQL_SERVER -n $RULE_NAME"
+            exit 1
+          fi
+          echo "Removed SQL firewall rule '$RULE_NAME' from '$SQL_SERVER'."

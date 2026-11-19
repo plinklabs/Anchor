@@ -38,9 +38,12 @@ test('a tab already on an off-list site is redirected when the agent hands down 
   // (AE1 / #177) — not a punitive one.
   await expect(page.locator('h1')).toContainText("Let's stay on track");
 
-  // The block reaches the agent, which reports it to the teacher's session log.
+  // The block reaches the agent, which reports it to the teacher's session log:
+  // by its host only, never the URL (#527).
   const report = await agent.waitForMessage((m) => m.type === 'blocked_url');
-  expect(report).toMatchObject({ sessionId, url: offlistUrl, host: OFFLIST_HOST });
+  expect(report).toMatchObject({ sessionId, host: OFFLIST_HOST });
+  expect(report).not.toHaveProperty('url');
+  expect(JSON.stringify(report)).not.toContain('before-session');
 });
 
 // #409 — the teacher starts a session from the dashboard, with no bundle yet.

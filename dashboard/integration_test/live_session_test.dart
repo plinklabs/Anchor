@@ -29,7 +29,8 @@ import 'support/e2e_binding.dart';
 // layout, real fonts under `flutter drive`) wired to fake API subclasses and a
 // stubbed live feed, then drives it the way the backend's SignalR pushes would:
 //   - a roster state transition (#100) updates the live roster,
-//   - an unblock-request push (#…) surfaces the pending panel,
+//   - an unblock-request push (#…) surfaces the pending panel, where each
+//     student who asked is approved or denied on their own line (#523),
 //   - a UI bundle toggle issues PUT /sessions/{id}/bundles (#93),
 //   - pushed events render in the live activity feed as plain sentences,
 //     only what needs the teacher until they show all activity, which the
@@ -60,6 +61,12 @@ import 'support/e2e_binding.dart';
 //     class at once, and the requests, the bundles and the feed share the
 //     right, each column scrolling on its own; a narrower window stacks the
 //     panels as before (#494).
+//   - the agent's reports that a student left an Edge window outside the
+//     school profile open, or isn't signed in to Edge with the school account,
+//     read as sentences in the feed (#525).
+//   - test phase only (#515): the agent's report of a site that isn't allowed
+//     open in Edge without the extension blocking it reads as a sentence in the
+//     feed, by its host only, with no tamper flag and no alert (#526).
 //
 // The fake-auth seam is the documented fallback the issue calls for: a seeded
 // AuthTokenStore + a no-op MsalAuthService get us past the /login redirect, and
@@ -220,6 +227,8 @@ class _FakeSessions extends SessionsApi {
   // Records approval calls so a test can assert which scope the UI chose (#101).
   final List<(String, String)> perStudentApprovals = [];
   final List<String> classApprovals = [];
+  // (userId, host) per denial (#523).
+  final List<(String, String)> denials = [];
   // How often the page fetched the detail and the pending list (#365).
   int getSessionCalls = 0;
   int unblockRequestsCalls = 0;
@@ -325,6 +334,35 @@ class _FakeSessions extends SessionsApi {
     final error = approveError;
     if (error != null) throw error;
     perStudentApprovals.add((userId, host));
+    // The student's request is granted, so it leaves the pending list.
+    _answer(userId, host);
+  }
+
+  @override
+  Future<void> denyUnblock(String sessionId, String userId, String host) async {
+    denials.add((userId, host));
+    // The backend answers the student's request: it leaves the pending list,
+    // and the host's row goes once nobody is left on it (#523).
+    _answer(userId, host);
+  }
+
+  void _answer(String userId, String host) {
+    pending = [
+      for (final s in pending)
+        if (s.host != host)
+          s
+        else if (s.requesters.any((r) => r.userId != userId))
+          UnblockRequestSummary(
+            host: s.host,
+            count: s.count - 1,
+            firstRequestedAt: s.firstRequestedAt,
+            latestRequestedAt: s.latestRequestedAt,
+            requesters: [
+              for (final r in s.requesters)
+                if (r.userId != userId) r,
+            ],
+          ),
+    ];
   }
 
   @override
@@ -584,6 +622,97 @@ void main() {
     // Ada is still "in session" — tampering is orthogonal to live state.
     expect(find.text('In session'), findsOneWidget);
   });
+
+  testWidgets(
+    'the school-profile reports read as sentences in the feed and flag the '
+    'student (#525, #536)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [_participant('Ada', ParticipantLiveState.joined)],
+      );
+
+      // During a session only the Edge profile signed in with the school
+      // account may be used. The agent tells the teacher only what the student
+      // leaves unresolved: a paused window of another profile still open, no
+      // profile signed in with the school account at all, or (#536) one that
+      // is, without the Anchor extension.
+      h.sessions.roster = [
+        _participant('Ada', ParticipantLiveState.joined, tampered: true),
+      ];
+      for (final (kind, minute) in [
+        ('outside_school_profile', 22),
+        ('school_profile_missing', 23),
+        ('school_profile_without_extension', 24),
+      ]) {
+        h.hub.emit('TamperDetected', {
+          'sessionId': _sessionId,
+          'userId': 'Ada',
+          'userDisplayName': 'Ada',
+          'kind': kind,
+          'detectedAt': '2026-06-12T07:$minute:00+00:00',
+        });
+      }
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('Ada kept an Edge window open outside the school profile.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Ada is not signed in to Edge with their school account.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text("Ada hasn't added Anchor to their school profile in Edge."),
+        findsOneWidget,
+      );
+      // Never the kind itself, and the roster flags her like any tampering.
+      for (final raw in [
+        'outside_school_profile',
+        'school_profile_missing',
+        'school_profile_without_extension',
+      ]) {
+        expect(find.textContaining(raw), findsNothing, reason: raw);
+      }
+      expect(find.byTooltip('Tampering detected'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a site the extension let through reads as a sentence in the feed, by its '
+    'host, without flagging the student (#526)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [_participant('Ada', ParticipantLiveState.joined)],
+      );
+
+      // The agent read Edge's address bar: a site that isn't allowed stayed
+      // open and the extension didn't block it. Test phase only (#515).
+      h.hub.emit('UnfilteredSite', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'userDisplayName': 'Ada',
+        'host': 'games.example',
+        'seenAt': '2026-06-12T07:24:00+00:00',
+      });
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          "Ada had games.example open in Edge, which isn't allowed, and it "
+          "wasn't blocked.",
+        ),
+        findsOneWidget,
+      );
+      // Never the kind, and no tamper flag: the gap may be the extension's.
+      expect(find.textContaining('UnfilteredSite'), findsNothing);
+      expect(find.byTooltip('Tampering detected'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'a student whose agent never connects shows on the live roster until it '
@@ -875,6 +1004,103 @@ void main() {
       expect(h.sessions.classApprovals, ['chat.example.com']);
       expect(h.sessions.perStudentApprovals, isEmpty);
       expect(find.text('Pending requests'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'each student who asked is approved or denied on their own line, and the '
+    'site goes once nobody is left on it (#523)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [
+          _participant('Ada', ParticipantLiveState.joined),
+          _participant('Bo', ParticipantLiveState.joined),
+        ],
+      );
+
+      // Two students ask for the same site.
+      final now = DateTime(2026, 6, 12, 9, 20);
+      h.sessions.pending = [
+        UnblockRequestSummary(
+          host: 'chat.example.com',
+          count: 2,
+          firstRequestedAt: now,
+          latestRequestedAt: now,
+          requesters: [
+            for (final name in ['Ada', 'Bo'])
+              UnblockRequestRequester(
+                userId: name,
+                displayName: name,
+                requestedAt: now,
+              ),
+          ],
+        ),
+      ];
+      h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+      await tester.pumpAndSettle();
+
+      // The button on [name]'s line among the requests, not their roster row;
+      // nothing once their line is gone.
+      Finder onLineOf(String name, Type button, String label) {
+        final panel = find.ancestor(
+          of: find.text('Pending requests'),
+          matching: find.byType(Column),
+        );
+        if (panel.evaluate().isEmpty) return panel;
+        final line = find.descendant(
+          of: panel.first,
+          matching: find.text(name),
+        );
+        if (line.evaluate().isEmpty) return line;
+        return find.descendant(
+          of: find.ancestor(of: line, matching: find.byType(Row)).first,
+          matching: find.widgetWithText(button, label),
+        );
+      }
+
+      for (final name in ['Ada', 'Bo']) {
+        expect(onLineOf(name, OutlinedButton, 'Approve'), findsOneWidget);
+        expect(onLineOf(name, TextButton, 'Deny'), findsOneWidget);
+      }
+
+      // The teacher turns Ada down: her request is answered, Bo's still waits.
+      await tester.tap(onLineOf('Ada', TextButton, 'Deny'));
+      await tester.pumpAndSettle();
+      expect(h.sessions.denials, [('Ada', 'chat.example.com')]);
+      expect(h.sessions.perStudentApprovals, isEmpty);
+      expect(find.text('chat.example.com'), findsOneWidget);
+      expect(onLineOf('Ada', TextButton, 'Deny'), findsNothing);
+      expect(onLineOf('Bo', TextButton, 'Deny'), findsOneWidget);
+
+      // And lets Bo in: nobody is left on the site, so its row goes.
+      await tester.tap(onLineOf('Bo', OutlinedButton, 'Approve'));
+      await tester.pumpAndSettle();
+      expect(h.sessions.perStudentApprovals, [('Bo', 'chat.example.com')]);
+      expect(h.sessions.denials, [('Ada', 'chat.example.com')]);
+      expect(find.text('chat.example.com'), findsNothing);
+      expect(find.text('Pending requests'), findsNothing);
+
+      // Ada asks again after the denial: she is pending again.
+      h.sessions.pending = [
+        UnblockRequestSummary(
+          host: 'chat.example.com',
+          count: 1,
+          firstRequestedAt: now,
+          latestRequestedAt: now,
+          requesters: [
+            UnblockRequestRequester(
+              userId: 'Ada',
+              displayName: 'Ada',
+              requestedAt: now,
+            ),
+          ],
+        ),
+      ];
+      h.hub.emit('UnblockRequested', {'host': 'chat.example.com'});
+      await tester.pumpAndSettle();
+      expect(onLineOf('Ada', OutlinedButton, 'Approve'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -1994,10 +2220,22 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    /// [name]'s row on the roster. Not their line among the pending
+    /// requests, which names each student who asked (#523).
+    Finder onRoster(String name) => find.descendant(
+      of: find
+          .ancestor(
+            of: find.textContaining(' in session)'),
+            matching: find.byType(Column),
+          )
+          .first,
+      matching: find.text(name),
+    );
+
     /// The roster's list: the one around [student]'s row.
     Rect rosterList(WidgetTester tester, String student) => tester.getRect(
       find
-          .ancestor(of: find.text(student), matching: find.byType(ListView))
+          .ancestor(of: onRoster(student), matching: find.byType(ListView))
           .first,
     );
 
@@ -2019,7 +2257,7 @@ void main() {
         expect(find.text('Students (18/18 in session)'), findsOneWidget);
         for (final p in students(18)) {
           expect(
-            inView(tester, find.text(p.displayName)),
+            inView(tester, onRoster(p.displayName)),
             isTrue,
             reason: p.displayName,
           );
@@ -2129,7 +2367,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
 
-        final first = find.text('Student 01');
+        final first = onRoster('Student 01');
         final last = find.text('Student 30', skipOffstage: false);
         final requests = find.text('Pending requests');
         // Where [finder] sits under the header. The page itself scrolls only

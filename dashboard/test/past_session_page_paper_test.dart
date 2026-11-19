@@ -171,7 +171,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Unapproved requests'), findsOneWidget);
+    expect(find.text('Unanswered requests'), findsOneWidget);
     expect(find.text('youtube.com'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -221,6 +221,7 @@ void main() {
         count('u1', 'ForegroundChange', 12),
         count('u1', 'BlockedUrl', 3),
         count('u1', 'ManualLeave', 1),
+        count('u1', 'UnblockDenied', 1),
         // The teacher's approval for the whole class is theirs, and they are
         // not on the roster.
         count(teacherId, 'UnblockApproved', 1),
@@ -246,6 +247,8 @@ void main() {
           userId: teacherId,
         ),
         stored('e6', 'HeartbeatLost', '{}'),
+        // A denial is the student's, as the backend stores it (#523).
+        stored('e7', 'UnblockDenied', '{"host":"games.example.com"}'),
       ],
       participants: base.participants,
       bundles: base.bundles,
@@ -263,13 +266,17 @@ void main() {
       'Ada Lovelace opened an InPrivate window.',
       'Access to wikipedia.org was approved for the whole class.',
       "Ada Lovelace's agent stopped reporting.",
+      'Access to games.example.com was denied for Ada Lovelace.',
     ]) {
       expect(find.text(sentence), findsOneWidget, reason: sentence);
     }
     // The summary, in words, and a row for someone off the roster names no
     // id.
     expect(
-      find.text('left the session, 3 blocked websites, 12 app switches'),
+      find.text(
+        'left the session, 1 request denied, 3 blocked websites, '
+        '12 app switches',
+      ),
       findsOneWidget,
     );
     expect(find.text('1 website approved'), findsOneWidget);
@@ -282,6 +289,7 @@ void main() {
       'UnblockRequest',
       'TamperDetected',
       'UnblockApproved',
+      'UnblockDenied',
       'HeartbeatLost',
       'ManualLeave',
       'processName',
@@ -290,16 +298,32 @@ void main() {
       expect(find.textContaining(raw), findsNothing, reason: raw);
     }
 
-    // It is in a tooltip, for troubleshooting.
+    // It is in a tooltip, for troubleshooting: a blocked page by its host
+    // only, though an older agent stored its URL too (#527).
+    expect(
+      find.byTooltip('BlockedUrl\n{"host":"chat.example.com"}'),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Tooltip &&
+            (w.message ?? '').contains('https://chat.example.com/c'),
+      ),
+      findsNothing,
+    );
     expect(
       find.byTooltip(
-        'BlockedUrl\n'
-        '{"url":"https://chat.example.com/c","host":"chat.example.com"}',
+        'ForegroundChange\n'
+        '{"processName":"WINWORD","publisher":"Microsoft Corporation",'
+        '"blocked":false}',
       ),
       findsOneWidget,
     );
     expect(
-      find.byTooltip('ForegroundChange: 12\nBlockedUrl: 3\nManualLeave: 1'),
+      find.byTooltip(
+        'ForegroundChange: 12\nBlockedUrl: 3\nManualLeave: 1\nUnblockDenied: 1',
+      ),
       findsOneWidget,
     );
 

@@ -27,7 +27,8 @@ namespace FocusAgent.App.Connectivity;
 ///       activeSessionId,   // non-null while the toast is up or the user has joined
 ///       joinedSessionId,   // non-null after user confirmed
 ///       allowedApps,       // current matcher app rules, or null when not in a session (#93)
-///       inPrivateDetections // count of Edge InPrivate windows the agent-side witness has reported (#148)
+///       inPrivateDetections, // count of Edge InPrivate windows the agent-side witness has reported (#148)
+///       inPrivateOpen      // InPrivate windows it sees open now, reported or not yet (#535)
 ///   }
 ///
 /// Poll <c>activeSessionId</c> to know whether SessionStarted reached the
@@ -55,6 +56,12 @@ namespace FocusAgent.App.Connectivity;
 ///               -> the paused-Edge overlay's "switch the extension back on"
 ///                  action (#427): opens Edge for the repair window (409 when
 ///                  Edge isn't paused).
+///   POST /school-profile?window=&lt;hwnd&gt;
+///               -> the overlay's "go to my school profile" action on a window
+///                  outside the school profile (#525): closes that window
+///                  (decimal handle; none: the one the overlay was last shown for)
+///                  and brings the school profile forward (409 when there is no
+///                  school profile to go to).
 ///   POST /overlay-app?app=&lt;rule value&gt;
 ///               -> the focus overlay's row for that allowed app (#453): clicks it
 ///                  on the UI thread, as the student does, without waiting for
@@ -65,9 +72,16 @@ namespace FocusAgent.App.Connectivity;
 /// whether the setup window is open, and how far the check for the extension
 /// got (#488: <c>WaitingForBrowser</c>, <c>Installed</c>, <c>GuidedInstall</c>, ...); <c>extensionGuard</c> (#427):
 /// whether the extension's witness is connected, the Edge pause's state and the
-/// open Edge profiles with the extension switched off (#518); and
+/// open Edge profiles with the extension switched off (#518), why Edge is paused
+/// and what the extension says about its own settings (#524); <c>schoolProfile</c>
+/// (#525): whether Edge has a profile signed in with the school account, which
+/// one, and the windows outside it the last scan found, the one signed in that
+/// lacks the extension and what the overlay's buttons last opened in which profile
+/// (#536); <c>addressBar</c> (#526):
+/// whether the agent is reading Edge's address bar (only during a session), how
+/// many times it has, and the off-list hosts it reported in this session; and
 /// <c>overlay</c> (#452): what the focus overlay shows while it is up
-/// (<c>Blocked</c> / <c>BrowserPaused</c>), null while it is not; and
+/// (<c>Blocked</c> / <c>BrowserPaused</c> / <c>SiteAccessPaused</c>), null while it is not; and
 /// <c>pendingUpdate</c> (#449): the version of a downloaded update that the next
 /// agent start applies, null while none is waiting; and <c>lastUpdateCheck</c>
 /// (#456): when the last update check started, by the agent's clock; and
@@ -106,6 +120,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Action? _onCheckUpdate;
     private readonly Action<TimeSpan>? _onSimulateSleep;
     private readonly Func<object?>? _logUpload;
+    private readonly Func<object?>? _schoolProfile;
+    private readonly Func<nint, bool>? _onGoToSchoolProfile;
+    private readonly Func<object?>? _addressBar;
     private readonly HttpListener _listener;
     private CancellationTokenSource? _cts;
     private Task? _loop;
@@ -131,7 +148,10 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Action? onCheckUpdate = null,
         Action<TimeSpan>? onSimulateSleep = null,
         Func<bool>? canQuit = null,
-        Func<object?>? logUpload = null)
+        Func<object?>? logUpload = null,
+        Func<object?>? schoolProfile = null,
+        Func<nint, bool>? onGoToSchoolProfile = null,
+        Func<object?>? addressBar = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -154,6 +174,9 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _onSimulateSleep = onSimulateSleep;
         _canQuit = canQuit;
         _logUpload = logUpload;
+        _schoolProfile = schoolProfile;
+        _onGoToSchoolProfile = onGoToSchoolProfile;
+        _addressBar = addressBar;
         _listener = new HttpListener();
     }
 
@@ -254,6 +277,18 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 return;
             }
 
+            if (method == "POST" && path == "/school-profile")
+            {
+                // 409 when there is no school profile to go to.
+                var raw = ctx.Request.QueryString["window"];
+                var valid = string.IsNullOrWhiteSpace(raw) || long.TryParse(raw, out _);
+                var window = valid && !string.IsNullOrWhiteSpace(raw) ? (nint)long.Parse(raw) : IntPtr.Zero;
+                var went = valid ? _onGoToSchoolProfile?.Invoke(window) : null;
+                ctx.Response.StatusCode = !valid ? 400 : went switch { null => 404, true => 204, false => 409 };
+                ctx.Response.Close();
+                return;
+            }
+
             if (method == "POST" && path == "/overlay-app")
             {
                 // 409 when the overlay isn't up, so a spec can tell "clicked" from "no-op".
@@ -320,8 +355,11 @@ public sealed class StatusEndpoint : IAsyncDisposable
                     },
                 // #148: how many Edge InPrivate windows the agent-side witness has
                 // reported this process, so the headless e2e can assert detection
-                // fired without screenshotting a real InPrivate window.
+                // fired without screenshotting a real InPrivate window. #535: and
+                // how many it sees open now, so it can tell one it closes in time
+                // (never reported) was seen.
                 inPrivateDetections = _inPrivate.DetectionCount,
+                inPrivateOpen = _inPrivate.OpenCount,
                 // #405: where the Edge force-install entry is, and whether the
                 // setup window is up, so the headless e2e can follow the flow.
                 extensionPolicy = _extensionPolicy?.Invoke(),
@@ -331,6 +369,11 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 // #452: which overlay the student is on, if any, so the headless
                 // e2e can tell the paused-browser overlay from the blocked-app one.
                 overlay = _overlay?.Invoke(),
+                // #525: where the school profile stands and the windows outside it.
+                schoolProfile = _schoolProfile?.Invoke(),
+                // #526: whether the address bar is being read, how often it was,
+                // and the off-list hosts reported in this session.
+                addressBar = _addressBar?.Invoke(),
                 // #449: the downloaded update the next agent start applies, so the
                 // headless e2e can tell the update pass finished while the agent
                 // kept running.

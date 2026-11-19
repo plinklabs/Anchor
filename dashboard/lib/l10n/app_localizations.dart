@@ -164,6 +164,12 @@ abstract class AppLocalizations {
   /// **'Approve'**
   String get actionApprove;
 
+  /// No description provided for @actionDeny.
+  ///
+  /// In en, this message translates to:
+  /// **'Deny'**
+  String get actionDeny;
+
   /// No description provided for @badgeLive.
   ///
   /// In en, this message translates to:
@@ -812,6 +818,12 @@ abstract class AppLocalizations {
   /// **'Could not approve the request. Please try again.'**
   String get sessionApproveError;
 
+  /// No description provided for @sessionDenyError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not deny the request. Please try again.'**
+  String get sessionDenyError;
+
   /// No description provided for @sessionCopiedCode.
   ///
   /// In en, this message translates to:
@@ -1064,6 +1076,30 @@ abstract class AppLocalizations {
   /// **'{who, select, named{{name}\'s Anchor app stopped running.} other{A student\'s Anchor app stopped running.}}'**
   String feedTamperAgentUnavailable(String who, String name);
 
+  /// Tamper report outside_school_profile (#525): during a session a window of another Edge profile or a Guest window stayed open, paused, after the student was asked to close it.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} kept an Edge window open outside the school profile.} other{A student kept an Edge window open outside the school profile.}}'**
+  String feedTamperOutsideSchoolProfile(String who, String name);
+
+  /// Tamper report school_profile_missing (#525): during a session no Edge profile was signed in with the student's school account (Edge stays paused), and the student did not sign in in time.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} is not signed in to Edge with their school account.} other{A student is not signed in to Edge with their school account.}}'**
+  String feedTamperSchoolProfileMissing(String who, String name);
+
+  /// Tamper report school_profile_without_extension (#536): during a session the student was signed in to Edge with their school account, but in a profile without the Anchor extension (Edge stays paused, its button opens the store listing in that profile), and the student did not add the extension in time.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} hasn\'t added Anchor to their school profile in Edge.} other{A student hasn\'t added Anchor to their school profile in Edge.}}'**
+  String feedTamperSchoolProfileWithoutExtension(String who, String name);
+
+  /// Test phase only (#515). UnfilteredSite (#526): during a session the student's agent saw an off-list website open in Edge (the school profile's window in front) that the extension did not block. Live feed and past session's event log. {host} is the site's host only.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name} had {host} open in Edge, which isn\'t allowed, and it wasn\'t blocked.} other{A student had {host} open in Edge, which isn\'t allowed, and it wasn\'t blocked.}}'**
+  String feedUnfilteredSite(String who, String name, String host);
+
   /// A tamper report of a kind the dashboard has no sentence for.
   ///
   /// In en, this message translates to:
@@ -1111,6 +1147,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Access to {host} was approved for the whole class.'**
   String feedApprovedForClass(String host);
+
+  /// Past session's event log (#523): the teacher denied a student's access request. The student may have asked again after it.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{Access to {host} was denied for {name}.} other{Access to {host} was denied for a student.}}'**
+  String feedDeniedFor(String who, String name, String host);
 
   /// No description provided for @sessionStateStale.
   ///
@@ -1189,12 +1231,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Pending requests'**
   String get sessionPendingRequests;
-
-  /// No description provided for @sessionRequesters.
-  ///
-  /// In en, this message translates to:
-  /// **'{count, plural, =1{1 student — {names}} other{{count} students — {names}}}'**
-  String sessionRequesters(int count, String names);
 
   /// No description provided for @sessionMoreApprovalOptions.
   ///
@@ -2156,11 +2192,11 @@ abstract class AppLocalizations {
   /// **'Approved exceptions'**
   String get pastApprovedExceptions;
 
-  /// No description provided for @pastUnapprovedRequests.
+  /// Past session page: the access requests the teacher neither approved nor denied (#523).
   ///
   /// In en, this message translates to:
-  /// **'Unapproved requests'**
-  String get pastUnapprovedRequests;
+  /// **'Unanswered requests'**
+  String get pastUnansweredRequests;
 
   /// No description provided for @pastEventLog.
   ///
@@ -2245,6 +2281,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 website approved} other{{count} websites approved}}'**
   String pastSummaryApproved(int count);
+
+  /// Past session's activity summary (#523): how many of the student's access requests the teacher denied.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 request denied} other{{count} requests denied}}'**
+  String pastSummaryDenied(int count);
+
+  /// Test phase only (#515). Past session's activity summary (#526): how many off-list websites the agent saw open in Edge that the extension did not block.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 website not blocked} other{{count} websites not blocked}}'**
+  String pastSummaryUnfilteredSites(int count);
 
   /// No description provided for @pastSummaryBlockedSites.
   ///

@@ -19,10 +19,10 @@ name: Extension Release
 # rejected credentials. The job refuses any ref that is not an `extension-v*`
 # tag, so a dispatch without --ref (the default branch, develop) ships nothing.
 #
-# Backend-agnostic, one canonical listing: the extension gets its backend URL from
-# the agent at runtime (#204), so every fork reuses the ONE published listing
-# instead of publishing near-identical copies. Forks therefore normally do NOT run
-# this workflow; it ships the canonical Plink Labs listing.
+# Backend-agnostic, one canonical listing: the extension has no backend connection
+# and gets its session from the agent (#489), so every fork reuses the ONE
+# published listing instead of publishing near-identical copies. Forks therefore
+# normally do NOT run this workflow; it ships the canonical Plink Labs listing.
 #
 # Extension ID: the Edge store ASSIGNS the published ID and rejects a manifest that
 # ships a `key`, so pack-extension.mjs strips `key` from the upload ZIP (locked by a

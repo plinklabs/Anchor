@@ -32,6 +32,7 @@ const _connectError =
     'try again.';
 const _endError = 'Failed to end session. Please try again.';
 const _approveError = 'Could not approve the request. Please try again.';
+const _denyError = 'Could not deny the request. Please try again.';
 const _bundlesError = 'Could not update the allowed bundles. Please try again.';
 const _notYours =
     "This session isn't available to you. Only the teacher who started it can "
@@ -80,6 +81,7 @@ class _Sessions extends SessionsApi {
   Object? endError;
   Object? approveError;
   Object? approveClassError;
+  Object? denyError;
   Object? updateBundlesError;
   int endCalls = 0;
 
@@ -122,6 +124,12 @@ class _Sessions extends SessionsApi {
   @override
   Future<void> approveUnblockForClass(String sessionId, String host) async {
     final error = approveClassError;
+    if (error != null) throw error;
+  }
+
+  @override
+  Future<void> denyUnblock(String sessionId, String userId, String host) async {
+    final error = denyError;
     if (error != null) throw error;
   }
 
@@ -260,6 +268,9 @@ Future<void> _endFromLeaveDialog(WidgetTester tester) async {
 Future<void> _approveForStudent(WidgetTester tester) =>
     _tapAndSettle(tester, find.widgetWithText(OutlinedButton, 'Approve'));
 
+Future<void> _deny(WidgetTester tester) =>
+    _tapAndSettle(tester, find.widgetWithText(TextButton, 'Deny'));
+
 Future<void> _approveForClass(WidgetTester tester) async {
   await _tapAndSettle(tester, find.byIcon(Icons.more_vert));
   await _tapAndSettle(tester, find.text('Approve for whole class'));
@@ -347,6 +358,18 @@ void main() {
       expect(find.text(_host), findsOneWidget);
     });
 
+    testWidgets('Deny while offline (#523)', (tester) async {
+      final h = await _pumpLive(tester);
+      h.sessions.denyError = _offline();
+
+      await _deny(tester);
+
+      _expectSentence(tester, _denyError);
+      // The request is still there to answer again.
+      expect(find.text(_host), findsOneWidget);
+      expect(find.widgetWithText(TextButton, 'Deny'), findsOneWidget);
+    });
+
     testWidgets('Approve for whole class answering 500', (tester) async {
       final h = await _pumpLive(tester);
       h.sessions.approveClassError = ApiException(500, 'System.Exception');
@@ -399,6 +422,7 @@ void main() {
             (s) => s.approveError = ApiException(403, ''),
             _approveForStudent,
           ),
+          ('Deny', (s) => s.denyError = ApiException(403, ''), _deny),
           (
             'Approve for whole class',
             (s) => s.approveClassError = ApiException(403, ''),
@@ -424,7 +448,12 @@ void main() {
         // None of the owner's controls, and no error line under them.
         expect(find.text('End session'), findsNothing);
         expect(find.text(_host), findsNothing);
-        for (final line in const [_endError, _approveError, _bundlesError]) {
+        for (final line in const [
+          _endError,
+          _approveError,
+          _denyError,
+          _bundlesError,
+        ]) {
           expect(find.text(line), findsNothing);
         }
         _expectNoRawError();

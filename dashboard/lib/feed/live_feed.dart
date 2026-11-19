@@ -51,6 +51,11 @@ FeedPriority feedPriorityOf(SessionEvent event) {
   if (state != null && _unenforcedStates.contains(state)) {
     return FeedPriority.warning;
   }
+  // Test phase only (#515): a site that isn't allowed was open in Edge and
+  // the extension didn't block it (#526). The laptop isn't filtered, so it
+  // ranks with the warnings, but it goes off as no alert: the gap may be the
+  // extension's, not the student's doing.
+  if (event.kind == 'UnfilteredSite') return FeedPriority.warning;
   switch (liveAlertCategoryOf(event)) {
     case LiveAlertCategory.agentLost:
     case LiveAlertCategory.tamper:
@@ -112,8 +117,20 @@ String feedSentence(
         'inprivate_opened' => l10n.feedTamperInPrivate(who, n),
         'host_permission_revoked' => l10n.feedTamperSiteAccess(who, n),
         'agent_unavailable' => l10n.feedTamperAgentUnavailable(who, n),
+        'outside_school_profile' => l10n.feedTamperOutsideSchoolProfile(who, n),
+        'school_profile_missing' => l10n.feedTamperSchoolProfileMissing(who, n),
+        'school_profile_without_extension' =>
+          l10n.feedTamperSchoolProfileWithoutExtension(who, n),
         _ => l10n.feedTamperOther(who, n),
       };
+    case 'UnfilteredSite':
+      // Test phase only (#515): the host only, never a URL (#526).
+      final Object? host = event.payload['host'];
+      return l10n.feedUnfilteredSite(
+        who,
+        n,
+        host is String && host.isNotEmpty ? host : l10n.feedSomeSite,
+      );
   }
   return l10n.feedOther;
 }

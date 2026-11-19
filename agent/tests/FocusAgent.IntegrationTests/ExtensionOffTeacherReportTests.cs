@@ -48,6 +48,9 @@ public sealed class ExtensionOffTeacherReportTests
 
         // 2. Switched off with the browser open: nothing on the drop itself, and
         //    one report once the grace period ran out and the browser is paused.
+        //    Open means on screen when the grace period runs out, and someone using
+        //    this desktop may have taken the stand-in off it meanwhile (#538).
+        await run.EnsureBrowserOnScreenAsync();
         await run.Extension.DisconnectAsync();
         await run.WaitForGuardAsync(g => !g.WitnessConnected, TimeSpan.FromSeconds(5), "the witness to drop");
         Assert.Equal(0, await ExtensionOffReports.CountAsync(api, run.SessionId));
@@ -294,6 +297,32 @@ internal static class ExtensionOffReports
 [SupportedOSPlatform("windows")]
 internal static class WindowAppId
 {
+    /// <summary>The window's explicit AppUserModelID, or null when it has none (#526: which Edge profile it is).</summary>
+    public static string? Get(IntPtr hwnd)
+    {
+        var iid = typeof(IPropertyStore).GUID;
+        if (SHGetPropertyStoreForWindow(hwnd, ref iid, out var store) != 0) return null;
+        try
+        {
+            var key = new PropertyKey { FormatId = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), PropertyId = 5 };
+            if (store.GetValue(ref key, out var value) != 0) return null;
+            try
+            {
+                return value.Type == 31 /* VT_LPWSTR */ && value.Pointer != IntPtr.Zero
+                    ? Marshal.PtrToStringUni(value.Pointer)
+                    : null;
+            }
+            finally
+            {
+                _ = PropVariantClear(ref value);
+            }
+        }
+        finally
+        {
+            Marshal.ReleaseComObject(store);
+        }
+    }
+
     public static void Set(IntPtr hwnd, string appId)
     {
         var iid = typeof(IPropertyStore).GUID;
@@ -345,4 +374,7 @@ internal static class WindowAppId
     [DllImport("shell32.dll")]
     private static extern int SHGetPropertyStoreForWindow(
         IntPtr hwnd, ref Guid riid, [MarshalAs(UnmanagedType.Interface)] out IPropertyStore store);
+
+    [DllImport("ole32.dll")]
+    private static extern int PropVariantClear(ref PropVariant value);
 }

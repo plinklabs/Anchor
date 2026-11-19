@@ -102,6 +102,11 @@ public static class DevDataSeeder
     {
         var seeds = new[]
         {
+            // The session baseline holds only the sign-in hosts (#516), so this
+            // bundle is what opens Office, Outlook, Teams, Copilot and the rest
+            // of Microsoft's web. Mirrored in scripts/seed-bundles.ps1; the
+            // Microsoft365BundleNewWebDomains migration brings a deployment's
+            // existing bundle up to this list.
             new BundleSeed("Microsoft 365", new[]
             {
                 new EntrySeed("*.office.com", BundleEntryMatchType.Wildcard),
@@ -112,6 +117,23 @@ public static class DevDataSeeder
                 new EntrySeed("*.sharepoint.com", BundleEntryMatchType.Wildcard),
                 new EntrySeed("outlook.office.com", BundleEntryMatchType.Exact),
                 new EntrySeed("teams.microsoft.com", BundleEntryMatchType.Exact),
+                // Where Microsoft 365 on the web lives now (#531): the home page
+                // (m365.cloud.microsoft, where www.office.com redirects), and
+                // Outlook, Teams, Word, Excel, PowerPoint, OneDrive, OneNote and
+                // Forms on their *.cloud.microsoft hosts. www.microsoft365.com
+                // redirects there too, and portal.office.com and sign-in pass
+                // through it.
+                new EntrySeed("*.cloud.microsoft", BundleEntryMatchType.Wildcard),
+                new EntrySeed("*.microsoft365.com", BundleEntryMatchType.Wildcard),
+                // The shortcuts a student types (#532): outlook.com and
+                // onedrive.com redirect on to Outlook and onedrive.live.com,
+                // but the extension judges a navigation by its first URL.
+                // Exact, so the rest of *.outlook.com (consumer mail's other
+                // hosts, Safe Links) stays closed.
+                new EntrySeed("outlook.com", BundleEntryMatchType.Exact),
+                new EntrySeed("www.outlook.com", BundleEntryMatchType.Exact),
+                new EntrySeed("onedrive.com", BundleEntryMatchType.Exact),
+                new EntrySeed("www.onedrive.com", BundleEntryMatchType.Exact),
             }),
             new BundleSeed("Smartschool", new[]
             {

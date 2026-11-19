@@ -41,10 +41,10 @@ export interface ActiveSessionState {
 
 /**
  * Payload reported each time a navigation is blocked; the agent sends it on as
- * EventKind.BlockedUrl (#72, #489).
+ * EventKind.BlockedUrl (#72, #489). The host only, never the URL (#527): a
+ * path or query string can hold search terms and other personal detail.
  */
 export interface BlockedUrlPayload {
-  url: string;
   host: string;
   tabId: number;
   occurredAt: string;
@@ -59,17 +59,6 @@ export interface UnblockRequestPayload {
   host: string;
   reason?: string;
 }
-
-/**
- * The kinds of tamper the extension can witness in-browser (#105):
- * - `inprivate_opened` — an InPrivate window was created during a session.
- * - `host_permission_revoked` — "Site access" was downgraded from "On all
- *   sites", so the navigation filter lost the host access it needs.
- * The agent sends them on as the `kind` of a TamperDetected event (#489), which
- * the backend surfaces verbatim on the teacher's roster. What the extension
- * can't witness about itself (`extension_disabled`) the agent reports.
- */
-export type TamperKind = 'inprivate_opened' | 'host_permission_revoked';
 
 /**
  * Wire format for chrome.runtime messages exchanged between the background
@@ -92,4 +81,13 @@ export type ExtensionRuntimeMessage =
       sessionId: string;
       /** The full allowlist now in force, entries as the matcher reads them. */
       domains: ReadonlyArray<AllowedDomainDto>;
+    }
+  | {
+      /**
+       * The teacher turned down the request for `host` (#523). The block page
+       * holding that host back says so, and offers to ask again.
+       */
+      kind: 'unblock-denied';
+      sessionId: string;
+      host: string;
     };

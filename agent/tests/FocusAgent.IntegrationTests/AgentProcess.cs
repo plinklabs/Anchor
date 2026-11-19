@@ -31,7 +31,46 @@ internal sealed record StatusSnapshot(
     // #456: when the last update check started, by the agent's update clock.
     [property: JsonPropertyName("lastUpdateCheck")] DateTimeOffset? LastUpdateCheck = null,
     // #446: what the log uploads did in this agent process.
-    [property: JsonPropertyName("logUpload")] LogUploadSnapshot? LogUpload = null);
+    [property: JsonPropertyName("logUpload")] LogUploadSnapshot? LogUpload = null,
+    // #525: where the Edge profile signed in with the school account stands.
+    [property: JsonPropertyName("schoolProfile")] SchoolProfileSnapshot? SchoolProfile = null,
+    // #526: whether the agent reads Edge's address bar, and what it reported.
+    [property: JsonPropertyName("addressBar")] AddressBarSnapshot? AddressBar = null,
+    // #535: the InPrivate windows the agent's InPrivate witness sees open now,
+    // reported or not yet.
+    [property: JsonPropertyName("inPrivateOpen")] int InPrivateOpen = 0);
+
+/// <summary>
+/// The address-bar witness as exposed on /status (#526, test phase only): whether
+/// the agent is reading the school profile's foreground Edge window (only during
+/// a session), how many times it has read an address bar since it started, and
+/// the off-list hosts it reported in this session.
+/// </summary>
+internal sealed record AddressBarSnapshot(
+    [property: JsonPropertyName("watching")] bool Watching,
+    [property: JsonPropertyName("reads")] int Reads,
+    [property: JsonPropertyName("reported")] string[]? Reported);
+
+/// <summary>
+/// The school-profile rule as exposed on /status (#525): whether Edge has a
+/// profile signed in with the school account (<c>Unknown</c> / <c>Found</c> /
+/// <c>Missing</c>), which one (its folder), and the windows outside it (another
+/// profile, Guest, InPrivate) the last scan found. #536: the profile signed in
+/// with the school account while it lacks the extension, and what the overlay's
+/// buttons last opened in which profile (the e2e's Edge is a stand-in that is
+/// never started).
+/// </summary>
+internal sealed record SchoolProfileSnapshot(
+    [property: JsonPropertyName("status")] string? Status,
+    [property: JsonPropertyName("profile")] string? Profile,
+    [property: JsonPropertyName("outsideWindows")] long[]? OutsideWindows,
+    [property: JsonPropertyName("withoutExtension")] string? WithoutExtension = null,
+    [property: JsonPropertyName("lastOpened")] ProfileOpenedSnapshot? LastOpened = null);
+
+/// <summary>What the agent last opened in which Edge profile (#536): the profile folder, and the address or null.</summary>
+internal sealed record ProfileOpenedSnapshot(
+    [property: JsonPropertyName("profile")] string? Profile,
+    [property: JsonPropertyName("url")] string? Url);
 
 /// <summary>
 /// The log uploads as exposed on /status (#446): how many passes ran in this agent
@@ -48,14 +87,20 @@ internal sealed record LogUploadSnapshot(
 /// The Edge pause as exposed on /status (#427): whether the extension's witness
 /// pipe is connected, how many extensions are (one per Edge profile, #517), the
 /// guard's state (<c>Off</c> / <c>Present</c> / <c>Waiting</c> /
-/// <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>), and the open Edge profiles
-/// that have the extension switched off or removed (#518).
+/// <c>Dormant</c> / <c>Paused</c> / <c>Repairing</c>), the open Edge profiles
+/// that have the extension switched off or removed (#518), and (#524) why Edge is
+/// paused (<c>ExtensionOff</c> / <c>NoSiteAccess</c>) and what the extension says
+/// about its own settings: whether one may not work on all sites, and whether
+/// they are allowed in InPrivate (null before any has said).
 /// </summary>
 internal sealed record ExtensionGuardSnapshot(
     [property: JsonPropertyName("witnessConnected")] bool WitnessConnected,
     [property: JsonPropertyName("state")] string? State,
     [property: JsonPropertyName("witnessConnections")] int WitnessConnections = 0,
-    [property: JsonPropertyName("profilesWithExtensionOff")] string[]? ProfilesWithExtensionOff = null);
+    [property: JsonPropertyName("profilesWithExtensionOff")] string[]? ProfilesWithExtensionOff = null,
+    [property: JsonPropertyName("pauseReason")] string? PauseReason = null,
+    [property: JsonPropertyName("siteAccessLost")] bool SiteAccessLost = false,
+    [property: JsonPropertyName("inPrivateAllowed")] bool? InPrivateAllowed = null);
 
 /// <summary>
 /// The Edge extension setup as exposed on /status (#405): where an Anchor
@@ -338,6 +383,18 @@ internal sealed class AgentProcess : IAsyncDisposable
     public async Task<bool> TurnExtensionBackOnAsync()
     {
         using var res = await _http.PostAsync($"{_controlBase}/extension-repair", content: null);
+        return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    /// <summary>
+    /// The overlay's "go to my school profile" action for <paramref name="window"/>,
+    /// a window outside the school profile, via POST /school-profile (#525): the
+    /// agent closes it and brings the school profile forward. Returns false when
+    /// there was no school profile to go to.
+    /// </summary>
+    public async Task<bool> GoToSchoolProfileAsync(IntPtr window)
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/school-profile?window={(long)window}", content: null);
         return res.StatusCode == System.Net.HttpStatusCode.NoContent;
     }
 

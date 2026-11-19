@@ -56,29 +56,37 @@ public class WitnessHostIntegrationTests
     }
 
     [Fact]
-    public async Task Host_sends_the_configured_backend_url_to_the_extension_on_startup()
+    public async Task Host_hands_the_extension_only_the_agent_link_and_what_the_agent_sends()
     {
-        // #204: the host hands the extension its backend URL over the native
-        // messaging channel as soon as it starts, so a single published extension
-        // learns its backend from the on-box agent at runtime. The env var is the
-        // per-deployment source (what the agent installer / e2e harness sets).
+        // #495: the host used to hand every extension a backend_url and an
+        // auth_config as soon as it started, for extensions from before #489 that
+        // signed in and connected to the backend themselves. Every extension now gets
+        // its session from the agent, so the host writes only its own agent_available /
+        // agent_unavailable and the agent's messages, even on a box that still has the
+        // old deployment config set.
         var pipeName = "anchor-witness-test-" + Guid.NewGuid().ToString("N");
-        const string backendUrl = "https://backend.test.example";
 
         var transport = new NamedPipeWitnessTransport(pipeName: pipeName);
+        transport.WitnessConnected += (_, connection) =>
+            transport.TrySend(connection, "{\"type\":\"welcome\"}");
         await transport.StartAsync();
 
-        var host = StartHostProcess(pipeName, backendUrl);
+        var host = StartHostProcess(pipeName, withLegacyConfig: true);
         try
         {
-            // Read the first framed native message off the host's stdout — the
-            // backend_url message it emits the moment the bridge starts.
-            var stdout = host.StandardOutput.BaseStream;
-            var json = await ReadFramedMessageAsync(stdout, Timeout);
+            var types = new List<string?>();
+            var deadline = DateTime.UtcNow + Timeout;
+            do
+            {
+                var remaining = deadline - DateTime.UtcNow;
+                Assert.True(remaining > TimeSpan.Zero, $"the host never relayed the agent's message; it wrote [{string.Join(", ", types)}]");
+                var json = await ReadFramedMessageAsync(host.StandardOutput.BaseStream, remaining);
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                types.Add(doc.RootElement.GetProperty("type").GetString());
+            }
+            while (types[^1] != "welcome");
 
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            Assert.Equal("backend_url", doc.RootElement.GetProperty("type").GetString());
-            Assert.Equal(backendUrl, doc.RootElement.GetProperty("url").GetString());
+            Assert.Equal(new[] { "agent_available", "welcome" }, types);
         }
         finally
         {
@@ -188,7 +196,7 @@ public class WitnessHostIntegrationTests
         return System.Text.Encoding.UTF8.GetString(payload);
     }
 
-    private static Process StartHostProcess(string pipeName, string? backendUrl = null)
+    private static Process StartHostProcess(string pipeName, bool withLegacyConfig = false)
     {
         var hostExe = ResolveHostExe();
         var psi = new ProcessStartInfo(hostExe)
@@ -199,11 +207,15 @@ public class WitnessHostIntegrationTests
             CreateNoWindow = true,
         };
         psi.Environment["ANCHOR_WITNESS_PIPE"] = pipeName;
-        // Pin a deterministic backend URL for the #204 hand-off test; leaving it
-        // unset lets the disconnect test run against the dev fallback, which it
-        // never reads.
-        if (backendUrl is not null)
-            psi.Environment[FocusAgent.WitnessHost.BackendUrlConfig.EnvVarName] = backendUrl;
+        // What a deployment set for the host before #495, when it still handed the
+        // extension a backend URL and Entra config. The host must ignore it now.
+        if (withLegacyConfig)
+        {
+            psi.Environment["ANCHOR_WITNESS_BACKEND_URL"] = "https://backend.test.example";
+            psi.Environment["ANCHOR_WITNESS_AUTH_TENANT_ID"] = "tenant-1";
+            psi.Environment["ANCHOR_WITNESS_AUTH_CLIENT_ID"] = "client-1";
+            psi.Environment["ANCHOR_WITNESS_AUTH_SCOPE"] = "api://x/.default";
+        }
         var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the witness host process.");
         return process;

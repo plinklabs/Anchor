@@ -9,6 +9,12 @@ namespace Anchor.Domain.Events;
 public enum EventKind
 {
     ForegroundChange,
+
+    /// <summary>
+    /// The extension blocked a page during a session, reported by the agent.
+    /// Stored by the page's host only — <c>{"host":"…","tabId":…,"occurredAt":"…"}</c>
+    /// — never its URL (#527), whatever an older agent sends.
+    /// </summary>
     BlockedUrl,
     UnblockRequest,
     HeartbeatLost,
@@ -53,5 +59,26 @@ public enum EventKind
     /// payload is <c>{"expectedSince":"…"}</c>, the session's start. A student
     /// who joins later is recorded only by their participant row's join.
     /// </summary>
-    NotConnected
+    NotConnected,
+
+    /// <summary>
+    /// A teacher turned down one student's pending unblock request (#523).
+    /// Recorded under the student, with the payload <c>{"host":"…"}</c>. It
+    /// answers that student's requests for the host up to then: they drop off
+    /// the pending list, and a request the student sends after it is pending
+    /// again. Their agent hears it as <c>UnblockDenied</c> and the block page
+    /// says the request was declined.
+    /// </summary>
+    UnblockDenied,
+
+    /// <summary>
+    /// TEST PHASE ONLY (#515): the agent saw an off-list site open in Edge that
+    /// the extension didn't block (#526). During a session it reads the address
+    /// bar of the school profile's foreground Edge window, a second witness of
+    /// what gets past the extension, and reports each off-list host once. Stored
+    /// by the host only — <c>{"host":"…"}</c> — whatever an agent sends, and
+    /// pushed to the teacher's live page. After the pilot it goes, or stays
+    /// without the site (#515).
+    /// </summary>
+    UnfilteredSite
 }

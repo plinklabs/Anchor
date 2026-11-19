@@ -2,7 +2,7 @@ import { isUrlAllowed } from './shared/host-matcher';
 import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { selectTabsToRestore } from './shared/tab-restore';
-import { classifyCreatedWindow, isHostAccessLoss } from './shared/tamper';
+import { ALL_SITES, extensionPageUrl, runSelfCheck } from './shared/self-check';
 import { WitnessClient, WITNESS_HOST_NAME, type AgentMessage } from './shared/witness';
 import {
   clearActiveSession,
@@ -16,7 +16,6 @@ import type {
   AllowedDomainDto,
   ExtensionRuntimeMessage,
   SessionStartedPayload,
-  TamperKind,
   UnblockRequestPayload,
 } from './shared/types';
 
@@ -103,6 +102,12 @@ async function handleAgentMessage(message: AgentMessage): Promise<void> {
     case 'allowlist_amended':
       await handleAllowlistAmended(message.sessionId, message.addedDomains);
       return;
+    case 'unblock_denied':
+      await handleUnblockDenied(message.sessionId, message.host);
+      return;
+    case 'open_extension_page':
+      await openExtensionPage(message.sessionId);
+      return;
   }
 }
 
@@ -133,6 +138,9 @@ async function handleSessionStarted(payload: SessionStartedPayload): Promise<voi
     sessionId: state.sessionId,
     domainCount: state.domains.length,
   });
+  // A setting changed before the session (or while the extension was away)
+  // fires nothing now, so read them and tell the agent (#524).
+  await reportSelfCheck(state.sessionId);
   // A reconnect can bring a wider allowlist than the cached one (a grant or a
   // bundle the extension missed): let block pages it now covers go back.
   await notifyBlockPages(state);
@@ -240,6 +248,25 @@ async function notifyBlockPages(state: ActiveSessionState): Promise<void> {
     // "Receiving end does not exist" is the normal case when no block page
     // is open; not worth surfacing as an error.
     log.debug('no runtime listeners for allowlist-amended (expected if no block page open)', err);
+  }
+}
+
+// The teacher turned down a request (#523). Nothing changes on the allowlist:
+// the block page for the host says the request was declined, and lets the
+// student ask again.
+async function handleUnblockDenied(sessionId: string, host: string): Promise<void> {
+  const current = await getActiveSession();
+  if (current?.sessionId !== sessionId) {
+    log.warn('unblock denial dropped — no matching active session in cache', { sessionId });
+    return;
+  }
+  log.info('unblock request denied', { sessionId, host });
+  const message: ExtensionRuntimeMessage = { kind: 'unblock-denied', sessionId, host };
+  try {
+    await chrome.runtime.sendMessage(message);
+  } catch (err) {
+    // No block page open: nobody is waiting on the answer.
+    log.debug('no runtime listeners for unblock-denied (expected if no block page open)', err);
   }
 }
 
@@ -395,17 +422,19 @@ async function redirectToBlockPage(tabId: number, blockedUrl: string, session: A
 }
 
 // The agent sends it on to the teacher's session log as a BlockedUrl event.
+// The host only, never the URL (#527): a path or query string can hold search
+// terms and other personal detail the teacher doesn't need. The block page
+// still shows the student the whole URL, on their own device.
 function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: string): void {
   let host = '';
   try {
     host = new URL(blockedUrl).hostname;
   } catch {
-    // Unparseable — leave host empty; the URL itself is still informative.
+    // Unparseable: the block is still reported, as "a website".
   }
   witness?.report({
     type: 'blocked_url',
     sessionId,
-    url: blockedUrl,
     host,
     tabId,
     occurredAt: new Date().toISOString(),
@@ -413,31 +442,63 @@ function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: string):
 }
 
 // ---------------------------------------------------------------------------
-// Tamper detection (#105, #146)
+// Self-check (#524)
 // ---------------------------------------------------------------------------
-// Soft enforcement (design §5.4): make tampering visible to the teacher rather
-// than trying to prevent it. These listeners catch what the extension can
-// witness itself while running, and hand it to the agent to report; the agent
-// covers what the extension cannot witness about itself (disabled/removed).
+// The extension reads its own settings and the agent decides what they mean: it
+// pauses Edge while "Site access" isn't "On all sites", lifts the pause as soon
+// as a check passes, and tells the teacher only if the student doesn't put it
+// back. See self-check.ts for what a student can change and why.
+//
+// The check runs on every session the agent hands down (a join, and every
+// reconnect: "Allow in InPrivate" restarts the extension, so that is how its
+// change comes in) and whenever the permissions change ("Site access" doesn't
+// restart it). So fixing it needs no restart of Edge or of the session.
+//
+// Beyond its own settings the extension reports no tampering. What it can't
+// witness about itself (switched off, removed) and InPrivate windows are the
+// agent's (#146, #148): the agent pauses an InPrivate window during a session
+// and tells the teacher only of one still open after a minute (#535). The
+// extension used to report every InPrivate window it saw the moment it opened;
+// the agent stopped passing that on in #535, and the extension stopped sending
+// it in #539.
 
-chrome.windows.onCreated.addListener((window) => {
-  const kind = classifyCreatedWindow(window);
-  if (kind) void reportTamperIfInSession(kind);
-});
+chrome.permissions.onRemoved.addListener(() => void reportSelfCheckIfInSession());
+chrome.permissions.onAdded.addListener(() => void reportSelfCheckIfInSession());
 
-chrome.permissions.onRemoved.addListener((removed) => {
-  if (isHostAccessLoss(removed)) void reportTamperIfInSession('host_permission_revoked');
-});
-
-async function reportTamperIfInSession(kind: TamperKind): Promise<void> {
-  // Tampering is only actionable while a session is enforcing — outside one the
-  // student may browse and reconfigure freely, so an InPrivate window or a
-  // permission change isn't a violation (#105, "during session").
+async function reportSelfCheckIfInSession(): Promise<void> {
+  // Outside a session the student may set the extension up as they like.
   const session = await getActiveSession();
-  if (!session) {
-    log.debug('tamper signal ignored — no active session', { kind });
+  if (!session) return;
+  await reportSelfCheck(session.sessionId);
+}
+
+async function reportSelfCheck(sessionId: string): Promise<void> {
+  const result = await runSelfCheck(
+    {
+      containsAllSites: () => chrome.permissions.contains(ALL_SITES),
+      isAllowedInPrivate: () => chrome.extension.isAllowedIncognitoAccess(),
+    },
+    (setting, err) => log.warn(`could not read the extension's ${setting}; counting it as fine`, err),
+  );
+  if (result.allSites) log.info('self-check', { sessionId, ...result });
+  else log.warn('self-check: the extension may not work on all sites', { sessionId, ...result });
+  witness?.report({ type: 'self_check', sessionId, ...result });
+}
+
+// The student pressed the button on the agent's pause: open the extension's own
+// page, where "Site access" is. The agent can't open it from outside the browser,
+// and it opens Edge for the repair window before asking.
+async function openExtensionPage(sessionId: string): Promise<void> {
+  const current = await getActiveSession();
+  if (current?.sessionId !== sessionId) {
+    log.warn('not opening the extension page for a session other than the active one', { sessionId });
     return;
   }
-  log.warn('tamper detected', { kind, sessionId: session.sessionId });
-  witness?.report({ type: 'tamper', sessionId: session.sessionId, kind });
+  try {
+    const tab = await chrome.tabs.create({ url: extensionPageUrl(chrome.runtime.id), active: true });
+    if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true });
+    log.info('opened the extension page for the student', { sessionId });
+  } catch (err) {
+    log.error('opening the extension page failed', err);
+  }
 }

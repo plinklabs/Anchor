@@ -75,6 +75,14 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
                 payload.SessionId, payload.AddedDomains.Count);
             AllowlistAmended?.Invoke(this, payload);
         });
+        // #523: the teacher turned a request down; the block page says so.
+        _connection.On<UnblockDeniedPayload>("UnblockDenied", payload =>
+        {
+            _log.LogInformation(
+                "Hub received UnblockDenied for session {SessionId} ({Host})",
+                payload.SessionId, payload.Host);
+            UnblockDenied?.Invoke(this, payload);
+        });
 
         _connection.Reconnecting += _ =>
         {
@@ -103,6 +111,7 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     public event EventHandler<Guid>? SessionEnded;
     public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
     public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+    public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 
     public async Task StartAsync(CancellationToken ct = default)
     {

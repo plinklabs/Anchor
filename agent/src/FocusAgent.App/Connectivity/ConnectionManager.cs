@@ -31,6 +31,7 @@ public sealed class ConnectionManager : IAsyncDisposable
     private readonly IAuthTokenProvider _tokens;
     private readonly ISessionHubConnection _hub;
     private readonly ILogger<ConnectionManager> _log;
+    private readonly SignedInAccount? _account;
     private readonly string _backendBaseUrl;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -43,12 +44,14 @@ public sealed class ConnectionManager : IAsyncDisposable
         IAuthTokenProvider tokens,
         ISessionHubConnection hub,
         IOptions<BackendSettings> backend,
-        ILogger<ConnectionManager> log)
+        ILogger<ConnectionManager> log,
+        SignedInAccount? account = null)
     {
         _tokens = tokens;
         _hub = hub;
         _backendBaseUrl = backend.Value.BaseUrl;
         _log = log;
+        _account = account;
 
         // Mirror SignalR's protocol-level state into ours so a transient drop
         // becomes Reconnecting in the UI instead of "still Connected".
@@ -96,6 +99,9 @@ public sealed class ConnectionManager : IAsyncDisposable
             {
                 auth = await _tokens.AcquireTokenAsync().ConfigureAwait(false);
                 _displayName = auth.DisplayName;
+                // #525: whose school profile Edge must be in during a session.
+                if (_account is not null)
+                    _account.Current = new SchoolAccount(auth.Username, auth.AccountId);
                 _log.LogInformation("Sign-in succeeded for {Username}", auth.Username);
             }
             catch (Exception ex)

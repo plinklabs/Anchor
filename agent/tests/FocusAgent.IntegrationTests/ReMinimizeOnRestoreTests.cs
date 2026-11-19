@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.Versioning;
 
 namespace FocusAgent.IntegrationTests;
@@ -57,17 +56,11 @@ public sealed class ReMinimizeOnRestoreTests
     {
         var api = new BackendClient(_backend.Url);
 
-        // A fresh Notepad window must be up before the session starts. Win11's
-        // notepad is a tabbed launcher, so kill leftovers first to guarantee a new
-        // window (a merely-activated existing one fires no event to enforce on).
-        KillNotepad();
-        using var notepad = Process.Start(new ProcessStartInfo("notepad.exe") { UseShellExecute = true })
-            ?? throw new InvalidOperationException("Failed to launch notepad.");
+        // A fresh Notepad window must be up before the session starts (a
+        // merely-activated existing one fires no event to enforce on).
+        var hwnd = await TestNotepad.OpenOnPrimaryMonitorAsync();
         try
         {
-            var hwnd = await WaitForNotepadWindowAsync(TimeSpan.FromSeconds(10));
-            Assert.True(hwnd != IntPtr.Zero, "Notepad did not present a top-level window within 10s.");
-
             await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
             await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
 
@@ -88,7 +81,8 @@ public sealed class ReMinimizeOnRestoreTests
                 // Wait for that baseline iconic state before driving restores.
                 Assert.True(
                     await WaitForIconicAsync(hwnd, expected: true, TimeSpan.FromSeconds(10)),
-                    "Agent never minimized the off-list Notepad after the session started (#104 sweep).");
+                    "Agent never minimized the off-list Notepad after the session started (#104 sweep); " +
+                    $"Notepad is {WindowCapture.DescribePlacement(hwnd)}.");
 
                 // #92: each restore-from-minimized must drive the window iconic
                 // again. SW_RESTORE on another process's window is asynchronous, so
@@ -102,8 +96,8 @@ public sealed class ReMinimizeOnRestoreTests
                     WindowCapture.RestoreWindow(hwnd);
                     Assert.True(
                         await WaitForIconicAsync(hwnd, expected: true, TimeSpan.FromSeconds(5)),
-                        $"Notepad was not re-minimized within 5s after restore #{i + 1} — " +
-                        "restore-from-minimized is not being re-enforced (#92).");
+                        $"Notepad was not re-minimized within 5s after restore #{i + 1} " +
+                        $"({WindowCapture.DescribePlacement(hwnd)}) — restore-from-minimized is not being re-enforced (#92).");
                 }
 
                 // Control: end the session (agent stops the watcher) and restore
@@ -117,12 +111,13 @@ public sealed class ReMinimizeOnRestoreTests
                 WindowCapture.RestoreWindow(hwnd);
                 Assert.True(
                     await WaitForIconicAsync(hwnd, expected: false, TimeSpan.FromSeconds(5)),
-                    "After the session ended, restoring Notepad did not un-minimize it — " +
+                    $"After the session ended, restoring Notepad did not un-minimize it ({WindowCapture.DescribePlacement(hwnd)}) — " +
                     "SW_RESTORE is a no-op here, so the in-session re-minimize assertions are vacuous.");
                 await Task.Delay(TimeSpan.FromSeconds(1));
                 Assert.False(
                     WindowCapture.IsIconic(hwnd),
-                    "Notepad was re-minimized after the session ended — enforcement should have stopped.");
+                    $"Notepad was re-minimized after the session ended ({WindowCapture.DescribePlacement(hwnd)}) — " +
+                    $"enforcement should have stopped. {TestNotepad.TakenDownFromOutside}");
             }
             finally
             {
@@ -134,7 +129,7 @@ public sealed class ReMinimizeOnRestoreTests
         }
         finally
         {
-            KillNotepad();
+            TestNotepad.Kill();
         }
     }
 
@@ -221,28 +216,5 @@ public sealed class ReMinimizeOnRestoreTests
             await Task.Delay(100);
         }
         return false;
-    }
-
-    private static async Task<IntPtr> WaitForNotepadWindowAsync(TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            var hwnd = WindowCapture.FindMainWindowByProcessName("notepad");
-            if (hwnd != IntPtr.Zero) return hwnd;
-            await Task.Delay(200);
-        }
-        return IntPtr.Zero;
-    }
-
-    private static void KillNotepad()
-    {
-        foreach (var p in Process.GetProcessesByName("notepad"))
-        {
-            using (p)
-            {
-                try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-            }
-        }
     }
 }

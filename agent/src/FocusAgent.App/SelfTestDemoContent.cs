@@ -30,4 +30,10 @@ internal static class SelfTestDemoContent
 
     /// <summary>The off-list app whose foreground triggers the block overlay.</summary>
     public const string BlockedAppName = "notepad";
+
+    /// <summary>
+    /// The school account the pause for a missing school profile names (#525):
+    /// the student's, in the shape a school gives its students.
+    /// </summary>
+    public const string SchoolAccount = "ada.lovelace@student.school.example";
 }

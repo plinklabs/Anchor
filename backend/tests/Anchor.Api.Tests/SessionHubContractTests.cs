@@ -64,8 +64,9 @@ public sealed class SessionHubContractTests : IClassFixture<SessionHubContractTe
         await own.StartAndAwaitOnConnectedAsync();
 
         // The teacher's live page subscribes; the student's agent joins, asks
-        // to open a site, trips a tamper check, goes quiet, comes back and
-        // leaves; then the teacher ends the session.
+        // to open a site, trips a tamper check, sees an off-list site the
+        // extension let through (#526), goes quiet, comes back and leaves; then
+        // the teacher ends the session.
         await teacher.InvokeAsync<JoinSessionResult>("JoinSession", new JoinSessionRequest(sessionId, JoinCode: null));
         await own.InvokeAsync<JoinSessionResult>("JoinSession", new JoinSessionRequest(sessionId, JoinCode: null));
         await own.InvokeAsync("ReportEvent", new ReportEventRequest(
@@ -73,6 +74,9 @@ public sealed class SessionHubContractTests : IClassFixture<SessionHubContractTe
             """{"url":"https://reddit.com/r/aww","host":"reddit.com"}""", OccurredAt: null));
         await own.InvokeAsync("ReportEvent", new ReportEventRequest(
             sessionId, nameof(EventKind.TamperDetected), """{"kind":"inprivate_opened"}""", OccurredAt: null));
+        // Test phase only (#515): the agent saw an off-list site the extension let through (#526).
+        await own.InvokeAsync("ReportEvent", new ReportEventRequest(
+            sessionId, nameof(EventKind.UnfilteredSite), """{"host":"offlist.example"}""", OccurredAt: null));
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var tracker = new HeartbeatTracker();
         var monitor = ActivatorUtilities.CreateInstance<HeartbeatMonitor>(_factory.Services, tracker, (TimeProvider)clock);

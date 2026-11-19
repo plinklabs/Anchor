@@ -320,10 +320,16 @@ public sealed class DevImpersonationRestTests : IClassFixture<DevImpersonationRe
             public Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default)
                 => Task.CompletedTask;
 
+            public Task UnblockDeniedAsync(UnblockDeniedPayload payload, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
+
             public Task UnblockRequestedAsync(UnblockRequestedPayload payload, CancellationToken cancellationToken = default)
                 => Task.CompletedTask;
 
             public Task TamperDetectedAsync(TamperDetectedPayload payload, CancellationToken cancellationToken = default)
+                => Task.CompletedTask;
+
+            public Task UnfilteredSiteAsync(UnfilteredSitePayload payload, CancellationToken cancellationToken = default)
                 => Task.CompletedTask;
         }
 

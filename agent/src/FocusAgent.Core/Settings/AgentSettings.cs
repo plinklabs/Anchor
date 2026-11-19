@@ -194,6 +194,14 @@ public sealed record WitnessSettings
     /// own, under <c>%LOCALAPPDATA%\Microsoft\Edge</c>.
     /// </summary>
     public string BrowserUserDataFolder { get; init; } = "";
+
+    /// <summary>
+    /// Where the packages of the browser's installed sites' apps are read from
+    /// (#537), one folder per package family holding its <c>AppxManifest.xml</c>.
+    /// Empty: the packages Windows has registered for the user. The e2e points it
+    /// at packages of its own, as it does the <c>User Data</c> folder.
+    /// </summary>
+    public string BrowserAppPackagesFolder { get; init; } = "";
 }
 
 /// <summary>
@@ -230,4 +238,11 @@ public sealed record DevSettings
     /// student identities without multiple Entra accounts.
     /// </summary>
     public string ImpersonateOid { get; init; } = "";
+
+    /// <summary>
+    /// Optional sign-in name to go with <see cref="ImpersonateOid"/>, as WAM would
+    /// give it (an address). Lets the e2e show the pause that names the school
+    /// account Edge must be signed in with (#525). Empty: a placeholder naming the OID.
+    /// </summary>
+    public string ImpersonateUsername { get; init; } = "";
 }
