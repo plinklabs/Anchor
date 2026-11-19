@@ -151,6 +151,14 @@ public static class DevDataSeeder
             {
                 new EntrySeed("notepad", BundleEntryMatchType.Exact, BundleEntryKind.App),
             }),
+            // The agent e2e's stand-in for Edge (#549): the school-profile specs
+            // (SchoolProfileRun) have the test host's own windows play Edge's, and
+            // this bundle allows that process in their session as the baseline
+            // allows msedge in every session. Dev-only, like Notepad (dev).
+            new BundleSeed("Edge stand-in (dev)", new[]
+            {
+                new EntrySeed("testhost", BundleEntryMatchType.Exact, BundleEntryKind.App),
+            }),
         };
 
         var changed = false;

@@ -7,9 +7,12 @@ namespace FocusAgent.IntegrationTests;
 /// <summary>
 /// A plain top-level app window shown by the test process itself, which no
 /// session allows: an off-list app for the specs that need one next to an
-/// allowed Notepad (#437). Owning the window keeps the spec independent of which
-/// apps a Windows build ships. It runs on a dedicated thread with a message pump,
-/// so the agent can minimize it and the spec can restore it, like any app. It
+/// allowed Notepad (#437). The school-profile specs, whose windows play Edge's,
+/// are the exception: their session allows the test process as it allows Edge
+/// (<see cref="SchoolProfileRun"/>, #549). Owning the window keeps the spec
+/// independent of which apps a Windows build ships. It runs on a dedicated
+/// thread with a message pump, so the agent can minimize it and the spec can
+/// restore it, like any app. It
 /// can stop handling messages for a while (<see cref="Freeze"/>,
 /// <see cref="HangWhenMinimized"/>), as an app that is not responding (#440), or
 /// be brought back while it goes down (<see cref="RestoreWhenMinimized"/>, #476).
