@@ -24,7 +24,10 @@ namespace FocusAgent.IntegrationTests;
 /// The spec's windows are no allowed app, so they are opened without taking the
 /// foreground: what this asserts comes from the agent's own scans and
 /// <c>ShowWindow</c> calls, not from foreground events, which are the flaky part
-/// on a headless desktop. The overlays are <see cref="SchoolProfileOverlayTests"/>'.
+/// on a headless desktop. That alone doesn't keep the foreground away from them:
+/// each window the agent minimizes hands it to the window on top of those left,
+/// so a school-profile window that must stay up while the others go down is one
+/// Windows never hands it to (#547). The overlays are <see cref="SchoolProfileOverlayTests"/>'.
 ///
 /// #537 adds the windows of sites installed as apps: each carries its package's
 /// ID in every profile, so the run also stands in the packages (a folder of the
@@ -48,8 +51,10 @@ public sealed class SchoolProfileTests
             "the agent to find the school profile (Default)");
 
         // 1. The student has their school profile open, and opens a personal
-        //    profile's window, a Guest window and an InPrivate window.
-        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge");
+        //    profile's window, a Guest window and an InPrivate window. The school
+        //    profile's window is never handed the foreground by the others going
+        //    down (#547): the spec's process plays Edge but isn't allowed as Edge is.
+        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge", neverActivated: true);
         var personal = await run.OpenWindowAsync("Anchor e2e - Personal - Microsoft Edge", "MSEdge.UserData.Profile1");
         var guest = await run.OpenWindowAsync("Anchor e2e - [Guest] - Microsoft Edge", "MSEdge.UserData.GuestProfile");
         var inPrivate = await run.OpenWindowAsync("Anchor e2e - [InPrivate] - Microsoft Edge", "MSEdge");
@@ -67,8 +72,14 @@ public sealed class SchoolProfileTests
             found!.SchoolProfile!.OutsideWindows!.Order());
         // ...the school profile's keeps working, and Edge as a whole isn't paused.
         await Task.Delay(TimeSpan.FromSeconds(3));
-        Assert.False(WindowCapture.IsIconic(school.Handle), "The school profile's window was paused.");
-        Assert.Equal("Present", (await run.Agent.TryGetStatusAsync())?.ExtensionGuard?.State);
+        var status = await run.Agent.TryGetStatusAsync();
+        // What the overlay shows says which way it went down: "Blocked" as an
+        // off-list app, a pause for Edge as a whole, or nothing at all.
+        Assert.False(
+            WindowCapture.IsIconic(school.Handle),
+            $"The school profile's window was paused (overlay: {status?.Overlay ?? "none"}, " +
+            $"guard: {status?.ExtensionGuard?.State ?? "<none>"}/{status?.ExtensionGuard?.PauseReason ?? "<none>"}).");
+        Assert.Equal("Present", status?.ExtensionGuard?.State);
 
         // 2. A paused window the student brings back goes down again.
         WindowCapture.RestoreWithoutActivating(guest.Handle);
@@ -617,11 +628,14 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     /// <paramref name="appId"/> as Edge gives each profile's windows.
     /// </summary>
     /// <param name="neverActivated">
-    /// Windows doesn't hand it the foreground when a window above it is minimized
-    /// (<c>WS_EX_NOACTIVATE</c>). For a window that must stay up while others are
-    /// paused around it: Edge is an allowed app in a session, but the spec's process
-    /// that plays it isn't, and a stand-in that ends up with the foreground that
-    /// way is taken down as an off-list app, which Edge never is.
+    /// Windows doesn't hand it the foreground when another window is minimized
+    /// (<c>WS_EX_NOACTIVATE</c>): the agent's <c>SW_MINIMIZE</c> hands it to the
+    /// window on top of those left on screen whenever Windows lets the agent pass
+    /// the foreground on, as the CI runner's desktop can (#547). For a window that
+    /// must stay up while others are paused around it: Edge is an allowed app in a
+    /// session, but the spec's process that plays it isn't, and a stand-in that
+    /// ends up with the foreground that way is taken down as an off-list app,
+    /// which Edge never is.
     /// </param>
     public async Task<OffListWindow> OpenWindowAsync(
         string title, string appId, bool activate = false, bool neverActivated = false)
