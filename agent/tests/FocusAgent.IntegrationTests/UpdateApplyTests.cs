@@ -575,17 +575,13 @@ internal sealed class FakeAgentInstall : IDisposable
 
     /// <summary>
     /// Each line of one of the recorder's JSON-lines files in the install root (#487:
-    /// <c>update-hooks.jsonl</c>, <c>update-starts.jsonl</c>, <c>update-stops.jsonl</c>).
+    /// <c>update-hooks.jsonl</c>, <c>update-starts.jsonl</c>, <c>update-stops.jsonl</c>),
+    /// read while the recorder may still be appending to it (#544).
     /// </summary>
-    public IReadOnlyList<JsonElement> ReadRecords(string fileName)
-    {
-        var path = Path.Combine(Root, fileName);
-        if (!File.Exists(path)) return [];
-        return File.ReadAllLines(path)
-            .Where(line => line.Length > 0)
+    public IReadOnlyList<JsonElement> ReadRecords(string fileName) =>
+        RecordFile.ReadLines(Path.Combine(Root, fileName))
             .Select(line => JsonDocument.Parse(line).RootElement.Clone())
             .ToList();
-    }
 
     /// <summary>Every agent process running from this install's <c>current\</c> right now.</summary>
     public IReadOnlyList<Process> RunningAgents()
@@ -664,28 +660,21 @@ internal sealed class FakeAgentInstall : IDisposable
         return ReadUpdaterWaits().FirstOrDefault();
     }
 
-    private IReadOnlyList<UpdaterWait> ReadUpdaterWaits()
-    {
-        var path = Path.Combine(Root, WaitsFileName);
-        if (!File.Exists(path)) return [];
-        return File.ReadAllLines(path)
-            .Where(line => line.Length > 0)
+    private IReadOnlyList<UpdaterWait> ReadUpdaterWaits() =>
+        RecordFile.ReadLines(Path.Combine(Root, WaitsFileName))
             .Select(line => JsonSerializer.Deserialize<UpdaterWait>(line, WaitJson)!)
             .ToList();
-    }
 
     private static readonly JsonSerializerOptions WaitJson = new(JsonSerializerDefaults.Web);
 
-    /// <summary>Every start of the install's Update.exe so far, as its argument list.</summary>
-    public IReadOnlyList<string[]> ReadUpdaterInvocations()
-    {
-        var path = Path.Combine(Root, InvocationsFileName);
-        if (!File.Exists(path)) return [];
-        return File.ReadAllLines(path)
-            .Where(line => line.Length > 0)
+    /// <summary>
+    /// Every start of the install's Update.exe so far, as its argument list, read while
+    /// a start may still be appending its own (#544).
+    /// </summary>
+    public IReadOnlyList<string[]> ReadUpdaterInvocations() =>
+        RecordFile.ReadLines(Path.Combine(Root, InvocationsFileName))
             .Select(line => JsonSerializer.Deserialize<string[]>(line) ?? [])
             .ToList();
-    }
 
     /// <summary>
     /// The last lines of Velopack's own log for this pack id, for failure messages:
