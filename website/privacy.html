@@ -37,7 +37,7 @@
   <main class="doc">
     <p class="eyebrow">Anchor</p>
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated 15 June 2026</p>
+    <p class="updated">Last updated 20 November 2026</p>
 
     <p class="lead">Anchor is open-source classroom software made by teachers. It is built to enforce focus during a lesson, not to surveil students — it only observes activity while a teacher has an active focus session running, and the data it produces stays inside the school that operates it.</p>
 
@@ -58,20 +58,38 @@
     </ul>
     <p>This activity is associated with the signed-in student for the duration of the session so the teacher can see which student's device is off task. The extension does not record keystrokes, page contents, screenshots, passwords, or any browsing that happens outside an active session.</p>
 
+    <h2>What the agent collects, and when</h2>
+    <p>The agent only watches which app is in the foreground <strong>while a teacher-started focus session is active</strong>. During an active session, it sends the following to the school's Anchor backend:</p>
+    <ul>
+      <li><strong>App switches</strong> — each time a different app comes to the foreground: the program's name (for example <code>msedge</code> or <code>WINWORD</code>), its publisher, and whether it was blocked. It does <strong>not</strong> send the window title, the file path, or anything shown in the window.</li>
+    </ul>
+
+    <h2>Diagnostic logs (optional)</h2>
+    <p>A school can switch on <strong>diagnostic log uploads</strong>, which are off by default. The agent then uploads its own log lines from 30 minutes before each session starts to 10 minutes after it ends, for the students on that session's roster and for nothing else. The log lines are technical: sign-in and connection status, updates, errors, which apps the agent let through, paused or blocked during the session (by program name), and the hostnames of off-list sites it handled. They include the student's school account name. They contain no window titles, page contents, keystrokes, screenshots, or passwords. Before and after the session itself they hold only technical messages, because the agent doesn't watch apps then.</p>
+    <p>Only the administrators of the school's Anchor backend can download diagnostic logs; teachers can't.</p>
+
     <h2>Where data is stored locally</h2>
     <p>On the device, the extension keeps only what it needs to run: the current session's allowlist and metadata (cleared when the session ends or the browser restarts) and the backend address supplied by the agent. It does not maintain a local browsing history.</p>
+    <p>The agent keeps its own log files in the student's Windows profile for 14 days, whether or not the school has switched on diagnostic log uploads. They hold the same kind of technical lines described above.</p>
 
     <h2>How the data is used</h2>
-    <p>Data is used solely for Anchor's single purpose: enforcing the focus session and giving the supervising teacher live visibility of off-task activity during that session. It is <strong>not</strong> used for advertising, sold or rented, shared with third parties, used to build profiles beyond the classroom context, or used to assess creditworthiness.</p>
+    <p>Session data (the extension's reports and the agent's app switches) is used for Anchor's core purpose: enforcing the focus session and giving the supervising teacher live visibility of off-task activity during that session.</p>
+    <p>Diagnostic logs may be used for <strong>only two purposes</strong>:</p>
+    <ul>
+      <li><strong>Technical diagnosis</strong> — finding out why Anchor did or didn't block something, or why a device dropped out of a session.</li>
+      <li><strong>A concrete suspicion of fraud</strong> during a test or exam — <strong>only at the request of the school's leadership</strong>, and limited to the students and the session that the suspicion concerns.</li>
+    </ul>
+    <p>They are not used for routine checks or to monitor students in general.</p>
+    <p>None of this data is used for advertising, sold or rented, shared with third parties, used to build profiles beyond the classroom context, or used to assess creditworthiness.</p>
 
     <h2>Data retention</h2>
-    <p>Because each school operates its own backend, retention and deletion are governed by that school's configuration and policies. Questions about how long your data is kept, or requests to access or delete it, should be directed to your school or its IT administrator, who controls the Anchor deployment.</p>
+    <p>Because each school operates its own backend, retention and deletion are governed by that school's configuration and policies. By default the backend deletes raw session events after 14 days and diagnostic log uploads 14 days after they arrive; it keeps per-session summaries longer. Questions about how long your data is kept, or requests to access or delete it, should be directed to your school or its IT administrator, who controls the Anchor deployment.</p>
 
     <h2>Children's privacy</h2>
-    <p>Anchor is used in schools, including with students who may be minors, under the authority and direction of the school. The school is responsible for the lawful basis (including any required parental notice or consent) for using Anchor with its students. Plink Labs does not knowingly collect data directly from children — it operates no backend and receives no data.</p>
+    <p>Anchor is used in schools, including with students who may be minors, under the authority and direction of the school. The school is responsible for the lawful basis (including any required parental notice or consent) for using Anchor with its students. A school that switches on diagnostic log uploads should tell students and parents that it does, and for which purposes. Plink Labs does not knowingly collect data directly from children — it operates no backend and receives no data.</p>
 
     <h2>Open source</h2>
-    <p>Anchor's full source code, including exactly what the extension collects and sends, is public and auditable at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>.</p>
+    <p>Anchor's full source code, including exactly what the extension and the agent collect and send, is public and auditable at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>.</p>
 
     <h2>Changes to this policy</h2>
     <p>If the data Anchor collects changes, this policy will be updated and the "last updated" date above revised. Material changes will be reflected in the published extension listing.</p>
