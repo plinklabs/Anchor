@@ -435,6 +435,10 @@ public sealed class SchoolProfileWithoutExtensionTests
 /// both languages is <c>I18nTests</c>' and their rendering <c>OverlayVisualTests</c>';
 /// this is the live rule bringing them up. Depends on the real foreground, so it
 /// runs in the non-blocking Visual lane, like <see cref="ExtensionSiteAccessOverlayTests"/>.
+///
+/// The school-profile overlay's button is taken here with no window of the school
+/// profile open: it closes the window and opens Edge in the school profile (#552).
+/// <see cref="SchoolProfileTests"/> takes it with one open, which it brings forward.
 /// </summary>
 [Trait("Category", "Visual")]
 [Collection(AgentE2ECollection.Name)]
@@ -460,12 +464,9 @@ public sealed class SchoolProfileOverlayTests
 
         await AssertOverlayAsync(run, personal.Handle, "SchoolProfilePaused");
 
-        // Its button closes the window.
-        Assert.True(await run.Agent.GoToSchoolProfileAsync(IntPtr.Zero), "The agent refused to go to the school profile.");
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (WindowCapture.IsWindow(personal.Handle) && DateTime.UtcNow < deadline)
-            await Task.Delay(100);
-        Assert.False(WindowCapture.IsWindow(personal.Handle), "The overlay's button did not close the window it was shown for.");
+        // Its button closes the window and, with no window of the school profile
+        // open, opens Edge in it (#552).
+        await AssertButtonClosesAndOpensTheSchoolProfileAsync(run, personal.Handle, "window");
     }
 
     [Fact]
@@ -483,12 +484,9 @@ public sealed class SchoolProfileOverlayTests
 
         await AssertOverlayAsync(run, app.Handle, "SchoolProfilePaused");
 
-        // Its button closes the app window.
-        Assert.True(await run.Agent.GoToSchoolProfileAsync(IntPtr.Zero), "The agent refused to go to the school profile.");
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (WindowCapture.IsWindow(app.Handle) && DateTime.UtcNow < deadline)
-            await Task.Delay(100);
-        Assert.False(WindowCapture.IsWindow(app.Handle), "The overlay's button did not close the app window it was shown for.");
+        // Its button closes the app window and, with no window of the school
+        // profile open, opens Edge in it (#552).
+        await AssertButtonClosesAndOpensTheSchoolProfileAsync(run, app.Handle, "app window");
     }
 
     [Fact]
@@ -548,6 +546,35 @@ public sealed class SchoolProfileOverlayTests
             overlay != IntPtr.Zero && WindowCapture.ForegroundWindow() == overlay,
             $"The overlay does not have the keyboard (foreground: " +
             $"{WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())}).");
+    }
+
+    /// <summary>
+    /// The overlay's "go to my school profile" (#525) with no window of the school
+    /// profile open: it closes <paramref name="window"/>, the one the overlay was
+    /// shown for, and opens Edge in the school profile (#552). The e2e's Edge is a
+    /// stand-in that is never started, so what the button opened is read from
+    /// /status, as the store listing is (#536). Nothing was opened before the
+    /// button, so what is there after it is the button's.
+    /// </summary>
+    private static async Task AssertButtonClosesAndOpensTheSchoolProfileAsync(SchoolProfileRun run, IntPtr window, string what)
+    {
+        var before = (await run.Agent.TryGetStatusAsync())?.SchoolProfile;
+        Assert.True(before is not null, "The agent's /status said nothing of the school profile before the button.");
+        Assert.True(
+            before.LastOpened is null,
+            $"Edge was opened in profile {before.LastOpened?.Profile} at {before.LastOpened?.Url ?? "-"} before the " +
+            "button: what the button opens can't be told from it.");
+
+        Assert.True(await run.Agent.GoToSchoolProfileAsync(IntPtr.Zero), "The agent refused to go to the school profile.");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (WindowCapture.IsWindow(window) && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        Assert.False(WindowCapture.IsWindow(window), $"The overlay's button did not close the {what} it was shown for.");
+
+        var opened = await run.WaitForAsync(
+            s => s.SchoolProfile?.LastOpened is not null, TimeSpan.FromSeconds(3),
+            "the button to open Edge in the school profile, no window of which was open");
+        Assert.Equal(new ProfileOpenedSnapshot("Default", null), opened!.SchoolProfile!.LastOpened);
     }
 }
 
