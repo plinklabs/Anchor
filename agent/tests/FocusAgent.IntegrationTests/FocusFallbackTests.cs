@@ -57,8 +57,21 @@ public sealed class FocusFallbackTests
     {
         await RunAsync(async (api, sessionId, notepad, offList) =>
         {
-            // The student clicks the taskbar. Explorer is allowed, so the agent lets
-            // it be and reports it.
+            // The student works in Notepad, then clicks the taskbar. Explorer is
+            // allowed, so the agent lets it be and reports it.
+            //
+            // Notepad gets the foreground first, so the click moves it: a click on a
+            // taskbar that has the foreground already is no foreground change, and
+            // the agent has nothing to report (#554). Without it the click started
+            // from wherever the spec before left the foreground. That spec types
+            // into the agent's overlay, and its agent is killed with the overlay up;
+            // the test process may then not set the foreground, so on the CI runner
+            // neither the classic notepad.exe it starts nor its off-list window took
+            // it, and in about half the runs the taskbar had it all along.
+            Assert.True(
+                WindowCapture.BringToForeground(notepad),
+                "Notepad could not be brought to the foreground " +
+                $"(foreground: {WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}).");
             var taskbar = WindowCapture.FindTaskbar();
             Assert.True(taskbar != IntPtr.Zero, "No taskbar (Shell_TrayWnd) on this desktop.");
             Assert.True(
