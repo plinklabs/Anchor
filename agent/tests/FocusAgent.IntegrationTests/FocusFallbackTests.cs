@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using System.Text.Json;
+using Xunit.Abstractions;
 
 namespace FocusAgent.IntegrationTests;
 
@@ -49,8 +50,18 @@ public sealed class FocusFallbackTests
     // Where Windows parks a minimized top-level window.
     private const int MinimizedPosition = -32000;
 
+    // How often the taskbar spec moves the foreground from Notepad to the taskbar
+    // before it gives up on Windows raising the foreground event for the click.
+    private const int TaskbarClickAttempts = 3;
+
     private readonly BackendFixture _backend;
-    public FocusFallbackTests(BackendFixture backend) => _backend = backend;
+    private readonly ITestOutputHelper _output;
+
+    public FocusFallbackTests(BackendFixture backend, ITestOutputHelper output)
+    {
+        _backend = backend;
+        _output = output;
+    }
 
     [Fact]
     public async Task AfterTheTaskbarHadTheFocus_BlockingAnApp_BringsBackTheStudentsAllowedApp()
@@ -59,26 +70,23 @@ public sealed class FocusFallbackTests
         {
             // The student works in Notepad, then clicks the taskbar. Explorer is
             // allowed, so the agent lets it be and reports it.
-            //
-            // Notepad gets the foreground first, so the click moves it: a click on a
-            // taskbar that has the foreground already is no foreground change, and
-            // the agent has nothing to report (#554). Without it the click started
-            // from wherever the spec before left the foreground. That spec types
-            // into the agent's overlay, and its agent is killed with the overlay up;
-            // the test process may then not set the foreground, so on the CI runner
-            // neither the classic notepad.exe it starts nor its off-list window took
-            // it, and in about half the runs the taskbar had it all along.
-            Assert.True(
-                WindowCapture.BringToForeground(notepad),
-                "Notepad could not be brought to the foreground " +
-                $"(foreground: {WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}).");
             var taskbar = WindowCapture.FindTaskbar();
             Assert.True(taskbar != IntPtr.Zero, "No taskbar (Shell_TrayWnd) on this desktop.");
-            Assert.True(
-                WindowCapture.BringToForeground(taskbar),
-                "The taskbar could not be brought to the foreground " +
-                $"(foreground: {WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}).");
-            await WaitForLatestReportAsync(api, sessionId, "explorer", "the taskbar");
+            using var sampler = new ForegroundSampler(agentPid: 0);
+            sampler.Name(notepad, "Notepad");
+            sampler.Name(taskbar, "taskbar");
+            sampler.Name(offList, "off-list app");
+            var clicks = await ClickTheTaskbarAsync(notepad, taskbar, sampler);
+            _output.WriteLine($"The taskbar click raised its foreground event on attempt {clicks}. Foreground: {sampler.Describe()}");
+            if (!await LatestReportNamesAsync(api, sessionId, "explorer", TimeSpan.FromSeconds(10)))
+            {
+                var events = await api.GetSessionEventsAsync(sessionId);
+                Assert.Fail(
+                    "Windows raised the foreground event for the taskbar, but the agent did not report the taskbar " +
+                    "(explorer) as the latest foreground change within 10s: it missed a foreground change the " +
+                    $"student made. Events: {string.Join("; ", events.Select(e => $"{e.Kind} {e.PayloadJson}"))}. " +
+                    $"Foreground: {sampler.Describe()}");
+            }
 
             // Notepad is minimized meanwhile, so whether the agent hands focus back
             // to it shows: it comes back up.
@@ -499,6 +507,52 @@ public sealed class FocusFallbackTests
         {
             TestNotepad.Kill();
         }
+    }
+
+    /// <summary>
+    /// The student works in <paramref name="notepad"/>, then clicks the
+    /// <paramref name="taskbar"/>: each step is a foreground change that Windows
+    /// raises <c>EVENT_SYSTEM_FOREGROUND</c> for, the event the agent judges
+    /// windows on. Returns on which attempt the click raised it; fails the spec
+    /// when it never does.
+    ///
+    /// <see cref="WindowCapture.BringToForeground"/> returning true does not show
+    /// that (#554). It checks <c>GetForegroundWindow</c>, and on the CI runner
+    /// Windows has made a window the foreground window without raising the event.
+    /// In one run the #560 spec's own hook saw Notepad come forward from the
+    /// agent's window, then no event at all for the window it brought forward
+    /// right after, which the agent's sweep then found to have the foreground. In
+    /// the same run this spec's two moves (Notepad, then the taskbar) both
+    /// returned true, and the agent got no event for the taskbar. So the spec
+    /// watches for the event on a hook of its own (<paramref name="sampler"/>),
+    /// gives Notepad's move time to finish before the click, and tries both moves
+    /// again when the click raised nothing.
+    /// </summary>
+    private static async Task<int> ClickTheTaskbarAsync(IntPtr notepad, IntPtr taskbar, ForegroundSampler sampler)
+    {
+        for (var attempt = 1; attempt <= TaskbarClickAttempts; attempt++)
+        {
+            var working = $"working in Notepad ({attempt})";
+            sampler.Mark(working);
+            Assert.True(
+                WindowCapture.BringToForeground(notepad),
+                $"Notepad could not be brought to the foreground. Foreground: {sampler.Describe()}");
+            // Notepad raises no event when it had the foreground already.
+            await WaitUntilAsync(() => sampler.SawSince(working, notepad, "foreground"), TimeSpan.FromMilliseconds(500));
+
+            var clicking = $"clicking the taskbar ({attempt})";
+            sampler.Mark(clicking);
+            Assert.True(
+                WindowCapture.BringToForeground(taskbar),
+                $"The taskbar could not be brought to the foreground. Foreground: {sampler.Describe()}");
+            if (await WaitUntilAsync(() => sampler.SawSince(clicking, taskbar, "foreground"), TimeSpan.FromSeconds(1)))
+                return attempt;
+        }
+        Assert.Fail(
+            $"Windows raised no foreground event for the taskbar in {TaskbarClickAttempts} clicks, although each time " +
+            "GetForegroundWindow named it: there was no foreground change for the agent to judge or report (#554). " +
+            $"Foreground: {sampler.Describe()}");
+        return TaskbarClickAttempts;
     }
 
     /// <summary>
