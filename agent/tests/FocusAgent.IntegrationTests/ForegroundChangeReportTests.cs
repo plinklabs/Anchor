@@ -196,26 +196,47 @@ public sealed class ForegroundChangeReportTests
                     $"{reachedNotepad} of the {lettersTyped} letters typed after the session-start sweep reached Notepad, " +
                     $"the window in front; the keyboard is with {DescribeForeground()}.{interference} Foreground: {sampler.Describe()}");
 
-                // The teacher's feed says the same: the agent's latest report names the
-                // app that has the foreground.
+                // The teacher's feed says the same: of the spec's two apps, the one the
+                // agent reported last is the one that has the foreground. An app of
+                // whoever uses this desktop that comes forward meanwhile is judged and
+                // reported too, so it is left out.
+                var foregroundApp = WindowCapture.GetProcessName(WindowCapture.ForegroundWindow());
                 Assert.True(
-                    await FocusFallbackTests.LatestReportNamesAsync(
-                        api, session.Id, WindowCapture.GetProcessName(WindowCapture.ForegroundWindow()), TimeSpan.FromSeconds(5)),
-                    $"The agent's latest report does not name {DescribeForeground()}, the window that has the foreground " +
-                    $"(#560). Events: {Describe(await api.GetSessionEventsAsync(session.Id))}. Foreground: {sampler.Describe()}");
+                    await LatestReportOfNamesAsync(
+                        api, session.Id,
+                        new[] { WindowCapture.GetProcessName(notepad), WindowCapture.GetProcessName(offList.Handle) },
+                        foregroundApp, TimeSpan.FromSeconds(5)),
+                    $"Of Notepad and the off-list app, the agent did not report {foregroundApp} last, the app that has the " +
+                    $"foreground (#560). Events: {Describe(await api.GetSessionEventsAsync(session.Id))}. " +
+                    $"Foreground: {sampler.Describe()}");
 
                 // And Notepad is the window to fall back to: blocking the off-list app
                 // now brings the student back to Notepad, not to the overlay (#557).
-                sampler.Mark("restoring the off-list app");
-                WindowCapture.RestoreWindow(offList.Handle);
+                //
+                // The off-list app restores itself (OffListWindow.Restore): its own
+                // thread restores the window in one go, so the minimize the agent's
+                // block posts to it comes after. A restore from the spec's thread is
+                // carried out in steps sent to the window's thread. The first step
+                // activates the window, which the agent blocks, and on CI the block's
+                // minimize landed between the steps and the rest undid it (#563).
+                const string restoring = "restoring the off-list app";
+                sampler.Mark(restoring);
+                offList.Restore();
+                // The restore is posted: the window is down and Notepad has the keyboard
+                // until the off-list app gets to it. It may be back for only a moment.
+                Assert.True(
+                    await WaitUntilAsync(() => sampler.SawSince(restoring, offList.Handle, "restored"), TimeSpan.FromSeconds(5)),
+                    $"The off-list app did not come back when the spec restored it ({WindowCapture.DescribePlacement(offList.Handle)}). " +
+                    $"Foreground: {sampler.Describe()}");
                 await WaitUntilAsync(
                     () => offList.HasGoneDown && WindowCapture.ForegroundWindow() == notepad, TimeSpan.FromSeconds(5));
                 var overlay = (await agent.TryGetStatusAsync())?.Overlay;
                 Assert.True(
                     offList.HasGoneDown && WindowCapture.ForegroundWindow() == notepad && overlay is null,
                     "After the session-start sweep gave Notepad the keyboard, blocking the off-list app did not bring the " +
-                    $"student back to Notepad (off-list app down: {offList.HasGoneDown}, overlay: '{overlay ?? "<hidden>"}', " +
-                    $"Notepad: {WindowCapture.DescribePlacement(notepad)}). Foreground: {sampler.Describe()}");
+                    $"student back to Notepad (off-list app: {WindowCapture.DescribePlacement(offList.Handle)}, " +
+                    $"overlay: '{overlay ?? "<hidden>"}', Notepad: {WindowCapture.DescribePlacement(notepad)}). " +
+                    $"Foreground: {sampler.Describe()}");
             }
             finally
             {
@@ -226,6 +247,35 @@ public sealed class ForegroundChangeReportTests
         {
             TestNotepad.Kill();
         }
+    }
+
+    /// <summary>
+    /// Whether, of the reports that name one of <paramref name="apps"/>, the agent's
+    /// most recent names <paramref name="processName"/> within <paramref name="timeout"/>.
+    /// </summary>
+    private static async Task<bool> LatestReportOfNamesAsync(
+        BackendClient api, Guid sessionId, IReadOnlyCollection<string> apps, string processName, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        do
+        {
+            // recentEvents is newest first.
+            var latest = (await api.GetSessionEventsAsync(sessionId))
+                .Where(e => e.Kind == ForegroundChange)
+                .Select(e => ProcessNameOf(e.PayloadJson))
+                .FirstOrDefault(name => apps.Contains(name, StringComparer.OrdinalIgnoreCase));
+            if (string.Equals(latest, processName, StringComparison.OrdinalIgnoreCase))
+                return true;
+            await Task.Delay(250);
+        }
+        while (DateTime.UtcNow < deadline);
+        return false;
+    }
+
+    private static string? ProcessNameOf(string payloadJson)
+    {
+        using var payload = JsonDocument.Parse(payloadJson);
+        return payload.RootElement.TryGetProperty("processName", out var name) ? name.GetString() : null;
     }
 
     /// <summary>
