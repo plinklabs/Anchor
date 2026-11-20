@@ -46,10 +46,13 @@
       <p class="eyebrow" id="privacy-heading">Privacy &amp; surveillance</p>
 
       <h2>Is this spyware? Does it watch students all the time?</h2>
-      <p>No. Anchor only observes activity <strong>while a teacher has an active focus session running</strong> — outside a session it inspects nothing and sends nothing. Even during a session it does not record everything: it surfaces <strong>off-task</strong> activity (apps and pages that aren't on the lesson's allowlist) so the teacher can nudge a student back. On-allowlist work is never logged. It does not record keystrokes, page contents, screenshots, passwords, or any browsing outside an active session.</p>
+      <p>No. Anchor only observes activity <strong>while a teacher has an active focus session running</strong> — outside a session it inspects nothing and sends nothing. Even during a session it does not record everything: it surfaces <strong>off-task</strong> activity (apps and pages that aren't on the lesson's allowlist) so the teacher can nudge a student back. On-allowlist pages are never logged, and for apps it notes only the program's name, never window titles or what's on screen. It does not record keystrokes, page contents, screenshots, passwords, or any browsing outside an active session.</p>
 
       <h2>What exactly does it collect during a session?</h2>
-      <p>Only what the teacher needs to see who is off task: off-allowlist page visits (URL, hostname, time, and a tab identifier), unblock requests, integrity signals that suggest enforcement was bypassed, and periodic liveness heartbeats. This is tied to the signed-in student for the duration of the session, then it stops. The full, exact list is in the <a href="privacy.html">privacy policy</a>, and the source is public so you can verify it.</p>
+      <p>Only what the teacher needs to see who is off task: off-allowlist page visits (URL, hostname, time, and a tab identifier), the name of each app that comes to the foreground and whether it was blocked, unblock requests, integrity signals that suggest enforcement was bypassed, and periodic liveness heartbeats. This is tied to the signed-in student for the duration of the session, then it stops. The full, exact list is in the <a href="privacy.html">privacy policy</a>, and the source is public so you can verify it.</p>
+
+      <h2>Can the school look back at what a student did?</h2>
+      <p>Only in a narrow way. Besides the session data above, a school can switch on <strong>diagnostic log uploads</strong>, which are off by default. Only the administrators of the school's backend can download them, and the <a href="privacy.html">privacy policy</a> allows two uses: technical diagnosis, and a concrete suspicion of fraud during a test or exam, <strong>only at the request of the school's leadership</strong>. By default they are deleted after 14 days. A school that switches them on should tell students and parents.</p>
 
       <h2>Do students need to consent, and is that handled?</h2>
       <p>Anchor runs in schools under the school's authority, so the <strong>school is the data controller</strong> and is responsible for the lawful basis — including any parental notice or consent its policies or local law require. Plink Labs operates no backend and receives no student data, so it can't and doesn't collect anything directly from students. Practically, students always know a session is running: they sign in with their existing school account, and the agent shows a join confirmation when a session starts.</p>
@@ -68,7 +71,7 @@
       <p>Off-list apps are pushed to the background (minimised, not closed — the student keeps their work), off-list pages show a friendly block page, and the event surfaces on the teacher's dashboard live. The teacher can quietly nudge the student back rather than police a log afterwards.</p>
 
       <h2>Does it keep running between lessons?</h2>
-      <p>No. Anchor only does anything while a teacher-started session is active. When the session ends — teacher action, a timer, or the class period — enforcement stops and observation stops. Nothing is recorded between sessions.</p>
+      <p>No. Anchor only does anything while a teacher-started session is active. When the session ends — teacher action, a timer, or the class period — enforcement stops and observation stops. No activity is recorded between sessions.</p>
     </section>
 
     <!-- ============================================================
@@ -97,10 +100,10 @@
       <p>Anchor itself is <strong>free and open source</strong>, licensed GPL-3.0. There is no licence fee and no per-seat charge — Plink Labs sells nothing and operates nothing. The only cost is hosting your own backend in your school's Azure subscription: an App Service on the Basic B1 plan and an Azure SQL Standard S0 database, with the teacher dashboard on a free-tier Static Web App. For a school of around 1,000 students that comes to about <strong>€24 a month</strong> (Azure list prices, Belgium Central region, excluding VAT), or about €43 a month if the database needs to move up to Standard S1. Azure's free App Service tier can't hold the live connections of a full class, so a free-tier deployment isn't an option for real lessons.</p>
 
       <h2>Who can see the data, and where is it stored?</h2>
-      <p>Anchor is <strong>self-hosted</strong>: each school runs its own backend in its own Azure subscription, and student devices and the dashboard talk only to that. Your data stays in your Azure. The supervising teacher sees the live session activity for their class; access beyond that is governed by the school, which is the data controller. <strong>Plink Labs operates no backend, receives no student data, and has no access to any school's deployment.</strong></p>
+      <p>Anchor is <strong>self-hosted</strong>: each school runs its own backend in its own Azure subscription, and student devices and the dashboard talk only to that. Your data stays in your Azure. The supervising teacher sees the live session activity for their class. If the school switches on diagnostic log uploads, only its backend administrators can download them. Access beyond that is governed by the school, which is the data controller. <strong>Plink Labs operates no backend, receives no student data, and has no access to any school's deployment.</strong></p>
 
       <h2>How long is the data kept?</h2>
-      <p>Retention is set by the school, because the school runs the backend. As a default the backend prunes raw session events after 14 days and keeps summaries, but each deployment can configure this. Requests to access or delete data should go to your school or its IT administrator, who controls the deployment.</p>
+      <p>Retention is set by the school, because the school runs the backend. As a default the backend prunes raw session events after 14 days and keeps summaries, and it deletes diagnostic log uploads 14 days after they arrive, but each deployment can configure this. Requests to access or delete data should go to your school or its IT administrator, who controls the deployment.</p>
 
       <h2>Can we audit what it actually collects?</h2>
       <p>Yes. Anchor's full source code — including exactly what each component collects and sends — is public at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>. Nothing about the data flow is hidden.</p>
