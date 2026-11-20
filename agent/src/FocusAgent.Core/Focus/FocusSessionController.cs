@@ -217,6 +217,18 @@ public sealed class FocusSessionController : IAsyncDisposable
     /// alone (#140), allowed apps stay up, everything else is minimized. Records
     /// the outcome for <see cref="GetLastStartupSweep"/>. Best-effort — a failure
     /// to enumerate or minimize one window must not abort the session start.
+    /// <para>
+    /// The off-list window with the foreground (or a dialog of it, #428) goes down
+    /// last, and minimizes itself (<see cref="IFocusEnforcer.MinimizeForeground"/>,
+    /// #560). Minimized from the agent like the others, it stayed the foreground
+    /// window and got what the student typed, while Windows raised the foreground
+    /// event for the window below it, which the agent judged and reported as the
+    /// window in front. Minimizing itself, it hands the foreground to that window
+    /// for real. Last, so the window below is no off-list window the sweep is about
+    /// to take down, but one the student may use, or explorer's desktop or taskbar.
+    /// No overlay comes up for it: the student was not switching to the off-list
+    /// app.
+    /// </para>
     /// </summary>
     private void SweepOpenWindows(AllowlistMatcher matcher)
     {
@@ -232,6 +244,8 @@ public sealed class FocusSessionController : IAsyncDisposable
         }
 
         var minimized = new List<string>();
+        var foreground = IntPtr.Zero;
+        OpenWindow? foregroundOwner = null;
         foreach (var window in open)
         {
             if (AllowlistMatcher.IsSystemSurface(window.App))
@@ -240,6 +254,13 @@ public sealed class FocusSessionController : IAsyncDisposable
                 continue;
             try
             {
+                var windowForeground = foreground == IntPtr.Zero ? _enforcer.ForegroundWindowOf(window.Handle) : IntPtr.Zero;
+                if (windowForeground != IntPtr.Zero)
+                {
+                    foreground = windowForeground;
+                    foregroundOwner = window;
+                    continue;
+                }
                 _enforcer.Minimize(window.Handle);
                 minimized.Add(window.App.ProcessName);
             }
@@ -248,6 +269,24 @@ public sealed class FocusSessionController : IAsyncDisposable
                 _log.LogWarning(ex,
                     "Session-start sweep failed to minimize off-list window for {ProcessName}",
                     window.App.ProcessName);
+            }
+        }
+
+        if (foregroundOwner is { } owner)
+        {
+            try
+            {
+                _log.LogInformation(
+                    "Session-start sweep: {ProcessName} has the foreground (0x{Window:X}); it minimizes itself so the window below it gets the keyboard",
+                    owner.App.ProcessName, foreground);
+                _enforcer.MinimizeForeground(foreground);
+                minimized.Add(owner.App.ProcessName);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex,
+                    "Session-start sweep failed to minimize off-list window for {ProcessName}, which has the foreground",
+                    owner.App.ProcessName);
             }
         }
 

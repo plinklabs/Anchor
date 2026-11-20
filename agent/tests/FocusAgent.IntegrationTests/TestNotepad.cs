@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 
 namespace FocusAgent.IntegrationTests;
 
@@ -67,6 +69,71 @@ internal static class TestNotepad
             }
         }
     }
+
+    /// <summary>
+    /// The box Notepad's text is in: the classic Notepad's <c>Edit</c>, or Windows
+    /// 11 Notepad's <c>RichEditD2DPT</c>; 0 when there is none.
+    /// </summary>
+    public static IntPtr FindTextBox(IntPtr notepad)
+    {
+        var found = IntPtr.Zero;
+        EnumChildWindows(notepad, (child, _) =>
+        {
+            var className = WindowCapture.GetClassName(child);
+            if (className is "Edit" or "RichEditD2DPT")
+            {
+                found = child;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>
+    /// The text in Notepad's text box (<see cref="FindTextBox"/>), or null when it
+    /// can't be read. Windows 11 Notepad may open with a tab it kept from an earlier
+    /// session, so a spec compares the text before and after it types, never with
+    /// what it expects to be there, and puts the text back
+    /// (<see cref="SetText"/>). Never put it in a message: it can be the text of
+    /// whoever uses this desktop.
+    /// </summary>
+    public static string? ReadText(IntPtr textBox)
+    {
+        if (SendMessageTimeoutW(textBox, WmGetTextLength, IntPtr.Zero, IntPtr.Zero, SmtoAbortIfHung, 2000, out var length) == IntPtr.Zero)
+            return null;
+        var buffer = new StringBuilder((int)length + 1);
+        if (SendMessageTimeoutW(textBox, WmGetText, buffer.Capacity, buffer, SmtoAbortIfHung, 2000, out var copied) == IntPtr.Zero)
+            return null;
+        return buffer.ToString(0, (int)copied);
+    }
+
+    /// <summary>Put <paramref name="text"/> in Notepad's text box (<see cref="FindTextBox"/>).</summary>
+    public static void SetText(IntPtr textBox, string text) =>
+        SendMessageTimeoutW(textBox, WmSetText, IntPtr.Zero, text, SmtoAbortIfHung, 2000, out _);
+
+    private const uint WmSetText = 0x000C;
+    private const uint WmGetText = 0x000D;
+    private const uint WmGetTextLength = 0x000E;
+    private const uint SmtoAbortIfHung = 0x0002;
+
+    private delegate bool EnumChildProc(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageTimeoutW(
+        IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageTimeoutW(
+        IntPtr hwnd, uint msg, int wParam, StringBuilder lParam, uint flags, uint timeoutMs, out IntPtr result);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr SendMessageTimeoutW(
+        IntPtr hwnd, uint msg, IntPtr wParam, string lParam, uint flags, uint timeoutMs, out IntPtr result);
 
     private static async Task<IntPtr> WaitForWindowAsync(TimeSpan timeout)
     {
