@@ -99,6 +99,7 @@ session it joined and reports what the extension sees (#489; §6, §10).
 - Shows a brief join confirmation: *"Mr. De Vos started a focus session. Joining in 5s. [Cancel]"*. Decline is logged.
 - Once joined:
   - Subscribes to `EVENT_SYSTEM_FOREGROUND` via `SetWinEventHook`.
+  - Minimizes the off-list windows already open (#104). The one with the foreground goes last, and minimizes itself, so Windows hands the foreground, and the keyboard, to the window the student then sees in front: an allowed app, or explorer's desktop or taskbar when none is left (#560). Minimized by the agent like the others, it stayed the foreground window and kept getting what the student typed. No overlay comes up for it.
   - On every foreground change, identifies the app (process name, executable path, signed publisher).
   - If the new foreground app is **on the allowlist**: report and do nothing.
   - If the new foreground app is **not on the allowlist**: report the event, minimize that window (`ShowWindow` with `SW_MINIMIZE`), and bring the agent's overlay (or the most recently allowed app) back to the foreground.

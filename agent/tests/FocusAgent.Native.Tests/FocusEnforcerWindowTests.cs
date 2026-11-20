@@ -245,6 +245,76 @@ public class FocusEnforcerWindowTests
     }
 
     [Fact]
+    public async Task The_window_with_the_foreground_minimizes_itself_for_the_sweep()
+    {
+        // #560: minimized from the agent, the window with the foreground stayed the
+        // foreground window, and what the student typed reached the minimized app.
+        // Minimizing itself, it hands the foreground on (#438), as a blocked window
+        // does. Where the foreground goes then needs two processes and is covered by
+        // the e2e ForegroundChangeReportTests.
+        var log = new ListLogger<FocusEnforcer>();
+        using var offList = TestWindow.Open("Anchor test off-list app with the foreground");
+        var enforcer = new FocusEnforcer(log);
+
+        enforcer.MinimizeForeground(offList.Handle);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window with the foreground was not minimized.");
+        Assert.True(
+            offList.MinimizedItself == true,
+            "The window with the foreground was minimized by the agent's thread rather than its own: it stays the " +
+            "foreground window and gets what the student types (#560).");
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout + TimeSpan.FromMilliseconds(300));
+        Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
+    }
+
+    [Fact]
+    public async Task A_window_minimized_from_the_agent_does_not_minimize_itself()
+    {
+        // The other side of the line the test above draws: the sweep's other windows,
+        // which have no foreground to hand on, are minimized from the agent (#440).
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer();
+
+        enforcer.Minimize(offList.Handle);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window was not minimized.");
+        Assert.True(offList.MinimizedItself == false, "A window minimized from the agent minimized itself.");
+    }
+
+    [Fact]
+    public async Task Minimizing_the_foreground_window_of_an_app_that_is_not_responding_never_holds_up_the_sweep()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var offList = TestWindow.Open("Anchor test hung off-list app with the foreground");
+        var enforcer = new FocusEnforcer(log);
+        offList.Freeze();
+
+        var clock = Stopwatch.StartNew();
+        enforcer.MinimizeForeground(offList.Handle);
+        clock.Stop();
+
+        Assert.True(
+            clock.Elapsed < TimeSpan.FromSeconds(1),
+            $"MinimizeForeground took {clock.ElapsedMilliseconds} ms while the off-list app was not responding.");
+        Assert.True(
+            await WaitUntilAsync(() => log.Messages.Any(m => m.Contains("did not minimize")), TimeSpan.FromSeconds(3)),
+            "The agent did not log that the app is not responding.");
+        Assert.False(offList.HasGoneDown, "A window whose thread is frozen went down.");
+
+        // The request waits in the app's queue: the window goes down the moment its
+        // app responds, and minimizes itself.
+        offList.Thaw();
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window did not go down once its app responded again.");
+        Assert.True(offList.MinimizedItself == true, "The window that responded again did not minimize itself.");
+    }
+
+    [Fact]
     public async Task Without_a_fallback_Block_leaves_the_window_to_the_overlay()
     {
         using var offList = TestWindow.Open("Anchor test off-list app");

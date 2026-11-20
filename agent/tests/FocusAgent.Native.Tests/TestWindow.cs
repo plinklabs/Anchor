@@ -42,6 +42,9 @@ internal sealed class TestWindow : IDisposable
     private nint _staticProc;
     private int _restoreWhenMinimized;
     private int _timesInTheTopmostBand;
+    // 1 when the last minimize ran on the window's own thread, 0 when another
+    // thread carried it out on the window, -1 before any minimize.
+    private int _minimizedItself = -1;
     private uint _threadId;
 
     private TestWindow(string title)
@@ -72,6 +75,20 @@ internal sealed class TestWindow : IDisposable
     /// into the band and straight out again counts too.
     /// </summary>
     public int TimesInTheTopmostBand => Volatile.Read(ref _timesInTheTopmostBand);
+
+    /// <summary>
+    /// Whether the window's last minimize ran on its own thread, as one it carries
+    /// out itself (<c>ShowWindowAsync</c>), which hands the foreground on (#438,
+    /// #560); false when another thread carried it out on the window (a
+    /// <c>ShowWindow</c> from the agent), which Windows sends to the window's thread
+    /// and which leaves it the foreground window; null before any minimize.
+    /// </summary>
+    public bool? MinimizedItself => Volatile.Read(ref _minimizedItself) switch
+    {
+        1 => true,
+        0 => false,
+        _ => null,
+    };
 
     public static TestWindow Open(string title)
     {
@@ -161,6 +178,10 @@ internal sealed class TestWindow : IDisposable
     {
         if (msg == WM_WINDOWPOSCHANGED && (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0)
             Interlocked.Increment(ref _timesInTheTopmostBand);
+        // A minimize another thread carries out on the window reaches it as a
+        // message sent from that thread.
+        if (msg == WM_SIZE && wParam == SIZE_MINIMIZED)
+            Volatile.Write(ref _minimizedItself, InSendMessage() ? 0 : 1);
         // WM_SIZE comes in the middle of the minimize, once the window is marked
         // minimized and before Windows says it started to minimize.
         if (msg == WM_SIZE && wParam == SIZE_MINIMIZED && Interlocked.Exchange(ref _restoreWhenMinimized, 0) == 1)
@@ -243,4 +264,8 @@ internal sealed class TestWindow : IDisposable
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLongW(nint hWnd, int index);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool InSendMessage();
 }

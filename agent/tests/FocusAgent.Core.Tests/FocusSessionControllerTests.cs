@@ -408,6 +408,75 @@ public class FocusSessionControllerTests : IDisposable
     }
 
     [Fact]
+    public async Task Session_start_sweep_lets_the_off_list_window_with_the_foreground_minimize_itself_last()
+    {
+        // #560: minimized from the agent like the others, the window with the
+        // foreground stayed the foreground window, and what the student typed reached
+        // the minimized app. It minimizes itself instead, so Windows hands the
+        // foreground on, and only once the other off-list windows are down, so the
+        // window it goes to is one the student may use.
+        var fixtures = new Fixtures();
+        fixtures.Windows.Windows.AddRange(new[]
+        {
+            OpenWindowFor("notepad", hwnd: 0x20),     // off-list, has the foreground
+            OpenWindowFor("winword", hwnd: 0x10),     // allowed
+            OpenWindowFor("calc", hwnd: 0x40),        // off-list
+        });
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
+        var (controller, _) = BuildController(fixtures);
+
+        await fixtures.Hub.RaiseSessionStarted(NewPayload(apps: new[]
+        {
+            new AllowedAppDto("ProcessName", "winword"),
+        }));
+
+        Assert.Equal(new[] { ((nint)0x40, false), ((nint)0x20, true) }, fixtures.Enforcer.TakenDown);
+        // It is a sweep, not a block: no overlay at session start.
+        Assert.Empty(fixtures.Overlay.Shown);
+        Assert.Empty(fixtures.Enforcer.Blocked);
+        Assert.Equal(new[] { "calc", "notepad" }, controller.GetLastStartupSweep()!.MinimizedProcesses);
+    }
+
+    [Fact]
+    public async Task Session_start_sweep_lets_the_dialog_with_the_foreground_minimize_itself_with_its_app()
+    {
+        // #428: the foreground is a dialog of the off-list window (a file picker
+        // another process shows for it). It is that window the student was in.
+        var fixtures = new Fixtures();
+        fixtures.Windows.Windows.AddRange(new[]
+        {
+            OpenWindowFor("notepad", hwnd: 0x20),     // off-list, its dialog 0x21 has the foreground
+            OpenWindowFor("calc", hwnd: 0x40),        // off-list
+        });
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x21;
+        var (_, _) = BuildController(fixtures);
+
+        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        Assert.Equal(new[] { ((nint)0x40, false), ((nint)0x21, true) }, fixtures.Enforcer.TakenDown);
+    }
+
+    [Fact]
+    public async Task Session_start_sweep_still_minimizes_the_other_windows_when_the_foreground_one_throws()
+    {
+        var fixtures = new Fixtures();
+        fixtures.Windows.Windows.AddRange(new[]
+        {
+            OpenWindowFor("notepad", hwnd: 0x20),     // off-list, has the foreground
+            OpenWindowFor("calc", hwnd: 0x40),        // off-list
+        });
+        fixtures.Enforcer.ForegroundOf[0x20] = 0x20;
+        fixtures.Enforcer.MinimizeForegroundThrows = new InvalidOperationException("boom");
+        var (controller, _) = BuildController(fixtures);
+
+        await fixtures.Hub.RaiseSessionStarted(NewPayload());
+
+        Assert.Equal(new[] { (nint)0x40 }, fixtures.Enforcer.Minimized);
+        Assert.Equal(new[] { "calc" }, controller.GetLastStartupSweep()!.MinimizedProcesses);
+        Assert.NotNull(controller.ActiveSessionId);
+    }
+
+    [Fact]
     public async Task Session_start_sweep_leaves_baseline_edge_up_and_minimizes_the_rest()
     {
         // AC: a session starting with no bundles minimizes everything except the
@@ -1512,7 +1581,26 @@ public class FocusSessionControllerTests : IDisposable
             Remembered.Add(windowHandle);
             return !NoFallback.Contains(windowHandle);
         }
-        public void Minimize(nint windowHandle) => Minimized.Add(windowHandle);
+        public void Minimize(nint windowHandle)
+        {
+            Minimized.Add(windowHandle);
+            TakenDown.Add((windowHandle, Itself: false));
+        }
+        /// <summary>The windows with the foreground the sweep let minimize themselves (#560).</summary>
+        public List<nint> MinimizedForeground { get; } = new();
+        /// <summary>
+        /// Every window taken down by <see cref="Minimize"/> or
+        /// <see cref="MinimizeForeground"/> (<c>Itself</c>), in order.
+        /// </summary>
+        public List<(nint Window, bool Itself)> TakenDown { get; } = new();
+        /// <summary>When set, <see cref="MinimizeForeground"/> throws it.</summary>
+        public Exception? MinimizeForegroundThrows { get; set; }
+        public void MinimizeForeground(nint windowHandle)
+        {
+            if (MinimizeForegroundThrows is { } ex) throw ex;
+            MinimizedForeground.Add(windowHandle);
+            TakenDown.Add((windowHandle, Itself: true));
+        }
         public bool Block(nint offendingWindowHandle)
         {
             Blocked.Add(offendingWindowHandle);

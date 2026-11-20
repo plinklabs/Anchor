@@ -181,6 +181,15 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// </summary>
     public void Minimize(nint windowHandle) => Minimize(windowHandle, onOwnThread: false);
 
+    /// <summary>
+    /// Minimizes the window with the foreground by posting the request to its own
+    /// thread (#560), as <see cref="Block"/> does (#438): that thread owns the
+    /// foreground, so Windows hands it on to the window below. The session-start
+    /// sweep asks this once every other off-list window is down, so the window below
+    /// is one the student may use, or explorer's desktop or taskbar.
+    /// </summary>
+    public void MinimizeForeground(nint windowHandle) => Minimize(windowHandle, onOwnThread: true);
+
     /// <summary>Returns whether a window was asked to go down.</summary>
     private bool Minimize(nint windowHandle, bool onOwnThread)
     {
@@ -265,13 +274,15 @@ public sealed class FocusEnforcer : IFocusEnforcer
 
     /// <summary>
     /// Minimizes one window with the agent's own <c>ShowWindow</c>
-    /// (<see cref="ShowFromAgent"/>, #440), for the session-start sweep and for
-    /// paused browser windows that do not have the foreground. A blocked or paused
-    /// window with the foreground goes to the overlay instead
-    /// (<see cref="HandOverAsync"/>, #441, #450): minimized from the agent, it either
-    /// stays the foreground window and keeps what the student types, or hands the
-    /// foreground to the window below it, which may be an allowed app that hides the
-    /// overlay (Windows 11 Notepad does the latter).
+    /// (<see cref="ShowFromAgent"/>, #440), for the windows the session-start sweep
+    /// and a paused browser take down that do not have the foreground. A blocked or
+    /// paused window with the foreground goes to the overlay instead
+    /// (<see cref="HandOverAsync"/>, #441, #450), and the sweep's minimizes itself
+    /// (<see cref="MinimizeForeground"/>, #560): minimized from the agent, it either
+    /// stays the foreground window and keeps what the student types, while Windows
+    /// raises the foreground event for the window below it as though that one had
+    /// it, or hands the foreground to the window below it, which may be an allowed
+    /// app that hides the overlay (Windows 11 Notepad does the latter).
     /// </summary>
     private void MinimizeFromAgent(nint windowHandle) => ShowFromAgent(windowHandle, NativeMethods.SW_MINIMIZE);
 

@@ -22,9 +22,25 @@ public interface IFocusEnforcer
     /// owns it (#428): minimizing the owner hides its dialogs too, and they come
     /// back with the app. Never held up by an app that is not responding (#440):
     /// the caller carries on after a moment, and the window goes down the moment its
-    /// app responds.
+    /// app responds. Not for the window with the foreground: the agent minimizes
+    /// it, so it stays the foreground window and gets what the student types
+    /// (<see cref="MinimizeForeground"/>, #560).
     /// </summary>
     void Minimize(nint windowHandle);
+
+    /// <summary>
+    /// Minimizes the window that has the foreground, for the session-start sweep
+    /// (#560). The window minimizes itself, as a blocked window does (#438), so
+    /// Windows hands the foreground on to the window below it: the window the
+    /// student then sees in front, or explorer's desktop or taskbar when no app
+    /// window is left on screen. Minimized from the agent (<see cref="Minimize"/>), it stayed the
+    /// foreground window, and what the student typed reached the minimized app. A
+    /// dialog goes down with the app window that owns it, like
+    /// <see cref="Minimize"/> (#428). Never held up by an app that is not
+    /// responding: the request waits in the app's queue, and the window goes down
+    /// the moment the app responds.
+    /// </summary>
+    void MinimizeForeground(nint windowHandle);
 
     /// <summary>
     /// Blocks the off-list window. Returns true if a previously remembered allowed
