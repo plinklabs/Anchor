@@ -1669,4 +1669,190 @@ class AppLocalizationsNl extends AppLocalizations {
     );
     return '$_temp0';
   }
+
+  @override
+  String get adminNavLogs => 'Logs';
+
+  @override
+  String get logsHeader => 'Agentlogs';
+
+  @override
+  String get logsIntro =>
+      'De logs die de agents van de leerlingen rond elke sessie hebben opgeladen, 14 dagen bewaard. Download ze alleen voor een technische diagnose of, op vraag van de schoolleiding, bij een concreet vermoeden van fraude tijdens een toets of examen. Elke download wordt geregistreerd.';
+
+  @override
+  String get logsTabUploads => 'Uploads';
+
+  @override
+  String get logsTabHistory => 'Toegangsgeschiedenis';
+
+  @override
+  String get logsLoadError => 'Kon de logs niet laden. Probeer het opnieuw.';
+
+  @override
+  String get logsEmpty => 'Er zijn geen logs bewaard.';
+
+  @override
+  String get logsNoMatch => 'Geen logs voor deze filters.';
+
+  @override
+  String get logsFilterSession => 'Sessie';
+
+  @override
+  String get logsFilterAllSessions => 'Alle sessies';
+
+  @override
+  String get logsFilterDate => 'Datum';
+
+  @override
+  String get logsFilterAllDates => 'Alle datums';
+
+  @override
+  String get logsFilterStudent => 'Leerling';
+
+  @override
+  String logsWindow(String from, String to) {
+    return 'log $from–$to';
+  }
+
+  @override
+  String get logsComplete => 'volledig';
+
+  @override
+  String get logsPartial => 'onvolledig';
+
+  @override
+  String logsSizeKb(String size) {
+    return '$size kB';
+  }
+
+  @override
+  String logsSelected(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count leerlingen geselecteerd',
+      one: '1 leerling geselecteerd',
+      zero: 'Geen leerlingen geselecteerd',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get logsOneSessionHint =>
+      'Selecteer leerlingen van één sessie om hun logs samen te downloaden.';
+
+  @override
+  String get logsDownload => 'Downloaden';
+
+  @override
+  String logsDownloadTitle(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count logs downloaden',
+      one: '1 log downloaden',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get logsDownloadIntro =>
+      'Je naam, het tijdstip, de leerlingen, het doel en de reden worden bij de download geregistreerd, zodat de schoolleiding of de DPO die kan nakijken.';
+
+  @override
+  String get logsPurposeLabel => 'Doel';
+
+  @override
+  String get logsPurposeTechnical => 'Technische diagnose';
+
+  @override
+  String get logsPurposeFraud => 'Vermoeden van fraude';
+
+  @override
+  String get logsPurposeFraudDetail =>
+      'Een concreet vermoeden van fraude tijdens een toets of examen, op vraag van de schoolleiding.';
+
+  @override
+  String get logsReasonLabel => 'Reden';
+
+  @override
+  String get logsReasonHint =>
+      'Wat er gebeurde, in welke sessie, wat je zoekt. Hou het feitelijk.';
+
+  @override
+  String logsReasonTooShort(int min) {
+    return 'Minstens $min tekens.';
+  }
+
+  @override
+  String get logsRequestedByLabel => 'Gevraagd door (schoolleiding)';
+
+  @override
+  String get logsRequestedByHint => 'Naam en functie, bijv. de directeur';
+
+  @override
+  String get logsRetentionReminder =>
+      'Gedownloade kopieën vallen buiten de bewaartermijn van 14 dagen van de backend. Verwijder ze zodra de analyse klaar is.';
+
+  @override
+  String get logsDownloadError =>
+      'Kon de logs niet downloaden. Probeer het opnieuw.';
+
+  @override
+  String logsDownloaded(String fileName) {
+    return '$fileName gedownload.';
+  }
+
+  @override
+  String get logsHistoryIntro =>
+      'Elke download van de log van een leerling: door wie, wanneer, waarom en op wiens vraag. Een jaar bewaard.';
+
+  @override
+  String get logsHistoryEmpty => 'Er zijn nog geen logs gedownload.';
+
+  @override
+  String get logsHistoryLoadError =>
+      'Kon de toegangsgeschiedenis niet laden. Probeer het opnieuw.';
+
+  @override
+  String get logsExportCsv => 'CSV exporteren';
+
+  @override
+  String logsHistoryRequestedBy(String name) {
+    return 'gevraagd door $name';
+  }
+
+  @override
+  String get logsCsvAccessedAt => 'Gedownload op (UTC)';
+
+  @override
+  String get logsCsvAdmin => 'Beheerder';
+
+  @override
+  String get logsCsvAdminId => 'Beheerder-ID';
+
+  @override
+  String get logsCsvSessionId => 'Sessie-ID';
+
+  @override
+  String get logsCsvSessionStartedAt => 'Sessie gestart (UTC)';
+
+  @override
+  String get logsCsvClass => 'Klas';
+
+  @override
+  String get logsCsvStudent => 'Leerling';
+
+  @override
+  String get logsCsvStudentId => 'Leerling-ID';
+
+  @override
+  String get logsCsvPurpose => 'Doel';
+
+  @override
+  String get logsCsvReason => 'Reden';
+
+  @override
+  String get logsCsvRequestedBy => 'Gevraagd door';
 }

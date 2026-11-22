@@ -8,11 +8,14 @@ import 'api/admins_api.dart';
 import 'api/auth_token_store.dart';
 import 'api/bundles_api.dart';
 import 'api/classes_api.dart';
+import 'api/logs_api.dart';
 import 'api/schools_api.dart';
 import 'api/sessions_api.dart';
 import 'auth/msal_auth_service.dart';
 import 'bundles/bundle_file_io.dart';
+import 'logs/log_file_io.dart';
 import 'realtime/session_hub_client.dart';
+import 'pages/admin_logs_page.dart';
 import 'pages/bundles_page.dart';
 import 'pages/classes_page.dart';
 import 'pages/history_page.dart';
@@ -81,9 +84,11 @@ GoRouter buildRouter({
   required ClassesApi classes,
   required AdminsApi admins,
   required SchoolsApi schools,
+  required LogsApi logs,
   required Uri apiBaseUrl,
   SessionHubClientFactory? hubClientFactory,
   BundleFileIo? bundleFileIo,
+  LogFileIo? logFileIo,
   LiveAlertServices? alertServices,
   Duration loginSilentTimeout = const Duration(seconds: 30),
 }) {
@@ -201,6 +206,11 @@ GoRouter buildRouter({
                 builder: (context, state) =>
                     ManageSchoolsPage(schools: schools),
               ),
+              GoRoute(
+                path: '/admin/logs',
+                builder: (context, state) =>
+                    AdminLogsPage(logs: logs, fileIo: logFileIo),
+              ),
             ],
           ),
           GoRoute(
@@ -238,6 +248,7 @@ AppSection _sectionFor(String location) {
 AdminSection _adminSectionFor(String location) {
   if (location.startsWith('/admin/admins')) return AdminSection.admins;
   if (location.startsWith('/admin/schools')) return AdminSection.schools;
+  if (location.startsWith('/admin/logs')) return AdminSection.logs;
   // Bundles is the default landing sub-page (bare `/admin` redirects here).
   return AdminSection.bundles;
 }

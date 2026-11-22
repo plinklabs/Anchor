@@ -2317,6 +2317,306 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 other event} other{{count} other events}}'**
   String pastSummaryOther(int count);
+
+  /// No description provided for @adminNavLogs.
+  ///
+  /// In en, this message translates to:
+  /// **'Logs'**
+  String get adminNavLogs;
+
+  /// No description provided for @logsHeader.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent logs'**
+  String get logsHeader;
+
+  /// Admin → Logs (#566): what the page holds and the two uses the privacy policy (#565) allows.
+  ///
+  /// In en, this message translates to:
+  /// **'The logs students\' agents uploaded around each session, kept for 14 days. Download them only for a technical diagnosis or, at the request of the school\'s leadership, for a concrete suspicion of fraud during a test or exam. Every download is recorded.'**
+  String get logsIntro;
+
+  /// No description provided for @logsTabUploads.
+  ///
+  /// In en, this message translates to:
+  /// **'Uploads'**
+  String get logsTabUploads;
+
+  /// No description provided for @logsTabHistory.
+  ///
+  /// In en, this message translates to:
+  /// **'Access history'**
+  String get logsTabHistory;
+
+  /// No description provided for @logsLoadError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load the logs. Please try again.'**
+  String get logsLoadError;
+
+  /// No description provided for @logsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No logs are stored.'**
+  String get logsEmpty;
+
+  /// No description provided for @logsNoMatch.
+  ///
+  /// In en, this message translates to:
+  /// **'No logs match these filters.'**
+  String get logsNoMatch;
+
+  /// No description provided for @logsFilterSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Session'**
+  String get logsFilterSession;
+
+  /// No description provided for @logsFilterAllSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'All sessions'**
+  String get logsFilterAllSessions;
+
+  /// No description provided for @logsFilterDate.
+  ///
+  /// In en, this message translates to:
+  /// **'Date'**
+  String get logsFilterDate;
+
+  /// No description provided for @logsFilterAllDates.
+  ///
+  /// In en, this message translates to:
+  /// **'All dates'**
+  String get logsFilterAllDates;
+
+  /// No description provided for @logsFilterStudent.
+  ///
+  /// In en, this message translates to:
+  /// **'Student'**
+  String get logsFilterStudent;
+
+  /// No description provided for @logsWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'log {from}–{to}'**
+  String logsWindow(String from, String to);
+
+  /// No description provided for @logsComplete.
+  ///
+  /// In en, this message translates to:
+  /// **'complete'**
+  String get logsComplete;
+
+  /// An upload of a session's window that is still running or was cut short: not the whole window.
+  ///
+  /// In en, this message translates to:
+  /// **'partial'**
+  String get logsPartial;
+
+  /// No description provided for @logsSizeKb.
+  ///
+  /// In en, this message translates to:
+  /// **'{size} KB'**
+  String logsSizeKb(String size);
+
+  /// No description provided for @logsSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No students selected} =1{1 student selected} other{{count} students selected}}'**
+  String logsSelected(int count);
+
+  /// No description provided for @logsOneSessionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Select students of one session to download their logs together.'**
+  String get logsOneSessionHint;
+
+  /// No description provided for @logsDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Download'**
+  String get logsDownload;
+
+  /// No description provided for @logsDownloadTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Download 1 log} other{Download {count} logs}}'**
+  String logsDownloadTitle(int count);
+
+  /// No description provided for @logsDownloadIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Your name, the time, the students, the purpose and the reason are recorded with the download, so the school\'s leadership or DPO can review it.'**
+  String get logsDownloadIntro;
+
+  /// No description provided for @logsPurposeLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Purpose'**
+  String get logsPurposeLabel;
+
+  /// No description provided for @logsPurposeTechnical.
+  ///
+  /// In en, this message translates to:
+  /// **'Technical diagnosis'**
+  String get logsPurposeTechnical;
+
+  /// No description provided for @logsPurposeFraud.
+  ///
+  /// In en, this message translates to:
+  /// **'Suspicion of fraud'**
+  String get logsPurposeFraud;
+
+  /// No description provided for @logsPurposeFraudDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'A concrete suspicion of fraud during a test or exam, at the request of the school\'s leadership.'**
+  String get logsPurposeFraudDetail;
+
+  /// No description provided for @logsReasonLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Reason'**
+  String get logsReasonLabel;
+
+  /// No description provided for @logsReasonHint.
+  ///
+  /// In en, this message translates to:
+  /// **'What happened, in which session, what you are looking for. Keep it factual.'**
+  String get logsReasonHint;
+
+  /// No description provided for @logsReasonTooShort.
+  ///
+  /// In en, this message translates to:
+  /// **'At least {min} characters.'**
+  String logsReasonTooShort(int min);
+
+  /// No description provided for @logsRequestedByLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Requested by (school leadership)'**
+  String get logsRequestedByLabel;
+
+  /// No description provided for @logsRequestedByHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Name and role, e.g. the principal'**
+  String get logsRequestedByHint;
+
+  /// No description provided for @logsRetentionReminder.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloaded copies fall outside the backend\'s 14-day retention. Delete them once the analysis is done.'**
+  String get logsRetentionReminder;
+
+  /// No description provided for @logsDownloadError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not download the logs. Please try again.'**
+  String get logsDownloadError;
+
+  /// No description provided for @logsDownloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloaded {fileName}.'**
+  String logsDownloaded(String fileName);
+
+  /// No description provided for @logsHistoryIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Every download of a student\'s log: by whom, when, why and at whose request. Kept for a year.'**
+  String get logsHistoryIntro;
+
+  /// No description provided for @logsHistoryEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No logs have been downloaded yet.'**
+  String get logsHistoryEmpty;
+
+  /// No description provided for @logsHistoryLoadError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load the access history. Please try again.'**
+  String get logsHistoryLoadError;
+
+  /// No description provided for @logsExportCsv.
+  ///
+  /// In en, this message translates to:
+  /// **'Export CSV'**
+  String get logsExportCsv;
+
+  /// No description provided for @logsHistoryRequestedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'requested by {name}'**
+  String logsHistoryRequestedBy(String name);
+
+  /// No description provided for @logsCsvAccessedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloaded at (UTC)'**
+  String get logsCsvAccessedAt;
+
+  /// No description provided for @logsCsvAdmin.
+  ///
+  /// In en, this message translates to:
+  /// **'Admin'**
+  String get logsCsvAdmin;
+
+  /// No description provided for @logsCsvAdminId.
+  ///
+  /// In en, this message translates to:
+  /// **'Admin ID'**
+  String get logsCsvAdminId;
+
+  /// No description provided for @logsCsvSessionId.
+  ///
+  /// In en, this message translates to:
+  /// **'Session ID'**
+  String get logsCsvSessionId;
+
+  /// No description provided for @logsCsvSessionStartedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Session started (UTC)'**
+  String get logsCsvSessionStartedAt;
+
+  /// No description provided for @logsCsvClass.
+  ///
+  /// In en, this message translates to:
+  /// **'Class'**
+  String get logsCsvClass;
+
+  /// No description provided for @logsCsvStudent.
+  ///
+  /// In en, this message translates to:
+  /// **'Student'**
+  String get logsCsvStudent;
+
+  /// No description provided for @logsCsvStudentId.
+  ///
+  /// In en, this message translates to:
+  /// **'Student ID'**
+  String get logsCsvStudentId;
+
+  /// No description provided for @logsCsvPurpose.
+  ///
+  /// In en, this message translates to:
+  /// **'Purpose'**
+  String get logsCsvPurpose;
+
+  /// No description provided for @logsCsvReason.
+  ///
+  /// In en, this message translates to:
+  /// **'Reason'**
+  String get logsCsvReason;
+
+  /// No description provided for @logsCsvRequestedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Requested by'**
+  String get logsCsvRequestedBy;
 }
 
 class _AppLocalizationsDelegate

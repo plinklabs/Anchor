@@ -4,9 +4,9 @@ import 'package:plink_design_system/plink_design_system.dart';
 import '../l10n/app_localizations.dart';
 
 /// The admin-area sub-pages, each reached from the left vertical sub-nav. New
-/// admin features (manage admins, schools) slot in here as further values — the
-/// sub-nav is the extension point so they never clutter the primary app-bar.
-enum AdminSection { bundles, admins, schools }
+/// admin features (manage admins, schools, logs) slot in here as further values —
+/// the sub-nav is the extension point so they never clutter the primary app-bar.
+enum AdminSection { bundles, admins, schools, logs }
 
 /// Chrome for the admin area (#299): a left vertical sub-navigation beside the
 /// routed sub-page [child]. Sits *inside* the shared [AppShell] (which still
@@ -60,6 +60,7 @@ const List<({AdminSection section, String location})> _items = [
   (section: AdminSection.bundles, location: '/admin/bundles'),
   (section: AdminSection.admins, location: '/admin/admins'),
   (section: AdminSection.schools, location: '/admin/schools'),
+  (section: AdminSection.logs, location: '/admin/logs'),
 ];
 
 /// The localized display label for an admin sub-nav [section].
@@ -69,6 +70,7 @@ String _adminNavLabel(BuildContext c, AdminSection s) {
     AdminSection.bundles => l10n.adminNavBundles,
     AdminSection.admins => l10n.adminNavAdmins,
     AdminSection.schools => l10n.adminNavSchools,
+    AdminSection.logs => l10n.adminNavLogs,
   };
 }
 

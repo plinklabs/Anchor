@@ -266,8 +266,9 @@ public sealed class RestContractTests : IClassFixture<RestContractTests.Contract
         await TestSeed.AddUserAsync(_factory, UserRole.Teacher, $"Candidate {suffix}");
         var bundle = await TestSeed.AddBundleAsync(_factory, $"Bundle {suffix}");
         await TestSeed.AddBundleEntryAsync(_factory, bundle.Id, BundleEntryKind.Domain, "example.com", BundleEntryMatchType.Suffix);
-        await TestSeed.AddSessionAsync(
+        var pastSession = await TestSeed.AddSessionAsync(
             _factory, scenario.Teacher.Id, classId, scenario.Students.Select(s => s.Id).ToList(), ended: true);
+        await AddLogUploadAsync(pastSession, scenario.Students[0].Id);
 
         DirectoryUser InDirectory(string name) =>
             new(Guid.NewGuid(), name, $"{name.ToLowerInvariant()}.{suffix}@school.be", school, "3A");
@@ -327,7 +328,35 @@ public sealed class RestContractTests : IClassFixture<RestContractTests.Contract
         await Call(adminClient, "PUT admin/schools/lesson-periods", [], new SetSchoolLessonPeriodsRequest(
             school, [new LessonPeriodDto("08:25", "09:15"), new LessonPeriodDto("09:15", "10:05")]));
 
+        // Admin → Logs (#566): the uploads, a recorded download (a file, so
+        // its response isn't described) and the access history it left.
+        await Call(adminClient, "GET admin/log-uploads", []);
+        using (var download = await adminClient.PostAsJsonAsync("/admin/log-uploads/download", new DownloadLogUploadsRequest(
+                   pastSession.Id, [scenario.Students[0].Id], LogAccessPurpose.FraudSuspicion,
+                   "Contract scenario download.", "The principal")))
+            Assert.True(download.IsSuccessStatusCode, $"POST admin/log-uploads/download answered {(int)download.StatusCode}");
+        await Call(adminClient, "GET admin/log-access", []);
+
         return calls;
+    }
+
+    private async Task AddLogUploadAsync(Session session, Guid userId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        db.SessionLogUploads.Add(new SessionLogUpload
+        {
+            SessionId = session.Id,
+            UserId = userId,
+            WindowFrom = session.StartedAt.AddMinutes(-30),
+            WindowTo = session.EndedAt!.Value.AddMinutes(10),
+            IsComplete = true,
+            UploadedAt = DateTimeOffset.UtcNow,
+            AgentVersion = "0.0.0-contract",
+            ContentLength = 2,
+            Content = [0x1f, 0x8b],
+        });
+        await db.SaveChangesAsync();
     }
 
     /// <summary>What the agent's calls got, and what a call that went wrong left behind.</summary>
@@ -379,9 +408,9 @@ public sealed class RestContractTests : IClassFixture<RestContractTests.Contract
             await zip.WriteAsync("2026-11-22 08:30:00 [INF] contract\n"u8.ToArray());
         using (var upload = new HttpRequestMessage(HttpMethod.Post,
                    $"/log-uploads/{sessionId}?to={Uri.EscapeDataString(to.GetValue<string>())}&agentVersion=0.0.0-contract")
-               {
-                   Content = new ByteArrayContent(gzip.ToArray()),
-               })
+        {
+            Content = new ByteArrayContent(gzip.ToArray()),
+        })
         {
             upload.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(LogUploadsController.GzipContentType);
             using var uploaded = await agent.SendAsync(upload);

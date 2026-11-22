@@ -12,8 +12,9 @@ namespace Anchor.Api.Tests;
 
 /// <summary>
 /// The agents' log uploads (#446) are deleted 14 days after they arrived,
-/// whether or not uploads are still switched on, at the event pruner's quiet
-/// hour and never at startup. The host's loop is off in tests
+/// whether or not uploads are still switched on, and the records of admins'
+/// downloads of them (#566) a year after the download, long after the logs; both
+/// at the event pruner's quiet hour and never at startup. The host's loop is off in tests
 /// (<c>LogUpload:EnablePruner=false</c> on <see cref="AnchorApiFactory"/>);
 /// these tests run <see cref="LogUploadPruner"/> on a clock of their own.
 /// </summary>
@@ -44,12 +45,34 @@ public sealed class LogUploadPrunerTests : IClassFixture<LogUploadPrunerTests.Pr
     }
 
     [Fact]
+    public async Task Access_records_are_kept_a_year_not_the_logs_14_days()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero));
+        var old = await SeedAccessRecordAsync(accessedAt: clock.GetUtcNow().AddDays(-365).AddMinutes(-1));
+        var monthOld = await SeedAccessRecordAsync(accessedAt: clock.GetUtcNow().AddDays(-30));
+        var pruner = BuildPruner(clock);
+
+        // The uploads' sweep leaves every record alone, even one older than
+        // the uploads' 14 days.
+        await pruner.PruneOnceAsync(CancellationToken.None);
+        Assert.True(await RecordExistsAsync(old));
+        Assert.True(await RecordExistsAsync(monthOld));
+
+        var deleted = await pruner.PruneAccessRecordsOnceAsync(CancellationToken.None);
+
+        Assert.Equal(1, deleted);
+        Assert.False(await RecordExistsAsync(old));
+        Assert.True(await RecordExistsAsync(monthOld));
+    }
+
+    [Fact]
     public async Task The_pruner_waits_for_the_quiet_hour_instead_of_pruning_at_startup()
     {
         // Started at 12:00 UTC with the event pruner's run hour at 02:00: the
         // first prune is 14 h away, and nothing is deleted before it.
         var clock = new TimerRecordingTimeProvider(new DateTimeOffset(2026, 11, 21, 12, 0, 0, TimeSpan.Zero));
         var old = await SeedUploadAsync(uploadedAt: clock.GetUtcNow().AddDays(-20));
+        var oldRecord = await SeedAccessRecordAsync(accessedAt: clock.GetUtcNow().AddDays(-400));
         var timeout = TimeSpan.FromSeconds(10);
 
         var pruner = BuildPruner(clock);
@@ -59,10 +82,12 @@ public sealed class LogUploadPrunerTests : IClassFixture<LogUploadPrunerTests.Pr
             var firstWait = await clock.WaitForTimerAsync(_ => true, timeout);
             Assert.Equal(TimeSpan.FromHours(14), firstWait);
             Assert.True(await ExistsAsync(old));
+            Assert.True(await RecordExistsAsync(oldRecord));
 
             clock.Advance(firstWait);
             await clock.WaitForTimerAsync(due => due == TimeSpan.FromHours(24), timeout);
             Assert.False(await ExistsAsync(old));
+            Assert.False(await RecordExistsAsync(oldRecord));
         }
         finally
         {
@@ -75,6 +100,7 @@ public sealed class LogUploadPrunerTests : IClassFixture<LogUploadPrunerTests.Pr
             _factory.Services.GetRequiredService<IServiceScopeFactory>(),
             clock,
             new StaticOptionsMonitor<LogUploadOptions>(new LogUploadOptions { RetentionDays = 14, EnablePruner = false }),
+            new StaticOptionsMonitor<LogAccessOptions>(new LogAccessOptions { RetentionDays = 365 }),
             new StaticOptionsMonitor<EventRetentionOptions>(new EventRetentionOptions { PruneHourUtc = 2, PruneIntervalMinutes = 1440 }),
             NullLogger<LogUploadPruner>.Instance);
 
@@ -98,6 +124,35 @@ public sealed class LogUploadPrunerTests : IClassFixture<LogUploadPrunerTests.Pr
         db.SessionLogUploads.Add(upload);
         await db.SaveChangesAsync();
         return upload.Id;
+    }
+
+    private async Task<Guid> SeedAccessRecordAsync(DateTimeOffset accessedAt)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var record = new LogAccess
+        {
+            AccessedAt = accessedAt,
+            AdminUserId = Guid.NewGuid(),
+            AdminDisplayName = "Admin",
+            SessionId = Guid.NewGuid(),
+            SessionStartedAt = accessedAt.AddDays(-1),
+            ClassName = "3A",
+            StudentUserId = Guid.NewGuid(),
+            StudentDisplayName = "Student",
+            Purpose = LogAccessPurpose.TechnicalDiagnosis,
+            Reason = "The agent never joined this session.",
+        };
+        db.LogAccesses.Add(record);
+        await db.SaveChangesAsync();
+        return record.Id;
+    }
+
+    private async Task<bool> RecordExistsAsync(Guid recordId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        return await db.LogAccesses.AnyAsync(a => a.Id == recordId);
     }
 
     private async Task<bool> ExistsAsync(Guid uploadId)

@@ -508,7 +508,7 @@ and never reads an Azure SignalR connection string, so Bicep provisions none.
 switches to `AddAzureSignalR()` — see
 [Realtime: in-process SignalR](../infra/README.md#realtime-in-process-signalr).
 
-`Heartbeat`, `EventRetention`, `SessionAutoEnd`, `LogUpload`, and `Logging` have
+`Heartbeat`, `EventRetention`, `SessionAutoEnd`, `LogUpload`, `LogAccess`, and `Logging` have
 committed defaults in `appsettings.json` and only need App Service overrides to
 tune them — not for a baseline deploy. For example, `EventRetention__RawEventDays`
 (default 14) sets how many days raw session events are kept, and
@@ -520,11 +520,32 @@ uploads (#446): each agent then uploads its log lines from a window around each
 session its student was on the roster of — from `LogUpload__WindowBefore`
 (default `00:30:00`) before the session started to `LogUpload__WindowAfter`
 (default `00:10:00`) after it ended — and nothing else. Uploads are kept
-`LogUpload__RetentionDays` (default 14) and only admins can download them
-(`GET /admin/log-uploads`, then `GET /admin/log-uploads/{sessionId}/{userId}`,
-a gzipped text file). Setting it back to `false` stops the uploads without an
-agent release. Students (and parents) should be told that technical logs are
-collected while it is on.
+`LogUpload__RetentionDays` (default 14) and only admins can download them,
+from the dashboard's Admin → Logs page (#566): `GET /admin/log-uploads` lists
+them, and `POST /admin/log-uploads/download` returns one student's log as a
+gzipped text file (`.txt.gz`) or several students of one session as one
+`.zip`. Setting it back to `false` stops the uploads without an agent release.
+Students (and parents) should be told that technical logs are collected while
+it is on.
+
+Every download is recorded (#566). The download states its purpose, one of
+the two the privacy policy allows (`TechnicalDiagnosis`, or `FraudSuspicion`:
+a concrete suspicion of fraud during a test or exam, at the request of the
+school's leadership), a reason of at least 10 characters and, for a fraud
+suspicion, who in the leadership asked; without them the backend answers 400.
+Before it returns any log content, in the same transaction, it writes one
+`LogAccess` record per student: the admin (id and name), the time, the session
+(id, class, start), the student (id and name), the purpose, the reason and who
+asked. No route returns log content without one, and none changes or deletes
+one: `GET /admin/log-access` lists them, and the dashboard's Access history
+view exports them as CSV for the leadership or the DPO. The records hold names
+rather than foreign keys, so they outlive the logs, and are kept
+`LogAccess__RetentionDays` (default 365) after the download, pruned in the same
+nightly sweep as the uploads. A record gives accountability, not a hard
+barrier: anyone with direct database or App Service access can still read
+`SessionLogUploads` without one, so the history is worth a review by someone
+other than the admins who download. The reason text and the CSV export are
+personal data themselves; handle them like the logs.
 
 ## Cutting a release
 
