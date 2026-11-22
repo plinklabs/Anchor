@@ -15,6 +15,8 @@ internal static class NativeMethods
     // ShowWindow
     public const int SW_MINIMIZE = 6;
     public const int SW_SHOWNOACTIVATE = 4;
+    public const int SW_SHOWMINIMIZED = 2;
+    public const int SW_SHOWMAXIMIZED = 3;
     public const int SW_SHOWMINNOACTIVE = 7;
     public const int SW_RESTORE = 9;
 
@@ -213,6 +215,18 @@ internal static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetWindowRect(nint hWnd, out RECT lpRect);
 
+    /// <summary><see cref="WINDOWPLACEMENT.flags"/>: a minimized window comes back maximized (#580).</summary>
+    public const int WPF_RESTORETOMAXIMIZED = 0x0002;
+
+    /// <summary>
+    /// <see cref="MonitorFromWindow"/>: none, when the window is on no monitor. For a
+    /// minimized window, where it goes back to counts.
+    /// </summary>
+    public const uint MONITOR_DEFAULTTONULL = 0x00000000;
+
+    [DllImport("user32.dll")]
+    public static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetWindowPlacement(nint hWnd, ref WINDOWPLACEMENT lpwndpl);
@@ -230,6 +244,9 @@ internal static class NativeMethods
 
     // SystemParametersInfo: how Windows arranges minimized windows (#563).
     public const uint SPI_GETMINIMIZEDMETRICS = 0x002B;
+
+    /// <summary>The primary monitor's work area, without the taskbar, in screen coordinates (#580).</summary>
+    public const uint SPI_GETWORKAREA = 0x0030;
 
     /// <summary>
     /// <see cref="MINIMIZEDMETRICS.iArrange"/>: minimized windows are hidden, parked
@@ -251,4 +268,8 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, ref MINIMIZEDMETRICS pvParam, uint fWinIni);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);
 }

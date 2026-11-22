@@ -253,6 +253,20 @@ internal static class WindowCapture
         MonitorFromWindow(hwnd, MonitorDefaultToNull) is var monitor && monitor != IntPtr.Zero && IsPrimary(monitor);
 
     /// <summary>
+    /// Where <paramref name="hwnd"/> goes back to once restored, or is when it is not
+    /// minimized nor maximized: its <c>rcNormalPosition</c>, in workspace coordinates
+    /// (#580).
+    /// </summary>
+    public static (int Left, int Top, int Right, int Bottom) RestorePlace(IntPtr hwnd)
+    {
+        var placement = new WindowPlacement { length = Marshal.SizeOf<WindowPlacement>() };
+        if (!GetWindowPlacement(hwnd, ref placement))
+            return default;
+        var normal = placement.rcNormalPosition;
+        return (normal.Left, normal.Top, normal.Right, normal.Bottom);
+    }
+
+    /// <summary>
     /// Show <paramref name="hwnd"/> at its normal size on the primary monitor's
     /// work area, without activating it: not minimized, not maximized, off any
     /// other monitor. Windows a spec opens can land on a second screen, where a

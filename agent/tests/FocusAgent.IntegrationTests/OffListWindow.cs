@@ -17,7 +17,8 @@ namespace FocusAgent.IntegrationTests;
 /// <see cref="HangWhenMinimized"/>), as an app that is not responding (#440), or
 /// be brought back while it goes down (<see cref="RestoreWhenMinimized"/>, #476),
 /// or have the agent's minimize land in the middle of a restore from another thread
-/// (<see cref="MinimizeInTheMiddleOfTheNextRestore"/>, #563).
+/// (<see cref="MinimizeInTheMiddleOfTheNextRestore"/>, #563), or before that restore
+/// moves it back on screen (#580).
 /// It can share another app's input and come to the top as that app's own windows
 /// do (<see cref="ShareInputWith"/>, #477). And it counts the keystrokes it
 /// receives (#441), so a spec can tell whether
@@ -158,15 +159,24 @@ internal sealed class OffListWindow : IDisposable
     /// the agent blocks the window on, though not always before the move: the spec
     /// does it itself, right before the move. The rest of the restore then puts the
     /// window back on screen, while it counts as minimized.
+    /// <para>
+    /// <paramref name="beforeTheMove"/> does that one step earlier, as Windows starts
+    /// to move the window (<c>WM_WINDOWPOSCHANGING</c>), where a <c>SW_RESTORE</c>
+    /// activates it (#580). The window then stays down, but Windows took its spot,
+    /// parked off the screen, as the place it goes back to.
+    /// </para>
     /// </summary>
-    public void MinimizeInTheMiddleOfTheNextRestore()
+    public void MinimizeInTheMiddleOfTheNextRestore(bool beforeTheMove = false)
     {
         Volatile.Write(ref _holdingARestore, 0);
         Volatile.Write(ref _activatedInTheMiddleOfARestore, 0);
         Volatile.Write(ref _minimizedInTheMiddleOfARestore, 0);
         Volatile.Write(ref _backOnScreenWhileMinimized, 0);
-        Volatile.Write(ref _minimizeInTheMiddleOfTheNextRestore, 1);
+        Volatile.Write(ref _minimizeInTheMiddleOfTheNextRestore, beforeTheMove ? HoldBeforeTheMove : HoldAtTheMove);
     }
+
+    private const int HoldAtTheMove = 1;
+    private const int HoldBeforeTheMove = 2;
 
     /// <summary>
     /// How long <see cref="MinimizeInTheMiddleOfTheNextRestore"/> holds a restore for
@@ -308,11 +318,13 @@ internal sealed class OffListWindow : IDisposable
             hanging.Hang();
             return IntPtr.Zero;
         }
-        // A restore from another thread sends WM_NCCALCSIZE as it moves the window
-        // back on screen: marked restored, the window is still parked off it.
-        if (msg == WmNcCalcSize && InSendMessage() && !IsIconic(hwnd) && IsParked(hwnd) &&
+        // A restore from another thread sends WM_WINDOWPOSCHANGING as it starts to
+        // move the window back on screen, and WM_NCCALCSIZE as it moves it: marked
+        // restored, the window is still parked off it.
+        var holdAt = msg == WmNcCalcSize ? HoldAtTheMove : msg == WmWindowPosChanging ? HoldBeforeTheMove : 0;
+        if (holdAt != 0 && InSendMessage() && !IsIconic(hwnd) && IsParked(hwnd) &&
             Open.TryGetValue(hwnd, out var restoring) &&
-            Interlocked.Exchange(ref restoring._minimizeInTheMiddleOfTheNextRestore, 0) == 1)
+            Interlocked.CompareExchange(ref restoring._minimizeInTheMiddleOfTheNextRestore, 0, holdAt) == holdAt)
         {
             restoring.HoldRestoreUntilMinimized(hwnd);
         }
@@ -390,6 +402,7 @@ internal sealed class OffListWindow : IDisposable
     private const uint WmSize = 0x0005;
     private const uint WmQuit = 0x0012;
     private const uint WmWindowPosChanged = 0x0047;
+    private const uint WmWindowPosChanging = 0x0046;
     private const uint WmNcCalcSize = 0x0083;
     private const uint PmRemove = 0x0001;
     private const uint WmClose = 0x0010;

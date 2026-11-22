@@ -89,6 +89,93 @@ public class FocusEnforcerWindowTests
         Assert.Equal(restoredTo, offList.Bounds);
     }
 
+    /// <summary>
+    /// #580: the other order of #563. The block's minimize lands in the middle of a
+    /// restore from another thread before the restore starts to move the window
+    /// back on screen, as it does when a <c>SW_RESTORE</c> activates the window
+    /// first. The window stays down, but Windows took its spot, parked off the
+    /// screen, as the place it goes back to. The agent had blocked the window
+    /// before, while it was on screen, so it knows where it was.
+    /// </summary>
+    [Fact]
+    public async Task A_block_whose_minimize_lands_before_a_restore_moves_the_window_leaves_it_coming_back_where_it_was()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer(log);
+        enforcer.RememberAllowed(allowed.Handle);
+        var restoredTo = offList.Bounds;
+
+        // The agent blocks the window while it is on screen...
+        Assert.True(enforcer.Block(offList.Handle));
+        Assert.True(await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)), "The blocked window did not go down.");
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout + TimeSpan.FromMilliseconds(300));
+
+        // ...then blocks it again in the middle of a restore from another thread,
+        // before the restore moves it.
+        await BlockBeforeARestoreMovesTheWindowAsync(enforcer, offList);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.RestoresOnAMonitor, TimeSpan.FromSeconds(3)),
+            "A block whose minimize landed before a restore from another thread moved the window left it coming back " +
+            "off every monitor (#580).");
+        Assert.True(offList.HasGoneDown, "Putting back where the window goes back to brought it up.");
+        Assert.False(NativeMethods.IsIconic(allowed.Handle), "The allowed window was minimized.");
+
+        offList.RestoreWithoutActivating();
+        Assert.True(offList.IsBackOnScreen, "The window did not come back on screen once restored.");
+        Assert.Equal(restoredTo, offList.Bounds);
+    }
+
+    /// <summary>
+    /// #580, for a window the agent never saw on screen: minimized before the
+    /// agent started, it has no place to go back to that the agent knows of. It
+    /// comes back on the primary monitor, where the student sees it.
+    /// </summary>
+    [Fact]
+    public async Task A_block_whose_minimize_lands_before_a_restore_moves_a_window_the_agent_never_saw_brings_it_back_on_a_monitor()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer(log);
+        enforcer.RememberAllowed(allowed.Handle);
+        offList.MinimizeWithoutActivating();
+
+        await BlockBeforeARestoreMovesTheWindowAsync(enforcer, offList);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.RestoresOnAMonitor, TimeSpan.FromSeconds(3)),
+            "A block whose minimize landed before a restore from another thread moved the window left it coming back " +
+            "off every monitor (#580).");
+        Assert.True(offList.HasGoneDown, "Putting back where the window goes back to brought it up.");
+
+        offList.RestoreWithoutActivating();
+        Assert.True(offList.IsBackOnScreen, "The window did not come back on screen once restored.");
+        Assert.True(offList.RestoresOnAMonitor, "The window came back off every monitor.");
+    }
+
+    /// <summary>
+    /// Restores the minimized <paramref name="offList"/> window from another thread
+    /// and has <paramref name="enforcer"/> block it in the middle, before the
+    /// restore moves it back on screen (#580). Checks the spec reproduces the
+    /// issue: the window stays down, and goes back to where Windows parks it.
+    /// </summary>
+    private static async Task BlockBeforeARestoreMovesTheWindowAsync(FocusEnforcer enforcer, TestWindow offList)
+    {
+        offList.MinimizeInTheMiddleOfTheNextRestore(beforeTheMove: true);
+        var block = Task.Run(() =>
+            offList.WaitUntilInTheMiddleOfARestore(TimeSpan.FromSeconds(5)) && enforcer.Block(offList.Handle));
+        offList.RestoreWithoutActivating();
+        Assert.True(await block, "The restore was not held in the middle for the agent to block the window.");
+        Assert.True(offList.MinimizedInTheMiddleOfARestore, "The block's minimize did not land in the middle of the restore.");
+        Assert.True(offList.HasGoneDown, "The rest of the restore brought the window up; the spec does not reproduce #580.");
+        Assert.False(
+            offList.RestoresOnAMonitor,
+            "The window goes back to a place on a monitor right after the restore; the spec does not reproduce #580.");
+    }
+
     [Fact]
     public async Task Blocking_an_app_that_is_not_responding_never_holds_up_the_agent()
     {

@@ -9,7 +9,8 @@ namespace FocusAgent.Native.Tests;
 /// as an app that hangs, and <see cref="RestoreWhenMinimized"/> brings the window
 /// back in the middle of its next minimize (#476).
 /// <see cref="MinimizeInTheMiddleOfTheNextRestore"/> has a minimize asked of it land
-/// in the middle of a restore from another thread (#563). It counts the times it lands in
+/// in the middle of a restore from another thread (#563), as it moves the window
+/// back on screen or before that (#580). It counts the times it lands in
 /// the topmost band (<see cref="TimesInTheTopmostBand"/>, #477), however briefly.
 /// Shown without activating, so a test never takes the foreground from whoever
 /// works at the desktop.
@@ -19,6 +20,7 @@ internal sealed class TestWindow : IDisposable
 {
     private const uint WM_SIZE = 0x0005;
     private const uint WM_NCCALCSIZE = 0x0083;
+    private const uint WM_WINDOWPOSCHANGING = 0x0046;
     private const uint PM_REMOVE = 0x0001;
     private const uint WM_WINDOWPOSCHANGED = 0x0047;
     private const int GWL_EXSTYLE = -20;
@@ -145,13 +147,29 @@ internal sealed class TestWindow : IDisposable
     /// to it between them, as it waits for the next one. The rest of the restore then
     /// puts the window back on screen, while it counts as minimized.
     /// <see cref="WaitUntilInTheMiddleOfARestore"/> says when the restore is held.
+    /// <para>
+    /// <paramref name="beforeTheMove"/> holds the restore one step earlier, as
+    /// Windows starts to move the window (<c>WM_WINDOWPOSCHANGING</c>), where a
+    /// <c>SW_RESTORE</c> activates it (#580). A minimize carried out there leaves the
+    /// window down, and the rest of the restore does not move it: but Windows took
+    /// its spot, parked off the screen, as the place it goes back to.
+    /// </para>
     /// </summary>
-    public void MinimizeInTheMiddleOfTheNextRestore()
+    public void MinimizeInTheMiddleOfTheNextRestore(bool beforeTheMove = false)
     {
         _inTheMiddleOfARestore.Reset();
         Volatile.Write(ref _minimizedInTheMiddleOfARestore, 0);
-        Volatile.Write(ref _minimizeInTheMiddleOfTheNextRestore, 1);
+        Volatile.Write(ref _minimizeInTheMiddleOfTheNextRestore, beforeTheMove ? HoldBeforeTheMove : HoldAtTheMove);
     }
+
+    private const int HoldAtTheMove = 1;
+    private const int HoldBeforeTheMove = 2;
+
+    /// <summary>
+    /// Whether the window, or, minimized, the place it goes back to, is on a
+    /// monitor rather than off every one (#580).
+    /// </summary>
+    public bool RestoresOnAMonitor => MonitorFromWindow(Handle, MONITOR_DEFAULTTONULL) != 0;
 
     /// <summary>
     /// Waits until a restore from another thread is held in the middle
@@ -236,11 +254,13 @@ internal sealed class TestWindow : IDisposable
         // message sent from that thread.
         if (msg == WM_SIZE && wParam == SIZE_MINIMIZED)
             Volatile.Write(ref _minimizedItself, InSendMessage() ? 0 : 1);
-        // A restore from another thread sends WM_NCCALCSIZE as it moves the window
-        // back on screen: marked restored, the window is still parked off it.
-        if (msg == WM_NCCALCSIZE && InSendMessage() && !IsIconic(hwnd) &&
+        // A restore from another thread sends WM_WINDOWPOSCHANGING as it starts to
+        // move the window back on screen, and WM_NCCALCSIZE as it moves it: marked
+        // restored, the window is still parked off it.
+        var holdAt = msg == WM_NCCALCSIZE ? HoldAtTheMove : msg == WM_WINDOWPOSCHANGING ? HoldBeforeTheMove : 0;
+        if (holdAt != 0 && InSendMessage() && !IsIconic(hwnd) &&
             GetWindowRect(hwnd, out var parkedAt) && parkedAt.Left <= MinimizedPosition &&
-            Interlocked.Exchange(ref _minimizeInTheMiddleOfTheNextRestore, 0) == 1)
+            Interlocked.CompareExchange(ref _minimizeInTheMiddleOfTheNextRestore, 0, holdAt) == holdAt)
         {
             _inTheMiddleOfARestore.Set();
             // Handles its messages, as its thread does while it waits for the
@@ -332,6 +352,11 @@ internal sealed class TestWindow : IDisposable
 
     [DllImport("user32.dll")]
     private static extern void PostQuitMessage(int exitCode);
+
+    private const uint MONITOR_DEFAULTTONULL = 0x00000000;
+
+    [DllImport("user32.dll")]
+    private static extern nint MonitorFromWindow(nint hwnd, uint flags);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
