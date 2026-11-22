@@ -170,7 +170,6 @@
   "feedTamperExtensionSilent": "{who, select, named{De Anchor-extensie van {name} staat uit of reageert niet.} other{De Anchor-extensie van een leerling staat uit of reageert niet.}}",
   "feedTamperInPrivate": "{who, select, named{{name} heeft een InPrivate-venster geopend.} other{Een leerling heeft een InPrivate-venster geopend.}}",
   "feedTamperSiteAccess": "{who, select, named{{name} heeft de toegang van de Anchor-extensie tot websites beperkt.} other{Een leerling heeft de toegang van de Anchor-extensie tot websites beperkt.}}",
-  "feedTamperAgentUnavailable": "{who, select, named{De Anchor-app van {name} draait niet meer.} other{De Anchor-app van een leerling draait niet meer.}}",
   "feedTamperOutsideSchoolProfile": "{who, select, named{{name} hield een Edge-venster buiten het schoolprofiel open.} other{Een leerling hield een Edge-venster buiten het schoolprofiel open.}}",
   "feedTamperSchoolProfileMissing": "{who, select, named{{name} is in Edge niet aangemeld met het schoolaccount.} other{Een leerling is in Edge niet aangemeld met het schoolaccount.}}",
   "feedTamperSchoolProfileWithoutExtension": "{who, select, named{{name} heeft Anchor nog niet toegevoegd aan het schoolprofiel in Edge.} other{Een leerling heeft Anchor nog niet toegevoegd aan het schoolprofiel in Edge.}}",

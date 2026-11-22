@@ -14,7 +14,7 @@ namespace FocusAgent.Core.Tests;
 /// The agent as the extension's only identity (#489): what the agent hands the
 /// extension over the witness link, and what it reports for it.
 /// </summary>
-public class ExtensionSessionRelayTests
+public partial class ExtensionSessionRelayTests
 {
     private static readonly AllowedDomainDto Office = new("Suffix", "office.com");
     private static readonly AllowedDomainDto Wiki = new("Exact", "wikipedia.org");

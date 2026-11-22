@@ -4,12 +4,11 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FocusAgent.Core.Auth;
-using FocusAgent.Core.Diagnostics;
 using FocusAgent.Core.Settings;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace FocusAgent.App.Diagnostics;
+namespace FocusAgent.Core.Diagnostics;
 
 /// <summary>
 /// The real <see cref="ILogUploadClient"/> (#446): <c>GET /log-uploads/pending</c>

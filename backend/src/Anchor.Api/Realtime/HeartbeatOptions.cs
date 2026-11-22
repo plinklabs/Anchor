@@ -19,11 +19,12 @@ public sealed class HeartbeatOptions
 
     /// <summary>
     /// How long a joined participant's agent has to send its first heartbeat
-    /// before the teacher's roster shows it as missing (#444). The agent and the
-    /// Edge extension each join on their own, so a join alone doesn't say the
-    /// agent is there; only its heartbeats do. The wait starts when the agent is
-    /// first expected: the participant's join, or, after a backend restart, the
-    /// extension's first ping. It has to cover the agent's 5-second join toast
+    /// before the teacher's roster shows it as missing (#444). The agent joins
+    /// for the student (the extension has no hub connection since #489), but a
+    /// join alone doesn't say the agent stays; only its heartbeats do. The wait
+    /// starts when the agent is first expected: the participant's join, or,
+    /// after a backend restart, the first ping the agent sends for the
+    /// extension. It has to cover the agent's 5-second join toast
     /// and its first ping one <see cref="IntervalSeconds"/> after it joins.
     ///
     /// <para>

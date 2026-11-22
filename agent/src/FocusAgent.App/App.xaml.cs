@@ -3,7 +3,6 @@ using FocusAgent.App.Connectivity;
 using FocusAgent.App.Diagnostics;
 using FocusAgent.App.Extension;
 using FocusAgent.App.Focus;
-using FocusAgent.App.Realtime;
 using FocusAgent.App.Sessions;
 using FocusAgent.App.Tamper;
 using FocusAgent.App.Tray;

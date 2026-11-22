@@ -3,12 +3,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
-using FocusAgent.Core.Sessions;
 using FocusAgent.Core.Settings;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace FocusAgent.App.Sessions;
+namespace FocusAgent.Core.Sessions;
 
 /// <summary>
 /// Real implementation of <see cref="ISessionRehydrationClient"/> that talks

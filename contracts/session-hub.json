@@ -3,7 +3,7 @@
     "The session hub as the teacher dashboard relies on it (#390): the events the dashboard listens for, who each one goes to, what its payload carries, and the hub methods the dashboard calls.",
     "Both sides test against this file. Backend CI (SessionHubContractTests) drives the real hub, broadcaster and SessionEnder, records where each event is sent and what it carries, and fails when that differs from this file. Dashboard CI (dashboard/test/contract/) checks that SessionHubClient handles every event and sends the methods in this shape, and that the live page ignores an event that reaches the teacher's user group naming another session.",
     "So a backend change to an event's routing or payload fails Backend CI until this file says so, and that change to this file runs the dashboard's tests against it.",
-    "It covers the dashboard's slice of the hub only. The agent and the extension use more of it, listed under notCovered, and this file doesn't describe those.",
+    "It covers the dashboard's slice of the hub only. The student's agent uses more of it, described in agent-hub.json (#573); every event and hub method is in one file or both, and Backend CI fails on one that is in neither.",
     "A message carries one argument: an object with \"fields\", or a bare value that \"argument\" names. Field names are as they go over the wire (camelCase)."
   ],
   "hub": "/hubs/session",
@@ -53,9 +53,5 @@
     "LeaveSession": {
       "argument": "sessionId"
     }
-  },
-  "notCovered": {
-    "events": ["SessionBundlesUpdated", "AllowlistAmended", "UnblockDenied", "ParticipationEnded"],
-    "methods": ["DeclineSession", "Heartbeat", "ExtensionHeartbeat", "IsInSession", "GetStartedSession", "ReportEvent"]
   }
 }

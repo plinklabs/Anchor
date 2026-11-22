@@ -12,7 +12,6 @@ public interface ISessionBroadcaster
         Guid sessionId,
         IReadOnlyCollection<Guid> recipientUserIds,
         CancellationToken cancellationToken = default);
-    Task ParticipationEndedAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default);
     Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default);
     Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default);
     Task HeartbeatLostAsync(HeartbeatLostPayload payload, CancellationToken cancellationToken = default);
@@ -65,27 +64,18 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         // User groups, not the session group (#354). A connection joins its user
         // group on every connect (OnConnectedAsync) but the session group only
         // through JoinSession, and SignalR doesn't carry group membership across
-        // a reconnect: an agent whose connection came back, or an extension
-        // whose service worker was revived, never heard the session end. A
-        // connection is in exactly one user group, so nobody receives it twice.
+        // a reconnect: an agent whose connection came back never heard the
+        // session end. A connection is in exactly one user group, so nobody
+        // receives it twice.
         var groups = recipientUserIds.Select(SessionHub.UserGroupName).ToArray();
         return _hub.Clients.Groups(groups).SessionEnded(sessionId);
     }
 
-    public Task ParticipationEndedAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
-        // The student's user group, where their agent and extension listen
-        // (#462): the session runs on, but the backend no longer counts them in
-        // it, because they left, declined or quit the agent. The agent made
-        // that call itself, so it is the extension that acts on this: it stops
-        // filtering for the session and stops pinging it. Not SessionEnded: a
-        // teacher taking part in their own session (#410) has their dashboard
-        // in this group too, and SessionEnded would close its live page.
-        => _hub.Clients.Group(SessionHub.UserGroupName(userId)).ParticipationEnded(sessionId);
-
     public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
         // Per-student: each student's allowlist differs by their own unblock
-        // grants (#73), so this targets the user group (reaching both the
-        // student's agent and extension) rather than the whole session group.
+        // grants (#73), so this targets the student's user group, where their
+        // agent listens and hands the domains down to the extension (#489),
+        // rather than the whole session group.
         => _hub.Clients.Group(SessionHub.UserGroupName(userId)).SessionBundlesUpdated(payload);
 
     public Task ParticipantStateChangedAsync(ParticipantStateChangedPayload payload, CancellationToken cancellationToken = default)
@@ -100,8 +90,8 @@ internal sealed class SessionBroadcaster : ISessionBroadcaster
         => _hub.Clients.Group(SessionHub.GroupName(payload.SessionId)).AgentReconnected(payload);
 
     public Task AllowlistAmendedAsync(AllowlistAmendedPayload payload, CancellationToken cancellationToken = default)
-        // Granted student only — every other extension/agent on the same
-        // session must stay on the un-amended allowlist.
+        // Granted student only — every other student's agent (and so their
+        // extension) must stay on the un-amended allowlist.
         => _hub.Clients.Group(SessionHub.UserGroupName(payload.UserId)).AllowlistAmended(payload);
 
     public Task UnblockDeniedAsync(UnblockDeniedPayload payload, CancellationToken cancellationToken = default)

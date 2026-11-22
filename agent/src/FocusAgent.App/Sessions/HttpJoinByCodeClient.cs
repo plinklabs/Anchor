@@ -1,8 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using FocusAgent.App.Localization;
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Sessions;
@@ -23,8 +20,6 @@ namespace FocusAgent.App.Sessions;
 public sealed class HttpJoinByCodeClient : IJoinByCodeClient
 {
     private const string DevImpersonateOidHeader = "X-Dev-Impersonate-Oid";
-
-    private static readonly JsonSerializerOptions ErrorReadOptions = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _http;
     private readonly IAuthTokenProvider _tokens;
@@ -50,9 +45,9 @@ public sealed class HttpJoinByCodeClient : IJoinByCodeClient
 
     public async Task<JoinByCodeOutcome> JoinAsync(string code, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, "sessions/join-by-code")
+        using var request = new HttpRequestMessage(HttpMethod.Post, JoinByCodeWire.Route)
         {
-            Content = JsonContent.Create(new { code }),
+            Content = JoinByCodeWire.Body(code),
         };
 
         try
@@ -121,21 +116,6 @@ public sealed class HttpJoinByCodeClient : IJoinByCodeClient
         }
     }
 
-    private static async Task<string> ReadMessageOrDefaultAsync(HttpResponseMessage response, string fallback, CancellationToken ct)
-    {
-        try
-        {
-            var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(body))
-                return fallback;
-            var parsed = JsonSerializer.Deserialize<ErrorBody>(body, ErrorReadOptions);
-            return string.IsNullOrWhiteSpace(parsed?.Message) ? fallback : parsed!.Message!;
-        }
-        catch
-        {
-            return fallback;
-        }
-    }
-
-    private sealed record ErrorBody([property: JsonPropertyName("message")] string? Message);
+    private static async Task<string> ReadMessageOrDefaultAsync(HttpResponseMessage response, string fallback, CancellationToken ct) =>
+        await JoinByCodeWire.ReadErrorMessageAsync(response, ct).ConfigureAwait(false) ?? fallback;
 }

@@ -4,7 +4,9 @@ namespace FocusAgent.Core.Extension;
 /// The <c>type</c> of each message on the witness link between the agent and the
 /// Edge extension (#489). The extension repeats these strings in
 /// <c>extension/src/shared/witness.ts</c>; the native host forwards the messages
-/// unchanged, so the two ends must agree on them.
+/// unchanged, so the two ends must agree on them. contracts/witness.json (#573)
+/// lists every message here with its fields, and both ends' tests check
+/// themselves against it.
 /// </summary>
 public static class ExtensionMessages
 {
@@ -54,6 +56,12 @@ public static class ExtensionMessages
     public const string OpenExtensionPage = "open_extension_page";
 
     // ---- extension → agent -------------------------------------------------
+
+    /// <summary>
+    /// The extension's keepalive, every 15 seconds while the link is up. It keeps
+    /// the pipe busy; the agent needs nothing from it.
+    /// </summary>
+    public const string Ping = "ping";
 
     /// <summary>
     /// The extension blocked a navigation; reported as a <c>BlockedUrl</c> event

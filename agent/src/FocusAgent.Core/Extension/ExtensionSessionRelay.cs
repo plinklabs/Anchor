@@ -338,8 +338,12 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
             case ExtensionMessages.Tamper:
                 _ = ReportTamperAsync(message);
                 break;
+            case ExtensionMessages.Ping:
+                // The keepalive: nothing to do.
+                break;
             default:
-                // hello / ping keepalives, and anything newer than this agent.
+                // self_check (ExtensionSelfCheckWatch's), and anything newer than
+                // this agent.
                 break;
         }
     }

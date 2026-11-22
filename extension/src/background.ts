@@ -3,7 +3,13 @@ import { logger } from './shared/logger';
 import { selectTabsToBlock } from './shared/tab-scan';
 import { selectTabsToRestore } from './shared/tab-restore';
 import { ALL_SITES, extensionPageUrl, runSelfCheck } from './shared/self-check';
-import { WitnessClient, WITNESS_HOST_NAME, type AgentMessage } from './shared/witness';
+import {
+  WitnessClient,
+  WITNESS_HOST_NAME,
+  blockedUrlReport,
+  selfCheckReport,
+  type AgentMessage,
+} from './shared/witness';
 import {
   clearActiveSession,
   getActiveSession,
@@ -422,23 +428,9 @@ async function redirectToBlockPage(tabId: number, blockedUrl: string, session: A
 }
 
 // The agent sends it on to the teacher's session log as a BlockedUrl event.
-// The host only, never the URL (#527): a path or query string can hold search
-// terms and other personal detail the teacher doesn't need. The block page
-// still shows the student the whole URL, on their own device.
+// The host only, never the URL (#527); see blockedUrlReport.
 function reportBlockedUrl(sessionId: string, tabId: number, blockedUrl: string): void {
-  let host = '';
-  try {
-    host = new URL(blockedUrl).hostname;
-  } catch {
-    // Unparseable: the block is still reported, as "a website".
-  }
-  witness?.report({
-    type: 'blocked_url',
-    sessionId,
-    host,
-    tabId,
-    occurredAt: new Date().toISOString(),
-  });
+  witness?.report(blockedUrlReport(sessionId, tabId, blockedUrl));
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +474,7 @@ async function reportSelfCheck(sessionId: string): Promise<void> {
   );
   if (result.allSites) log.info('self-check', { sessionId, ...result });
   else log.warn('self-check: the extension may not work on all sites', { sessionId, ...result });
-  witness?.report({ type: 'self_check', sessionId, ...result });
+  witness?.report(selfCheckReport(sessionId, result));
 }
 
 // The student pressed the button on the agent's pause: open the extension's own

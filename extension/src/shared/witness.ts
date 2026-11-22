@@ -26,9 +26,12 @@
 // Same split as self-check.ts / host-matcher.ts: the pure parsing + backoff
 // helpers live here and are unit-tested; the chrome.runtime wiring is injected
 // so the WitnessClient can be driven with a fake port in tests. The message names
-// match FocusAgent.Core.Extension.ExtensionMessages on the agent side.
+// match FocusAgent.Core.Extension.ExtensionMessages on the agent side, and
+// contracts/witness.json lists every message each way with its fields (#573):
+// witness-contract.test.ts holds this end to it, the agent's tests the other.
 
 import { logger } from './logger';
+import type { SelfCheckResult } from './self-check';
 import type { AllowedDomainDto, SessionStartedPayload } from './types';
 
 const log = logger('witness');
@@ -84,6 +87,33 @@ export interface UnblockRequestResult {
 export type ExtensionReport =
   | { type: 'blocked_url'; sessionId: string; host: string; tabId: number; occurredAt: string }
   | { type: 'self_check'; sessionId: string; allSites: boolean; inPrivate: boolean };
+
+/**
+ * The report of a blocked navigation: its host only, never the URL (#527), as a
+ * path or query string can hold search terms and other personal detail the
+ * teacher doesn't need. The block page still shows the student the whole URL,
+ * on their own device. An address that doesn't parse is still reported, as "a
+ * website".
+ */
+export function blockedUrlReport(
+  sessionId: string,
+  tabId: number,
+  blockedUrl: string,
+  now: Date = new Date(),
+): ExtensionReport {
+  let host = '';
+  try {
+    host = new URL(blockedUrl).hostname;
+  } catch {
+    // Unparseable: reported without a host.
+  }
+  return { type: 'blocked_url', sessionId, host, tabId, occurredAt: now.toISOString() };
+}
+
+/** The report of what the extension read about its own settings (#524). */
+export function selfCheckReport(sessionId: string, result: SelfCheckResult): ExtensionReport {
+  return { type: 'self_check', sessionId, allSites: result.allSites, inPrivate: result.inPrivate };
+}
 
 /** An unblock request, before the client gives it a request id. */
 export interface UnblockRequest {

@@ -1070,12 +1070,6 @@ abstract class AppLocalizations {
   /// **'{who, select, named{{name} limited the Anchor extension\'s access to websites.} other{A student limited the Anchor extension\'s access to websites.}}'**
   String feedTamperSiteAccess(String who, String name);
 
-  /// Tamper report agent_unavailable: the agent went away while the extension still runs.
-  ///
-  /// In en, this message translates to:
-  /// **'{who, select, named{{name}\'s Anchor app stopped running.} other{A student\'s Anchor app stopped running.}}'**
-  String feedTamperAgentUnavailable(String who, String name);
-
   /// Tamper report outside_school_profile (#525): during a session a window of another Edge profile or a Guest window stayed open, paused, after the student was asked to close it.
   ///
   /// In en, this message translates to:
