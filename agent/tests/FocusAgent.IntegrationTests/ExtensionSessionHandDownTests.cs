@@ -388,6 +388,119 @@ public sealed class ExtensionSessionHandDownTests
         }
     }
 
+    /// <summary>
+    /// #570: what the teacher changes on the student's allowlist while the
+    /// agent's network is down reaches the extension once it is back. The
+    /// approval (<c>AllowlistAmended</c>) and the bundle change
+    /// (<c>SessionBundlesUpdated</c>) go only to the connections open when they
+    /// are sent, so the reconnected agent asks the backend and hands the
+    /// extension the whole list (<c>allowlist_replaced</c>). A later reconnect
+    /// with nothing changed hands it nothing.
+    /// </summary>
+    [Fact]
+    public async Task AnAllowlistChangedWhileTheAgentWasCutOff_ReachesTheExtensionOnceItIsBack()
+    {
+        var api = new BackendClient(_backend.Url);
+        var stale = await api.GetRejoinableSessionIdsAsync();
+        Assert.True(
+            stale.Count == 0,
+            $"The student is still in running session(s) {string.Join(", ", stale)} that an earlier spec left " +
+            "behind; this agent would rejoin them on connect. End every session a spec starts.");
+
+        var pipeName = "anchor-witness-e2e-" + Guid.NewGuid().ToString("N");
+        await using var network = new NetworkRelay(_backend.Url);
+        await using var agent = AgentProcess.Launch(
+            network.Url,
+            TestConfig.StudentOid,
+            autoJoin: true,
+            reconnectMaxBackoff: TimeSpan.FromSeconds(2),
+            extraEnvironment: new Dictionary<string, string> { ["Witness__PipeName"] = pipeName });
+        await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+        var extension = WitnessHostProcess.Start(pipeName);
+        Guid? sessionId = null;
+        try
+        {
+            await extension.WaitForAsync(m => Type(m) == "no_session", Wait, "the agent to hand down 'no session'");
+            var classId = await api.FindClassIdAsync();
+            var ms365 = await api.FindBundleIdAsync("Microsoft 365");
+            var session = await api.StartSessionAsync(classId, new[] { ms365 });
+            sessionId = session.Id;
+            var started = await extension.WaitForAsync(
+                m => Type(m) == "session_started" && SessionOf(m) == session.Id, Wait,
+                "the agent to hand down the session it joined");
+            Assert.Contains(Domains(started, "domains"), d => d.Contains("sharepoint.com"));
+
+            // 1. The student asks for a site from the block page.
+            extension.Send(new
+            {
+                type = "unblock_request",
+                requestId = "e2e-cut-off",
+                sessionId = session.Id,
+                url = "https://docs.test/notes",
+                host = "docs.test",
+            });
+            await extension.WaitForAsync(
+                m => Type(m) == "unblock_request_result" && m.GetProperty("requestId").GetString() == "e2e-cut-off", Wait,
+                "the agent to answer the unblock request");
+            var pending = await WaitForUnblockRequestAsync(api, session.Id, "docs.test");
+
+            // 2. The laptop drops off the network. Meanwhile the teacher approves
+            //    the site and takes the Microsoft 365 bundle away.
+            network.Cut();
+            await WaitForDisconnectedAsync(agent);
+            await api.UnblockAsync(session.Id, Assert.Single(pending.RequesterIds), "docs.test");
+            await api.UpdateBundlesAsync(session.Id, Array.Empty<Guid>());
+
+            // 3. Back on the network, the extension gets the allowlist the
+            //    teacher left: the approved site in, the bundle's sites out.
+            network.Restore();
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+            var replaced = await extension.WaitForAsync(
+                m => Type(m) == "allowlist_replaced" && SessionOf(m) == session.Id, Wait,
+                "the reconnected agent to hand down the allowlist changed while it was cut off");
+            Assert.Contains("docs.test", Domains(replaced, "domains"));
+            Assert.DoesNotContain(Domains(replaced, "domains"), d => d.Contains("sharepoint.com"));
+            // Neither push got through the cut: the reconnect is what caught up.
+            Assert.False(extension.Received(m => Type(m) == "allowlist_amended"), "The approval was pushed through the cut.");
+            Assert.Equal(1, Count(extension, "allowlist_replaced"));
+            Assert.Equal(session.Id, (await agent.TryGetStatusAsync())?.JoinedSessionId);
+
+            // 4. Another drop with nothing changed hands the extension nothing,
+            //    so it doesn't recheck every tab. The catch-up is one hub call
+            //    straight after the connect; give it ample time to have run.
+            network.Cut();
+            await WaitForDisconnectedAsync(agent);
+            network.Restore();
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            Assert.Equal(1, Count(extension, "allowlist_replaced"));
+            Assert.Equal(session.Id, (await agent.TryGetStatusAsync())?.JoinedSessionId);
+        }
+        finally
+        {
+            try
+            {
+                if (sessionId is Guid id) await api.EndSessionAsync(id);
+            }
+            catch { /* best-effort */ }
+            finally
+            {
+                await extension.DisposeAsync();
+            }
+        }
+    }
+
+    private static int Count(WitnessHostProcess extension, string type) =>
+        extension.ReceivedCount(m => Type(m) == type);
+
+    private static async Task WaitForDisconnectedAsync(AgentProcess agent)
+    {
+        var dropped = await agent.WaitForAsync(s => s.ConnectionStatus != "Connected", TimeSpan.FromSeconds(10));
+        Assert.True(
+            dropped is not null && dropped.ConnectionStatus != "Connected",
+            "Agent still reported Connected 10s after its network was cut.");
+    }
+
     private static async Task WaitForGuardAsync(AgentProcess agent, Func<ExtensionGuardSnapshot, bool> predicate, string what)
     {
         var last = await agent.WaitForAsync(s => s.ExtensionGuard is { } g && predicate(g), Wait);
@@ -518,6 +631,12 @@ internal sealed class WitnessHostProcess : IAsyncDisposable
     public bool Received(Func<JsonElement, bool> predicate)
     {
         lock (_received) return _received.Any(predicate);
+    }
+
+    /// <summary>How many matching messages the host has written so far.</summary>
+    public int ReceivedCount(Func<JsonElement, bool> predicate)
+    {
+        lock (_received) return _received.Count(predicate);
     }
 
     private async Task ReadLoopAsync()

@@ -19,14 +19,17 @@ namespace FocusAgent.Core.Sessions;
 ///
 /// Then, on every connect, it has the coordinator ask the backend whether the
 /// student is still in their joined session
-/// (<see cref="SessionCoordinator.ConfirmJoinedSessionAsync"/>, #354), and for a
+/// (<see cref="SessionCoordinator.ConfirmJoinedSessionAsync"/>, #354), for the
+/// student's allowlist in it, should the teacher have changed it meanwhile
+/// (<see cref="SessionCoordinator.RefreshJoinedAllowlistAsync"/>, #570), and for a
 /// session that started without the agent hearing it
 /// (<see cref="SessionCoordinator.CatchUpStartedSessionAsync"/>, #356). Every
 /// reconnect is a new SignalR connection, and whatever the backend broadcast
-/// while the agent was offline — <c>SessionEnded</c>, <c>SessionStarted</c> —
+/// while the agent was offline — <c>SessionEnded</c>, <c>SessionStarted</c>,
+/// <c>SessionBundlesUpdated</c>, <c>AllowlistAmended</c> —
 /// never reaches it. Nor does what it broadcasts in the moment after the
 /// connection opens, before the backend has added it to the student's user
-/// group. Both questions are hub calls, which the backend answers only once it
+/// group. Each question is a hub call, which the backend answers only once it
 /// has.
 ///
 /// The trigger is driven externally via <see cref="NotifyConnectedAsync"/>
@@ -100,6 +103,10 @@ public sealed class SessionRehydrationService
 
             // Never throws but for cancellation: a failed check keeps the session.
             await _coordinator.ConfirmJoinedSessionAsync(ct).ConfigureAwait(false);
+
+            // In a session it is still in, the allowlist the teacher left it. Never
+            // throws but for cancellation: a failed question keeps the allowlist.
+            await _coordinator.RefreshJoinedAllowlistAsync(ct).ConfigureAwait(false);
 
             // After the confirm, so a session that ended while the agent was
             // offline is left before a newer one is offered; after rehydration,

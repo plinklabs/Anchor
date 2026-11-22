@@ -361,8 +361,35 @@ public sealed class SessionHub : Hub<ISessionHubClient>
     {
         var ct = Context.ConnectionAborted;
         var user = await ResolveCurrentUserAsync(ct);
+        return await IsInSessionAsync(sessionId, user.Id, ct);
+    }
+
+    /// <summary>
+    /// The allowlist the caller enforces in the session, or null when they are
+    /// not in it (the condition of <see cref="IsInSession"/>). The agent asks
+    /// after every reconnect while it is in a session (#570): what the teacher
+    /// changes on the student's allowlist while the agent is offline — a
+    /// request approved (<c>AllowlistAmended</c>), a bundle added or removed
+    /// (<c>SessionBundlesUpdated</c>) — goes only to the connections open when
+    /// it is sent. The session's bundles, its whole-class grants and the
+    /// caller's own grants (#568), as a bundle change hands them out; the agent
+    /// replaces its allowlist with it when it differs.
+    /// </summary>
+    public async Task<SessionAllowlistPayload?> GetSessionAllowlist(Guid sessionId)
+    {
+        var ct = Context.ConnectionAborted;
+        var user = await ResolveCurrentUserAsync(ct);
+        if (!await IsInSessionAsync(sessionId, user.Id, ct))
+            return null;
+
+        var allowlist = await _allowlist.ExpandForParticipantAsync(sessionId, user.Id, ct);
+        return new SessionAllowlistPayload(sessionId, allowlist.Apps, allowlist.Domains);
+    }
+
+    private async Task<bool> IsInSessionAsync(Guid sessionId, Guid userId, CancellationToken ct)
+    {
         var active = await _db.SessionParticipants.AsNoTracking()
-            .Where(ActiveParticipantCache.IsActive(sessionId, user.Id))
+            .Where(ActiveParticipantCache.IsActive(sessionId, userId))
             .Select(p => new { p.Session!.EndsAt })
             .FirstOrDefaultAsync(ct);
         if (active is null)

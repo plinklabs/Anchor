@@ -575,6 +575,66 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task GetSessionAllowlist_is_the_bundles_and_the_callers_own_grants_and_no_classmates()
+    {
+        // #570: what a reconnecting agent asks while it is in a session. An
+        // approval made while it was offline must be in the answer, as must the
+        // session's bundles; a classmate's grant must not.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var (student, classmate) = (scenario.Students[0], scenario.Students[1]);
+        var bundle = await TestSeed.AddBundleAsync(_factory, "Bundle-" + Guid.NewGuid().ToString("N")[..6]);
+        await TestSeed.AddBundleEntryAsync(
+            _factory, bundle.Id, BundleEntryKind.Domain, "allowlist-bundle.example", BundleEntryMatchType.Suffix);
+        await TestSeed.AddBundleEntryAsync(
+            _factory, bundle.Id, BundleEntryKind.App, "allowlist-bundle-app", BundleEntryMatchType.Exact);
+        using var teacher = _factory.CreateClient();
+        TestAuth.SetTeacher(teacher, scenario.Teacher);
+        var started = await teacher.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, new[] { bundle.Id }));
+        started.EnsureSuccessStatusCode();
+        var sessionId = (await started.Content.ReadFromJsonAsync<StartSessionResponse>())!.Id;
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await JoinAsync(connection, sessionId);
+
+        (await teacher.PostAsJsonAsync($"/sessions/{sessionId}/unblock", new UnblockGrantRequest(student.Id, "own-grant-reconnect.example")))
+            .EnsureSuccessStatusCode();
+        await TestSeed.AddUnblockGrantAsync(_factory, sessionId, classmate.Id, "classmate-grant-reconnect.example");
+
+        // Asked over a new connection, as after a reconnect.
+        await using var reconnected = BuildConnection(student.EntraOid, "Student");
+        await reconnected.StartAsync();
+        var payload = await reconnected.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", sessionId);
+
+        Assert.NotNull(payload);
+        Assert.Equal(sessionId, payload.SessionId);
+        Assert.Contains(payload.Domains, d => d.Value == "allowlist-bundle.example");
+        Assert.Contains(payload.Apps, a => a.Value == "allowlist-bundle-app");
+        Assert.Contains(payload.Domains, d => d.Value == "own-grant-reconnect.example");
+        Assert.DoesNotContain(payload.Domains, d => d.Value == "classmate-grant-reconnect.example");
+    }
+
+    [Fact]
+    public async Task GetSessionAllowlist_is_null_outside_the_session()
+    {
+        // Not joined yet, left, or never a participant: the agent keeps what it
+        // has, and IsInSession decides whether it leaves.
+        var (student, session) = await SeedSessionWithStudentAsync();
+        var stranger = await SeedUserAsync(UserRole.Student, "Outsider");
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await using var outside = BuildConnection(stranger.EntraOid, "Student");
+        await connection.StartAsync();
+        await outside.StartAsync();
+
+        Assert.Null(await connection.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", session.Id));
+        await JoinAsync(connection, session.Id);
+        Assert.NotNull(await connection.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", session.Id));
+        Assert.Null(await outside.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", session.Id));
+
+        await connection.InvokeAsync("LeaveSession", session.Id);
+        Assert.Null(await connection.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", session.Id));
+    }
+
+    [Fact]
     public async Task GetStartedSession_returns_a_session_started_straight_after_the_connection_opened()
     {
         // #356: what a client asks right after it connects. Its start completed

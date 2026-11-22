@@ -414,6 +414,154 @@ public class SessionCoordinatorTests
         Assert.False(fired);
     }
 
+    // ---- #570: the allowlist after a reconnect ----------------------------------
+
+    private static SessionStartedPayload PayloadWith(AllowedAppDto[] apps, AllowedDomainDto[] domains) =>
+        Payload() with { Apps = apps, Domains = domains };
+
+    private static readonly AllowedAppDto Word = new("ProcessName", "winword");
+    private static readonly AllowedDomainDto Office = new("Suffix", "office.com");
+    private static readonly AllowedDomainDto Docs = new("Suffix", "docs.test");
+
+    [Fact]
+    public async Task RefreshJoinedAllowlist_raises_SessionAllowlistUpdated_when_the_teacher_changed_it_while_the_agent_was_offline()
+    {
+        // The teacher approved docs.test and added notepad while the agent's
+        // connection was down: neither push reached it.
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var payload = PayloadWith([Word], [Office]);
+        await coordinator.HandleSessionStartedAsync(payload);
+        var updates = new List<SessionBundlesUpdatedPayload>();
+        coordinator.SessionAllowlistUpdated += (_, p) => updates.Add(p);
+        var notepad = new AllowedAppDto("ProcessName", "notepad");
+        hub.SessionAllowlist = new SessionAllowlistPayload(payload.SessionId, [Word, notepad], [Office, Docs]);
+
+        await coordinator.RefreshJoinedAllowlistAsync();
+
+        Assert.Equal(new[] { payload.SessionId }, hub.GetSessionAllowlistCalls);
+        var update = Assert.Single(updates);
+        Assert.Equal(payload.SessionId, update.SessionId);
+        Assert.Equal(new[] { Word, notepad }, update.Apps);
+        Assert.Equal(new[] { Office, Docs }, update.Domains);
+
+        // Applied once: the next reconnect finds it as the agent has it.
+        await coordinator.RefreshJoinedAllowlistAsync();
+        Assert.Single(updates);
+    }
+
+    [Fact]
+    public async Task RefreshJoinedAllowlist_raises_nothing_when_the_allowlist_is_unchanged()
+    {
+        // In another order and case than the agent got it: the backend builds
+        // the list afresh on every answer.
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var payload = PayloadWith([Word], [Office, Docs]);
+        await coordinator.HandleSessionStartedAsync(payload);
+        var fired = false;
+        coordinator.SessionAllowlistUpdated += (_, _) => fired = true;
+        hub.SessionAllowlist = new SessionAllowlistPayload(
+            payload.SessionId, [new AllowedAppDto("ProcessName", "WinWord")], [Docs, Office]);
+
+        await coordinator.RefreshJoinedAllowlistAsync();
+
+        Assert.Single(hub.GetSessionAllowlistCalls);
+        Assert.False(fired);
+    }
+
+    [Fact]
+    public async Task RefreshJoinedAllowlist_counts_what_the_hub_pushed_while_connected()
+    {
+        // A bundle change and an approval that did arrive are what the agent
+        // has; finding them in the answer is no change.
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var payload = PayloadWith([], [Office]);
+        await coordinator.HandleSessionStartedAsync(payload);
+        hub.RaiseBundlesUpdated(new SessionBundlesUpdatedPayload(payload.SessionId, [Word], [Office]));
+        hub.RaiseAllowlistAmended(new AllowlistAmendedPayload(payload.SessionId, Guid.NewGuid(), [Docs]));
+        var fired = false;
+        coordinator.SessionAllowlistUpdated += (_, _) => fired = true;
+        hub.SessionAllowlist = new SessionAllowlistPayload(payload.SessionId, [Word], [Office, Docs]);
+
+        await coordinator.RefreshJoinedAllowlistAsync();
+
+        Assert.False(fired);
+    }
+
+    [Fact]
+    public async Task RefreshJoinedAllowlist_after_a_rejoin_compares_with_the_allowlist_the_rejoin_carried()
+    {
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi());
+        var payload = PayloadWith([Word], [Office, Docs]);
+        await coordinator.RejoinAsync(payload);
+        var fired = false;
+        coordinator.SessionAllowlistUpdated += (_, _) => fired = true;
+        hub.SessionAllowlist = new SessionAllowlistPayload(payload.SessionId, [Word], [Office, Docs]);
+
+        await coordinator.RefreshJoinedAllowlistAsync();
+        Assert.False(fired);
+
+        hub.SessionAllowlist = new SessionAllowlistPayload(payload.SessionId, [Word], [Office]);
+        await coordinator.RefreshJoinedAllowlistAsync();
+        Assert.True(fired);
+    }
+
+    [Fact]
+    public async Task RefreshJoinedAllowlist_keeps_the_allowlist_when_not_joined_not_in_the_session_or_the_backend_cannot_be_asked()
+    {
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var fired = false;
+        coordinator.SessionAllowlistUpdated += (_, _) => fired = true;
+
+        // Not joined: nothing to ask.
+        await coordinator.RefreshJoinedAllowlistAsync();
+        Assert.Empty(hub.GetSessionAllowlistCalls);
+
+        var payload = PayloadWith([Word], [Office]);
+        await coordinator.HandleSessionStartedAsync(payload);
+
+        // Not in it (ConfirmJoinedSessionAsync is the one that leaves).
+        hub.SessionAllowlist = null;
+        await coordinator.RefreshJoinedAllowlistAsync();
+
+        // A backend too old to know the question, or the connection dropped again.
+        hub.SessionAllowlist = new SessionAllowlistPayload(payload.SessionId, [], []);
+        hub.GetSessionAllowlistThrows = new InvalidOperationException("Method does not exist.");
+        await coordinator.RefreshJoinedAllowlistAsync();
+
+        Assert.Equal(2, hub.GetSessionAllowlistCalls.Count);
+        Assert.False(fired);
+        Assert.Equal(payload.SessionId, coordinator.JoinedSessionId);
+    }
+
+    [Fact]
+    public async Task RefreshJoinedAllowlist_does_not_apply_an_answer_a_newer_push_overtook()
+    {
+        // The teacher changes the bundles again while the question is out: the
+        // push is newer than the answer, which must not undo it.
+        var hub = new FakeHub();
+        var coordinator = NewCoordinator(hub, new FakeUi { NextDecision = JoinDecision.Confirmed });
+        var payload = PayloadWith([Word], [Office]);
+        await coordinator.HandleSessionStartedAsync(payload);
+        var updates = new List<SessionBundlesUpdatedPayload>();
+        coordinator.SessionAllowlistUpdated += (_, p) => updates.Add(p);
+        var gate = new TaskCompletionSource();
+        hub.GetSessionAllowlistGate = gate.Task;
+        hub.SessionAllowlist = new SessionAllowlistPayload(payload.SessionId, [Word], [Office, Docs]);
+
+        var refresh = coordinator.RefreshJoinedAllowlistAsync();
+        var pushed = new SessionBundlesUpdatedPayload(payload.SessionId, [], [Docs]);
+        hub.RaiseBundlesUpdated(pushed);
+        gate.SetResult();
+        await refresh;
+
+        Assert.Equal(new[] { pushed }, updates);
+    }
+
     [Fact]
     public async Task ConfirmJoinedSession_when_not_joined_does_not_ask_the_backend()
     {
@@ -825,13 +973,16 @@ public class SessionCoordinatorTests
         public event EventHandler<Guid>? SessionEnded;
 #pragma warning restore CS0067
         public event EventHandler<SessionBundlesUpdatedPayload>? SessionBundlesUpdated;
-#pragma warning disable CS0067 // Not raised by these tests.
         public event EventHandler<AllowlistAmendedPayload>? AllowlistAmended;
+#pragma warning disable CS0067 // Not raised by these tests.
         public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 #pragma warning restore CS0067
 
         public void RaiseBundlesUpdated(SessionBundlesUpdatedPayload payload) =>
             SessionBundlesUpdated?.Invoke(this, payload);
+
+        public void RaiseAllowlistAmended(AllowlistAmendedPayload payload) =>
+            AllowlistAmended?.Invoke(this, payload);
 
         public List<(Guid SessionId, string? JoinCode)> JoinCalls { get; } = new();
         public List<Guid> LeaveCalls { get; } = new();
@@ -896,6 +1047,22 @@ public class SessionCoordinatorTests
             return GetStartedSessionThrows is null
                 ? Task.FromResult(StartedSession)
                 : Task.FromException<SessionStartedPayload?>(GetStartedSessionThrows);
+        }
+        // The backend's answer to GetSessionAllowlist (#570), or the failure to
+        // ask; when the gate is set, the answer waits for it.
+        public SessionAllowlistPayload? SessionAllowlist { get; set; }
+        public Exception? GetSessionAllowlistThrows { get; set; }
+        public Task? GetSessionAllowlistGate { get; set; }
+        public List<Guid> GetSessionAllowlistCalls { get; } = new();
+        public async Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default)
+        {
+            GetSessionAllowlistCalls.Add(sessionId);
+            var answer = SessionAllowlist;
+            if (GetSessionAllowlistGate is { } gate)
+                await gate;
+            if (GetSessionAllowlistThrows is { } ex)
+                throw ex;
+            return answer;
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

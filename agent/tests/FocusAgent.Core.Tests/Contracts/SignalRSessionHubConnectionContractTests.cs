@@ -133,6 +133,7 @@ public sealed class SignalRSessionHubConnectionContractTests : IAsyncLifetime
             ["ExtensionHeartbeat"] = async () => Assert.True(await _agent.ExtensionHeartbeatAsync(sessionId)),
             ["IsInSession"] = async () => Assert.True(await _agent.IsInSessionAsync(sessionId)),
             ["GetStartedSession"] = async () => await _agent.GetStartedSessionAsync(),
+            ["GetSessionAllowlist"] = async () => await _agent.GetSessionAllowlistAsync(sessionId),
             ["ReportEvent"] = async () =>
             {
                 foreach (var kind in kinds)
@@ -193,6 +194,15 @@ public sealed class SignalRSessionHubConnectionContractTests : IAsyncLifetime
         Assert.Equal(true, Methods["GetStartedSession"]!["returnsNull"]?.GetValue<bool>());
         _calls.Answer = null;
         Assert.Null(await _agent.GetStartedSessionAsync());
+
+        _calls.Answer = ContractFiles.Sample(Methods["GetSessionAllowlist"]!["returns"]!);
+        var allowlist = await _agent.GetSessionAllowlistAsync(sessionId);
+        problems.AddRange(ContractFiles.ReadDifferences(_calls.Answer, ContractFiles.AsRead(allowlist), "GetSessionAllowlist answer"));
+
+        // returnsNull: the student is not in the session.
+        Assert.Equal(true, Methods["GetSessionAllowlist"]!["returnsNull"]?.GetValue<bool>());
+        _calls.Answer = null;
+        Assert.Null(await _agent.GetSessionAllowlistAsync(sessionId));
 
         Assert.Equal("boolean", Methods["IsInSession"]!["returns"]!.GetValue<string>());
         _calls.InSession = false;
@@ -281,6 +291,12 @@ public sealed class SignalRSessionHubConnectionContractTests : IAsyncLifetime
         public JsonNode? GetStartedSession()
         {
             calls.Add(nameof(GetStartedSession));
+            return calls.Answer?.DeepClone();
+        }
+
+        public JsonNode? GetSessionAllowlist(JsonElement sessionId)
+        {
+            calls.Add(nameof(GetSessionAllowlist), sessionId);
             return calls.Answer?.DeepClone();
         }
     }

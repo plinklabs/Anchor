@@ -85,6 +85,15 @@
       },
       "returnsNull": true
     },
+    "GetSessionAllowlist": {
+      "argument": "string",
+      "returns": {
+        "sessionId": "string",
+        "apps": [{ "matchKind": "string", "value": "string" }],
+        "domains": [{ "matchType": "string", "value": "string" }]
+      },
+      "returnsNull": true
+    },
     "ReportEvent": {
       "argument": {
         "sessionId": "string",

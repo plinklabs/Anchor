@@ -55,4 +55,11 @@ public interface ISessionHubConnection : IAsyncDisposable
     /// sent; null when there is none (#356). Throws when the backend can't be asked.
     /// </summary>
     Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Asks the backend for the student's whole allowlist in the session — its
+    /// bundles, its whole-class grants and the student's own grants — or null
+    /// when they are not in it (#570). Throws when the backend can't be asked,
+    /// or is too old to know the question.
+    /// </summary>
+    Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default);
 }

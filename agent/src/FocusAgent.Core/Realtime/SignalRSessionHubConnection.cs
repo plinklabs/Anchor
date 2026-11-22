@@ -176,6 +176,9 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
     public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default) =>
         _connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession", ct);
 
+    public Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default) =>
+        _connection.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", sessionId, ct);
+
     private void SetState(AgentConnectionState next)
     {
         bool changed;

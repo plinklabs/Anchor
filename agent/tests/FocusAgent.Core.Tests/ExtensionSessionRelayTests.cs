@@ -713,6 +713,7 @@ public partial class ExtensionSessionRelayTests
         public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default) =>
             Task.FromResult<SessionStartedPayload?>(null);
+        public Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult<SessionAllowlistPayload?>(null);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

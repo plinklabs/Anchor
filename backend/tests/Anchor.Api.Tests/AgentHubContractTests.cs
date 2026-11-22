@@ -263,6 +263,7 @@ public sealed class AgentHubContractTests : IClassFixture<SessionHubContractTest
         await CallAsync(agent, "ExtensionHeartbeat");
         await CallAsync(agent, "IsInSession");
         await CallAsync(agent, "GetStartedSession");
+        await CallAsync(agent, "GetSessionAllowlist");
 
         (await teacher.PutAsJsonAsync($"/sessions/{sessionId}/bundles", new UpdateSessionBundlesRequest([bundle.Id])))
             .EnsureSuccessStatusCode();

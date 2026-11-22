@@ -192,7 +192,7 @@ public class SessionRehydrationServiceTests
         var ended = Payload();
         await coordinator.HandleSessionStartedAsync(ended);
         await service.NotifyConnectedAsync();
-        Assert.Equal(new[] { "IsInSession", "GetStartedSession" }, hub.Calls);
+        Assert.Equal(new[] { "IsInSession", "GetSessionAllowlist", "GetStartedSession" }, hub.Calls);
 
         hub.StillInSession = false;
         var started = Payload();
@@ -204,6 +204,31 @@ public class SessionRehydrationServiceTests
         Assert.Equal(new[] { ended.SessionId, started.SessionId }, hub.JoinCalls.Select(c => c.SessionId));
         Assert.Equal(started.SessionId, coordinator.JoinedSessionId);
         Assert.Equal(2, ui.ShownCount);
+    }
+
+    [Fact]
+    public async Task Every_NotifyConnectedAsync_brings_the_joined_sessions_allowlist_up_to_date()
+    {
+        // #570: the teacher approved a request while the agent was offline; the
+        // AllowlistAmended push reached no connection of it. The rejoin's own
+        // allowlist is no change; the reconnect's is.
+        var hub = new RecordingHub();
+        var coordinator = NewCoordinator(hub, new SilentUi());
+        var payload = Payload();
+        var service = new SessionRehydrationService(new StubClient(new[] { payload }), coordinator);
+        var updates = new List<SessionBundlesUpdatedPayload>();
+        coordinator.SessionAllowlistUpdated += (_, p) => updates.Add(p);
+        hub.SessionAllowlist = new SessionAllowlistPayload(payload.SessionId, payload.Apps, payload.Domains);
+        await service.NotifyConnectedAsync();
+        Assert.Empty(updates);
+
+        var granted = new AllowedDomainDto("Suffix", "docs.test");
+        hub.SessionAllowlist = new SessionAllowlistPayload(payload.SessionId, payload.Apps, [granted]);
+        await service.NotifyConnectedAsync();
+
+        var update = Assert.Single(updates);
+        Assert.Equal(payload.SessionId, update.SessionId);
+        Assert.Equal(new[] { granted }, update.Domains);
     }
 
     [Fact]
@@ -303,6 +328,13 @@ public class SessionRehydrationServiceTests
         {
             lock (Calls) Calls.Add("GetStartedSession");
             return Task.FromResult(StartedSession);
+        }
+        // The backend's answer to GetSessionAllowlist (#570); none by default.
+        public SessionAllowlistPayload? SessionAllowlist { get; set; }
+        public Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default)
+        {
+            lock (Calls) Calls.Add("GetSessionAllowlist");
+            return Task.FromResult(SessionAllowlist);
         }
         // The order of the backend questions each pass asks.
         public List<string> Calls { get; } = new();
