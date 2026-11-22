@@ -226,4 +226,36 @@ public class FocusEnforcerTests
     {
         Assert.False(FocusEnforcer.AsksPostponedMinimize(shown, minimized, appWindowMinimized));
     }
+
+    // --- #563: a minimize a restore from another thread undid -----------------
+
+    [Fact]
+    public void A_window_that_counts_as_minimized_but_is_on_screen_had_its_minimize_undone_by_a_restore()
+    {
+        // The minimize landed between the steps of a restore from another thread,
+        // and the rest of the restore put the window back where it was.
+        Assert.Equal(
+            FocusEnforcer.OwnThreadMinimizeOutcome.UndoneByRestore,
+            FocusEnforcer.JudgeOwnThreadMinimize(shown: true, minimized: true, parked: false, minimizedWindowsParked: true));
+    }
+
+    [Fact]
+    public void A_window_on_screen_and_not_minimized_has_an_app_that_is_not_responding()
+    {
+        Assert.Equal(
+            FocusEnforcer.OwnThreadMinimizeOutcome.NotResponding,
+            FocusEnforcer.JudgeOwnThreadMinimize(shown: true, minimized: false, parked: false, minimizedWindowsParked: true));
+    }
+
+    [Theory]
+    [InlineData(true, true, true, true)]    // minimized and parked off the screen
+    [InlineData(false, true, false, true)]  // hidden
+    [InlineData(false, false, false, true)] // hidden
+    [InlineData(true, true, false, false)]  // where Windows shows minimized windows as title bars
+    public void A_window_that_is_down_is_left_alone(bool shown, bool minimized, bool parked, bool minimizedWindowsParked)
+    {
+        Assert.Equal(
+            FocusEnforcer.OwnThreadMinimizeOutcome.Down,
+            FocusEnforcer.JudgeOwnThreadMinimize(shown, minimized, parked, minimizedWindowsParked));
+    }
 }

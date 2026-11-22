@@ -37,6 +37,58 @@ public class FocusEnforcerWindowTests
         Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
     }
 
+    /// <summary>
+    /// #563: another app restores the off-list window from a thread of its own.
+    /// Windows carries that out in steps it sends to the window's thread: the first
+    /// raises an event the agent blocks the window on, and the window's thread can
+    /// carry the block's minimize out before the next step, which puts the window
+    /// back on screen while it counts as minimized. The restore's second event
+    /// blocks it again, and that minimize changes nothing. The spec holds the restore
+    /// in the middle until the first block's minimize has landed there, then blocks
+    /// the window again, as the second event does.
+    /// </summary>
+    [Fact]
+    public async Task A_block_whose_minimize_lands_in_the_middle_of_a_restore_from_another_thread_still_takes_the_window_down()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer(log);
+        enforcer.RememberAllowed(allowed.Handle);
+        var restoredTo = offList.Bounds;
+        offList.MinimizeWithoutActivating();
+
+        // The first event of the restore: the agent blocks the window while the
+        // restore is under way, and the window's thread carries the block's minimize
+        // out between the restore's steps.
+        offList.MinimizeInTheMiddleOfTheNextRestore();
+        var firstBlock = Task.Run(() =>
+            offList.WaitUntilInTheMiddleOfARestore(TimeSpan.FromSeconds(5)) && enforcer.Block(offList.Handle));
+        offList.RestoreWithoutActivating();
+        Assert.True(await firstBlock, "The restore was not held in the middle for the agent to block the window.");
+        Assert.True(offList.MinimizedInTheMiddleOfARestore, "The block's minimize did not land in the middle of the restore.");
+        Assert.True(
+            offList.CountsAsMinimizedOnScreen,
+            "The rest of the restore did not put the window back on screen while it counts as minimized; the spec " +
+            "does not reproduce #563.");
+
+        // The second event of the restore blocks the window once more.
+        Assert.True(enforcer.Block(offList.Handle));
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(3)),
+            "A block whose minimize landed in the middle of a restore from another thread left the window on screen, " +
+            "counted as minimized (#563).");
+        Assert.False(NativeMethods.IsIconic(allowed.Handle), "The allowed window was minimized.");
+        Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
+
+        // Put down from there, the window goes back to where it was when it is
+        // restored, not to where Windows parks a minimized window, out of sight.
+        offList.RestoreWithoutActivating();
+        Assert.True(offList.IsBackOnScreen, "The window did not come back on screen once restored.");
+        Assert.Equal(restoredTo, offList.Bounds);
+    }
+
     [Fact]
     public async Task Blocking_an_app_that_is_not_responding_never_holds_up_the_agent()
     {
