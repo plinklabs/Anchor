@@ -687,15 +687,6 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
-  String feedTamperAgentUnavailable(String who, String name) {
-    String _temp0 = intl.Intl.selectLogic(who, {
-      'named': 'De Anchor-app van $name draait niet meer.',
-      'other': 'De Anchor-app van een leerling draait niet meer.',
-    });
-    return '$_temp0';
-  }
-
-  @override
   String feedTamperOutsideSchoolProfile(String who, String name) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named': '$name hield een Edge-venster buiten het schoolprofiel open.',

@@ -205,10 +205,6 @@ void main() {
           "Ada limited the Anchor extension's access to websites.",
           'Ada heeft de toegang van de Anchor-extensie tot websites beperkt.',
         ),
-        'agent_unavailable': (
-          "Ada's Anchor app stopped running.",
-          'De Anchor-app van Ada draait niet meer.',
-        ),
         // #525: only told when the student doesn't resolve it.
         'outside_school_profile': (
           'Ada kept an Edge window open outside the school profile.',

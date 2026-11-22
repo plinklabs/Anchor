@@ -7,12 +7,18 @@ on:
       - 'agent/**'
       - 'backend/**'
       - 'extension/test-ring.json'
+      - 'contracts/agent-hub.json'
+      - 'contracts/agent-rest.json'
+      - 'contracts/witness.json'
       - '.github/workflows/agent-e2e.yml'
   pull_request:
     paths:
       - 'agent/**'
       - 'backend/**'
       - 'extension/test-ring.json'
+      - 'contracts/agent-hub.json'
+      - 'contracts/agent-rest.json'
+      - 'contracts/witness.json'
       - '.github/workflows/agent-e2e.yml'
 
 concurrency:
@@ -54,6 +60,9 @@ jobs:
 
       # The agent had no CI at all before #131 — run its unit/native suites here
       # too, on the same Windows runner that already has to build the agent.
+      # They include the contract tests (#573) against contracts/agent-hub.json,
+      # agent-rest.json and witness.json, which is why a change to one of those
+      # files runs this workflow.
       - name: Agent unit tests
         run: dotnet test agent/FocusAgent.sln -c Debug
 

@@ -65,6 +65,9 @@ jobs:
               - 'agent/**'
               - 'backend/**'
               - 'extension/test-ring.json'
+              - 'contracts/agent-hub.json'
+              - 'contracts/agent-rest.json'
+              - 'contracts/witness.json'
               - '.github/workflows/agent-e2e.yml'
             dashboard_e2e:
               - 'dashboard/**'
@@ -81,6 +84,7 @@ jobs:
               - '.github/workflows/extension-e2e.yml'
             extension_unit:
               - 'extension/**'
+              - 'contracts/witness.json'
               - '.github/workflows/extension-release.yml'
               - '.github/workflows/edge-key-expiry.yml'
               - '.github/workflows/extension-test-ring.yml'

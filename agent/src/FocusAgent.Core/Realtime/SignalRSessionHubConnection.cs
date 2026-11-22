@@ -1,12 +1,11 @@
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
-using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Settings;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace FocusAgent.App.Realtime;
+namespace FocusAgent.Core.Realtime;
 
 public sealed class SignalRSessionHubConnection : ISessionHubConnection
 {

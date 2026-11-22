@@ -124,23 +124,32 @@ public sealed class SessionHubContractTests : IClassFixture<SessionHubContractTe
     }
 
     [Fact]
-    public void Every_hub_event_and_method_is_in_the_contract_or_listed_as_not_covered()
+    public void Every_hub_event_and_method_is_in_the_dashboards_contract_or_the_agents()
     {
-        // A new event or hub method has to be described for the dashboard, or
-        // left to the agent and the extension on purpose.
+        // A new event or hub method has to be described for the dashboard
+        // here, for the agent in agent-hub.json (#573), or for both. One that
+        // nobody listens for or calls is one to remove, as ParticipationEnded
+        // was.
+        var agent = ContractJson.Load("contracts/agent-hub.json");
         Assert.Equal(
             typeof(ISessionHubClient).GetMethods().Select(m => m.Name).Order(StringComparer.Ordinal),
-            _contract.Events.Select(e => e.Key).Concat(_contract.NotCoveredEvents).Order(StringComparer.Ordinal));
+            _contract.Events.Select(e => e.Key)
+                .Concat(agent["events"]!.AsObject().Select(e => e.Key))
+                .Distinct()
+                .Order(StringComparer.Ordinal));
         Assert.Equal(
             HubMethods().Select(m => m.Name).Order(StringComparer.Ordinal),
-            _contract.Methods.Select(m => m.Key).Concat(_contract.NotCoveredMethods).Order(StringComparer.Ordinal));
+            _contract.Methods.Select(m => m.Key)
+                .Concat(agent["methods"]!.AsObject().Select(m => m.Key))
+                .Distinct()
+                .Order(StringComparer.Ordinal));
         Assert.Equal(AudienceNames.Order(StringComparer.Ordinal), _contract.Audiences.Order(StringComparer.Ordinal));
     }
 
     // ------- The description -------
 
     /// <summary>The audience names, in the order a description lists them.</summary>
-    private static readonly string[] AudienceNames = ["session", "teacher", "participants"];
+    internal static readonly string[] AudienceNames = ["session", "teacher", "participants"];
 
     /// <summary>
     /// The audience each group a send can target stands for, for one session:
@@ -221,7 +230,7 @@ public sealed class SessionHubContractTests : IClassFixture<SessionHubContractTe
     /// The methods a client can invoke on the hub, found the way SignalR finds
     /// them: its public instance methods, less those of <see cref="Hub"/>.
     /// </summary>
-    private static IEnumerable<MethodInfo> HubMethods() =>
+    internal static IEnumerable<MethodInfo> HubMethods() =>
         typeof(SessionHub).GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => !m.IsSpecialName)
             .Where(m => m.GetBaseDefinition().DeclaringType is { } declaring &&
@@ -325,16 +334,12 @@ public sealed class SessionHubContractTests : IClassFixture<SessionHubContractTe
             Audiences = root["audiences"]!.AsObject().Select(a => a.Key).ToList();
             Events = root["events"]!.AsObject();
             Methods = root["methods"]!.AsObject();
-            NotCoveredEvents = Names(root["notCovered"]!["events"]!);
-            NotCoveredMethods = Names(root["notCovered"]!["methods"]!);
         }
 
         public string Hub { get; }
         public IReadOnlyList<string> Audiences { get; }
         public JsonObject Events { get; }
         public JsonObject Methods { get; }
-        public IReadOnlyList<string> NotCoveredEvents { get; }
-        public IReadOnlyList<string> NotCoveredMethods { get; }
 
         public static SessionHubContract Load()
         {
@@ -346,9 +351,6 @@ public sealed class SessionHubContractTests : IClassFixture<SessionHubContractTe
             }
             throw new FileNotFoundException($"No {RelativePath} above {AppContext.BaseDirectory}.");
         }
-
-        private static List<string> Names(JsonNode list) =>
-            list.AsArray().Select(n => n!.GetValue<string>()).ToList();
     }
 
     // ------- Recording the sends -------

@@ -1,0 +1,50 @@
+{
+  "_about": [
+    "The witness link between the student's agent and the Edge extension (#489, #573): the native-messaging messages each way and their fields. The extension opens the link to the native host (anchor-witness-host.exe), which forwards each message unchanged over a named pipe to the agent and back, and adds two of its own about the pipe.",
+    "Both ends test against this file. The agent's unit tests check that what it sends the extension (ExtensionSessionRelay) has exactly the fields listed under toExtension, that it acts on each message under toAgent built from this file (ExtensionSessionRelay, ExtensionSelfCheckWatch), that the host's own messages are the ones under fromHost (WitnessBridge), and that ExtensionMessages names every message here. The extension's unit tests (src/shared/witness-contract.test.ts) check that it takes every message under toExtension and fromHost built from this file with every field read, and that what it sends the agent (WitnessClient) has exactly the fields listed under toAgent.",
+    "So a change to a message on one side fails that side's tests until this file says so, and the change to this file fails the other side's tests until it agrees. The agent and the extension are released separately (Velopack / Intune and the Edge store), so either may meet an older copy of the other.",
+    "Every message is a JSON object whose type names it; the fields listed are the rest. A shape is an object of fields, a list written as [element], or a type: string, number, boolean or date-time (an ISO 8601 string). A field whose type ends in ? may be left out. Ids go over the wire as strings.",
+    "legacy: what the agent still takes from extensions older than #539, which the extension no longer sends."
+  ],
+  "toExtension": {
+    "session_started": {
+      "sessionId": "string",
+      "classId": "string",
+      "joinCode": "string",
+      "startedAt": "date-time",
+      "domains": [{ "matchType": "string", "value": "string" }]
+    },
+    "no_session": {},
+    "session_ended": { "sessionId": "string" },
+    "allowlist_replaced": {
+      "sessionId": "string",
+      "domains": [{ "matchType": "string", "value": "string" }]
+    },
+    "allowlist_amended": {
+      "sessionId": "string",
+      "addedDomains": [{ "matchType": "string", "value": "string" }]
+    },
+    "unblock_denied": { "sessionId": "string", "host": "string" },
+    "unblock_request_result": { "requestId": "string", "ok": "boolean", "error": "string?" },
+    "open_extension_page": { "sessionId": "string" }
+  },
+  "fromHost": {
+    "agent_available": {},
+    "agent_unavailable": {}
+  },
+  "toAgent": {
+    "ping": {},
+    "blocked_url": { "sessionId": "string", "host": "string", "tabId": "number", "occurredAt": "date-time" },
+    "unblock_request": {
+      "requestId": "string",
+      "sessionId": "string",
+      "url": "string",
+      "host": "string",
+      "reason": "string?"
+    },
+    "self_check": { "sessionId": "string", "allSites": "boolean", "inPrivate": "boolean" }
+  },
+  "legacy": {
+    "tamper": { "sessionId": "string", "kind": "string" }
+  }
+}

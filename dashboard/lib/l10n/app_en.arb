@@ -246,8 +246,6 @@
   "@feedTamperInPrivate": { "placeholders": { "who": { "type": "String" }, "name": { "type": "String" } } },
   "feedTamperSiteAccess": "{who, select, named{{name} limited the Anchor extension's access to websites.} other{A student limited the Anchor extension's access to websites.}}",
   "@feedTamperSiteAccess": { "description": "Tamper report host_permission_revoked: the extension's site access was turned down from 'On all sites'.", "placeholders": { "who": { "type": "String" }, "name": { "type": "String" } } },
-  "feedTamperAgentUnavailable": "{who, select, named{{name}'s Anchor app stopped running.} other{A student's Anchor app stopped running.}}",
-  "@feedTamperAgentUnavailable": { "description": "Tamper report agent_unavailable: the agent went away while the extension still runs.", "placeholders": { "who": { "type": "String" }, "name": { "type": "String" } } },
   "feedTamperOutsideSchoolProfile": "{who, select, named{{name} kept an Edge window open outside the school profile.} other{A student kept an Edge window open outside the school profile.}}",
   "@feedTamperOutsideSchoolProfile": { "description": "Tamper report outside_school_profile (#525): during a session a window of another Edge profile or a Guest window stayed open, paused, after the student was asked to close it.", "placeholders": { "who": { "type": "String" }, "name": { "type": "String" } } },
   "feedTamperSchoolProfileMissing": "{who, select, named{{name} is not signed in to Edge with their school account.} other{A student is not signed in to Edge with their school account.}}",
