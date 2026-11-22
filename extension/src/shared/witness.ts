@@ -30,6 +30,7 @@
 // contracts/witness.json lists every message each way with its fields (#573):
 // witness-contract.test.ts holds this end to it, the agent's tests the other.
 
+import type { LinkRetryAlarm } from './link-retry';
 import { logger } from './logger';
 import type { SelfCheckResult } from './self-check';
 import type { AllowedDomainDto, SessionStartedPayload } from './types';
@@ -256,6 +257,12 @@ export interface WitnessClientDeps {
   onAgentUnavailable?: () => void;
   /** Invoked when the host reports the agent came back. */
   onAgentAvailable?: () => void;
+  /**
+   * Armed while the link is down, disarmed once the host relays a message
+   * (#572): an alarm wakes a stopped service worker, the reconnect setTimeout
+   * doesn't. See link-retry.ts.
+   */
+  retryAlarm?: LinkRetryAlarm;
   /** Injected for tests; default to the globals. */
   setTimeoutFn?: (callback: () => void, ms: number) => number;
   clearTimeoutFn?: (handle: number) => void;
@@ -282,6 +289,7 @@ export class WitnessClient {
   private readonly onAgentMessage: (message: AgentMessage) => void;
   private readonly onAgentUnavailable?: () => void;
   private readonly onAgentAvailable?: () => void;
+  private readonly retryAlarm?: LinkRetryAlarm;
   private readonly setTimeoutFn: (callback: () => void, ms: number) => number;
   private readonly clearTimeoutFn: (handle: number) => void;
   private readonly newRequestId: () => string;
@@ -309,6 +317,7 @@ export class WitnessClient {
     this.onAgentMessage = deps.onAgentMessage;
     this.onAgentUnavailable = deps.onAgentUnavailable;
     this.onAgentAvailable = deps.onAgentAvailable;
+    this.retryAlarm = deps.retryAlarm;
     this.setTimeoutFn = deps.setTimeoutFn ?? ((cb, ms) => setTimeout(cb, ms) as unknown as number);
     this.clearTimeoutFn = deps.clearTimeoutFn ?? ((h) => clearTimeout(h));
     this.newRequestId = deps.newRequestId ?? (() => crypto.randomUUID());
@@ -322,10 +331,26 @@ export class WitnessClient {
     this.open();
   }
 
+  /**
+   * Tries to connect now when the link is down and no attempt is under way,
+   * instead of waiting out the reconnect backoff — what the retry alarm does in
+   * a worker that is still awake (#572). A no-op while a port is open.
+   */
+  retryNow(): void {
+    if (this.stopped || this.port) return;
+    if (this.reconnectTimer !== null) {
+      this.clearTimeoutFn(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    log.debug('retrying the agent link now');
+    this.open();
+  }
+
   /** Tears the link down for good (e.g. on SW shutdown). */
   stop(): void {
     this.stopped = true;
     this.clearTimers();
+    this.retryAlarm?.disarm();
     const port = this.port;
     this.port = null;
     this.failPending('The Anchor app link was closed.');
@@ -418,6 +443,7 @@ export class WitnessClient {
       // reconnect backoff so a healthy agent comes back to the 1s base delay.
       this.established = true;
       this.reconnectAttempt = 0;
+      this.retryAlarm?.disarm();
       log.info('witness port connected to agent host');
     }
     const signal = parseHostMessage(message);
@@ -480,6 +506,10 @@ export class WitnessClient {
 
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer !== null) return;
+    // The backoff below soon outlasts the worker's ~30 s idle timeout, and a
+    // stopped worker takes its timers with it: the alarm is what brings it
+    // back to try again (#572).
+    this.retryAlarm?.arm();
     const delay = nextReconnectDelayMs(this.reconnectAttempt);
     this.reconnectAttempt += 1;
     this.reconnectTimer = this.setTimeoutFn(() => {

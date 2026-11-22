@@ -3,6 +3,7 @@ import {
   parseHostMessage,
   nextReconnectDelayMs,
   WitnessClient,
+  WITNESS_PING_INTERVAL_MS,
   type RuntimePort,
 } from './witness';
 
@@ -410,6 +411,108 @@ describe('WitnessClient', () => {
 
     client.start();
     expect(h.pendingDelays()).toContain(1_000);
+  });
+
+  // #572: the backoff soon outlasts the worker's ~30 s idle timeout, and a
+  // stopped worker takes its setTimeout with it. An alarm runs while the link is
+  // down; it is what wakes a stopped worker to try again.
+  it('arms the retry alarm when the link goes down and disarms it once the host speaks (#572)', () => {
+    const h = makeHarness();
+    const ports = [new h.FakePort(), new h.FakePort()];
+    let i = 0;
+    const retryAlarm = { arm: vi.fn(), disarm: vi.fn() };
+    const client = new WitnessClient({
+      connect: () => ports[i++],
+      onAgentMessage: vi.fn(),
+      onAgentAvailable: vi.fn(),
+      retryAlarm,
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    expect(retryAlarm.arm).not.toHaveBeenCalled();
+    ports[0].drop();
+    expect(retryAlarm.arm).toHaveBeenCalledTimes(1);
+    expect(retryAlarm.disarm).not.toHaveBeenCalled();
+
+    expect(h.runDue(1_000)).toBe(1);
+    // A port alone isn't a link (#243): only the host's first message is.
+    expect(retryAlarm.disarm).not.toHaveBeenCalled();
+    ports[1].emit({ type: 'agent_available' });
+    expect(retryAlarm.disarm).toHaveBeenCalledTimes(1);
+  });
+
+  it('arms the retry alarm when connectNative throws (#572)', () => {
+    const h = makeHarness();
+    const retryAlarm = { arm: vi.fn(), disarm: vi.fn() };
+    const client = new WitnessClient({
+      connect: () => {
+        throw new Error('Specified native messaging host not found.');
+      },
+      onAgentMessage: vi.fn(),
+      retryAlarm,
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    expect(retryAlarm.arm).toHaveBeenCalledTimes(1);
+  });
+
+  it('retryNow() tries at once instead of waiting out a long backoff (#572)', () => {
+    const h = makeHarness();
+    let attempts = 0;
+    const live = new h.FakePort();
+    let hostUp = false;
+    const client = new WitnessClient({
+      connect: () => {
+        attempts += 1;
+        if (!hostUp) throw new Error('Specified native messaging host not found.');
+        return live;
+      },
+      onAgentMessage: vi.fn(),
+      retryAlarm: { arm: vi.fn(), disarm: vi.fn() },
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 32_000]) {
+      expect(h.runDue(delay)).toBe(1);
+    }
+    expect(attempts).toBe(7);
+    expect(h.pendingDelays()).toEqual([60_000]);
+
+    hostUp = true;
+    client.retryNow();
+    expect(attempts).toBe(8);
+    // The 60 s timer is gone; the open port arms only its keepalive ping.
+    expect(h.pendingDelays()).toEqual([WITNESS_PING_INTERVAL_MS]);
+
+    // With a port open (or an attempt under way) it does nothing.
+    client.retryNow();
+    expect(attempts).toBe(8);
+  });
+
+  it('stop() disarms the retry alarm (#572)', () => {
+    const h = makeHarness();
+    const retryAlarm = { arm: vi.fn(), disarm: vi.fn() };
+    const client = new WitnessClient({
+      connect: () => {
+        throw new Error('Specified native messaging host not found.');
+      },
+      onAgentMessage: vi.fn(),
+      retryAlarm,
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    client.stop();
+    expect(retryAlarm.disarm).toHaveBeenCalledTimes(1);
+    client.retryNow();
+    expect(h.pendingDelays()).toEqual([]);
   });
 
   it('stop() disconnects the port and cancels all timers', () => {
