@@ -90,4 +90,16 @@ public static class ExtensionMessages
     /// <see cref="Tamper.ExtensionSelfCheckWatch"/>.
     /// </summary>
     public const string SelfCheck = "self_check";
+
+    /// <summary>
+    /// Why the extension's link to the agent was down before it came up (#561):
+    /// the reason Edge gave when the link last failed (<c>error</c>,
+    /// <c>chrome.runtime.lastError</c>: "Specified native messaging host not
+    /// found.", "Access to the specified native messaging host is forbidden.",
+    /// "Native host has exited."), how often it failed (<c>failedAttempts</c>) and
+    /// since when (<c>since</c>). Sent once the link is up again; the agent logs
+    /// it, so the log upload says what was wrong. Only Edge's message: nothing
+    /// the student browses.
+    /// </summary>
+    public const string LinkError = "link_error";
 }

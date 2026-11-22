@@ -175,6 +175,36 @@ public sealed class SessionsJoinByCodeEndpointTests : IClassFixture<AnchorApiFac
     }
 
     [Fact]
+    public async Task POST_join_by_code_after_leaving_carries_the_callers_own_grants_and_no_classmates()
+    {
+        // #568: a student who left and comes back with the code gets a fresh
+        // SessionStarted that replaces their allowlist. The host the teacher
+        // approved for them earlier in the session must be in it; a classmate's
+        // must not.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var (student, classmate) = (scenario.Students[0], scenario.Students[1]);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id, classmate.Id });
+        await SetParticipantJoinedAsync(session.Id, classmate.Id);
+        await SetParticipantJoinedAsync(session.Id, student.Id);
+        await SetParticipantLeftAsync(session.Id, student.Id);
+        await TestSeed.AddUnblockGrantAsync(_factory, session.Id, student.Id, "own-grant-by-code.example");
+        await TestSeed.AddUnblockGrantAsync(_factory, session.Id, classmate.Id, "classmate-grant-by-code.example");
+
+        var broadcaster = _factory.Services.GetRequiredService<RecordingSessionBroadcaster>();
+        using var client = _factory.CreateClient();
+        TestAuth.SetStudent(client, student);
+
+        var response = await client.PostAsJsonAsync("/sessions/join-by-code", new JoinByCodeRequest(session.JoinCode));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var call = Assert.Single(broadcaster.SessionStartedCalls, c => c.SessionId == session.Id);
+        Assert.Equal(new[] { student.Id }, call.RecipientUserIds);
+        Assert.Contains(call.Payload.Domains, d => d.MatchType == "Suffix" && d.Value == "own-grant-by-code.example");
+        Assert.DoesNotContain(call.Payload.Domains, d => d.Value == "classmate-grant-by-code.example");
+    }
+
+    [Fact]
     public async Task POST_join_by_code_is_idempotent_on_repeat()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);
@@ -247,6 +277,16 @@ public sealed class SessionsJoinByCodeEndpointTests : IClassFixture<AnchorApiFac
         Assert.Equal(HttpStatusCode.OK, hit.StatusCode);
 
         Assert.False(limiter.IsBlocked(student.Id));
+    }
+
+    private async Task SetParticipantLeftAsync(Guid sessionId, Guid userId)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        var participant = await db.SessionParticipants
+            .SingleAsync(p => p.SessionId == sessionId && p.UserId == userId);
+        participant.LeftAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync();
     }
 
     private async Task SetParticipantJoinedAsync(Guid sessionId, Guid userId)

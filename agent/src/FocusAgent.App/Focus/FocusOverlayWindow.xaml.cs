@@ -92,6 +92,7 @@ public sealed partial class FocusOverlayWindow : Window
         ExtensionPauseReason.NoSchoolProfile => "Overlay_SchoolAccount",
         ExtensionPauseReason.SchoolProfileWithoutExtension => "Overlay_SchoolExtension",
         ExtensionPauseReason.OutsideSchoolProfile => "Overlay_SchoolProfile",
+        ExtensionPauseReason.NotConnected => "Overlay_NotConnected",
         _ => "Overlay_BrowserPaused",
     };
 

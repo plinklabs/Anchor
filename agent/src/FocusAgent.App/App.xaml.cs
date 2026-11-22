@@ -265,8 +265,16 @@ public partial class App : Application
             // mirroring the force-install policy write above. Best-effort, off the UI
             // thread. #497: the host lets each of Anchor's extension IDs connect, the
             // self-hosted test-ring build's included.
+            // #561: with a logger, so a missing host exe or a failure is a warning in
+            // the log, not silence.
             var extensionIds = _host.Services.GetRequiredService<ExtensionPolicyParts>().Ids;
-            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(extensionIds));
+            var registrationLog = _host.Services.GetRequiredService<ILogger<WitnessHostRegistrar>>();
+            _ = Task.Run(() => WitnessHostRegistration.RegisterForStartup(extensionIds, registrationLog));
+            // #561: and when a session is joined with no extension connected, log
+            // why the link may be down (and register the host again), for the log
+            // upload. Resolved now so its SessionJoined subscription is in place
+            // before the first session.
+            _ = _host.Services.GetRequiredService<WitnessLinkSelfCheckOnJoin>();
             // Resolve the InPrivate witness eagerly (#148) so its SessionJoined /
             // SessionLeft subscriptions are wired before the first session — the
             // poll loop starts on join and reports any open Edge InPrivate window.
@@ -852,9 +860,10 @@ public partial class App : Application
         // #525: --overlay-school-account the one for no profile signed in with the
         // school account, --overlay-school-profile the one for a window outside it;
         // #536: --overlay-school-extension the one for a school profile without the
-        // extension.
+        // extension; #556: --overlay-not-connected the one for an extension that is
+        // installed but never connected.
         if (Program.OverlayPaused || Program.OverlaySiteAccess || Program.OverlaySchoolAccount
-            || Program.OverlaySchoolProfile || Program.OverlaySchoolExtension)
+            || Program.OverlaySchoolProfile || Program.OverlaySchoolExtension || Program.OverlayNotConnected)
             overlay.ShowBrowserPaused(
                 rules,
                 new BrowserPausedPrompt(
@@ -865,6 +874,7 @@ public partial class App : Application
                     : Program.OverlaySchoolAccount ? ExtensionPauseReason.NoSchoolProfile
                     : Program.OverlaySchoolProfile ? ExtensionPauseReason.OutsideSchoolProfile
                     : Program.OverlaySchoolExtension ? ExtensionPauseReason.SchoolProfileWithoutExtension
+                    : Program.OverlayNotConnected ? ExtensionPauseReason.NotConnected
                     : ExtensionPauseReason.ExtensionOff,
                     Account: SelfTestDemoContent.SchoolAccount),
                 pausedWindowHandle: IntPtr.Zero);
@@ -1212,6 +1222,9 @@ public partial class App : Application
                          (ExtensionPauseReason.NoSchoolProfile, "schoolaccount"),
                          (ExtensionPauseReason.OutsideSchoolProfile, "schoolprofile"),
                          (ExtensionPauseReason.SchoolProfileWithoutExtension, "schoolextension"),
+                         // #556: Edge paused because the extension is installed
+                         // but never connected.
+                         (ExtensionPauseReason.NotConnected, "notconnected"),
                      })
             {
                 overlay.UpdateBrowserPausedContent(
@@ -1623,6 +1636,31 @@ public partial class App : Application
         // the guard pauses Edge while it may not work on all sites, and this watch
         // tells the teacher if the student doesn't put it back.
         builder.Services.AddSingleton<ExtensionSelfCheckWatch>();
+        // #561 -- when a session is joined with no extension connected, the link
+        // self-check logs the host registration, the manifest, the installed
+        // extensions and Edge's policies, then registers the host again.
+        builder.Services.AddSingleton(sp => new WitnessLinkSelfCheck(
+            new RegistryWitnessHostStore(),
+            new RegistryEdgeNativeMessagingPolicySource(),
+            sp.GetRequiredService<ExtensionPolicyParts>().Profiles.FindInstalls,
+            WitnessHostRegistration.DefaultHostExePath(),
+            new WitnessHostRegistrar(
+                new RegistryWitnessHostStore(),
+                sp.GetRequiredService<ILogger<WitnessHostRegistrar>>(),
+                sp.GetRequiredService<ExtensionPolicyParts>().Ids),
+            sp.GetRequiredService<ILogger<WitnessLinkSelfCheck>>()));
+        builder.Services.AddSingleton<WitnessLinkSelfCheckOnJoin>();
+        // #556 -- the extension installed in an Edge profile, but its link never up
+        // since the agent started: the session never reached it, so Edge filtered
+        // nothing and nobody heard of it. The guard (below) reads where it is
+        // installed and which of those profiles is open, wakes it by opening Edge
+        // there at a page the session allows, and pauses Edge if it still doesn't
+        // connect. The relay is read only when waking, so no cycle.
+        builder.Services.AddSingleton(sp => new ExtensionWakeUp(
+            sp.GetRequiredService<IOpenProfileExtensionProbe>(),
+            sp.GetRequiredService<IBrowserProfileLauncher>(),
+            () => sp.GetRequiredService<ExtensionSessionRelay>().Domains,
+            sp.GetRequiredService<ILogger<ExtensionWakeUp>>()));
         // #427 -- the report alone left Edge an unfiltered browser while the
         // extension was off. The guard pauses Edge once the witness has stayed down
         // past a short grace period during a joined session with Edge on screen, or

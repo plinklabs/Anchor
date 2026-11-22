@@ -161,6 +161,11 @@ public sealed class AgentHubContractTests : IClassFixture<SessionHubContractTest
             if (answer is not null && !answer.IsValueType && describer.IsNullable(method.ReturnParameter))
                 entry["returnsNull"] = true;
 
+            // A note for the agent's side (#569): the hub still takes the
+            // method, which is all the backend can show for it.
+            if (node["retired"] is { } retired)
+                entry["retired"] = retired.DeepClone();
+
             if (node["kinds"] is JsonArray kinds)
             {
                 // The kinds the hub takes: ReportEvent parses each by its EventKind name.
@@ -263,6 +268,7 @@ public sealed class AgentHubContractTests : IClassFixture<SessionHubContractTest
         await CallAsync(agent, "ExtensionHeartbeat");
         await CallAsync(agent, "IsInSession");
         await CallAsync(agent, "GetStartedSession");
+        await CallAsync(agent, "GetSessionAllowlist");
 
         (await teacher.PutAsJsonAsync($"/sessions/{sessionId}/bundles", new UpdateSessionBundlesRequest([bundle.Id])))
             .EnsureSuccessStatusCode();

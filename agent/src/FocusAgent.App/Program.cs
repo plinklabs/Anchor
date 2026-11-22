@@ -71,6 +71,13 @@ public static class Program
     public const string OverlaySchoolExtensionArg = "--overlay-school-extension";
 
     /// <summary>
+    /// Dev-only modifier for <see cref="ShowTestOverlayArg"/> (#556): show the
+    /// overlay's variant for an Edge paused because the extension is installed but
+    /// never connected, so the visual e2e can capture it.
+    /// </summary>
+    public const string OverlayNotConnectedArg = "--overlay-not-connected";
+
+    /// <summary>
     /// Dev-only flag (#173): show the real <see cref="MainWindow"/> against a
     /// synthetic "connected, in a focus session" state, with no WAM / hub /
     /// coordinator bootstrap, and keep it up so its redesigned ink surface can be
@@ -434,6 +441,7 @@ public static class Program
     public static bool OverlaySchoolAccount { get; private set; }
     public static bool OverlaySchoolProfile { get; private set; }
     public static bool OverlaySchoolExtension { get; private set; }
+    public static bool OverlayNotConnected { get; private set; }
     public static bool ShowTestMainWindow { get; private set; }
     public static bool ShowTestJoinByCode { get; private set; }
     public static bool ShowTestTrayMenu { get; private set; }
@@ -647,6 +655,7 @@ public static class Program
         OverlaySchoolAccount = args.Any(a => string.Equals(a, OverlaySchoolAccountArg, StringComparison.OrdinalIgnoreCase));
         OverlaySchoolProfile = args.Any(a => string.Equals(a, OverlaySchoolProfileArg, StringComparison.OrdinalIgnoreCase));
         OverlaySchoolExtension = args.Any(a => string.Equals(a, OverlaySchoolExtensionArg, StringComparison.OrdinalIgnoreCase));
+        OverlayNotConnected = args.Any(a => string.Equals(a, OverlayNotConnectedArg, StringComparison.OrdinalIgnoreCase));
         ShowTestMainWindow = args.Any(a => string.Equals(a, ShowTestMainWindowArg, StringComparison.OrdinalIgnoreCase));
         ShowTestJoinByCode = args.Any(a => string.Equals(a, ShowTestJoinByCodeArg, StringComparison.OrdinalIgnoreCase));
         ShowTestTrayMenu = args.Any(a => string.Equals(a, ShowTestTrayMenuArg, StringComparison.OrdinalIgnoreCase));

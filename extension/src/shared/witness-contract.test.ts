@@ -160,6 +160,24 @@ describe('the witness contract, extension side (#573)', () => {
         });
         client.report(selfCheckReport(SESSION_ID, result));
       },
+      link_error: async () => {
+        // #561: a link that failed before it came up tells the agent why, once up.
+        let calls = 0;
+        const recovering = new WitnessClient({
+          connect: () => {
+            if (calls++ === 0) throw new Error('Specified native messaging host not found.');
+            return port;
+          },
+          onAgentMessage: () => undefined,
+          setTimeoutFn: (cb) => timers.push(cb),
+          clearTimeoutFn: () => undefined,
+        });
+        recovering.start();
+        recovering.retryNow();
+        port.emit({ type: 'agent_available' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        recovering.stop();
+      },
       unblock_request: () => {
         void client
           .requestUnblock({ sessionId: SESSION_ID, url: 'https://blocked.example/a', host: 'blocked.example', reason: 'For the assignment.' })

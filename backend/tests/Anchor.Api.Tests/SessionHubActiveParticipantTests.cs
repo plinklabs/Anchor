@@ -46,16 +46,12 @@ public sealed class SessionHubActiveParticipantTests
 
         _factory.ParticipantQueries.Reset();
         for (var i = 0; i < Pings; i++)
-        {
             await connection.InvokeAsync("Heartbeat", session.Id);
-            await connection.InvokeAsync("ExtensionHeartbeat", session.Id);
-        }
 
         Assert.Equal(0, _factory.ParticipantQueries.Count);
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
         Assert.True(tracker.TryGet(session.Id, student.Id, out var agent, WitnessSource.Agent));
         Assert.False(agent.AwaitingFirstPing); // pinged, not just awaited since the join (#444)
-        Assert.True(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
     }
 
     [Fact]
@@ -107,13 +103,13 @@ public sealed class SessionHubActiveParticipantTests
         for (var i = 0; i < Pings; i++)
         {
             var ex = await Assert.ThrowsAsync<HubException>(() =>
-                connection.InvokeAsync("ExtensionHeartbeat", session.Id));
+                connection.InvokeAsync("Heartbeat", session.Id));
             Assert.Contains("Not an active participant", ex.Message);
         }
 
         Assert.Equal(1, _factory.ParticipantQueries.Count);
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
-        Assert.False(tracker.TryGet(session.Id, stranger.Id, out _, WitnessSource.Extension));
+        Assert.False(tracker.TryGet(session.Id, stranger.Id, out _));
     }
 
     [Fact]
@@ -131,23 +127,23 @@ public sealed class SessionHubActiveParticipantTests
     }
 
     [Fact]
-    public async Task Extension_heartbeat_after_AgentKilled_is_rejected()
+    public async Task Heartbeat_after_AgentKilled_is_rejected()
     {
-        // #110: the student quit the agent, the extension keeps running and
-        // pinging — those pings must not keep the departed student tracked.
+        // #110: the student quit the agent. A ping still on its way must not
+        // keep the departed student tracked.
         var (student, session) = await SeedSessionWithStudentAsync();
         await using var connection = await ConnectAsync(student);
         await JoinAsync(connection, session.Id);
-        await connection.InvokeAsync("ExtensionHeartbeat", session.Id);
+        await connection.InvokeAsync("Heartbeat", session.Id);
 
         await connection.InvokeAsync("ReportEvent", new ReportEventRequest(
             session.Id, nameof(EventKind.AgentKilled), PayloadJson: "{}", OccurredAt: null));
 
         var ex = await Assert.ThrowsAsync<HubException>(() =>
-            connection.InvokeAsync("ExtensionHeartbeat", session.Id));
+            connection.InvokeAsync("Heartbeat", session.Id));
         Assert.Contains("Not an active participant", ex.Message);
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
-        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _));
     }
 
     [Fact]
@@ -207,11 +203,11 @@ public sealed class SessionHubActiveParticipantTests
     [Fact]
     public async Task Heartbeats_and_events_for_a_session_that_has_ended_are_rejected()
     {
-        // #354: an agent or extension that never heard SessionEnded keeps
-        // pinging. Ending the session dropped its cached participants, so the
-        // next ping falls back to the database, which must see that the session
-        // is over: otherwise the ping tracks the student again and the monitor
-        // reports them lost, or the extension silent, after the session ended.
+        // #354: an agent that never heard SessionEnded keeps pinging. Ending
+        // the session dropped its cached participants, so the next ping falls
+        // back to the database, which must see that the session is over:
+        // otherwise the ping tracks the student again and the monitor reports
+        // them lost after the session ended.
         var (student, session) = await SeedSessionWithStudentAsync();
         await using var connection = await ConnectAsync(student);
         await JoinAsync(connection, session.Id);
@@ -224,7 +220,6 @@ public sealed class SessionHubActiveParticipantTests
 
         var ex = await Assert.ThrowsAsync<HubException>(() => connection.InvokeAsync("Heartbeat", session.Id));
         Assert.Contains("Not an active participant", ex.Message);
-        await Assert.ThrowsAsync<HubException>(() => connection.InvokeAsync("ExtensionHeartbeat", session.Id));
         await Assert.ThrowsAsync<HubException>(() => connection.InvokeAsync("ReportEvent", new ReportEventRequest(
             session.Id, nameof(EventKind.ForegroundChange), "{\"app\":\"notepad\"}", OccurredAt: null)));
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();

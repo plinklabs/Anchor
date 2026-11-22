@@ -30,6 +30,8 @@ internal sealed class AgentSelfTestProcess : IAsyncDisposable
     public const string OverlaySchoolProfileArg = "--overlay-school-profile";
     /// <summary>With <see cref="ShowTestOverlayArg"/>: show the variant for a school profile without the extension (#536).</summary>
     public const string OverlaySchoolExtensionArg = "--overlay-school-extension";
+    /// <summary>With <see cref="ShowTestOverlayArg"/>: show the variant for an extension installed but never connected (#556).</summary>
+    public const string OverlayNotConnectedArg = "--overlay-not-connected";
     public const string ShowTestToastArg = "--show-test-toast";
     public const string ShowTestMainWindowArg = "--show-test-mainwindow";
     public const string ShowTestJoinByCodeArg = "--show-test-joinbycode";

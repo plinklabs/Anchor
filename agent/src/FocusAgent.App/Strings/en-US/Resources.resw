@@ -281,6 +281,18 @@
   <data name="Overlay_BrowserPaused_Hint" xml:space="preserve">
     <value>Edge opens for {0} seconds. Go to edge://extensions and switch Anchor on.</value>
   </data>
+  <data name="Overlay_NotConnected_Headline" xml:space="preserve">
+    <value>Edge is paused for now</value>
+  </data>
+  <data name="Overlay_NotConnected_Message" xml:space="preserve">
+    <value>The Anchor extension in Edge isn't connected to Anchor, so Edge can't be used in this session until it is. Your teacher knows. You can carry on with one of these apps in the meantime.</value>
+  </data>
+  <data name="Overlay_NotConnected_TurnBackOn" xml:space="preserve">
+    <value>Try Edge again</value>
+  </data>
+  <data name="Overlay_NotConnected_Hint" xml:space="preserve">
+    <value>Edge opens for {0} seconds. If Anchor connects in that time, Edge stays open.</value>
+  </data>
   <data name="Overlay_SiteAccess_Headline" xml:space="preserve">
     <value>Anchor is not allowed to work on all sites</value>
   </data>

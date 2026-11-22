@@ -36,6 +36,23 @@ public sealed class EdgeProfileExtensionProbeTests : IDisposable
     }
 
     [Fact]
+    public void Lists_every_install_of_each_id_by_profile()
+    {
+        // #561: the link self-check holds each installed ID against the host manifest.
+        const string testRing = "abcdefghijklmnopabcdefghijklmnop";
+        Unpack(UserData(), "Default");
+        Unpack(UserData(), "Profile 2", testRing);
+        Unpack(UserData(), "Profile 3", OtherId);
+        Unpack(UserData(), "Profile 4", manifest: false);
+
+        var installs = new EdgeProfileExtensionProbe([UserData()], AnchorExtensionIds.WithTestRing(testRing).All).FindInstalls();
+
+        Assert.Equal(
+            [new InstalledExtension(@"Edge\Default", EdgeExtensionPolicy.ExtensionId), new InstalledExtension(@"Edge\Profile 2", testRing)],
+            installs);
+    }
+
+    [Fact]
     public void Another_extension_is_not_ours()
     {
         Unpack(UserData(), "Default", OtherId);

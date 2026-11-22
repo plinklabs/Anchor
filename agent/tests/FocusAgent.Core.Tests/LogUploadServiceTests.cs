@@ -74,6 +74,15 @@ public sealed class LogUploadServiceTests : IDisposable
             "[lib-csharp:1234] [09:40:00] [Information] Initializing WindowsVelopackLocator",
             "[update:600] [10:20:00] [INFO] in class",
             "[update:600] [11:50:00] [INFO] after class");
+        // #561: the witness host's own log, one file a day, shared by the hosts
+        // of every Edge profile.
+        Write("witness-host-20261020.log",
+            "2026-10-20 21:00:00.000 +02:00 [INF] WitnessHost[700]: Witness host 0.9.3 started at home");
+        Write("witness-host-20261021.log",
+            "2026-10-21 07:15:00.000 +02:00 [INF] WitnessHost[800]: Witness host 0.9.3 started before class",
+            "2026-10-21 09:41:00.000 +02:00 [INF] WitnessHost[900]: Witness host 0.9.3 started by chrome-extension://dnkimhodjfogjibnbbfdjdapgmmiojio/; agent pipe anchor-witness.",
+            "2026-10-21 09:41:01.000 +02:00 [WRN] WitnessHost[900]: Connecting to the agent's pipe anchor-witness failed (attempt 1): UnauthorizedAccessException: Access to the path is denied.",
+            "2026-10-21 11:20:00.000 +02:00 [INF] WitnessHost[900]: Exiting: Edge closed the extension's port (stdin ended).");
         _client.Pending = new PendingLogWindows(1024 * 1024, [_window]);
 
         await Service().NotifyConnectedAsync();
@@ -101,6 +110,10 @@ public sealed class LogUploadServiceTests : IDisposable
             == Updater log ==
             [lib-csharp:1234] [09:40:00] [Information] Initializing WindowsVelopackLocator
             [update:600] [10:20:00] [INFO] in class
+
+            == Witness host log ==
+            2026-10-21 09:41:00.000 +02:00 [INF] WitnessHost[900]: Witness host 0.9.3 started by chrome-extension://dnkimhodjfogjibnbbfdjdapgmmiojio/; agent pipe anchor-witness.
+            2026-10-21 09:41:01.000 +02:00 [WRN] WitnessHost[900]: Connecting to the agent's pipe anchor-witness failed (attempt 1): UnauthorizedAccessException: Access to the path is denied.
 
             """.ReplaceLineEndings("\n"),
             Gunzip(upload.Gzip));

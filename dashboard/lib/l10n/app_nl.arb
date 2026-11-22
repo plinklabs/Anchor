@@ -167,6 +167,7 @@
   "feedAsks": "{who, select, named{{name} vraagt toegang tot {host}.} other{Een leerling vraagt toegang tot {host}.}}",
   "feedSomeSite": "een website",
   "feedTamperExtensionDisabled": "{who, select, named{De Anchor-extensie van {name} is uitgeschakeld of verwijderd.} other{De Anchor-extensie van een leerling is uitgeschakeld of verwijderd.}}",
+  "feedTamperExtensionNotConnected": "{who, select, named{De Anchor-extensie van {name} is niet verbonden met Anchor, dus Edge staat op pauze.} other{De Anchor-extensie van een leerling is niet verbonden met Anchor, dus Edge staat op pauze.}}",
   "feedTamperExtensionSilent": "{who, select, named{De Anchor-extensie van {name} staat uit of reageert niet.} other{De Anchor-extensie van een leerling staat uit of reageert niet.}}",
   "feedTamperInPrivate": "{who, select, named{{name} heeft een InPrivate-venster geopend.} other{Een leerling heeft een InPrivate-venster geopend.}}",
   "feedTamperSiteAccess": "{who, select, named{{name} heeft de toegang van de Anchor-extensie tot websites beperkt.} other{Een leerling heeft de toegang van de Anchor-extensie tot websites beperkt.}}",

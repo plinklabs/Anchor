@@ -56,17 +56,30 @@ public sealed class EdgeProfileExtensionProbe
     /// so the log line never carries the student's user name. A folder that can't
     /// be read counts as not having it.
     /// </summary>
-    public string? FindInstalledProfile()
+    public string? FindInstalledProfile() => FindInstalls().FirstOrDefault()?.Profile;
+
+    /// <summary>
+    /// Every install of one of Anchor's extensions: which ID, in which profile
+    /// (named as in <see cref="FindInstalledProfile"/>), in the order Edge's
+    /// folders list them. What the link self-check holds against the host
+    /// manifest's <c>allowed_origins</c> (#561).
+    /// </summary>
+    public IReadOnlyList<InstalledExtension> FindInstalls()
     {
+        var installs = new List<InstalledExtension>();
         foreach (var userData in _userDataFolders)
         {
             try
             {
                 if (!Directory.Exists(userData)) continue;
+                var channel = Path.GetFileName(Path.GetDirectoryName(userData.TrimEnd('\\', '/')));
                 foreach (var profile in Directory.EnumerateDirectories(userData))
                 {
-                    if (_extensionIds.Any(id => HasUnpackedVersion(Path.Combine(profile, "Extensions", id))))
-                        return $@"{Path.GetFileName(Path.GetDirectoryName(userData.TrimEnd('\\', '/')))}\{Path.GetFileName(profile)}";
+                    foreach (var id in _extensionIds)
+                    {
+                        if (HasUnpackedVersion(Path.Combine(profile, "Extensions", id)))
+                            installs.Add(new InstalledExtension($@"{channel}\{Path.GetFileName(profile)}", id));
+                    }
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -74,7 +87,7 @@ public sealed class EdgeProfileExtensionProbe
                 _log.LogWarning(ex, "Reading Edge's profiles failed; treating them as not having the extension.");
             }
         }
-        return null;
+        return installs;
     }
 
     // A version folder with its manifest: what Edge leaves once an install has
@@ -84,3 +97,6 @@ public sealed class EdgeProfileExtensionProbe
         Directory.EnumerateDirectories(extensionFolder)
             .Any(version => File.Exists(Path.Combine(version, "manifest.json")));
 }
+
+/// <summary>One of Anchor's extensions, installed in an Edge profile (<c>Edge\Default</c>).</summary>
+public sealed record InstalledExtension(string Profile, string ExtensionId);

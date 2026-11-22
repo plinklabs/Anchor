@@ -1052,6 +1052,12 @@ abstract class AppLocalizations {
   /// **'{who, select, named{{name}\'s Anchor extension was switched off or removed.} other{A student\'s Anchor extension was switched off or removed.}}'**
   String feedTamperExtensionDisabled(String who, String name);
 
+  /// Tamper report extension_not_connected (#556): the Anchor extension is installed in the student's open Edge profile, but its link to the agent never came up, not even after the agent woke it; the agent paused Edge. The student switched nothing off.
+  ///
+  /// In en, this message translates to:
+  /// **'{who, select, named{{name}\'s Anchor extension isn\'t connected to Anchor, so Edge is paused.} other{A student\'s Anchor extension isn\'t connected to Anchor, so Edge is paused.}}'**
+  String feedTamperExtensionNotConnected(String who, String name);
+
   /// Tamper report extension_silent: the extension stopped reporting (Edge closed, or the extension stopped).
   ///
   /// In en, this message translates to:

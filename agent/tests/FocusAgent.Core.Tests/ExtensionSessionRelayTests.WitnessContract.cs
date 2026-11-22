@@ -123,6 +123,17 @@ public partial class ExtensionSessionRelayTests
                 Assert.False(watch.InPrivateAllowed);
                 return Task.CompletedTask;
             },
+            ["link_error"] = async sent =>
+            {
+                // #561: logged for the log upload, and nothing else.
+                await Task.Delay(50);
+                Assert.Empty(h.Hub.Reports);
+                Assert.Empty(h.Channel.Messages());
+                var line = Assert.Single(h.Log.Entries, e => e.Message.Contains("before it came up"));
+                Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, line.Level);
+                Assert.Contains($"failed {sent["failedAttempts"]!.GetValue<int>()} time(s) since {sent["since"]!.GetValue<string>()}", line.Message);
+                Assert.Contains($"Edge last said: {sent["error"]!.GetValue<string>()}", line.Message);
+            },
             ["tamper"] = async sent =>
             {
                 var report = await h.Hub.NextReportAsync();
@@ -160,6 +171,7 @@ public partial class ExtensionSessionRelayTests
             "kind" => JsonValue.Create(TamperKinds.HostPermissionRevoked),
             "allSites" => JsonValue.Create(allSites),
             "inPrivate" => JsonValue.Create(inPrivate),
+            "error" => JsonValue.Create("Specified native messaging host not found."),
             _ => null,
         }).AsObject();
         message.Insert(0, "type", type);

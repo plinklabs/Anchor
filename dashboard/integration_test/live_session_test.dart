@@ -681,6 +681,44 @@ void main() {
   );
 
   testWidgets(
+    'an extension that never connected reads as a sentence in the feed, not '
+    'as switched off, and flags the student (#556)',
+    (tester) async {
+      final h = await _bootToLiveSession(
+        tester,
+        roster: [_participant('Ada', ParticipantLiveState.joined)],
+      );
+
+      // The extension is installed in Ada's open Edge profile, but its link to
+      // the agent never came up, not even after the agent woke it: Edge is
+      // paused, and the teacher is told. Ada switched nothing off.
+      h.sessions.roster = [
+        _participant('Ada', ParticipantLiveState.joined, tampered: true),
+      ];
+      h.hub.emit('TamperDetected', {
+        'sessionId': _sessionId,
+        'userId': 'Ada',
+        'userDisplayName': 'Ada',
+        'kind': 'extension_not_connected',
+        'detectedAt': '2026-06-12T07:25:00+00:00',
+      });
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text(
+          "Ada's Anchor extension isn't connected to Anchor, so Edge is "
+          'paused.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('switched off'), findsNothing);
+      expect(find.textContaining('extension_not_connected'), findsNothing);
+      expect(find.byTooltip('Tampering detected'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'a site the extension let through reads as a sentence in the feed, by its '
     'host, without flagging the student (#526)',
     (tester) async {

@@ -37,13 +37,6 @@ public interface ISessionHubConnection : IAsyncDisposable
     /// </summary>
     Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default);
     /// <summary>
-    /// Sends the Edge extension's liveness ping for the session (#149), on the
-    /// extension's behalf: the extension has no backend connection of its own
-    /// (#489), so the agent pings for it while its witness link is up. Same
-    /// contract as <see cref="HeartbeatAsync"/>: <c>false</c> when nothing was sent.
-    /// </summary>
-    Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default);
-    /// <summary>
     /// Asks the backend whether the student is still in the session: it hasn't
     /// ended and they haven't left it (#354). Throws when the backend can't be
     /// asked; only a <c>false</c> answer means the session is over.
@@ -55,4 +48,11 @@ public interface ISessionHubConnection : IAsyncDisposable
     /// sent; null when there is none (#356). Throws when the backend can't be asked.
     /// </summary>
     Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Asks the backend for the student's whole allowlist in the session — its
+    /// bundles, its whole-class grants and the student's own grants — or null
+    /// when they are not in it (#570). Throws when the backend can't be asked,
+    /// or is too old to know the question.
+    /// </summary>
+    Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default);
 }

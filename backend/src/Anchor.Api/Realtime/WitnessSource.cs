@@ -16,9 +16,9 @@ public enum WitnessSource
     Agent,
 
     /// <summary>
-    /// The in-browser Edge extension. Going silent mid-session is the
-    /// witness-independent absence-net: it surfaces as a
-    /// <c>TamperDetected{kind:"extension_silent"}</c> rather than HeartbeatLost.
+    /// The in-browser Edge extension. No longer recorded (#569): the retired
+    /// <c>ExtensionHeartbeat</c> takes the call and records nothing, and the
+    /// monitor reports nothing for it. #578 removes it.
     /// </summary>
     Extension,
 }

@@ -9,7 +9,7 @@
 // the host Edge starts connects to the fake agent. Every other spec gets the
 // link cut.
 
-import { chromium, type BrowserContext, type Worker } from '@playwright/test';
+import { chromium, type BrowserContext, type Page, type Worker } from '@playwright/test';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -137,6 +137,10 @@ export interface LoadedExtension {
    *  it: its native port to the agent is closed meanwhile, so whatever the
    *  agent would hand down then never reaches the extension until it is back. */
   restartServiceWorker(whileStopped?: () => Promise<void>): Promise<void>;
+  /** Terminate the MV3 service worker and leave it stopped: nothing the spec
+   *  does wakes it, so only what the extension itself arranged (an alarm,
+   *  #572) or the browser brings it back. Watch WORKER_START_LOG for that. */
+  stopServiceWorker(): Promise<void>;
   /** Read chrome.storage.local restart-safe (#313): re-acquires the live
    *  service worker on every attempt and retries if the MV3 worker idle-
    *  terminates mid-`evaluate` (Playwright throws "Service worker restarted"
@@ -216,18 +220,32 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
   // Target.closeTarget stops the worker (verified: background.js top-level runs
   // again afterwards, while chrome.storage.session survives), and a top-level
   // navigation is the same wake trigger a browsing student provides.
+  async function closeServiceWorkerTarget(page: Page): Promise<void> {
+    const cdp = await context.newCDPSession(page);
+    const { targetInfos } = await cdp.send('Target.getTargets');
+    const target = targetInfos.find(
+      (t) => t.type === 'service_worker' && t.url.startsWith(`chrome-extension://${extensionId}/`),
+    );
+    if (!target) throw new Error('no extension service-worker target to terminate');
+    await cdp.send('Target.closeTarget', { targetId: target.targetId });
+    await cdp.detach();
+  }
+
+  async function stopServiceWorker(): Promise<void> {
+    // A blank page only to reach CDP; closed again without navigating.
+    const page = await context.newPage();
+    try {
+      await closeServiceWorkerTarget(page);
+    } finally {
+      await page.close();
+    }
+  }
+
   async function restartServiceWorker(whileStopped?: () => Promise<void>): Promise<void> {
     const before = countLogs(WORKER_START_LOG);
     const page = await context.newPage();
     try {
-      const cdp = await context.newCDPSession(page);
-      const { targetInfos } = await cdp.send('Target.getTargets');
-      const target = targetInfos.find(
-        (t) => t.type === 'service_worker' && t.url.startsWith(`chrome-extension://${extensionId}/`),
-      );
-      if (!target) throw new Error('no extension service-worker target to terminate');
-      await cdp.send('Target.closeTarget', { targetId: target.targetId });
-      await cdp.detach();
+      await closeServiceWorkerTarget(page);
       if (whileStopped) {
         await whileStopped();
         if (countLogs(WORKER_START_LOG) !== before) {
@@ -252,6 +270,7 @@ export async function loadExtension(options: LoadExtensionOptions = {}): Promise
     waitForLogCount,
     countLogs,
     restartServiceWorker,
+    stopServiceWorker,
     getStorage<T = Record<string, unknown>>(keys: string | string[]): Promise<T> {
       return readStorage<T>(context, keys, 'local');
     },
@@ -310,7 +329,7 @@ async function readStorage<T = Record<string, unknown>>(
 }
 
 /** The line background.js logs at top level on every worker generation. */
-const WORKER_START_LOG = 'service worker started';
+export const WORKER_START_LOG = 'service worker started';
 
 /** Collect every console line from the context (pages + service workers) and
  *  expose a substring waiter over the running buffer. */

@@ -22,6 +22,9 @@
 //   (`self_check`, #524) on every session it is handed and whenever its
 //   permissions change, and the agent can ask it to open its own settings page
 //   (`open_extension_page`), which nothing outside the browser can open.
+// - When the link was down, the extension tells the agent why once it is back
+//   (`link_error`, #561): Edge's reason from chrome.runtime.lastError, how often
+//   it failed and since when, for the agent's log upload (see link-trouble.ts).
 //
 // Same split as self-check.ts / host-matcher.ts: the pure parsing + backoff
 // helpers live here and are unit-tested; the chrome.runtime wiring is injected
@@ -30,6 +33,8 @@
 // contracts/witness.json lists every message each way with its fields (#573):
 // witness-contract.test.ts holds this end to it, the agent's tests the other.
 
+import type { LinkRetryAlarm } from './link-retry';
+import { mergeTrouble, recordFailure, type LinkTrouble, type LinkTroubleStore } from './link-trouble';
 import { logger } from './logger';
 import type { SelfCheckResult } from './self-check';
 import type { AllowedDomainDto, SessionStartedPayload } from './types';
@@ -109,6 +114,13 @@ export function blockedUrlReport(
   }
   return { type: 'blocked_url', sessionId, host, tabId, occurredAt: now.toISOString() };
 }
+
+/**
+ * Why the link was down before it came up (#561): Edge's last reason
+ * (`chrome.runtime.lastError`), how often it failed and since when. Sent by the
+ * client itself once the link is up again; the agent logs it. See link-trouble.ts.
+ */
+export type LinkErrorReport = { type: 'link_error' } & LinkTrouble;
 
 /** The report of what the extension read about its own settings (#524). */
 export function selfCheckReport(sessionId: string, result: SelfCheckResult): ExtensionReport {
@@ -256,7 +268,26 @@ export interface WitnessClientDeps {
   onAgentUnavailable?: () => void;
   /** Invoked when the host reports the agent came back. */
   onAgentAvailable?: () => void;
+  /**
+   * Armed while the link is down, disarmed once the host relays a message
+   * (#572): an alarm wakes a stopped service worker, the reconnect setTimeout
+   * doesn't. See link-retry.ts.
+   */
+  retryAlarm?: LinkRetryAlarm;
+  /**
+   * Edge's reason for the last port failure, `chrome.runtime.lastError?.message`
+   * (#561): read when the port drops, which is also what keeps Edge from logging
+   * it as unchecked. None by default.
+   */
+  lastError?: () => string | undefined;
+  /**
+   * Where the reasons the link failed are kept until it is up again, so a
+   * worker the retry alarm woke still sends the earlier worker's (#561). In
+   * memory only by default.
+   */
+  troubleStore?: LinkTroubleStore;
   /** Injected for tests; default to the globals. */
+  now?: () => Date;
   setTimeoutFn?: (callback: () => void, ms: number) => number;
   clearTimeoutFn?: (handle: number) => void;
   newRequestId?: () => string;
@@ -282,6 +313,10 @@ export class WitnessClient {
   private readonly onAgentMessage: (message: AgentMessage) => void;
   private readonly onAgentUnavailable?: () => void;
   private readonly onAgentAvailable?: () => void;
+  private readonly retryAlarm?: LinkRetryAlarm;
+  private readonly lastError: () => string | undefined;
+  private readonly troubleStore?: LinkTroubleStore;
+  private readonly now: () => Date;
   private readonly setTimeoutFn: (callback: () => void, ms: number) => number;
   private readonly clearTimeoutFn: (handle: number) => void;
   private readonly newRequestId: () => string;
@@ -303,12 +338,28 @@ export class WitnessClient {
   private reconnectTimer: number | null = null;
   private stopped = false;
   private readonly pending = new Map<string, PendingRequest>();
+  /** Why the link failed since it was last up (#561); sent once it is. */
+  private trouble: LinkTrouble | null = null;
+  /** Settles once what an earlier worker kept has been merged in. */
+  private readonly troubleLoaded: Promise<void>;
 
   constructor(deps: WitnessClientDeps) {
     this.connect = deps.connect;
     this.onAgentMessage = deps.onAgentMessage;
     this.onAgentUnavailable = deps.onAgentUnavailable;
     this.onAgentAvailable = deps.onAgentAvailable;
+    this.retryAlarm = deps.retryAlarm;
+    this.lastError = deps.lastError ?? (() => undefined);
+    this.troubleStore = deps.troubleStore;
+    this.now = deps.now ?? (() => new Date());
+    this.troubleLoaded = this.troubleStore
+      ? this.troubleStore
+          .load()
+          .then((kept) => {
+            this.trouble = mergeTrouble(kept, this.trouble);
+          })
+          .catch((err) => log.warn('could not read the kept link trouble', err))
+      : Promise.resolve();
     this.setTimeoutFn = deps.setTimeoutFn ?? ((cb, ms) => setTimeout(cb, ms) as unknown as number);
     this.clearTimeoutFn = deps.clearTimeoutFn ?? ((h) => clearTimeout(h));
     this.newRequestId = deps.newRequestId ?? (() => crypto.randomUUID());
@@ -322,10 +373,26 @@ export class WitnessClient {
     this.open();
   }
 
+  /**
+   * Tries to connect now when the link is down and no attempt is under way,
+   * instead of waiting out the reconnect backoff — what the retry alarm does in
+   * a worker that is still awake (#572). A no-op while a port is open.
+   */
+  retryNow(): void {
+    if (this.stopped || this.port) return;
+    if (this.reconnectTimer !== null) {
+      this.clearTimeoutFn(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    log.debug('retrying the agent link now');
+    this.open();
+  }
+
   /** Tears the link down for good (e.g. on SW shutdown). */
   stop(): void {
     this.stopped = true;
     this.clearTimers();
+    this.retryAlarm?.disarm();
     const port = this.port;
     this.port = null;
     this.failPending('The Anchor app link was closed.');
@@ -397,6 +464,7 @@ export class WitnessClient {
     } catch (err) {
       // connectNative throws synchronously when the host isn't registered.
       log.warn('connectNative failed — agent witness host not reachable', err);
+      this.noteFailure(err instanceof Error ? err.message : String(err));
       this.scheduleReconnect();
       return;
     }
@@ -418,7 +486,9 @@ export class WitnessClient {
       // reconnect backoff so a healthy agent comes back to the 1s base delay.
       this.established = true;
       this.reconnectAttempt = 0;
+      this.retryAlarm?.disarm();
       log.info('witness port connected to agent host');
+      void this.sendTrouble();
     }
     const signal = parseHostMessage(message);
     switch (signal.kind) {
@@ -462,14 +532,17 @@ export class WitnessClient {
   }
 
   private handleDisconnect(): void {
+    // Edge's reason, readable only now, inside the onDisconnect callback (#561).
+    const reason = this.lastError();
     if (this.established) {
       // An established link dropping is a real event (agent/browser restart).
-      log.info('witness port disconnected');
+      log.info('witness port disconnected', reason);
     } else {
       // A port that drops before any message means the host was never there —
       // the expected, quiet case on a device without the agent (#243).
-      log.debug('witness port dropped before any host message (agent likely absent)');
+      log.debug('witness port dropped before any host message (agent likely absent)', reason);
     }
+    this.noteFailure(reason ?? '');
     this.established = false;
     this.agentUp = false;
     this.port = null;
@@ -478,8 +551,31 @@ export class WitnessClient {
     this.scheduleReconnect();
   }
 
+  /** One more failure of the link, kept until it is up again (#561). */
+  private noteFailure(error: string): void {
+    this.trouble = recordFailure(this.trouble, error, this.now());
+    // After what an earlier worker kept is merged in, so this doesn't overwrite it.
+    void this.troubleLoaded.then(() => this.troubleStore?.save(this.trouble));
+  }
+
+  /** The link is up: tell the agent why it was down, once (#561). */
+  private async sendTrouble(): Promise<void> {
+    await this.troubleLoaded;
+    const trouble = this.trouble;
+    if (!trouble || !this.port || !this.established) return;
+    const report: LinkErrorReport = { type: 'link_error', ...trouble };
+    if (!this.post(report)) return;
+    log.info('told the agent why the link was down', report);
+    this.trouble = null;
+    await this.troubleStore?.save(null);
+  }
+
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer !== null) return;
+    // The backoff below soon outlasts the worker's ~30 s idle timeout, and a
+    // stopped worker takes its timers with it: the alarm is what brings it
+    // back to try again (#572).
+    this.retryAlarm?.arm();
     const delay = nextReconnectDelayMs(this.reconnectAttempt);
     this.reconnectAttempt += 1;
     this.reconnectTimer = this.setTimeoutFn(() => {

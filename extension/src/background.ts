@@ -10,6 +10,8 @@ import {
   selfCheckReport,
   type AgentMessage,
 } from './shared/witness';
+import { LINK_RETRY_ALARM, linkRetryAlarm } from './shared/link-retry';
+import { linkTroubleStore } from './shared/link-trouble';
 import {
   clearActiveSession,
   getActiveSession,
@@ -54,6 +56,16 @@ chrome.runtime.onStartup.addListener(() => {
   ensureWitness();
 });
 
+// While the agent link is down a repeating alarm runs (#572): it wakes a worker
+// Edge stopped, and the top level below opens the link again; in a worker still
+// awake it cuts a long reconnect backoff short. Registered at the top level, so
+// the worker the alarm wakes has a listener for it.
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== LINK_RETRY_ALARM) return;
+  ensureWitness();
+  witness?.retryNow();
+});
+
 // Service worker waking up after hibernation — re-open the agent link. Re-entry
 // is idempotent because ensureWitness() guards on the existing instance.
 log.info('service worker started');
@@ -76,6 +88,11 @@ function ensureWitness(): void {
     // enforcing the one it has until the agent is back and says otherwise. The
     // teacher sees the agent go through its own missing heartbeat.
     onAgentUnavailable: () => log.warn('the Anchor app went away; keeping the session in force'),
+    retryAlarm: linkRetryAlarm(chrome.alarms),
+    // #561: Edge's reason the port dropped, kept until the link is back and then
+    // handed to the agent for its log, across the worker generations in between.
+    lastError: () => chrome.runtime.lastError?.message,
+    troubleStore: linkTroubleStore(chrome.storage.session),
   });
   witness.start();
 }

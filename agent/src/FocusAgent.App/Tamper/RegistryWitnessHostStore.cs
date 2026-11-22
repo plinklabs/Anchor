@@ -77,6 +77,18 @@ public sealed class RegistryWitnessHostStore : IWitnessHostStore
         }
     }
 
+    public bool FileExists(string path)
+    {
+        try
+        {
+            return File.Exists(path);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public void WriteFile(string path, string content)
     {
         var dir = Path.GetDirectoryName(path);

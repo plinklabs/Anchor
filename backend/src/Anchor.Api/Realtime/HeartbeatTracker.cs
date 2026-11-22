@@ -128,12 +128,11 @@ public sealed class HeartbeatTracker
     /// them to join. Used when a participant stops taking part:
     /// <c>LeaveSession</c>, <c>DeclineSession</c>
     /// and the #110 AgentKilled event (#448). Once they're gone their agent's
-    /// and extension's last pings must not age into a spurious
-    /// <c>HeartbeatLost</c> or <c>extension_silent</c>. A still-running
-    /// extension can't record again once the participant has left, because the
-    /// hub's heartbeat methods reject a left participant; a ping that slips in
-    /// just before is dropped by <see cref="HeartbeatMonitor"/>, which reports
-    /// only active participants.
+    /// last pings must not age into a spurious <c>HeartbeatLost</c>. A
+    /// still-running agent can't record again once the participant has left,
+    /// because the hub's <c>Heartbeat</c> rejects a left participant; a ping
+    /// that slips in just before is dropped by <see cref="HeartbeatMonitor"/>,
+    /// which reports only active participants.
     /// </summary>
     public void Clear(Guid sessionId, Guid userId)
     {

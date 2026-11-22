@@ -657,6 +657,17 @@ class AppLocalizationsNl extends AppLocalizations {
   }
 
   @override
+  String feedTamperExtensionNotConnected(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named':
+          'De Anchor-extensie van $name is niet verbonden met Anchor, dus Edge staat op pauze.',
+      'other':
+          'De Anchor-extensie van een leerling is niet verbonden met Anchor, dus Edge staat op pauze.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String feedTamperExtensionSilent(String who, String name) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named': 'De Anchor-extensie van $name staat uit of reageert niet.',

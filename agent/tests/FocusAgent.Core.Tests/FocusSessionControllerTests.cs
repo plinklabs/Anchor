@@ -1519,10 +1519,10 @@ public class FocusSessionControllerTests : IDisposable
             Reports.Add((sessionId, kind, payloadJson, occurredAt));
             return Task.CompletedTask;
         }
-        public Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default) => Task.FromResult<SessionStartedPayload?>(null);
+        public Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult<SessionAllowlistPayload?>(null);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
         public async Task RaiseSessionStarted(SessionStartedPayload payload)

@@ -28,6 +28,19 @@ public static class AgentLogPaths
             : LocalAppDataLogDirectory();
 
     /// <summary>
+    /// The environment variable that moves the witness host's log (#561), for the
+    /// tests that run the real host. The host is started by Edge, not by the agent,
+    /// so it doesn't see the agent's <see cref="LogDirectoryEnvVar"/>; left unset it
+    /// logs to <see cref="LocalAppDataLogDirectory"/>, next to the agent's logs,
+    /// where the log upload reads it.
+    /// </summary>
+    public const string WitnessHostLogDirectoryEnvVar = "ANCHOR_WITNESS_LOG_DIR";
+
+    /// <summary>The witness host's log file for <paramref name="day"/> (#561): <c>witness-host-YYYYMMDD.log</c>.</summary>
+    public static string WitnessHostLogFile(string directory, DateTime day) =>
+        Path.Combine(directory, $"witness-host-{day.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture)}.log");
+
+    /// <summary>
     /// Velopack's own log for the app with pack id <paramref name="appId"/>: its
     /// locator, the in-app update checks and the updater write here (#446).
     /// </summary>

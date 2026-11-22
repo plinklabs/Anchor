@@ -367,34 +367,6 @@ public partial class ExtensionSessionRelayTests
     }
 
     [Fact]
-    public async Task The_agent_pings_for_the_extension_only_while_in_a_session_with_the_link_up()
-    {
-        var h = new Harness();
-        var interval = TimeSpan.FromSeconds(10);
-
-        h.Channel.RaiseConnected();
-        h.Clock.Advance(interval * 2);
-        Assert.Empty(h.Hub.ExtensionPings);
-
-        var sessionId = await h.JoinAsync(Office);
-        h.Clock.Advance(interval);
-        Assert.Equal(new[] { sessionId }, h.Hub.ExtensionPings);
-
-        // The extension is off: no ping, so the backend's extension_silent can fire.
-        h.Channel.RaiseDisconnected();
-        h.Clock.Advance(interval * 3);
-        Assert.Single(h.Hub.ExtensionPings);
-
-        h.Channel.RaiseConnected();
-        h.Clock.Advance(interval);
-        Assert.Equal(2, h.Hub.ExtensionPings.Count);
-
-        h.Hub.RaiseSessionEnded(sessionId);
-        h.Clock.Advance(interval * 3);
-        Assert.Equal(2, h.Hub.ExtensionPings.Count);
-    }
-
-    [Fact]
     public async Task A_second_profile_connecting_mid_session_is_handed_the_session_and_the_first_hears_nothing_new()
     {
         // #517: the second Edge profile's extension used to get no session at all
@@ -488,24 +460,106 @@ public partial class ExtensionSessionRelayTests
         Assert.Empty(h.Channel.Messages(first));
     }
 
+    // ---- a restarted agent, before it has asked the backend (#571) -----------
+
     [Fact]
-    public async Task The_agent_keeps_pinging_for_the_extension_while_any_profile_is_connected()
+    public void An_extension_that_connects_before_the_agent_has_asked_the_backend_is_sent_nothing()
     {
-        var h = new Harness();
-        var interval = TimeSpan.FromSeconds(10);
+        // The agent was ended mid-session and started again, with the network
+        // down: it holds no session yet, but that isn't "the session is over".
+        var h = new Harness(askedBackend: false);
+
+        h.Channel.RaiseConnected();
+
+        Assert.Empty(h.Channel.Messages());
+        Assert.Null(h.Relay.SessionId);
+    }
+
+    [Fact]
+    public async Task Once_the_agent_has_asked_and_the_student_is_in_no_session_the_extension_is_told_so()
+    {
+        var h = new Harness(askedBackend: false);
+        h.Channel.RaiseConnected();
+
+        await h.HubConnectedAsync();
+
+        Assert.Equal("no_session", Type(Assert.Single(h.Channel.Messages())));
+    }
+
+    [Fact]
+    public async Task Once_the_agent_has_rejoined_the_session_the_extension_is_handed_it_once()
+    {
+        var h = new Harness(askedBackend: false);
+        var session = new SessionStartedPayload(
+            Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UnixEpoch, "ABC123", [], [Office]);
+        h.Backend.Sessions.Add(session);
+        h.Channel.RaiseConnected();
+
+        await h.HubConnectedAsync();
+
+        var message = Assert.Single(h.Channel.Messages());
+        Assert.Equal("session_started", Type(message));
+        Assert.Equal(session.SessionId, message.GetProperty("sessionId").GetGuid());
+        Assert.Equal(session.SessionId, h.Relay.SessionId);
+    }
+
+    [Fact]
+    public async Task A_pass_that_could_not_reach_the_backend_still_sends_nothing_and_the_next_one_tells()
+    {
+        var h = new Harness(askedBackend: false);
+        h.Channel.RaiseConnected();
+
+        // The hub came up, the network dropped before /sessions/rejoinable.
+        h.Backend.Throws = new HttpRequestException("No route to host.");
+        await h.HubConnectedAsync();
+        Assert.Empty(h.Channel.Messages());
+
+        h.Backend.Throws = null;
+        await h.HubConnectedAsync();
+        Assert.Equal("no_session", Type(Assert.Single(h.Channel.Messages())));
+
+        // Asked once is known for good: a later connect hears at once.
+        h.Channel.RaiseDisconnected();
+        h.Channel.ClearSent();
+        h.Channel.RaiseConnected();
+        Assert.Equal("no_session", Type(Assert.Single(h.Channel.Messages())));
+    }
+
+    [Fact]
+    public async Task Every_profile_waiting_on_the_agent_is_told_and_one_that_closed_meanwhile_is_not()
+    {
+        var h = new Harness(askedBackend: false);
         var first = new WitnessConnection(1);
         var second = new WitnessConnection(2);
+        var closed = new WitnessConnection(3);
         h.Channel.RaiseConnected(first);
         h.Channel.RaiseConnected(second);
-        await h.JoinAsync(Office);
+        h.Channel.RaiseConnected(closed);
+        h.Channel.RaiseDisconnected(closed);
 
-        h.Channel.RaiseDisconnected(first);
-        h.Clock.Advance(interval);
-        Assert.Single(h.Hub.ExtensionPings);
+        await h.HubConnectedAsync();
 
-        h.Channel.RaiseDisconnected(second);
-        h.Clock.Advance(interval * 3);
-        Assert.Single(h.Hub.ExtensionPings);
+        Assert.Equal("no_session", Type(Assert.Single(h.Channel.Messages(first))));
+        Assert.Equal("no_session", Type(Assert.Single(h.Channel.Messages(second))));
+        Assert.Empty(h.Channel.Messages(closed));
+    }
+
+    [Fact]
+    public async Task A_session_joined_before_the_agent_has_asked_is_handed_down_as_it_comes_and_not_again()
+    {
+        var h = new Harness(askedBackend: false);
+        h.Channel.RaiseConnected();
+
+        // A session the agent hears of before its first pass finishes (a
+        // SessionStarted broadcast, a join by code).
+        var sessionId = await h.JoinAsync(Office);
+        var started = Assert.Single(h.Channel.Messages());
+        Assert.Equal("session_started", Type(started));
+        Assert.Equal(sessionId, started.GetProperty("sessionId").GetGuid());
+
+        await h.HubConnectedAsync();
+
+        Assert.Single(h.Channel.Messages());
     }
 
     private static string? Type(JsonElement message) => message.GetProperty("type").GetString();
@@ -515,23 +569,37 @@ public partial class ExtensionSessionRelayTests
         public FakeHub Hub { get; } = new();
         public FakeTimeProvider Clock { get; } = new(DateTimeOffset.UnixEpoch);
         public FakeChannel Channel { get; } = new();
+        public RejoinableSessions Backend { get; } = new();
         public SessionCoordinator Coordinator { get; }
+        public SessionRehydrationService Rehydration { get; }
         public ExtensionSessionRelay Relay { get; }
+        public RecordingLogger<ExtensionSessionRelay> Log { get; } = new();
 
-        public Harness(JoinDecision decision = JoinDecision.Confirmed)
+        /// <param name="askedBackend">
+        /// Whether the agent has been through its first pass against the backend
+        /// (#571) before the test starts; most tests are about an agent that has.
+        /// </param>
+        public Harness(JoinDecision decision = JoinDecision.Confirmed, bool askedBackend = true)
         {
             Coordinator = new SessionCoordinator(
                 Hub,
                 new AnsweringUi(decision),
                 Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) }),
                 Clock);
+            Rehydration = new SessionRehydrationService(Backend, Coordinator);
             Relay = new ExtensionSessionRelay(
                 Channel,
                 Coordinator,
+                Rehydration,
                 Hub,
-                Options.Create(new SessionSettings { HeartbeatIntervalSeconds = 10 }),
-                Clock);
+                Clock,
+                Log);
+            if (askedBackend)
+                Rehydration.NotifyConnectedAsync().GetAwaiter().GetResult();
         }
+
+        /// <summary>The hub connecting: the agent's pass against the backend.</summary>
+        public Task HubConnectedAsync() => Rehydration.NotifyConnectedAsync();
 
         public async Task<Guid> JoinAsync(params AllowedDomainDto[] domains)
         {
@@ -540,6 +608,18 @@ public partial class ExtensionSessionRelayTests
             await Coordinator.HandleSessionStartedAsync(payload);
             return payload.SessionId;
         }
+    }
+
+    /// <summary>The backend's <c>GET /sessions/rejoinable</c>, as the restarted agent asks it.</summary>
+    private sealed class RejoinableSessions : ISessionRehydrationClient
+    {
+        public List<SessionStartedPayload> Sessions { get; } = new();
+        public Exception? Throws { get; set; }
+
+        public Task<IReadOnlyList<SessionStartedPayload>> GetRejoinableSessionsAsync(CancellationToken ct = default) =>
+            Throws is not null
+                ? Task.FromException<IReadOnlyList<SessionStartedPayload>>(Throws)
+                : Task.FromResult<IReadOnlyList<SessionStartedPayload>>(Sessions.ToArray());
     }
 
     private sealed class AnsweringUi(JoinDecision decision) : ISessionUiHost
@@ -665,7 +745,6 @@ public partial class ExtensionSessionRelayTests
         public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 
         public List<(Guid SessionId, string Kind, string PayloadJson, DateTimeOffset? OccurredAt)> Reports { get; } = new();
-        public List<Guid> ExtensionPings { get; } = new();
         public Exception? ReportThrows { get; set; }
 
         public void RaiseSessionEnded(Guid sessionId) => SessionEnded?.Invoke(this, sessionId);
@@ -704,15 +783,10 @@ public partial class ExtensionSessionRelayTests
 
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
 
-        public Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default)
-        {
-            lock (_gate) ExtensionPings.Add(sessionId);
-            return Task.FromResult(true);
-        }
-
         public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default) =>
             Task.FromResult<SessionStartedPayload?>(null);
+        public Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult<SessionAllowlistPayload?>(null);
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

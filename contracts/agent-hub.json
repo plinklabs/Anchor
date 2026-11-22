@@ -5,7 +5,8 @@
     "So a backend change to an event, a method or an event kind the agent depends on fails Backend CI until this file says so, and that change to this file runs the agent's tests against it.",
     "The agent is the only client a student has on the hub: the Edge extension has no hub connection since #489, and the agent hands the session down to it over the witness link (witness.json).",
     "A message carries one argument (none for GetStartedSession), written as a shape: an object of fields, a list written as [element], or a type: string, number, boolean or date-time (an ISO 8601 string). A type ending in ? may be null. Ids go over the wire as strings. Field names are as they go over the wire (camelCase).",
-    "payload and returns: the fields the agent reads. The backend may send more; adding a field is safe. returnsNull: the method may answer null instead. argument: every field the backend binds; the agent sends each one, null where the type allows it."
+    "payload and returns: the fields the agent reads. The backend may send more; adding a field is safe. returnsNull: the method may answer null instead. argument: every field the backend binds; the agent sends each one, null where the type allows it.",
+    "retired: a method the agent no longer calls, which the backend still takes for the agents in the field that do. The backend's test still calls it as the file shapes it; the agent's test leaves it out. The note says why, and which issue removes it."
   ],
   "hub": "/hubs/session",
   "audiences": {
@@ -68,7 +69,8 @@
       "argument": "string"
     },
     "ExtensionHeartbeat": {
-      "argument": "string"
+      "argument": "string",
+      "retired": "#569: the backend takes it and records nothing, so its absence no longer raises extension_silent. Agents in the field still send it. #578 removes it once none does."
     },
     "IsInSession": {
       "argument": "string",
@@ -80,6 +82,15 @@
         "classId": "string",
         "startedAt": "date-time",
         "joinCode": "string",
+        "apps": [{ "matchKind": "string", "value": "string" }],
+        "domains": [{ "matchType": "string", "value": "string" }]
+      },
+      "returnsNull": true
+    },
+    "GetSessionAllowlist": {
+      "argument": "string",
+      "returns": {
+        "sessionId": "string",
         "apps": [{ "matchKind": "string", "value": "string" }],
         "domains": [{ "matchType": "string", "value": "string" }]
       },
