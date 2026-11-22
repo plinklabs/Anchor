@@ -175,34 +175,6 @@ public sealed class SessionAgentMissingTests : IClassFixture<SessionAgentMissing
         await EndSessionAsync(teacher, sessionId);
     }
 
-    [Fact]
-    public async Task After_a_backend_restart_an_extension_that_keeps_pinging_still_reveals_a_missing_agent()
-    {
-        // A restart empties the heartbeat tracker. The extension reconnects and
-        // keeps pinging without joining again, so its pings start the wait.
-        var (sessionId, teacher, student, _) = await StartSessionAsync();
-
-        await using var livePage = Connect(teacher, "Teacher");
-        await using var extension = Connect(student, "Student");
-        var feed = new RosterFeed(livePage);
-        await livePage.StartAndAwaitOnConnectedAsync();
-        await JoinAsync(livePage, sessionId);
-        await extension.StartAndAwaitOnConnectedAsync();
-        await JoinAsync(extension, sessionId);
-
-        _factory.Services.GetRequiredService<HeartbeatTracker>().ClearSession(sessionId);
-
-        await extension.InvokeAsync(nameof(SessionHub.ExtensionHeartbeat), sessionId);
-        await PassAsync(TimeSpan.FromSeconds(25), extension, sessionId);
-        Assert.DoesNotContain(PushedStates(sessionId, student.Id), s => s != nameof(ParticipantLiveState.Joined));
-        await PassAsync(TimeSpan.FromSeconds(10), extension, sessionId);
-
-        await feed.WaitForAsync(student.Id, "ParticipantStateChanged:AgentMissing", Arrival);
-        Assert.Equal(nameof(ParticipantLiveState.AgentMissing), (await RosterRowAsync(teacher, sessionId, student.Id)).State);
-
-        await EndSessionAsync(teacher, sessionId);
-    }
-
     /// <summary>
     /// Moves the clock on in 5-second steps, the monitor's scan interval, and
     /// scans after each, with the extension pinging every 10 seconds, as it

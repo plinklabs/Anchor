@@ -162,14 +162,6 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
         return true;
     }
 
-    public async Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default)
-    {
-        if (_connection.State != HubConnectionState.Connected)
-            return false;
-        await _connection.InvokeAsync("ExtensionHeartbeat", sessionId, ct).ConfigureAwait(false);
-        return true;
-    }
-
     public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) =>
         _connection.InvokeAsync<bool>("IsInSession", sessionId, ct);
 

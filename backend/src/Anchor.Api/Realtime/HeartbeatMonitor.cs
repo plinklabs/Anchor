@@ -14,10 +14,11 @@ namespace Anchor.Api.Realtime;
 /// an <see cref="WitnessSource.Agent"/> going stale is a
 /// <see cref="EventKind.HeartbeatLost"/> (cleared by an
 /// <see cref="EventKind.AgentReconnected"/> when it resumes), while an
-/// <see cref="WitnessSource.Extension"/> going stale is the witness-independent
-/// absence-net (#149): a <see cref="EventKind.TamperDetected"/> with kind
-/// <see cref="TamperKinds.ExtensionSilent"/>. The tamper flag is sticky, so a
-/// returning extension re-arms silently rather than emitting a reconnect.
+/// <see cref="WitnessSource.Extension"/> going stale reports nothing (#569).
+/// It used to be a <c>TamperDetected(extension_silent)</c> flag (#149), but
+/// since #489 the agent sends the extension's pings, so the flag fired when the
+/// agent dropped out or Edge was closed, as a second report of what the
+/// agent's own heartbeat and <c>ExtensionGuard</c> already tell the teacher.
 ///
 /// <para>
 /// An agent that never pings at all is caught the same way (#444): the hub
@@ -224,9 +225,11 @@ public sealed class HeartbeatMonitor : BackgroundService
     private Task EmitStaleAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
         => p switch
         {
-            // The extension witness going silent is the absence-net (#149):
-            // surface it as a tamper flag, not an agent HeartbeatLost.
-            { Source: WitnessSource.Extension } => EmitExtensionSilentAsync(db, p, now, ct),
+            // The extension's witness going silent says nothing the agent
+            // doesn't (#569): its own heartbeat going stale is the
+            // HeartbeatLost, and a link to the extension that drops while it
+            // runs is ExtensionGuard's to report. #578 removes this source.
+            { Source: WitnessSource.Extension } => Task.CompletedTask,
             // An agent that never pinged was never there to be lost (#444).
             { AwaitingFirstPing: true } => EmitAgentMissingAsync(db, p, now, ct),
             _ => EmitLostAsync(db, p, now, ct),
@@ -235,38 +238,10 @@ public sealed class HeartbeatMonitor : BackgroundService
     private Task EmitResumedAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
         => p.Source switch
         {
-            // A tamper flag is sticky by design (soft enforcement, §5.4) — there
-            // is no "un-tamper" event — so a returning extension just re-arms
-            // silently: clear Reported (done by the caller) and emit nothing,
-            // so a *second* outage flags again.
+            // Nothing was reported for it going silent, so nothing to clear.
             WitnessSource.Extension => Task.CompletedTask,
             _ => EmitReconnectedAsync(db, p, now, ct),
         };
-
-    private async Task EmitExtensionSilentAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
-    {
-        var displayName = await db.Users.AsNoTracking()
-            .Where(u => u.Id == p.UserId)
-            .Select(u => u.DisplayName)
-            .FirstOrDefaultAsync(ct)
-            .ConfigureAwait(false) ?? string.Empty;
-
-        db.Events.Add(new Event
-        {
-            SessionId = p.SessionId,
-            UserId = p.UserId,
-            Kind = EventKind.TamperDetected,
-            PayloadJson = JsonSerializer.Serialize(new { kind = TamperKinds.ExtensionSilent }),
-            OccurredAt = now,
-        });
-        await db.SaveChangesAsync(ct).ConfigureAwait(false);
-        await _broadcaster.TamperDetectedAsync(
-            new TamperDetectedPayload(p.SessionId, p.UserId, displayName, TamperKinds.ExtensionSilent, now),
-            ct).ConfigureAwait(false);
-        _log.LogInformation(
-            "TamperDetected(extension_silent) session={SessionId} user={UserId} lastSeen={LastSeenAt:o}",
-            p.SessionId, p.UserId, p.LastSeenAt);
-    }
 
     private async Task EmitAgentMissingAsync(AnchorDbContext db, TrackedParticipant p, DateTimeOffset now, CancellationToken ct)
     {

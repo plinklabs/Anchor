@@ -367,34 +367,6 @@ public partial class ExtensionSessionRelayTests
     }
 
     [Fact]
-    public async Task The_agent_pings_for_the_extension_only_while_in_a_session_with_the_link_up()
-    {
-        var h = new Harness();
-        var interval = TimeSpan.FromSeconds(10);
-
-        h.Channel.RaiseConnected();
-        h.Clock.Advance(interval * 2);
-        Assert.Empty(h.Hub.ExtensionPings);
-
-        var sessionId = await h.JoinAsync(Office);
-        h.Clock.Advance(interval);
-        Assert.Equal(new[] { sessionId }, h.Hub.ExtensionPings);
-
-        // The extension is off: no ping, so the backend's extension_silent can fire.
-        h.Channel.RaiseDisconnected();
-        h.Clock.Advance(interval * 3);
-        Assert.Single(h.Hub.ExtensionPings);
-
-        h.Channel.RaiseConnected();
-        h.Clock.Advance(interval);
-        Assert.Equal(2, h.Hub.ExtensionPings.Count);
-
-        h.Hub.RaiseSessionEnded(sessionId);
-        h.Clock.Advance(interval * 3);
-        Assert.Equal(2, h.Hub.ExtensionPings.Count);
-    }
-
-    [Fact]
     public async Task A_second_profile_connecting_mid_session_is_handed_the_session_and_the_first_hears_nothing_new()
     {
         // #517: the second Edge profile's extension used to get no session at all
@@ -486,26 +458,6 @@ public partial class ExtensionSessionRelayTests
         Assert.Equal("unblock_request_result", Type(answer));
         Assert.Equal("r1", Assert.Single(h.Channel.Messages(second)).GetProperty("requestId").GetString());
         Assert.Empty(h.Channel.Messages(first));
-    }
-
-    [Fact]
-    public async Task The_agent_keeps_pinging_for_the_extension_while_any_profile_is_connected()
-    {
-        var h = new Harness();
-        var interval = TimeSpan.FromSeconds(10);
-        var first = new WitnessConnection(1);
-        var second = new WitnessConnection(2);
-        h.Channel.RaiseConnected(first);
-        h.Channel.RaiseConnected(second);
-        await h.JoinAsync(Office);
-
-        h.Channel.RaiseDisconnected(first);
-        h.Clock.Advance(interval);
-        Assert.Single(h.Hub.ExtensionPings);
-
-        h.Channel.RaiseDisconnected(second);
-        h.Clock.Advance(interval * 3);
-        Assert.Single(h.Hub.ExtensionPings);
     }
 
     // ---- a restarted agent, before it has asked the backend (#571) -----------
@@ -640,7 +592,6 @@ public partial class ExtensionSessionRelayTests
                 Coordinator,
                 Rehydration,
                 Hub,
-                Options.Create(new SessionSettings { HeartbeatIntervalSeconds = 10 }),
                 Clock,
                 Log);
             if (askedBackend)
@@ -794,7 +745,6 @@ public partial class ExtensionSessionRelayTests
         public event EventHandler<UnblockDeniedPayload>? UnblockDenied;
 
         public List<(Guid SessionId, string Kind, string PayloadJson, DateTimeOffset? OccurredAt)> Reports { get; } = new();
-        public List<Guid> ExtensionPings { get; } = new();
         public Exception? ReportThrows { get; set; }
 
         public void RaiseSessionEnded(Guid sessionId) => SessionEnded?.Invoke(this, sessionId);
@@ -832,12 +782,6 @@ public partial class ExtensionSessionRelayTests
         }
 
         public Task<bool> HeartbeatAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
-
-        public Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default)
-        {
-            lock (_gate) ExtensionPings.Add(sessionId);
-            return Task.FromResult(true);
-        }
 
         public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) => Task.FromResult(true);
         public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default) =>

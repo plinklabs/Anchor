@@ -225,10 +225,9 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             await _db.SaveChangesAsync(ct);
             _activeParticipants.Update(participant);
 
-            // The agent stops pinging, for itself and for its extension, once
-            // the student has left, so drop the heartbeat tracking, as
-            // AgentKilled does: left in place, the last pings would age into a
-            // HeartbeatLost and an extension_silent flag for a student who left
+            // The agent stops pinging once the student has left, so drop the
+            // heartbeat tracking, as AgentKilled does: left in place, the last
+            // pings would age into a HeartbeatLost for a student who left
             // normally (#448). After the cache update above, so a ping arriving
             // from now on is rejected rather than tracked again.
             _heartbeats.Clear(sessionId, user.Id);
@@ -304,21 +303,7 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             ct);
     }
 
-    public Task Heartbeat(Guid sessionId) => RecordHeartbeatAsync(sessionId, WitnessSource.Agent);
-
-    /// <summary>
-    /// The Edge extension's liveness ping (#149). The extension has no hub
-    /// connection of its own since #489: the agent sends this for it while the
-    /// extension's witness link to the agent is up. A separate hub method rather
-    /// than an extra parameter on <see cref="Heartbeat"/> so the already-deployed
-    /// agent's single-argument <c>Heartbeat</c> invocation stays wire-compatible.
-    /// Recorded under <see cref="WitnessSource.Extension"/> so it tracks
-    /// independently of the agent's own: the extension going silent is the
-    /// absence-net (<c>extension_silent</c>), not an agent HeartbeatLost.
-    /// </summary>
-    public Task ExtensionHeartbeat(Guid sessionId) => RecordHeartbeatAsync(sessionId, WitnessSource.Extension);
-
-    private async Task RecordHeartbeatAsync(Guid sessionId, WitnessSource source)
+    public async Task Heartbeat(Guid sessionId)
     {
         var ct = Context.ConnectionAborted;
         var user = await ResolveCurrentUserAsync(ct);
@@ -327,20 +312,26 @@ public sealed class SessionHub : Hub<ISessionHubClient>
         // finished session keeping participant slots warm. Confirm the
         // participant is actively joined before recording the ping — mirrors
         // ReportEvent's check. Answered from memory (#342): this runs on every
-        // ping every agent sends, for itself and for its extension.
+        // ping every agent sends.
         if (!await _activeParticipants.IsActiveAsync(_db.SessionParticipants.AsNoTracking(), sessionId, user.Id, ct))
             throw new HubException("Not an active participant of this session.");
 
-        var now = _clock.GetUtcNow();
-        _heartbeats.Record(sessionId, user.Id, now, source);
-
-        // An extension ping means its student's agent should be pinging for
-        // itself too. JoinSession already started waiting for that, but a
-        // backend restart empties the tracker, and the pings go on without a
-        // new join, so the extension pings start the wait anew (#444).
-        if (source == WitnessSource.Extension)
-            _heartbeats.ExpectAgent(sessionId, user.Id, now);
+        _heartbeats.Record(sessionId, user.Id, _clock.GetUtcNow(), WitnessSource.Agent);
     }
+
+    /// <summary>
+    /// Retired (#569): takes the call and records nothing. It was the Edge
+    /// extension's liveness ping (#149), which the agent sent for it since #489
+    /// while the extension's witness link was up, and whose absence the
+    /// heartbeat monitor turned into an <c>extension_silent</c> tamper flag. That
+    /// flag fired when the agent dropped out or Edge was closed, and said nothing
+    /// the agent doesn't report itself: while it runs, <c>ExtensionGuard</c> sees
+    /// the link drop, and an extension that never connects is
+    /// <c>extension_not_connected</c> (#556). Agents from #569 on no longer send
+    /// it; it stays for the agents in the field that do, so their pings aren't
+    /// answered with an error, until #578 removes it.
+    /// </summary>
+    public Task ExtensionHeartbeat(Guid sessionId) => Task.CompletedTask;
 
     /// <summary>
     /// Whether the caller is still in the session: it hasn't ended and the

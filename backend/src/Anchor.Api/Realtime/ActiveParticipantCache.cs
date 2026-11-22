@@ -7,8 +7,7 @@ namespace Anchor.Api.Realtime;
 
 /// <summary>
 /// In-memory answer to "is this user an active participant of this session?",
-/// the check behind every <c>Heartbeat</c> / <c>ExtensionHeartbeat</c> and
-/// <c>ReportEvent</c> (#342). Agent and extension each ping every 10 s, so at
+/// the check behind every <c>Heartbeat</c> and <c>ReportEvent</c> (#342). Agent and extension each ping every 10 s, so at
 /// ~300 students a database query per ping was ~60 queries per second — by far
 /// the largest share of database load. "Active" means a
 /// <see cref="SessionParticipant"/> row with <c>JoinedAt</c> set and

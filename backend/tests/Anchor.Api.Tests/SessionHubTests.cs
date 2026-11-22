@@ -393,42 +393,25 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
-    public async Task ExtensionHeartbeat_from_active_participant_records_under_extension_source()
+    public async Task ExtensionHeartbeat_is_taken_and_records_nothing()
     {
+        // #569: retired. Agents in the field still send it, for a session they
+        // are in or one they have left, and get no error back; it no longer
+        // tracks the extension, nor starts the wait for the agent.
         var (student, session) = await SeedSessionWithStudentAsync();
-
-        await using var connection = BuildConnection(student.EntraOid, "Student");
-        await connection.StartAsync();
-
-        await connection.InvokeAsync<JoinSessionResult>(
-            "JoinSession",
-            new JoinSessionRequest(session.Id, JoinCode: null));
-
-        await connection.InvokeAsync("ExtensionHeartbeat", session.Id);
-
-        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
-        Assert.True(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
-        // The whole point of the source dimension (#149): the extension's ping
-        // must not register as the agent's, or it would mask a dead agent. The
-        // join only started waiting for the agent (#444); nothing came from it.
-        Assert.True(tracker.TryGet(session.Id, student.Id, out var agent, WitnessSource.Agent));
-        Assert.True(agent.AwaitingFirstPing);
-    }
-
-    [Fact]
-    public async Task ExtensionHeartbeat_from_non_joined_user_is_rejected()
-    {
-        var (_, session) = await SeedSessionWithStudentAsync();
         var stranger = await SeedUserAsync(UserRole.Student, "Stranger");
 
-        await using var connection = BuildConnection(stranger.EntraOid, "Student");
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await using var strangerConnection = BuildConnection(stranger.EntraOid, "Student");
         await connection.StartAsync();
+        await strangerConnection.StartAsync();
 
-        var ex = await Assert.ThrowsAsync<HubException>(() =>
-            connection.InvokeAsync("ExtensionHeartbeat", session.Id));
-        Assert.Contains("Not an active participant", ex.Message);
+        await connection.InvokeAsync("ExtensionHeartbeat", session.Id);
+        await strangerConnection.InvokeAsync("ExtensionHeartbeat", session.Id);
 
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Agent));
         Assert.False(tracker.TryGet(session.Id, stranger.Id, out _, WitnessSource.Extension));
     }
 

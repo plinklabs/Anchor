@@ -74,10 +74,10 @@ public sealed class SessionLeaveHeartbeatTests : IClassFixture<SessionLeaveHeart
         Assert.False(tracker.TryGet(sessionId, student.Id, out _, WitnessSource.Agent));
         Assert.False(tracker.TryGet(sessionId, student.Id, out _, WitnessSource.Extension));
 
-        // A ping sent for the extension after the student left, as one already
-        // on its way, is turned away.
+        // A ping sent after the student left, as one already on its way, is
+        // turned away.
         var rejected = await Assert.ThrowsAsync<HubException>(() =>
-            extension.InvokeAsync(nameof(SessionHub.ExtensionHeartbeat), sessionId));
+            agent.InvokeAsync(nameof(SessionHub.Heartbeat), sessionId));
         Assert.Contains("Not an active participant", rejected.Message);
 
         await ScanPastTheTimeoutAsync();

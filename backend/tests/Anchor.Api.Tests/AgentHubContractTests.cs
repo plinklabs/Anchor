@@ -161,6 +161,11 @@ public sealed class AgentHubContractTests : IClassFixture<SessionHubContractTest
             if (answer is not null && !answer.IsValueType && describer.IsNullable(method.ReturnParameter))
                 entry["returnsNull"] = true;
 
+            // A note for the agent's side (#569): the hub still takes the
+            // method, which is all the backend can show for it.
+            if (node["retired"] is { } retired)
+                entry["retired"] = retired.DeepClone();
+
             if (node["kinds"] is JsonArray kinds)
             {
                 // The kinds the hub takes: ReportEvent parses each by its EventKind name.

@@ -130,7 +130,6 @@ public sealed class SignalRSessionHubConnectionContractTests : IAsyncLifetime
             ["LeaveSession"] = () => _agent.LeaveSessionAsync(sessionId),
             ["DeclineSession"] = () => _agent.DeclineSessionAsync(sessionId, "user_cancelled"),
             ["Heartbeat"] = async () => Assert.True(await _agent.HeartbeatAsync(sessionId)),
-            ["ExtensionHeartbeat"] = async () => Assert.True(await _agent.ExtensionHeartbeatAsync(sessionId)),
             ["IsInSession"] = async () => Assert.True(await _agent.IsInSessionAsync(sessionId)),
             ["GetStartedSession"] = async () => await _agent.GetStartedSessionAsync(),
             ["GetSessionAllowlist"] = async () => await _agent.GetSessionAllowlistAsync(sessionId),
@@ -141,10 +140,16 @@ public sealed class SignalRSessionHubConnectionContractTests : IAsyncLifetime
                 await _agent.ReportEventAsync(sessionId, kinds[0], "{}");
             },
         };
-        Assert.Equal(Methods.Select(m => m.Key).Order(), calls.Keys.Order());
+        // A retired method is one the agent no longer calls (#569); the
+        // backend still takes it for the agents in the field.
+        var called = Methods.Where(m => m.Value?["retired"] is null).ToList();
+        Assert.Equal(called.Select(m => m.Key).Order(), calls.Keys.Order());
+        Assert.DoesNotContain(
+            typeof(ISessionHubConnection).GetMethods().Select(m => m.Name),
+            n => Methods.Any(m => m.Value?["retired"] is not null && n == $"{m.Key}Async"));
 
         var problems = new List<string>();
-        foreach (var (name, entry) in Methods)
+        foreach (var (name, entry) in called)
         {
             _calls.Clear();
             if (entry!["returns"] is { } returns)
@@ -279,7 +284,6 @@ public sealed class SignalRSessionHubConnectionContractTests : IAsyncLifetime
         public void LeaveSession(JsonElement sessionId) => calls.Add(nameof(LeaveSession), sessionId);
         public void DeclineSession(JsonElement request) => calls.Add(nameof(DeclineSession), request);
         public void Heartbeat(JsonElement sessionId) => calls.Add(nameof(Heartbeat), sessionId);
-        public void ExtensionHeartbeat(JsonElement sessionId) => calls.Add(nameof(ExtensionHeartbeat), sessionId);
         public void ReportEvent(JsonElement request) => calls.Add(nameof(ReportEvent), request);
 
         public bool IsInSession(JsonElement sessionId)

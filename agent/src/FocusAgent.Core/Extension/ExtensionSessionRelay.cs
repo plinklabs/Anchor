@@ -3,11 +3,9 @@ using System.Text.Json.Serialization;
 using FocusAgent.Core.Dtos;
 using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Sessions;
-using FocusAgent.Core.Settings;
 using FocusAgent.Core.Tamper;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 
 namespace FocusAgent.Core.Extension;
 
@@ -44,10 +42,12 @@ namespace FocusAgent.Core.Extension;
 /// What the extension says about its own settings
 /// (<see cref="ExtensionMessages.SelfCheck"/>, #524) is
 /// <see cref="ExtensionSelfCheckWatch"/>'s to read.</item>
-/// <item>The extension's liveness ping (<c>ExtensionHeartbeat</c>, #149), sent
-/// for it while at least one witness link is up, so <c>extension_silent</c> keeps
-/// working.</item>
 /// </list>
+///
+/// It no longer pings the backend for the extension (<c>ExtensionHeartbeat</c>,
+/// #569): the backend's <c>extension_silent</c> that ping fed fired when the
+/// agent dropped out or Edge was closed. A link that drops while the agent runs
+/// is <see cref="ExtensionGuard"/>'s to report.
 ///
 /// Every state change and the message it causes happen under one lock, and the
 /// channel queues each connection's messages in order, so no extension can see a
@@ -86,7 +86,6 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     private readonly SessionRehydrationService _rehydration;
     private readonly ISessionHubConnection _hub;
     private readonly TimeProvider _clock;
-    private readonly SessionSettings _settings;
     private readonly ILogger<ExtensionSessionRelay> _log;
     private readonly object _gate = new();
 
@@ -100,14 +99,12 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     // Connections that came up before the agent knew, and have been told nothing
     // since: they get the state once it is known.
     private readonly Dictionary<long, WitnessConnection> _awaitingState = new();
-    private ITimer? _heartbeat;
 
     public ExtensionSessionRelay(
         IExtensionWitnessChannel witness,
         SessionCoordinator coordinator,
         SessionRehydrationService rehydration,
         ISessionHubConnection hub,
-        IOptions<SessionSettings> settings,
         TimeProvider? clock = null,
         ILogger<ExtensionSessionRelay>? log = null)
     {
@@ -115,7 +112,6 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _coordinator = coordinator;
         _rehydration = rehydration;
         _hub = hub;
-        _settings = settings.Value;
         _clock = clock ?? TimeProvider.System;
         _log = log ?? NullLogger<ExtensionSessionRelay>.Instance;
 
@@ -149,22 +145,16 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
 
     private void OnSessionJoined(object? sender, SessionStartedPayload payload)
     {
-        var interval = TimeSpan.FromSeconds(Math.Max(1, _settings.HeartbeatIntervalSeconds));
-        ITimer? previous;
         int sent;
         lock (_gate)
         {
             _session = payload;
             _domains = payload.Domains.ToList();
-            previous = _heartbeat;
-            var sessionId = payload.SessionId;
-            _heartbeat = _clock.CreateTimer(_ => OnHeartbeatDue(sessionId), null, interval, interval);
             sent = _witness.Broadcast(SessionStartedMessage());
             // A session joined (or rejoined) before the first pass finished is
             // handed down as it is: every connection now has the state.
             _awaitingState.Clear();
         }
-        previous?.Dispose();
         _log.LogInformation(
             "Handing session {SessionId} ({DomainCount} domains) to the extension: {Outcome}.",
             payload.SessionId, payload.Domains.Count,
@@ -173,19 +163,15 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
 
     private void OnSessionLeft(object? sender, Guid sessionId)
     {
-        ITimer? heartbeat;
         int sent;
         lock (_gate)
         {
             if (_session?.SessionId != sessionId) return;
             _session = null;
             _domains = new List<AllowedDomainDto>();
-            heartbeat = _heartbeat;
-            _heartbeat = null;
             sent = _witness.Broadcast(Serialize(new { type = ExtensionMessages.SessionEnded, sessionId }));
             _awaitingState.Clear();
         }
-        heartbeat?.Dispose();
         _log.LogInformation(
             "Telling the extension session {SessionId} is over: {Outcome}.",
             sessionId, sent > 0 ? $"sent to {sent}" : "no extension connected");
@@ -344,31 +330,6 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
             startedAt = session.StartedAt,
             domains = _domains,
         });
-    }
-
-    // ---- the extension's liveness ping (#149) ---------------------------------
-
-    private void OnHeartbeatDue(Guid sessionId)
-    {
-        lock (_gate)
-        {
-            if (_session?.SessionId != sessionId || _connections.Count == 0) return;
-        }
-        _ = PingForExtensionAsync(sessionId);
-    }
-
-    private async Task PingForExtensionAsync(Guid sessionId)
-    {
-        try
-        {
-            await _hub.ExtensionHeartbeatAsync(sessionId).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Sustained silence is what the backend's absence net watches for; a
-            // single dropped ping needs no retry.
-            _log.LogDebug(ex, "ExtensionHeartbeat failed for session {SessionId}", sessionId);
-        }
     }
 
     // ---- extension → agent ---------------------------------------------------
@@ -570,13 +531,6 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _witness.WitnessDisconnected -= OnWitnessDisconnected;
         _witness.MessageReceived -= OnMessageReceived;
         _rehydration.FirstPassFinished -= OnFirstPassFinished;
-        ITimer? heartbeat;
-        lock (_gate)
-        {
-            heartbeat = _heartbeat;
-            _heartbeat = null;
-        }
-        heartbeat?.Dispose();
         return ValueTask.CompletedTask;
     }
 }
