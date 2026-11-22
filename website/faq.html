@@ -49,7 +49,7 @@
       <p>No. Anchor only observes activity <strong>while a teacher has an active focus session running</strong> — outside a session it inspects nothing and sends nothing. Even during a session it does not record everything: it surfaces <strong>off-task</strong> activity (apps and pages that aren't on the lesson's allowlist) so the teacher can nudge a student back. On-allowlist pages are never logged, and for apps it notes only the program's name, never window titles or what's on screen. It does not record keystrokes, page contents, screenshots, passwords, or any browsing outside an active session.</p>
 
       <h2>What exactly does it collect during a session?</h2>
-      <p>Only what the teacher needs to see who is off task: off-allowlist page visits (URL, hostname, time, and a tab identifier), the name of each app that comes to the foreground and whether it was blocked, unblock requests, integrity signals that suggest enforcement was bypassed, and periodic liveness heartbeats. This is tied to the signed-in student for the duration of the session, then it stops. The full, exact list is in the <a href="privacy.html">privacy policy</a>, and the source is public so you can verify it.</p>
+      <p>Only what the teacher needs to see who is off task: off-allowlist page visits (URL, hostname, time, and a tab identifier), the name of each app that comes to the foreground and whether it was blocked, unblock requests, integrity signals that suggest enforcement was bypassed, and periodic liveness heartbeats. This is tied to the signed-in student, and collection stops when the session ends; what was already sent is kept as described under <em>How long is the data kept?</em> below. The full, exact list is in the <a href="privacy.html">privacy policy</a>, and the source is public so you can verify it.</p>
 
       <h2>Can the school look back at what a student did?</h2>
       <p>Only in a narrow way. Besides the session data above, a school can switch on <strong>diagnostic log uploads</strong>, which are off by default. Only the administrators of the school's backend can download them, and the <a href="privacy.html">privacy policy</a> allows two uses: technical diagnosis, and a concrete suspicion of fraud during a test or exam, <strong>only at the request of the school's leadership</strong>. By default they are deleted after 14 days. A school that switches them on should tell students and parents.</p>
@@ -71,7 +71,7 @@
       <p>Off-list apps are pushed to the background (minimised, not closed — the student keeps their work), off-list pages show a friendly block page, and the event surfaces on the teacher's dashboard live. The teacher can quietly nudge the student back rather than police a log afterwards.</p>
 
       <h2>Does it keep running between lessons?</h2>
-      <p>No. Anchor only does anything while a teacher-started session is active. When the session ends — teacher action, a timer, or the class period — enforcement stops and observation stops. No activity is recorded between sessions.</p>
+      <p>No. Anchor only does anything while a teacher-started session is active. When the session ends — the teacher ends it, or it reaches the end the teacher chose when starting it, such as the end of this or the next lesson period — enforcement stops and observation stops. A session still running after four hours ends by itself as a safety net. No activity is recorded between sessions.</p>
     </section>
 
     <!-- ============================================================
