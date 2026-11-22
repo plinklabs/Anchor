@@ -128,6 +128,24 @@ internal static class TestSeed
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// A host the teacher approved for one student only (#73), as the unblock
+    /// approval stores it.
+    /// </summary>
+    public static async Task AddUnblockGrantAsync(AnchorApiFactory factory, Guid sessionId, Guid userId, string host)
+    {
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AnchorDbContext>();
+        db.SessionUnblockGrants.Add(new SessionUnblockGrant
+        {
+            SessionId = sessionId,
+            UserId = userId,
+            Host = host,
+            GrantedAt = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync();
+    }
+
     public static async Task<Session> AddSessionAsync(
         AnchorApiFactory factory,
         Guid teacherId,

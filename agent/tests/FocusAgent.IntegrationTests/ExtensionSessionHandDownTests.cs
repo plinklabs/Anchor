@@ -292,6 +292,102 @@ public sealed class ExtensionSessionHandDownTests
         }
     }
 
+    /// <summary>
+    /// #568: a site the teacher approved for this student only stays open after
+    /// the agent is ended from Task Manager and started again. The restarted
+    /// agent rejoins without asking and hands the extension the session with the
+    /// student's own grant in it; that list replaces the one the extension had.
+    /// </summary>
+    [Fact]
+    public async Task ARestartedAgent_HandsTheExtensionTheSitesApprovedForTheStudent()
+    {
+        var api = new BackendClient(_backend.Url);
+        var stale = await api.GetRejoinableSessionIdsAsync();
+        Assert.True(
+            stale.Count == 0,
+            $"The student is still in running session(s) {string.Join(", ", stale)} that an earlier spec left " +
+            "behind; this agent would rejoin them on connect. End every session a spec starts.");
+
+        var pipeName = "anchor-witness-e2e-" + Guid.NewGuid().ToString("N");
+        var agent = AgentProcess.Launch(
+            _backend.Url,
+            TestConfig.StudentOid,
+            autoJoin: true,
+            extraEnvironment: new Dictionary<string, string> { ["Witness__PipeName"] = pipeName });
+        WitnessHostProcess? extension = null;
+        Guid? sessionId = null;
+        try
+        {
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+            extension = WitnessHostProcess.Start(pipeName);
+            await extension.WaitForAsync(m => Type(m) == "no_session", Wait, "the agent to hand down 'no session'");
+
+            var classId = await api.FindClassIdAsync();
+            var ms365 = await api.FindBundleIdAsync("Microsoft 365");
+            var session = await api.StartSessionAsync(classId, new[] { ms365 });
+            sessionId = session.Id;
+            await extension.WaitForAsync(
+                m => Type(m) == "session_started" && SessionOf(m) == session.Id, Wait,
+                "the agent to hand down the session it joined");
+
+            // 1. The teacher approves a site for this student only.
+            extension.Send(new
+            {
+                type = "unblock_request",
+                requestId = "e2e-restart",
+                sessionId = session.Id,
+                url = "https://docs.test/notes",
+                host = "docs.test",
+            });
+            await extension.WaitForAsync(
+                m => Type(m) == "unblock_request_result" && m.GetProperty("requestId").GetString() == "e2e-restart", Wait,
+                "the agent to answer the unblock request");
+            var pending = await WaitForUnblockRequestAsync(api, session.Id, "docs.test");
+            await api.UnblockAsync(session.Id, Assert.Single(pending.RequesterIds), "docs.test");
+            await extension.WaitForAsync(
+                m => Type(m) == "allowlist_amended" && SessionOf(m) == session.Id, Wait,
+                "the approved host to be handed down");
+
+            // 2. The agent is ended from Task Manager and started again, without
+            //    auto-join and with a long join confirmation: only the silent rejoin
+            //    (#54) puts it back in the session. Edge starts a new host for it.
+            await extension.DisposeAsync();
+            extension = null;
+            await agent.DisposeAsync();
+            agent = AgentProcess.Launch(
+                _backend.Url,
+                TestConfig.StudentOid,
+                extraEnvironment: new Dictionary<string, string>
+                {
+                    ["Witness__PipeName"] = pipeName,
+                    ["Realtime__JoinConfirmationDuration"] = "00:01:00",
+                });
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+            extension = WitnessHostProcess.Start(pipeName);
+
+            // 3. The session the extension gets carries the bundle and the
+            //    student's own grant.
+            var rejoined = await extension.WaitForAsync(
+                m => Type(m) == "session_started" && SessionOf(m) == session.Id, Wait,
+                "the restarted agent to hand down the session it rejoined");
+            Assert.Contains(Domains(rejoined, "domains"), d => d.Contains("sharepoint.com"));
+            Assert.Contains("docs.test", Domains(rejoined, "domains"));
+        }
+        finally
+        {
+            try
+            {
+                if (sessionId is Guid id) await api.EndSessionAsync(id);
+            }
+            catch { /* best-effort */ }
+            finally
+            {
+                if (extension is not null) await extension.DisposeAsync();
+                await agent.DisposeAsync();
+            }
+        }
+    }
+
     private static async Task WaitForGuardAsync(AgentProcess agent, Func<ExtensionGuardSnapshot, bool> predicate, string what)
     {
         var last = await agent.WaitForAsync(s => s.ExtensionGuard is { } g && predicate(g), Wait);

@@ -605,6 +605,30 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task GetStartedSession_carries_the_callers_own_grants_and_no_classmates()
+    {
+        // #568: the catch-up replaces the allowlist the agent and extension had,
+        // and it is what offers the session again when a silent rejoin failed.
+        // A host approved for this student only must be in it; a classmate's
+        // must not.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var (student, classmate) = (scenario.Students[0], scenario.Students[1]);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id, classmate.Id });
+        await TestSeed.AddUnblockGrantAsync(_factory, session.Id, student.Id, "own-grant-catch-up.example");
+        await TestSeed.AddUnblockGrantAsync(_factory, session.Id, classmate.Id, "classmate-grant-catch-up.example");
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        var payload = await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession");
+
+        Assert.NotNull(payload);
+        Assert.Equal(session.Id, payload.SessionId);
+        Assert.Contains(payload.Domains, d => d.MatchType == "Suffix" && d.Value == "own-grant-catch-up.example");
+        Assert.DoesNotContain(payload.Domains, d => d.Value == "classmate-grant-catch-up.example");
+    }
+
+    [Fact]
     public async Task GetStartedSession_returns_the_latest_running_session_joined_or_not()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 1);

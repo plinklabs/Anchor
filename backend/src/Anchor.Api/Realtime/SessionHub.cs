@@ -417,8 +417,9 @@ public sealed class SessionHub : Hub<ISessionHubClient>
             return null;
 
         // The allowlist a join-by-code SessionStarted carries: the session's
-        // bundles plus its whole-class grants (#101).
-        var allowlist = await _allowlist.ExpandForSessionAsync(latest.Id, ct);
+        // bundles, its whole-class grants (#101) and the caller's own grants
+        // (#568), which a catch-up would otherwise wipe.
+        var allowlist = await _allowlist.ExpandForParticipantAsync(latest.Id, user.Id, ct);
         return new SessionStartedPayload(
             latest.Id, latest.ClassId, latest.StartedAt, latest.JoinCode, allowlist.Apps, allowlist.Domains);
     }
