@@ -32,6 +32,13 @@ namespace FocusAgent.Core.Sessions;
 /// group. Each question is a hub call, which the backend answers only once it
 /// has.
 ///
+/// The first pass that gets through all of that — rehydration, confirm,
+/// allowlist, catch-up — is when the agent first knows whether the student is
+/// in a session (<see cref="HasFinishedFirstPass"/>, <see cref="FirstPassFinished"/>,
+/// #571). Until then the agent's own "no session" only means it hasn't asked yet:
+/// a restarted agent holds the session in memory only, and the extension must
+/// not be told it is over before the agent has asked.
+///
 /// The trigger is driven externally via <see cref="NotifyConnectedAsync"/>
 /// rather than by subscribing to <c>ConnectionManager</c> directly, because
 /// that class lives in the App layer (it owns WAM and the SignalR transport).
@@ -45,6 +52,7 @@ public sealed class SessionRehydrationService
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private bool _completed;
+    private volatile bool _firstPassFinished;
 
     public SessionRehydrationService(
         ISessionRehydrationClient client,
@@ -68,6 +76,20 @@ public sealed class SessionRehydrationService
     }
 
     /// <summary>
+    /// True once a pass has rehydrated and then asked the backend about the
+    /// joined session and a started one (#571): what the agent says about its
+    /// session from then on is what the backend told it, not what a fresh
+    /// process starts with.
+    /// </summary>
+    public bool HasFinishedFirstPass => _firstPassFinished;
+
+    /// <summary>
+    /// Raised once, when <see cref="HasFinishedFirstPass"/> turns true. Raised
+    /// on the pass's own thread, after the pass has let go of its gate.
+    /// </summary>
+    public event EventHandler? FirstPassFinished;
+
+    /// <summary>
     /// Hook called by the App layer each time its connection manager
     /// transitions to Connected. Async-void-safe: exceptions are caught and
     /// logged.
@@ -79,6 +101,7 @@ public sealed class SessionRehydrationService
         // a reconnect that lands while an earlier pass runs still gets its own
         // check — the earlier one may have asked over the connection that just
         // dropped.
+        var finishedFirstPass = false;
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -113,10 +136,25 @@ public sealed class SessionRehydrationService
             // so a session the student was already in is rejoined silently
             // rather than asked about again. Never throws but for cancellation.
             await _coordinator.CatchUpStartedSessionAsync(ct).ConfigureAwait(false);
+
+            // A pass whose rehydration failed has not asked about the session
+            // the student was in before a restart: the next connect's pass is
+            // the first one that counts.
+            if (_completed && !_firstPassFinished)
+            {
+                _firstPassFinished = true;
+                finishedFirstPass = true;
+            }
         }
         finally
         {
             _gate.Release();
+        }
+
+        if (finishedFirstPass)
+        {
+            _log.LogInformation("First pass against the backend finished; the agent now knows the student's session.");
+            FirstPassFinished?.Invoke(this, EventArgs.Empty);
         }
     }
 

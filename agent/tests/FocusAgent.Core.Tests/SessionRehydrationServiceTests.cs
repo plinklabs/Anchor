@@ -68,6 +68,30 @@ public class SessionRehydrationServiceTests
     }
 
     [Fact]
+    public async Task The_first_pass_is_finished_once_one_got_through_and_is_announced_once()
+    {
+        var hub = new RecordingHub();
+        var coordinator = NewCoordinator(hub, new SilentUi());
+        var client = new StubClient(new[] { Payload() }) { FailOnce = true };
+        var service = new SessionRehydrationService(client, coordinator);
+        var announced = new List<bool>();
+        service.FirstPassFinished += (_, _) => announced.Add(service.HasFinishedFirstPass);
+
+        // #571: a pass that couldn't ask the backend leaves the session unknown.
+        await service.NotifyConnectedAsync();
+        Assert.False(service.HasFinishedFirstPass);
+        Assert.Empty(announced);
+
+        await service.NotifyConnectedAsync();
+        await service.NotifyConnectedAsync();
+
+        Assert.True(service.HasFinishedFirstPass);
+        Assert.Equal(new[] { true }, announced);
+        // Announced after the rejoin, so a listener sees the session it rejoined.
+        Assert.Single(hub.JoinCalls);
+    }
+
+    [Fact]
     public async Task Empty_rejoinable_list_marks_rehydration_complete_without_calling_hub()
     {
         var hub = new RecordingHub();

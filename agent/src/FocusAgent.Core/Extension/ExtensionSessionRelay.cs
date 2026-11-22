@@ -27,7 +27,11 @@ namespace FocusAgent.Core.Extension;
 /// request, <see cref="ExtensionMessages.UnblockDenied"/> on a denied one (#523),
 /// <see cref="ExtensionMessages.SessionEnded"/> when the session ends or
 /// the student leaves it, and on every witness (re)connect the current session
-/// again, or <see cref="ExtensionMessages.NoSession"/>. Every Edge profile runs
+/// again, or <see cref="ExtensionMessages.NoSession"/>. That last one waits until
+/// the agent has asked the backend (<see cref="SessionRehydrationService.FirstPassFinished"/>,
+/// #571): a restarted agent starts in no session whatever the student is in, and
+/// an extension told so would stop filtering. Until then a connecting extension
+/// is sent nothing and keeps the session it has. Every Edge profile runs
 /// its own copy of the extension over its own connection (#517): each gets the
 /// state when it connects, and every change goes to all of them.</item>
 /// <item>extension → agent: blocked pages (by their host only, #527), unblock
@@ -79,6 +83,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
 
     private readonly IExtensionWitnessChannel _witness;
     private readonly SessionCoordinator _coordinator;
+    private readonly SessionRehydrationService _rehydration;
     private readonly ISessionHubConnection _hub;
     private readonly TimeProvider _clock;
     private readonly SessionSettings _settings;
@@ -89,11 +94,18 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     private List<AllowedDomainDto> _domains = new();
     // Ids of the open witness connections, one per Edge profile.
     private readonly HashSet<long> _connections = new();
+    // Whether the agent has asked the backend what session the student is in
+    // (#571). Before that, no session means "not known yet".
+    private bool _sessionKnown;
+    // Connections that came up before the agent knew, and have been told nothing
+    // since: they get the state once it is known.
+    private readonly Dictionary<long, WitnessConnection> _awaitingState = new();
     private ITimer? _heartbeat;
 
     public ExtensionSessionRelay(
         IExtensionWitnessChannel witness,
         SessionCoordinator coordinator,
+        SessionRehydrationService rehydration,
         ISessionHubConnection hub,
         IOptions<SessionSettings> settings,
         TimeProvider? clock = null,
@@ -101,6 +113,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     {
         _witness = witness;
         _coordinator = coordinator;
+        _rehydration = rehydration;
         _hub = hub;
         _settings = settings.Value;
         _clock = clock ?? TimeProvider.System;
@@ -114,6 +127,10 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _witness.WitnessConnected += OnWitnessConnected;
         _witness.WitnessDisconnected += OnWitnessDisconnected;
         _witness.MessageReceived += OnMessageReceived;
+        _rehydration.FirstPassFinished += OnFirstPassFinished;
+        // After subscribing, so a pass finishing in between is not missed.
+        if (_rehydration.HasFinishedFirstPass)
+            lock (_gate) _sessionKnown = true;
     }
 
     /// <summary>The session the extension is told it is in, or null.</summary>
@@ -143,6 +160,9 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
             var sessionId = payload.SessionId;
             _heartbeat = _clock.CreateTimer(_ => OnHeartbeatDue(sessionId), null, interval, interval);
             sent = _witness.Broadcast(SessionStartedMessage());
+            // A session joined (or rejoined) before the first pass finished is
+            // handed down as it is: every connection now has the state.
+            _awaitingState.Clear();
         }
         previous?.Dispose();
         _log.LogInformation(
@@ -163,6 +183,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
             heartbeat = _heartbeat;
             _heartbeat = null;
             sent = _witness.Broadcast(Serialize(new { type = ExtensionMessages.SessionEnded, sessionId }));
+            _awaitingState.Clear();
         }
         heartbeat?.Dispose();
         _log.LogInformation(
@@ -244,28 +265,71 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
     private void OnWitnessConnected(object? sender, WitnessConnection connection)
     {
         Guid? sessionId;
+        bool known;
         lock (_gate)
         {
             _connections.Add(connection.Id);
             sessionId = _session?.SessionId;
+            known = _sessionKnown;
             // The extension may have missed anything sent while its link was down
             // (a revived service worker, Edge restarted, the extension switched
             // back on), or never had one (a second profile opened mid-session), so
             // it gets the whole state on every connect. Only this connection: the
             // others already have it.
-            _witness.TrySend(connection, _session is null
-                ? Serialize(new { type = ExtensionMessages.NoSession })
-                : SessionStartedMessage());
+            if (_session is not null)
+                _witness.TrySend(connection, SessionStartedMessage());
+            else if (known)
+                _witness.TrySend(connection, NoSessionMessage());
+            else
+                // A restarted agent that hasn't asked the backend yet (#571): the
+                // extension keeps the session it has until the agent knows.
+                _awaitingState[connection.Id] = connection;
         }
-        _log.LogInformation(
-            "Extension connected (connection {Connection}); handed it {State}.",
-            connection, sessionId is { } id ? $"session {id}" : "no session");
+        if (sessionId is null && !known)
+            _log.LogInformation(
+                "Extension connected (connection {Connection}); handing it its state once the agent has asked the backend.",
+                connection);
+        else
+            _log.LogInformation(
+                "Extension connected (connection {Connection}); handed it {State}.",
+                connection, sessionId is { } id ? $"session {id}" : "no session");
     }
 
     private void OnWitnessDisconnected(object? sender, WitnessConnection connection)
     {
-        lock (_gate) _connections.Remove(connection.Id);
+        lock (_gate)
+        {
+            _connections.Remove(connection.Id);
+            _awaitingState.Remove(connection.Id);
+        }
     }
+
+    // The agent has asked the backend (#571): every extension that connected
+    // before then, and has heard nothing since, is told what is true now.
+    private void OnFirstPassFinished(object? sender, EventArgs e)
+    {
+        Guid? sessionId;
+        var sent = 0;
+        lock (_gate)
+        {
+            if (_sessionKnown) return;
+            _sessionKnown = true;
+            sessionId = _session?.SessionId;
+            if (_awaitingState.Count > 0)
+            {
+                var message = _session is null ? NoSessionMessage() : SessionStartedMessage();
+                foreach (var connection in _awaitingState.Values)
+                    if (_witness.TrySend(connection, message)) sent++;
+                _awaitingState.Clear();
+            }
+        }
+        if (sent > 0)
+            _log.LogInformation(
+                "The agent has asked the backend; handed {State} to {Count} extension(s) that connected before.",
+                sessionId is { } id ? $"session {id}" : "no session", sent);
+    }
+
+    private static string NoSessionMessage() => Serialize(new { type = ExtensionMessages.NoSession });
 
     // Call under _gate.
     private string SessionStartedMessage()
@@ -485,6 +549,7 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
         _witness.WitnessConnected -= OnWitnessConnected;
         _witness.WitnessDisconnected -= OnWitnessDisconnected;
         _witness.MessageReceived -= OnMessageReceived;
+        _rehydration.FirstPassFinished -= OnFirstPassFinished;
         ITimer? heartbeat;
         lock (_gate)
         {

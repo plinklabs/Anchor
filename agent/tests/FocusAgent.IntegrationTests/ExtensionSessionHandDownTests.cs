@@ -490,6 +490,106 @@ public sealed class ExtensionSessionHandDownTests
         }
     }
 
+    /// <summary>
+    /// #571: the agent is ended from Task Manager mid-session and started again
+    /// with the laptop off the network. Edge's host reconnects to it on its own,
+    /// but the restarted agent can't ask the backend what session the student is
+    /// in, so it tells the extension nothing: no <c>no_session</c>, which would
+    /// make the extension drop the session and send its block pages back. Once
+    /// the network is back and the agent has rejoined, the extension is handed
+    /// the session again.
+    /// </summary>
+    [Fact]
+    public async Task ARestartedAgent_OffTheNetwork_DoesNotTellTheExtensionTheSessionIsOver()
+    {
+        var api = new BackendClient(_backend.Url);
+        var stale = await api.GetRejoinableSessionIdsAsync();
+        Assert.True(
+            stale.Count == 0,
+            $"The student is still in running session(s) {string.Join(", ", stale)} that an earlier spec left " +
+            "behind; this agent would rejoin them on connect. End every session a spec starts.");
+
+        var pipeName = "anchor-witness-e2e-" + Guid.NewGuid().ToString("N");
+        await using var network = new NetworkRelay(_backend.Url);
+        var agent = AgentProcess.Launch(
+            network.Url,
+            TestConfig.StudentOid,
+            autoJoin: true,
+            reconnectMaxBackoff: TimeSpan.FromSeconds(2),
+            extraEnvironment: new Dictionary<string, string> { ["Witness__PipeName"] = pipeName });
+        var extension = WitnessHostProcess.Start(pipeName);
+        Guid? sessionId = null;
+        try
+        {
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
+            await extension.WaitForAsync(m => Type(m) == "no_session", Wait, "the agent to hand down 'no session'");
+            var classId = await api.FindClassIdAsync();
+            var ms365 = await api.FindBundleIdAsync("Microsoft 365");
+            var session = await api.StartSessionAsync(classId, new[] { ms365 });
+            sessionId = session.Id;
+            await extension.WaitForAsync(
+                m => Type(m) == "session_started" && SessionOf(m) == session.Id, Wait,
+                "the agent to hand down the session it joined");
+
+            // 1. The laptop goes off the network, and the agent is ended and
+            //    started again, without auto-join and with a long join
+            //    confirmation: only the silent rejoin puts it back in the session.
+            //    The same host stays up, as Edge keeps it, and finds the new agent.
+            network.Cut();
+            await agent.DisposeAsync();
+            agent = AgentProcess.Launch(
+                network.Url,
+                TestConfig.StudentOid,
+                reconnectMaxBackoff: TimeSpan.FromSeconds(2),
+                extraEnvironment: new Dictionary<string, string>
+                {
+                    ["Witness__PipeName"] = pipeName,
+                    ["Realtime__JoinConfirmationDuration"] = "00:01:00",
+                });
+            await WaitForGuardAsync(agent, g => g.WitnessConnected, "the host to reconnect to the restarted agent");
+
+            // 2. Offline, the agent doesn't know the student's session: the
+            //    extension is told nothing, so it keeps filtering with its own.
+            await Task.Delay(TimeSpan.FromSeconds(4));
+            var offline = await agent.TryGetStatusAsync();
+            Assert.NotEqual("Connected", offline?.ConnectionStatus);
+            Assert.Null(offline?.JoinedSessionId);
+            Assert.Equal(1, Count(extension, "no_session"));
+            Assert.Equal(1, Count(extension, "session_started"));
+
+            // 3. Back on the network, the agent rejoins and hands the session down.
+            network.Restore();
+            await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(30));
+            await WaitForCountAsync(
+                extension, m => Type(m) == "session_started" && SessionOf(m) == session.Id, 2,
+                "the restarted agent to hand down the session it rejoined");
+            Assert.Equal(1, Count(extension, "no_session"));
+            Assert.Equal(session.Id, (await agent.TryGetStatusAsync())?.JoinedSessionId);
+        }
+        finally
+        {
+            try
+            {
+                if (sessionId is Guid id) await api.EndSessionAsync(id);
+            }
+            catch { /* best-effort */ }
+            finally
+            {
+                await extension.DisposeAsync();
+                await agent.DisposeAsync();
+            }
+        }
+    }
+
+    private static async Task WaitForCountAsync(
+        WitnessHostProcess extension, Func<JsonElement, bool> predicate, int count, string what)
+    {
+        var deadline = DateTime.UtcNow + Wait;
+        while (extension.ReceivedCount(predicate) < count && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        Assert.True(extension.ReceivedCount(predicate) >= count, $"Timed out after {Wait.TotalSeconds:N0}s waiting for {what}.");
+    }
+
     private static int Count(WitnessHostProcess extension, string type) =>
         extension.ReceivedCount(m => Type(m) == type);
 
