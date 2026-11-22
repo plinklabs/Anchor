@@ -860,9 +860,10 @@ public partial class App : Application
         // #525: --overlay-school-account the one for no profile signed in with the
         // school account, --overlay-school-profile the one for a window outside it;
         // #536: --overlay-school-extension the one for a school profile without the
-        // extension.
+        // extension; #556: --overlay-not-connected the one for an extension that is
+        // installed but never connected.
         if (Program.OverlayPaused || Program.OverlaySiteAccess || Program.OverlaySchoolAccount
-            || Program.OverlaySchoolProfile || Program.OverlaySchoolExtension)
+            || Program.OverlaySchoolProfile || Program.OverlaySchoolExtension || Program.OverlayNotConnected)
             overlay.ShowBrowserPaused(
                 rules,
                 new BrowserPausedPrompt(
@@ -873,6 +874,7 @@ public partial class App : Application
                     : Program.OverlaySchoolAccount ? ExtensionPauseReason.NoSchoolProfile
                     : Program.OverlaySchoolProfile ? ExtensionPauseReason.OutsideSchoolProfile
                     : Program.OverlaySchoolExtension ? ExtensionPauseReason.SchoolProfileWithoutExtension
+                    : Program.OverlayNotConnected ? ExtensionPauseReason.NotConnected
                     : ExtensionPauseReason.ExtensionOff,
                     Account: SelfTestDemoContent.SchoolAccount),
                 pausedWindowHandle: IntPtr.Zero);
@@ -1220,6 +1222,9 @@ public partial class App : Application
                          (ExtensionPauseReason.NoSchoolProfile, "schoolaccount"),
                          (ExtensionPauseReason.OutsideSchoolProfile, "schoolprofile"),
                          (ExtensionPauseReason.SchoolProfileWithoutExtension, "schoolextension"),
+                         // #556: Edge paused because the extension is installed
+                         // but never connected.
+                         (ExtensionPauseReason.NotConnected, "notconnected"),
                      })
             {
                 overlay.UpdateBrowserPausedContent(
@@ -1645,6 +1650,17 @@ public partial class App : Application
                 sp.GetRequiredService<ExtensionPolicyParts>().Ids),
             sp.GetRequiredService<ILogger<WitnessLinkSelfCheck>>()));
         builder.Services.AddSingleton<WitnessLinkSelfCheckOnJoin>();
+        // #556 -- the extension installed in an Edge profile, but its link never up
+        // since the agent started: the session never reached it, so Edge filtered
+        // nothing and nobody heard of it. The guard (below) reads where it is
+        // installed and which of those profiles is open, wakes it by opening Edge
+        // there at a page the session allows, and pauses Edge if it still doesn't
+        // connect. The relay is read only when waking, so no cycle.
+        builder.Services.AddSingleton(sp => new ExtensionWakeUp(
+            sp.GetRequiredService<IOpenProfileExtensionProbe>(),
+            sp.GetRequiredService<IBrowserProfileLauncher>(),
+            () => sp.GetRequiredService<ExtensionSessionRelay>().Domains,
+            sp.GetRequiredService<ILogger<ExtensionWakeUp>>()));
         // #427 -- the report alone left Edge an unfiltered browser while the
         // extension was off. The guard pauses Edge once the witness has stayed down
         // past a short grace period during a joined session with Edge on screen, or

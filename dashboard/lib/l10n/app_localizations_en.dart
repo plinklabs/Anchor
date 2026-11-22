@@ -648,6 +648,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String feedTamperExtensionNotConnected(String who, String name) {
+    String _temp0 = intl.Intl.selectLogic(who, {
+      'named':
+          '$name\'s Anchor extension isn\'t connected to Anchor, so Edge is paused.',
+      'other':
+          'A student\'s Anchor extension isn\'t connected to Anchor, so Edge is paused.',
+    });
+    return '$_temp0';
+  }
+
+  @override
   String feedTamperExtensionSilent(String who, String name) {
     String _temp0 = intl.Intl.selectLogic(who, {
       'named': '$name\'s Anchor extension is off or not responding.',

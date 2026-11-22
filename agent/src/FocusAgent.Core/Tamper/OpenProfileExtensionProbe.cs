@@ -38,7 +38,17 @@ public interface IOpenProfileExtensionProbe
     /// read when they can't be.
     /// </summary>
     ProfileExtensionState ExtensionState(string profile);
+
+    /// <summary>
+    /// The profiles whose preferences have the extension installed, on or off
+    /// (#556); with <paramref name="openOnly"/>, only those with a browser window
+    /// open. A profile that never had it isn't one of them.
+    /// </summary>
+    IReadOnlyList<ProfileWithExtension> FindWithExtension(bool openOnly);
 }
+
+/// <summary>An Edge profile (its folder, <c>Profile 1</c>) that has Anchor's extension installed, and whether it is on there.</summary>
+public sealed record ProfileWithExtension(string Profile, bool On);
 
 /// <summary>What an Edge profile's preferences say about Anchor's extension.</summary>
 public enum ProfileExtensionState
@@ -157,6 +167,41 @@ public sealed class EdgeOpenProfileExtensionProbe : IOpenProfileExtensionProbe
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 _log.LogWarning(ex, "Reading Edge's profiles failed; treating them as having the extension.");
+            }
+            return found;
+        }
+    }
+
+    public IReadOnlyList<ProfileWithExtension> FindWithExtension(bool openOnly)
+    {
+        lock (_gate)
+        {
+            var found = new List<ProfileWithExtension>();
+            try
+            {
+                if (!Directory.Exists(_userDataFolder)) return found;
+
+                HashSet<string>? open = null;
+                foreach (var profileFolder in Directory.EnumerateDirectories(_userDataFolder))
+                {
+                    if (!PreferenceFiles.Any(file => File.Exists(Path.Combine(profileFolder, file)))) continue;
+                    var profile = Path.GetFileName(profileFolder);
+
+                    var state = ReadKnownStateLocked(profile, profileFolder);
+                    if (state is not (ProfileExtensionState.Enabled or ProfileExtensionState.Disabled)) continue;
+
+                    if (openOnly)
+                    {
+                        open ??= new HashSet<string>(
+                            _windows.GetWindowAppIds(_browserProcessName), StringComparer.OrdinalIgnoreCase);
+                        if (!WindowAppIds(_userDataFolder, profile).Any(open.Contains)) continue;
+                    }
+                    found.Add(new ProfileWithExtension(profile, state == ProfileExtensionState.Enabled));
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _log.LogWarning(ex, "Reading Edge's profiles failed; treating them as not having the extension.");
             }
             return found;
         }

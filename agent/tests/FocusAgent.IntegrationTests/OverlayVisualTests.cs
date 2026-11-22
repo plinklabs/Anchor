@@ -107,6 +107,15 @@ public sealed class OverlayVisualTests
         AssertOverlayRendersAndTearsDownAsync(
             extraArgs: [AgentSelfTestProcess.OverlaySchoolExtensionArg], artifactPrefix: "overlay-school-extension");
 
+    /// <summary>
+    /// #556: the variant for an Edge paused because the extension is installed but
+    /// never connected, with its "try Edge again" action.
+    /// </summary>
+    [Fact]
+    public Task NotConnectedPausedOverlaySelfTest_RendersAVisibleSurface_AndTearsItDownCleanly() =>
+        AssertOverlayRendersAndTearsDownAsync(
+            extraArgs: [AgentSelfTestProcess.OverlayNotConnectedArg], artifactPrefix: "overlay-not-connected");
+
     private static async Task AssertOverlayRendersAndTearsDownAsync(string[] extraArgs, string artifactPrefix)
     {
         await using var agent = AgentSelfTestProcess.Launch(AgentSelfTestProcess.ShowTestOverlayArg, extraArgs: extraArgs);

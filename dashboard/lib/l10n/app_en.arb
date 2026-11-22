@@ -240,6 +240,8 @@
   "@feedSomeSite": { "description": "Stands in for the site in feedAsks when an access request names none." },
   "feedTamperExtensionDisabled": "{who, select, named{{name}'s Anchor extension was switched off or removed.} other{A student's Anchor extension was switched off or removed.}}",
   "@feedTamperExtensionDisabled": { "description": "Tamper report extension_disabled: the agent saw the Edge extension go away.", "placeholders": { "who": { "type": "String" }, "name": { "type": "String" } } },
+  "feedTamperExtensionNotConnected": "{who, select, named{{name}'s Anchor extension isn't connected to Anchor, so Edge is paused.} other{A student's Anchor extension isn't connected to Anchor, so Edge is paused.}}",
+  "@feedTamperExtensionNotConnected": { "description": "Tamper report extension_not_connected (#556): the Anchor extension is installed in the student's open Edge profile, but its link to the agent never came up, not even after the agent woke it; the agent paused Edge. The student switched nothing off.", "placeholders": { "who": { "type": "String" }, "name": { "type": "String" } } },
   "feedTamperExtensionSilent": "{who, select, named{{name}'s Anchor extension is off or not responding.} other{A student's Anchor extension is off or not responding.}}",
   "@feedTamperExtensionSilent": { "description": "Tamper report extension_silent: the extension stopped reporting (Edge closed, or the extension stopped).", "placeholders": { "who": { "type": "String" }, "name": { "type": "String" } } },
   "feedTamperInPrivate": "{who, select, named{{name} opened an InPrivate window.} other{A student opened an InPrivate window.}}",

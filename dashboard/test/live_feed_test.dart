@@ -193,6 +193,12 @@ void main() {
           "Ada's Anchor extension was switched off or removed.",
           'De Anchor-extensie van Ada is uitgeschakeld of verwijderd.',
         ),
+        // #556: installed, but never connected to the agent; Edge is paused.
+        'extension_not_connected': (
+          "Ada's Anchor extension isn't connected to Anchor, so Edge is paused.",
+          'De Anchor-extensie van Ada is niet verbonden met Anchor, dus Edge '
+              'staat op pauze.',
+        ),
         'extension_silent': (
           "Ada's Anchor extension is off or not responding.",
           'De Anchor-extensie van Ada staat uit of reageert niet.',

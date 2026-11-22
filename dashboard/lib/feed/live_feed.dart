@@ -113,6 +113,10 @@ String feedSentence(
     case 'TamperDetected':
       return switch (event.payload['kind']) {
         'extension_disabled' => l10n.feedTamperExtensionDisabled(who, n),
+        'extension_not_connected' => l10n.feedTamperExtensionNotConnected(
+          who,
+          n,
+        ),
         'extension_silent' => l10n.feedTamperExtensionSilent(who, n),
         'inprivate_opened' => l10n.feedTamperInPrivate(who, n),
         'host_permission_revoked' => l10n.feedTamperSiteAccess(who, n),
