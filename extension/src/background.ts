@@ -11,6 +11,7 @@ import {
   type AgentMessage,
 } from './shared/witness';
 import { LINK_RETRY_ALARM, linkRetryAlarm } from './shared/link-retry';
+import { linkTroubleStore } from './shared/link-trouble';
 import {
   clearActiveSession,
   getActiveSession,
@@ -88,6 +89,10 @@ function ensureWitness(): void {
     // teacher sees the agent go through its own missing heartbeat.
     onAgentUnavailable: () => log.warn('the Anchor app went away; keeping the session in force'),
     retryAlarm: linkRetryAlarm(chrome.alarms),
+    // #561: Edge's reason the port dropped, kept until the link is back and then
+    // handed to the agent for its log, across the worker generations in between.
+    lastError: () => chrome.runtime.lastError?.message,
+    troubleStore: linkTroubleStore(chrome.storage.session),
   });
   witness.start();
 }

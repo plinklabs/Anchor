@@ -621,6 +621,7 @@ public partial class ExtensionSessionRelayTests
         public SessionCoordinator Coordinator { get; }
         public SessionRehydrationService Rehydration { get; }
         public ExtensionSessionRelay Relay { get; }
+        public RecordingLogger<ExtensionSessionRelay> Log { get; } = new();
 
         /// <param name="askedBackend">
         /// Whether the agent has been through its first pass against the backend
@@ -640,7 +641,8 @@ public partial class ExtensionSessionRelayTests
                 Rehydration,
                 Hub,
                 Options.Create(new SessionSettings { HeartbeatIntervalSeconds = 10 }),
-                Clock);
+                Clock,
+                Log);
             if (askedBackend)
                 Rehydration.NotifyConnectedAsync().GetAwaiter().GetResult();
         }

@@ -42,7 +42,8 @@
       "host": "string",
       "reason": "string?"
     },
-    "self_check": { "sessionId": "string", "allSites": "boolean", "inPrivate": "boolean" }
+    "self_check": { "sessionId": "string", "allSites": "boolean", "inPrivate": "boolean" },
+    "link_error": { "error": "string", "failedAttempts": "number", "since": "date-time" }
   },
   "legacy": {
     "tamper": { "sessionId": "string", "kind": "string" }

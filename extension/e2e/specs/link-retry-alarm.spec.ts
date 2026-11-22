@@ -10,11 +10,15 @@
 // Driven in real Edge: the extension starts with no host to start, its worker is
 // stopped, the host comes back, and nothing navigates. The link must come back
 // to the agent by itself, through a worker generation only the alarm started.
+//
+// #561: once back, that worker tells the agent why the link was down (Edge's
+// reason from chrome.runtime.lastError, kept across the worker stop), and the
+// host Edge started has logged that it reached the agent.
 
 import { test, expect } from '@playwright/test';
 import { EXTENSION_ID, WORKER_START_LOG, loadExtension } from '../extension.ts';
 import { FakeAgent } from '../fake-agent.ts';
-import { registerWitnessHost, witnessHostSupported } from '../witness-host.ts';
+import { readWitnessHostLog, registerWitnessHost, witnessHostSupported } from '../witness-host.ts';
 
 /** Either line the extension logs when the host can't be started (#243). */
 const DEAD_LINK_LINES = ['witness port dropped before any host message', 'connectNative failed'];
@@ -51,6 +55,20 @@ test('the link to the agent comes back with the worker stopped and no browsing (
       expect(ext.countLogs(WORKER_START_LOG)).toBeGreaterThan(startsWhileStopped);
       // No page was ever opened to wake it.
       expect(ext.context.pages().filter((p) => p.url() !== 'about:blank')).toEqual([]);
+
+      // #561: the new worker tells the agent why the link was down: Edge's
+      // reason, read off chrome.runtime.lastError by the worker that saw it,
+      // and kept for this one across the stop.
+      const linkError = await agent.waitForMessage((m) => m.type === 'link_error', 15_000);
+      expect(linkError.error).toMatch(/native messaging host/i);
+      expect(linkError.failedAttempts).toBeGreaterThanOrEqual(1);
+      expect(Date.parse(String(linkError.since))).toBeLessThan(Date.now());
+
+      // #561: and the host Edge started logged who started it and that it
+      // reached the agent, in the folder the agent's log upload reads.
+      const hostLog = readWitnessHostLog();
+      expect(hostLog).toContain(`started by chrome-extension://${EXTENSION_ID}/; agent pipe ${agent.pipeName}.`);
+      expect(hostLog).toContain(`Connected to the agent's pipe ${agent.pipeName} (attempt 1).`);
     } finally {
       host.unregister();
     }

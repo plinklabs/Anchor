@@ -6,6 +6,7 @@ import {
   WITNESS_PING_INTERVAL_MS,
   type RuntimePort,
 } from './witness';
+import type { LinkTrouble } from './link-trouble';
 
 const DOMAINS = [{ matchType: 'Wildcard', value: '*.sharepoint.com' }];
 
@@ -513,6 +514,159 @@ describe('WitnessClient', () => {
     expect(retryAlarm.disarm).toHaveBeenCalledTimes(1);
     client.retryNow();
     expect(h.pendingDelays()).toEqual([]);
+  });
+
+  // #561: Edge says why the port dropped only in chrome.runtime.lastError, which
+  // reached nothing but the worker's console. The extension keeps it until the
+  // link is back and then tells the agent, whose log upload carries it.
+  it("tells the agent, once the link is back, Edge's reason it was down and how often it failed (#561)", async () => {
+    const h = makeHarness();
+    const ports = [new h.FakePort(), new h.FakePort(), new h.FakePort()];
+    let i = 0;
+    let lastError: string | undefined;
+    const times = [new Date('2026-11-20T08:30:00.000Z'), new Date('2026-11-20T08:30:01.000Z')];
+    const client = new WitnessClient({
+      connect: () => ports[i++],
+      onAgentMessage: vi.fn(),
+      lastError: () => lastError,
+      now: () => times.shift() ?? new Date('2026-11-20T09:00:00.000Z'),
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    lastError = 'Specified native messaging host not found.';
+    ports[0].drop();
+    h.runDue(1_000);
+    lastError = 'Access to the specified native messaging host is forbidden.';
+    ports[1].drop();
+    h.runDue(2_000);
+    lastError = undefined;
+
+    ports[2].emit({ type: 'agent_available' });
+    await vi.waitFor(() => expect(ports[2].posted).toHaveLength(1));
+    expect(ports[2].posted).toEqual([
+      {
+        type: 'link_error',
+        error: 'Access to the specified native messaging host is forbidden.',
+        failedAttempts: 2,
+        since: '2026-11-20T08:30:00.000Z',
+      },
+    ]);
+
+    // Told once: the next message on the same link sends nothing more.
+    ports[2].emit({ type: 'no_session' });
+    await Promise.resolve();
+    expect(ports[2].posted).toHaveLength(1);
+  });
+
+  it('counts a connectNative that throws, with its message (#561)', async () => {
+    const h = makeHarness();
+    const port = new h.FakePort();
+    let calls = 0;
+    const client = new WitnessClient({
+      connect: () => {
+        if (calls++ === 0) throw new Error('Specified native messaging host not found.');
+        return port;
+      },
+      onAgentMessage: vi.fn(),
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    h.runDue(1_000);
+    port.emit({ type: 'agent_available' });
+
+    await vi.waitFor(() => expect(port.posted).toHaveLength(1));
+    expect(port.posted[0]).toMatchObject({
+      type: 'link_error',
+      error: 'Specified native messaging host not found.',
+      failedAttempts: 1,
+    });
+  });
+
+  it("sends what an earlier worker kept, and clears it once sent (#561)", async () => {
+    // The retry alarm wakes a new worker (#572): the reasons the stopped one
+    // saw are in chrome.storage.session.
+    const h = makeHarness();
+    const port = new h.FakePort();
+    let kept: LinkTrouble | null = {
+      error: 'Specified native messaging host not found.',
+      failedAttempts: 5,
+      since: '2026-11-20T08:00:00.000Z',
+    };
+    const saves: (LinkTrouble | null)[] = [];
+    const client = new WitnessClient({
+      connect: () => port,
+      onAgentMessage: vi.fn(),
+      troubleStore: {
+        load: async () => kept,
+        save: async (t) => {
+          saves.push(t);
+          kept = t;
+        },
+      },
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    port.emit({ type: 'agent_available' });
+
+    await vi.waitFor(() => expect(kept).toBeNull());
+    expect(port.posted).toEqual([
+      {
+        type: 'link_error',
+        error: 'Specified native messaging host not found.',
+        failedAttempts: 5,
+        since: '2026-11-20T08:00:00.000Z',
+      },
+    ]);
+    expect(saves).toEqual([null]);
+  });
+
+  it('keeps each failure for the next worker, on top of what an earlier one kept (#561)', async () => {
+    const h = makeHarness();
+    const port = new h.FakePort();
+    let kept: LinkTrouble | null = { error: 'old', failedAttempts: 3, since: '2026-11-20T08:00:00.000Z' };
+    const client = new WitnessClient({
+      connect: () => port,
+      onAgentMessage: vi.fn(),
+      lastError: () => 'Native host has exited.',
+      now: () => new Date('2026-11-20T08:10:00.000Z'),
+      troubleStore: {
+        load: async () => kept,
+        save: async (t) => {
+          kept = t;
+        },
+      },
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    port.drop();
+
+    await vi.waitFor(() => expect(kept?.failedAttempts).toBe(4));
+    expect(kept).toEqual({ error: 'Native host has exited.', failedAttempts: 4, since: '2026-11-20T08:00:00.000Z' });
+  });
+
+  it('sends no link_error when the link came up without failing (#561)', async () => {
+    const h = makeHarness();
+    const port = new h.FakePort();
+    const client = new WitnessClient({
+      connect: () => port,
+      onAgentMessage: vi.fn(),
+      lastError: () => undefined,
+      setTimeoutFn: h.setTimeoutFn,
+      clearTimeoutFn: h.clearTimeoutFn,
+    });
+
+    client.start();
+    port.emit({ type: 'agent_available' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(port.posted).toEqual([]);
   });
 
   it('stop() disconnects the port and cancels all timers', () => {

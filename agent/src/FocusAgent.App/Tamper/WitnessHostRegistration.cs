@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using FocusAgent.Core.Extension;
 using FocusAgent.Core.Tamper;
+using Microsoft.Extensions.Logging;
 
 namespace FocusAgent.App.Tamper;
 
@@ -16,8 +17,9 @@ namespace FocusAgent.App.Tamper;
 [SupportedOSPlatform("windows")]
 internal static class WitnessHostRegistration
 {
-    private static WitnessHostRegistrar Build(string? keyOverride, AnchorExtensionIds? extensionIds = null) =>
-        new(new RegistryWitnessHostStore(keyOverride), extensionIds: extensionIds);
+    private static WitnessHostRegistrar Build(
+        string? keyOverride, AnchorExtensionIds? extensionIds = null, ILogger<WitnessHostRegistrar>? log = null) =>
+        new(new RegistryWitnessHostStore(keyOverride), log, extensionIds);
 
     /// <summary>
     /// The host exe the release publish lands next to the agent (pack-release.ps1
@@ -59,25 +61,18 @@ internal static class WitnessHostRegistration
     /// self-hosted test-ring build's once one is configured. Null:
     /// <see cref="AnchorExtensionIds.Configured"/>.
     /// </param>
-    public static void RegisterForStartup(AnchorExtensionIds? extensionIds = null)
+    /// <param name="log">
+    /// Where the outcome goes (#561): what it wrote or found up to date, a missing
+    /// host exe and any failure, each with the path involved. Null: nowhere.
+    /// </param>
+    public static void RegisterForStartup(
+        AnchorExtensionIds? extensionIds = null, ILogger<WitnessHostRegistrar>? log = null)
     {
-        try
-        {
-            var hostExePath = DefaultHostExePath();
-            if (!File.Exists(hostExePath))
-            {
-                // Host not shipped beside the agent (a dev/debug build) — leave any
-                // dev-script registration intact rather than pointing Edge at a path
-                // that won't launch.
-                return;
-            }
-
-            Build(keyOverride: null, extensionIds).EnsureRegistered(hostExePath);
-        }
-        catch
-        {
-            // Startup must proceed regardless; the witness link is best-effort.
-        }
+        // Never throws: startup must proceed regardless, the witness link is
+        // best-effort. A missing exe (a dev/debug build) leaves any dev-script
+        // registration intact rather than pointing Edge at a path that won't
+        // launch; both are logged as warnings rather than swallowed.
+        Build(keyOverride: null, extensionIds, log).TryEnsureRegistered(DefaultHostExePath(), "startup");
     }
 
     /// <summary>

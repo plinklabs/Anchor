@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FocusAgent.Core.Extension;
 using FocusAgent.Core.Tamper;
+using Microsoft.Extensions.Logging;
 
 namespace FocusAgent.Core.Tests;
 
@@ -112,6 +113,59 @@ public class WitnessHostRegistrarTests
     }
 
     [Fact]
+    public void TryEnsureRegistered_logs_a_missing_host_exe_as_a_warning_and_registers_nothing()
+    {
+        // #561: the startup registration returned silently when the exe wasn't next
+        // to the agent, so a laptop whose install lost it said nothing about it.
+        var store = new FakeWitnessHostStore();
+        var log = new RecordingLogger<WitnessHostRegistrar>();
+
+        var wrote = new WitnessHostRegistrar(store, log).TryEnsureRegistered(ExeA, "startup");
+
+        Assert.False(wrote);
+        Assert.Null(store.ManifestPath);
+        Assert.Empty(store.Files);
+        var warning = Assert.Single(log.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains(ExeA, warning.Message);
+        Assert.Contains("doesn't exist", warning.Message);
+        Assert.Contains("startup", warning.Message);
+    }
+
+    [Fact]
+    public void TryEnsureRegistered_logs_a_failure_with_its_path_and_never_throws()
+    {
+        // #561: the startup registration swallowed every exception without a trace.
+        var log = new RecordingLogger<WitnessHostRegistrar>();
+
+        var ex = Record.Exception(() =>
+            Assert.False(new WitnessHostRegistrar(new ThrowingWitnessHostStore(), log).TryEnsureRegistered(ExeA, "startup")));
+
+        Assert.Null(ex);
+        var warning = Assert.Single(log.Entries, e => e.Level == LogLevel.Warning);
+        Assert.IsType<UnauthorizedAccessException>(warning.Exception);
+        Assert.Contains(ExeA, warning.Message);
+        Assert.Contains("failed", warning.Message);
+    }
+
+    [Fact]
+    public void TryEnsureRegistered_logs_what_it_wrote_and_then_that_it_is_up_to_date()
+    {
+        var store = new FakeWitnessHostStore();
+        store.Exes.Add(ExeA);
+        var log = new RecordingLogger<WitnessHostRegistrar>();
+        var registrar = new WitnessHostRegistrar(store, log);
+
+        Assert.True(registrar.TryEnsureRegistered(ExeA, "startup"));
+        Assert.Contains(log.Entries, e => e.Message.Contains("Wrote witness host manifest to " + ManifestPathFor(ExeA)));
+        Assert.Contains(log.Entries, e => e.Message.Contains("rewrote it"));
+        log.Entries.Clear();
+
+        Assert.False(registrar.TryEnsureRegistered(ExeA, "self-check"));
+        Assert.Contains(log.Entries, e => e.Message.Contains("(self-check)") && e.Message.Contains("already up to date"));
+        Assert.DoesNotContain(log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [Fact]
     public void Remove_deletes_the_key()
     {
         var store = new FakeWitnessHostStore { ManifestPath = ManifestPathFor(ExeA) };
@@ -132,28 +186,6 @@ public class WitnessHostRegistrarTests
         Assert.Null(ex);
     }
 
-    private sealed class FakeWitnessHostStore : IWitnessHostStore
-    {
-        public string? ManifestPath { get; set; }
-        public int KeyWriteCount { get; set; }
-        public Dictionary<string, string> Files { get; } = new();
-        public int FileWriteCount { get; set; }
-
-        public string? GetRegisteredManifestPath() => ManifestPath;
-        public void SetRegisteredManifestPath(string manifestPath)
-        {
-            ManifestPath = manifestPath;
-            KeyWriteCount++;
-        }
-        public void RemoveRegistration() => ManifestPath = null;
-        public string? ReadFile(string path) => Files.TryGetValue(path, out var c) ? c : null;
-        public void WriteFile(string path, string content)
-        {
-            Files[path] = content;
-            FileWriteCount++;
-        }
-    }
-
     private sealed class ThrowingWitnessHostStore : IWitnessHostStore
     {
         public string? GetRegisteredManifestPath() => null;
@@ -161,5 +193,6 @@ public class WitnessHostRegistrarTests
         public void RemoveRegistration() => throw new UnauthorizedAccessException("locked-down HKCU");
         public string? ReadFile(string path) => null;
         public void WriteFile(string path, string content) => throw new UnauthorizedAccessException();
+        public bool FileExists(string path) => true;
     }
 }

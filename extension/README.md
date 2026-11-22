@@ -530,7 +530,16 @@ go with it, so while the link is down a repeating 30 s alarm runs as well (the
 [`alarms`](src/manifest.json) permission, which shows no permission warning):
 it wakes a stopped worker, which opens the link again, and cuts a long backoff
 short in one still awake. It is cleared once the host relays a message (#572,
-[`link-retry.ts`](src/shared/link-retry.ts)). Host, pipe protocol, and dev registration:
+[`link-retry.ts`](src/shared/link-retry.ts)).
+
+Each time the port drops (or `connectNative` throws), the extension reads Edge's
+reason from `chrome.runtime.lastError` ("Specified native messaging host not
+found.", "… is forbidden.", "Native host has exited.") and keeps it, with how
+often the link failed and since when, in `chrome.storage.session`, so a worker
+the alarm wakes still has it. Once the link is up again it sends the agent
+`link_error` with those three, and the agent logs it for its log upload (#561,
+[`link-trouble.ts`](src/shared/link-trouble.ts)). Only Edge's message: nothing
+the student browses. Host, pipe protocol, and dev registration:
 [`agent/src/FocusAgent.WitnessHost/README.md`](../agent/src/FocusAgent.WitnessHost/README.md).
 
 ## Stable extension ID

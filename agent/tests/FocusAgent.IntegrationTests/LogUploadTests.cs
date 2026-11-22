@@ -71,6 +71,13 @@ public sealed class LogUploadTests
                 AgentLine(seededAt.AddMinutes(-10), "Seed.Inside: SEED-INSIDE agent started before class"),
                 "   at Seed.Inside.Frame() SEED-INSIDE-TRACE",
             ]);
+            // #561: the witness host's own log, which it writes next to the agent's.
+            var hostLog = Path.Combine(logs, $"witness-host-{seededAt:yyyyMMdd}.log");
+            File.WriteAllLines(hostLog,
+            [
+                AgentLine(seededAt.AddHours(-2), "WitnessHost[4242]: SEED-HOST-BEFORE started at home"),
+                AgentLine(seededAt.AddMinutes(-10), "WitnessHost[4242]: SEED-HOST-INSIDE pipe connect failed (attempt 1)"),
+            ]);
             File.WriteAllLines(Path.Combine(logs, "startup-error.log"),
             [
                 CrashLine(seededAt.AddHours(-2)), "System.Exception: SEED-CRASH-BEFORE", "",
@@ -117,6 +124,7 @@ public sealed class LogUploadTests
             ]);
             File.AppendAllLines(Path.Combine(logs, "startup-error.log"),
                 [CrashLine(afterAt), "System.Exception: SEED-CRASH-AFTER", ""]);
+            await AppendAsync(hostLog, [AgentLine(afterAt, "WitnessHost[4242]: SEED-HOST-AFTER exiting")]);
             // The updater's lines carry only a time of day. The locator line of the
             // first agent process (a second after its start, as Velopack writes it)
             // dates them; the line before it can't be dated, the last one is after
@@ -189,7 +197,7 @@ public sealed class LogUploadTests
                 foreach (var outside in new[]
                          {
                              "SEED-OLD-FILE", "SEED-BEFORE", "SEED-AFTER", "SEED-CRASH-BEFORE", "SEED-CRASH-AFTER",
-                             "SEED-UPDATER-BEFORE", "SEED-UPDATER-AFTER",
+                             "SEED-UPDATER-BEFORE", "SEED-UPDATER-AFTER", "SEED-HOST-BEFORE", "SEED-HOST-AFTER",
                          })
                 {
                     Assert.DoesNotContain(outside, text);
@@ -203,7 +211,22 @@ public sealed class LogUploadTests
                         $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-INSIDE",
                     ],
                     sections["Updater log"]);
-                return string.Join('\n', sections["Agent log"]);
+                // #561: the witness host's log, a section of its own, cut to the window.
+                Assert.Equal(
+                    [AgentLine(seededAt.AddMinutes(-10), "WitnessHost[4242]: SEED-HOST-INSIDE pipe connect failed (attempt 1)")],
+                    sections["Witness host log"]);
+                // #561: the lesson was joined with no extension connected (no Edge
+                // here), so the link self-check's lines are in its window: what the
+                // registration says, and the re-registration's outcome.
+                var agentText = string.Join('\n', sections["Agent log"]);
+                Assert.True(
+                    // Serilog quotes the id, as in every agent log line naming a session.
+                    agentText.Contains($"Witness link self-check: session \"{of.Id}\" joined with no extension connected"),
+                    "No link self-check for the lesson in its upload. Its lines about the link:\n" +
+                    string.Join('\n', sections["Agent log"].Where(l => l.Contains("itness") || l.Contains("joined"))));
+                Assert.Contains(@"Witness link self-check: key HKCU\Software\Microsoft\Edge\NativeMessagingHosts\net.anchor.witness:", agentText);
+                Assert.Contains("Witness host registration (self-check)", agentText);
+                return agentText;
             }
         }
         finally

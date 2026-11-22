@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using FocusAgent.Core.Diagnostics;
+using FocusAgent.Core.Logging;
 using FocusAgent.Core.Tamper;
 using FocusAgent.WitnessHost;
 
@@ -15,6 +17,90 @@ namespace FocusAgent.WitnessHost.Tests;
 public class WitnessHostIntegrationTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>Where the hosts of the specs that don't look at the host's log write it.</summary>
+    private static readonly string ScratchLogs =
+        Path.Combine(Path.GetTempPath(), "anchor-witness-host-test-logs");
+
+    [Fact]
+    public async Task Host_logs_who_started_it_each_connect_attempt_and_why_it_exited()
+    {
+        // #561: a host Edge started but that couldn't reach the agent's pipe left
+        // nothing behind. Its log is what the agent's log upload now carries.
+        var pipeName = "anchor-witness-test-" + Guid.NewGuid().ToString("N");
+        var logs = Directory.CreateTempSubdirectory("anchor-witness-host-log-").FullName;
+        // As Edge starts a host: the calling extension's origin, then the window.
+        var host = StartHostProcess(pipeName, logDirectory: logs,
+            arguments: ["chrome-extension://dnkimhodjfogjibnbbfdjdapgmmiojio/", "--parent-window=0"]);
+        var transport = new NamedPipeWitnessTransport(pipeName: pipeName);
+        try
+        {
+            // No agent yet: the first attempts fail, and say so.
+            var log = await WaitForLogAsync(logs, "(attempt 2)");
+            Assert.Contains($"started by chrome-extension://dnkimhodjfogjibnbbfdjdapgmmiojio/; agent pipe {pipeName}.", log);
+            Assert.Contains($"Connecting to the agent's pipe {pipeName} failed (attempt 1): no answer within 1s (no agent listening on it, or none free)", log);
+            Assert.DoesNotContain("--parent-window", log);
+
+            // The agent comes up: the host connects.
+            var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            transport.WitnessConnected += (_, _) => connected.TrySetResult();
+            await transport.StartAsync();
+            await WaitOrFail(connected.Task, "host never connected to the witness pipe");
+            await WaitForLogAsync(logs, $"Connected to the agent's pipe {pipeName} (attempt");
+
+            // The agent goes away: the drop is logged.
+            await transport.StopAsync();
+            await WaitForLogAsync(logs, "The agent's pipe dropped:");
+
+            // Edge closes the port: the host says why it exits.
+            host.StandardInput.Close();
+            Assert.True(host.WaitForExit(5000), "host process did not exit after stdin closed");
+            log = await WaitForLogAsync(logs, "Exiting: Edge closed the extension's port (stdin ended).");
+
+            // In the agent log's format, so the log upload cuts it to the session
+            // window; every line names the host's process.
+            var lines = log.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            Assert.All(lines, line =>
+            {
+                Assert.True(AgentLogCutter.TryParseAgentTimestamp(line, out _), $"not an agent log line: {line}");
+                Assert.Contains($"WitnessHost[{host.Id}]: ", line);
+            });
+            Assert.Single(Directory.GetFiles(logs), path => Path.GetFileName(path) == $"witness-host-{DateTime.Now:yyyyMMdd}.log");
+        }
+        finally
+        {
+            await transport.StopAsync();
+            if (!host.HasExited)
+            {
+                host.Kill(entireProcessTree: true);
+                host.WaitForExit(2000);
+            }
+            host.Dispose();
+            try { Directory.Delete(logs, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    /// <summary>The host's log once it holds <paramref name="text"/>.</summary>
+    private static async Task<string> WaitForLogAsync(string folder, string text)
+    {
+        var deadline = DateTime.UtcNow + Timeout;
+        var log = "";
+        while (DateTime.UtcNow < deadline)
+        {
+            log = string.Concat(Directory.GetFiles(folder, "witness-host-*.log").Select(ReadShared));
+            if (log.Contains(text, StringComparison.Ordinal)) return log;
+            await Task.Delay(100);
+        }
+        Assert.Fail($"The host's log never said \"{text}\". It holds:{Environment.NewLine}{log}");
+        return log;
+    }
+
+    private static string ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 
     [Fact]
     public async Task Host_connects_then_dropping_its_stdin_signals_a_witness_disconnect()
@@ -196,7 +282,8 @@ public class WitnessHostIntegrationTests
         return System.Text.Encoding.UTF8.GetString(payload);
     }
 
-    private static Process StartHostProcess(string pipeName, bool withLegacyConfig = false)
+    private static Process StartHostProcess(
+        string pipeName, bool withLegacyConfig = false, string? logDirectory = null, params string[] arguments)
     {
         var hostExe = ResolveHostExe();
         var psi = new ProcessStartInfo(hostExe)
@@ -206,7 +293,12 @@ public class WitnessHostIntegrationTests
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument);
         psi.Environment["ANCHOR_WITNESS_PIPE"] = pipeName;
+        // #561: never into the log folder of an agent installed on this box, whose
+        // log upload would carry these lines.
+        psi.Environment[AgentLogPaths.WitnessHostLogDirectoryEnvVar] = logDirectory ?? ScratchLogs;
         // What a deployment set for the host before #495, when it still handed the
         // extension a backend URL and Entra config. The host must ignore it now.
         if (withLegacyConfig)

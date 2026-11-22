@@ -30,6 +30,28 @@ const HOST_PROJECT = path.join(
   'FocusAgent.WitnessHost.csproj',
 );
 
+/**
+ * Where every witness host a spec's Edge starts writes its log (#561). The host
+ * reads ANCHOR_WITNESS_LOG_DIR from the environment Edge hands it, which is this
+ * process's: set here, at load, before any browser starts. Left unset it would
+ * log into the folder of an agent installed on this box, whose log upload would
+ * carry the lines. One folder per run.
+ */
+export const WITNESS_HOST_LOG_DIR: string = (process.env.ANCHOR_WITNESS_LOG_DIR ||= fs.mkdtempSync(
+  path.join(os.tmpdir(), 'anchor-e2e-witness-host-logs-'),
+));
+
+/** What the witness hosts of this run have logged so far, all days' files together. */
+export function readWitnessHostLog(): string {
+  if (!fs.existsSync(WITNESS_HOST_LOG_DIR)) return '';
+  return fs
+    .readdirSync(WITNESS_HOST_LOG_DIR)
+    .filter((name) => /^witness-host-\d{8}\.log$/.test(name))
+    .sort()
+    .map((name) => fs.readFileSync(path.join(WITNESS_HOST_LOG_DIR, name), 'utf8'))
+    .join('');
+}
+
 export interface RegisteredWitnessHost {
   /** Absolute path to the manifest written next to the built exe. */
   readonly manifestPath: string;

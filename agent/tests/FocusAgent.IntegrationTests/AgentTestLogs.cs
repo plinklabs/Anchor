@@ -54,6 +54,11 @@ internal static class AgentTestLogs
     internal static void PointEveryLaunchedAgentAtTheRunsFolder()
     {
         Environment.SetEnvironmentVariable(AgentLogPaths.LogDirectoryEnvVar, Folder);
+        // #561: and every witness host a spec's Edge starts. The host isn't started
+        // by the agent, so it reads a variable of its own; left unset it would log
+        // into the folder of an agent installed on this box.
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AgentLogPaths.WitnessHostLogDirectoryEnvVar)))
+            Environment.SetEnvironmentVariable(AgentLogPaths.WitnessHostLogDirectoryEnvVar, Folder);
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(UpdaterLogPathEnvVar)))
         {
             // The log upload reads Velopack's log from here instead of the one an

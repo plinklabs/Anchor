@@ -405,11 +405,31 @@ public sealed class ExtensionSessionRelay : IAsyncDisposable
             case ExtensionMessages.Ping:
                 // The keepalive: nothing to do.
                 break;
+            case ExtensionMessages.LinkError:
+                LogLinkError(received.Connection, message);
+                break;
             default:
                 // self_check (ExtensionSelfCheckWatch's), and anything newer than
                 // this agent.
                 break;
         }
+    }
+
+    // #561: what Edge said while the extension couldn't reach the agent, for the
+    // log upload. Capped, as it is the extension's say.
+    private void LogLinkError(WitnessConnection connection, JsonElement message)
+    {
+        const int MaxErrorLength = 300;
+        var error = GetString(message, "error") ?? "(none)";
+        if (error.Length > MaxErrorLength) error = error[..MaxErrorLength] + "…";
+        var failedAttempts = message.TryGetProperty("failedAttempts", out var attempts)
+                             && attempts.ValueKind == JsonValueKind.Number && attempts.TryGetInt32(out var count)
+            ? count
+            : 0;
+        var since = GetString(message, "since") ?? "(unknown)";
+        _log.LogWarning(
+            "Extension link {Connection}: before it came up, the link failed {FailedAttempts} time(s) since {Since}; Edge last said: {Error}",
+            connection.Id, failedAttempts, since, error.ReplaceLineEndings(" "));
     }
 
     private async Task ReportBlockedUrlAsync(JsonElement message)
