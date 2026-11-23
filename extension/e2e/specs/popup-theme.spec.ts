@@ -6,7 +6,8 @@
 // fonts, against an active session the background worker cached from the agent, and
 // asserts the binding is in force — the ink palette is applied, the spark stays
 // magenta, the one per-product accent is Anchor's indigo, the living focus ping
-// is animating, and the cached session's allowed sites are actually listed.
+// is animating, the cached session's allowed sites are actually listed, and the
+// join code reads as light text on a dark chip (#587).
 
 import { test, expect } from '../fixtures.ts';
 import { WITH_MS365 } from '../config.ts';
@@ -16,8 +17,24 @@ function popupUrl(extensionId: string): string {
   return `chrome-extension://${extensionId}/popup.html`;
 }
 
+/** A six-digit code, as the backend hands them out. */
+const JOIN_CODE = '482917';
+
+/** WCAG contrast ratio of two computed `rgb(...)` colours (opaque). */
+function contrastRatio(a: string, b: string): number {
+  const luminance = (rgb: string): number => {
+    const [r, g, b] = (rgb.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map((c) => {
+      const s = Number(c) / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 test('the popup renders the active session on the DS ink theme', async ({ ext, agent }) => {
-  agent.startSession(WITH_MS365);
+  agent.startSession(WITH_MS365, { joinCode: JOIN_CODE });
   await ext.waitForLog('active session cached');
 
   const page = await ext.context.newPage();
@@ -57,6 +74,23 @@ test('the popup renders the active session on the DS ink theme', async ({ ext, a
   const allowlist = page.locator('[data-allowlist]');
   await expect(allowlist).toBeVisible();
   await expect(allowlist.locator('li')).not.toHaveCount(0);
+
+  // #587: the join code must be legible — on-ink text (#FAF7F2) on the dark
+  // inset (paper-3 #2B2B38), the pair the block page's URL panel has since #318,
+  // not the cream-on-cream chip the light :root inset painted. It is labelled
+  // with the dashboard's own name for it.
+  const joinCode = page.locator('[data-joincode]');
+  await expect(joinCode).toBeVisible();
+  await expect(joinCode).toContainText('Join code');
+  const chip = page.locator('[data-joincode-value]');
+  await expect(chip).toHaveText(JOIN_CODE);
+  await expect(chip).toHaveCSS('color', 'rgb(250, 247, 242)');
+  await expect(chip).toHaveCSS('background-color', 'rgb(43, 43, 56)');
+  const { color, background } = await chip.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { color: style.color, background: style.backgroundColor };
+  });
+  expect(contrastRatio(color, background)).toBeGreaterThanOrEqual(4.5);
 });
 
 test('the popup shows the idle face when no session is active', async ({ ext }) => {
