@@ -40,6 +40,16 @@ It also reports, in style.css:
   say which background a colour sits on; the check doesn't work that out from
   the pages. Those tokens must be #RRGGBB or #RGB values in a :root block
   outside any @media, so the check can read them.
+- button: a rule for the links inside a container that reaches a button, an
+  element with class="cta" on any page. Such a rule's last compound selects
+  <a> without a class or id of its own, after an ancestor: ".doc a". It
+  outweighs the button's own .cta--primary and .cta--secondary rules, so the
+  button looks different in that container only; ".doc a" made the contact
+  page's primary button magenta on magenta (#599). Write ".doc a:not(.cta)".
+  Selectors are matched against each button's ancestors in the markup; a test
+  the markup can't settle (:hover, ::after, [href^=...]) counts as a match,
+  ">" is read as a descendant combinator, and the compound before "+" or "~"
+  isn't checked.
 
 Under GitHub Actions each problem is printed as an error annotation on its
 file and line. Exits 1 if it found any problem.
@@ -90,6 +100,21 @@ CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 CSS_ROOT = re.compile(r":root\s*\{([^{}]*)\}")
 CSS_CUSTOM_PROPERTY = re.compile(r"\s*(--[A-Za-z0-9_-]+)\s*:(.*)", re.S)
 HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
+# The class every button carries; .cta--primary and .cta--secondary give it
+# its colours, the same on every page.
+BUTTON_CLASS = "cta"
+# A style rule: its selector list (after the last ";", "{" or "}") and a body
+# without nested blocks, so the rules inside @media are found too.
+CSS_RULE = re.compile(r"([^{};]*)\{[^{}]*\}")
+# One simple selector of a compound one.
+CSS_SIMPLE = re.compile(r"""
+    (?P<type>\*|[A-Za-z][\w-]*)
+  | \.(?P<cls>[\w-]+)
+  | \#(?P<id>[\w-]+)
+  | \[\s*(?P<attr>[\w-]+)\s*
+      (?:(?P<op>[~|^$*]?=)\s*(?P<value>"[^"]*"|'[^']*'|[^\]\s]+)\s*)?\]
+  | ::?(?P<pseudo>[\w-]+)(?:\((?P<arg>(?:[^()]|\([^()]*\))*)\))?
+""", re.X)
 
 
 class Page(HTMLParser):
@@ -103,8 +128,9 @@ class Page(HTMLParser):
         self.images = []        # (line, attrs)
         self.chrome = {}        # name -> (line, [(token, line)])
         self.subnav_links = []  # (line, href, aria-current)
+        self.buttons = []       # (line, tag, attrs, [(tag, attrs)] of its ancestors)
         self.problems = []      # (line, message)
-        self._open = []         # [(tag, line)]
+        self._open = []         # [(tag, line, attrs)]
         self._capture = None    # [name, depth, line, tokens] inside a shared block
 
     def problem(self, line, message):
@@ -132,6 +158,8 @@ class Page(HTMLParser):
                 self.urls.append((line, value))
         if tag == "img":
             self.images.append((line, values))
+        if BUTTON_CLASS in (values.get("class") or "").split():
+            self.buttons.append((line, tag, values, [(t, a) for t, _, a in self._open]))
 
         if self._capture is None and self._open and self._open[-1][0] == "body":
             name = None
@@ -155,9 +183,9 @@ class Page(HTMLParser):
         self._token(("end", tag), line)
         if self._open and self._open[-1][0] == tag:
             self._open.pop()
-        elif any(t == tag for t, _ in self._open):
+        elif any(t == tag for t, *_ in self._open):
             while self._open[-1][0] != tag:
-                t, opened = self._open.pop()
+                t, opened, _ = self._open.pop()
                 self.problem(opened, f"<{t}> is not closed before </{tag}> on line {line}")
             self._open.pop()
         else:
@@ -171,15 +199,15 @@ class Page(HTMLParser):
         line = self.getpos()[0]
         self._start(tag, attrs, line)
         if tag not in VOID:
-            self._open.append((tag, line))
+            self._open.append((tag, line, dict(attrs)))
 
     def handle_startendtag(self, tag, attrs):
         line = self.getpos()[0]
         self._start(tag, attrs, line)
         if tag in VOID:
             return
-        self._open.append((tag, line))
-        if not any(t in FOREIGN for t, _ in self._open):
+        self._open.append((tag, line, dict(attrs)))
+        if not any(t in FOREIGN for t, *_ in self._open):
             self.problem(
                 line,
                 f"<{tag}/> leaves <{tag}> open: HTML ignores the slash on an "
@@ -197,7 +225,7 @@ class Page(HTMLParser):
 
     def finish(self):
         self.close()
-        for tag, line in self._open:
+        for tag, line, _ in self._open:
             self.problem(line, f"<{tag}> is never closed")
 
 
@@ -251,12 +279,17 @@ def render(token):
     return f'"{text}"'
 
 
+def blank_comments(css):
+    """The stylesheet with its comments blanked out. Their newlines stay, so
+    offsets still give lines."""
+    return CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), css)
+
+
 def root_tokens(css):
     """{name: (value, line)} for the custom properties in the stylesheet's
     :root blocks that aren't inside @media or another at-rule. A later
     definition wins, as it does in the browser."""
-    # Blank comments out but keep their newlines, so offsets still give lines.
-    css = CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), css)
+    css = blank_comments(css)
     tokens = {}
     for block in CSS_ROOT.finditer(css):
         if css.count("{", 0, block.start()) != css.count("}", 0, block.start()):
@@ -327,6 +360,144 @@ def check_contrast(site):
                 f"is {shown}:1, below the {CONTRAST_MIN}:1 WCAG AA asks of {use}",
             ))
     return problems, checked
+
+
+def selector_list(text):
+    """The selectors of a comma-separated list; a comma inside () or [] is
+    part of its selector."""
+    selectors, depth, current = [], 0, ""
+    for ch in text:
+        depth += (ch in "([") - (ch in ")]")
+        if ch == "," and depth == 0:
+            selectors.append(current)
+            current = ""
+        else:
+            current += ch
+    selectors.append(current)
+    return [s.strip() for s in selectors if s.strip()]
+
+
+def compounds(selector):
+    """[(combinator, compound)] of a selector, left to right. The combinator
+    joins the compound to the one before it: " ", ">", "+" or "~", and "" for
+    the first."""
+    parts, depth, current, combinator = [], 0, "", ""
+    for ch in selector:
+        depth += (ch in "([") - (ch in ")]")
+        if depth == 0 and (ch.isspace() or ch in ">+~"):
+            if current:
+                parts.append((combinator, current))
+                current, combinator = "", " "
+            if ch in ">+~":
+                combinator = ch
+        else:
+            current += ch
+    if current:
+        parts.append((combinator, current))
+    return parts
+
+
+def compound_matches(compound, tag, attrs):
+    """False if the compound selector can't match the element. A test the
+    markup can't settle (a pseudo-class such as :hover, a pseudo-element, an
+    attribute test other than [name] and [name=value]) counts as a match."""
+    classes = (attrs.get("class") or "").split()
+    for m in CSS_SIMPLE.finditer(compound):
+        if m["type"] and m["type"] != "*" and m["type"].lower() != tag:
+            return False
+        if m["cls"] and m["cls"] not in classes:
+            return False
+        if m["id"] and m["id"] != attrs.get("id"):
+            return False
+        if m["attr"]:
+            name = m["attr"].lower()
+            if name not in attrs:
+                return False
+            if m["op"] == "=" and m["value"].strip("\"'") != (attrs[name] or ""):
+                return False
+        if m["pseudo"] == "not" and m["arg"] is not None:
+            for negated in selector_list(m["arg"]):
+                plain = not re.search(r"[\s>+~:(]", negated)
+                if plain and compound_matches(negated, tag, attrs):
+                    return False
+    return True
+
+
+def reaches(parts, tag, attrs, ancestors):
+    """True if the selector's compounds may match the element, whose
+    ancestors are [(tag, attrs)] from <html> down. ">" is read as " ", and the
+    compound before "+" or "~", a sibling, isn't checked: its ancestors are
+    the next compound's."""
+    if not compound_matches(parts[-1][1], tag, attrs):
+        return False
+    level = len(ancestors)
+    for i in range(len(parts) - 2, -1, -1):
+        if parts[i + 1][0] in ("+", "~"):
+            continue
+        # The nearest ancestor that matches leaves the most room for the
+        # compounds further left.
+        while level and not compound_matches(parts[i][1], *ancestors[level - 1]):
+            level -= 1
+        if not level:
+            return False
+        level -= 1
+    return True
+
+
+def container_link_rules(css):
+    """[(selector, compounds, line)] for the stylesheet's rules for the links
+    inside a container: the last compound selects <a> and has no class or id
+    of its own, and a compound before it is an ancestor."""
+    css = blank_comments(css)
+    rules = []
+    for rule in CSS_RULE.finditer(css):
+        prelude = rule.group(1)
+        if prelude.strip().startswith("@"):
+            continue
+        start = rule.start(1) + len(prelude) - len(prelude.lstrip())
+        line = css.count("\n", 0, start) + 1
+        for selector in selector_list(prelude):
+            parts = compounds(selector)
+            if not parts:
+                continue
+            subject = list(CSS_SIMPLE.finditer(parts[-1][1]))
+            if not any((m["type"] or "").lower() == "a" for m in subject):
+                continue
+            if any(m["cls"] or m["id"] for m in subject):
+                continue
+            if all(combinator in ("+", "~") for combinator, _ in parts[1:]):
+                continue
+            rules.append((" ".join(selector.split()), parts, line))
+    return rules
+
+
+def check_buttons(site, pages):
+    """(problems, buttons checked): a rule for the links inside a container
+    must not reach a button, where it outweighs the button's own rules."""
+    path = site / STYLESHEET
+    buttons = [(page, button) for page in pages.values() for button in page.buttons]
+    if not path.is_file():
+        return [], len(buttons)
+    problems = []
+    for selector, parts, line in container_link_rules(path.read_text(encoding="utf-8")):
+        reached = [(page, b) for page, b in buttons if reaches(parts, b[1], b[2], b[3])]
+        if not reached:
+            continue
+        page, (button_line, tag, attrs, _) = reached[0]
+        more = f" (and {len(reached) - 1} more)" if len(reached) > 1 else ""
+        subject = parts[-1][1]
+        if selector.endswith(subject) and subject[:1].lower() == "a":
+            fixed = f'"{selector[:-len(subject)]}a:not(.{BUTTON_CLASS}){subject[1:]}"'
+        else:
+            fixed = f"add :not(.{BUTTON_CLASS}) to its a"
+        problems.append((
+            path, line,
+            f'button: "{selector}" restyles the button <{tag} class="{attrs["class"]}"> on '
+            f"{page.path.relative_to(site).as_posix()}:{button_line}{more}: a rule for the "
+            f"links in a container outweighs the button's own .{BUTTON_CLASS} rules there. "
+            f"Leave the buttons out of it: {fixed}",
+        ))
+    return problems, len(buttons)
 
 
 def check(site):
@@ -441,6 +612,8 @@ def check(site):
 
     contrast_problems, stats["contrasts"] = check_contrast(site)
     problems.extend(contrast_problems)
+    button_problems, stats["buttons"] = check_buttons(site, pages)
+    problems.extend(button_problems)
 
     problems.sort(key=lambda p: (str(p[0]), p[1]))
     return problems, stats
@@ -471,8 +644,8 @@ def main():
         return 1
     print(
         f"All {stats['pages']} pages pass: {stats['links']} local links and images, "
-        f"{stats['fragments']} fragments, {stats['images']} image sizes and "
-        f"{stats['contrasts']} text colour contrasts checked."
+        f"{stats['fragments']} fragments, {stats['images']} image sizes, "
+        f"{stats['buttons']} buttons and {stats['contrasts']} text colour contrasts checked."
     )
     return 0
 

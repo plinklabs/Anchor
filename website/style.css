@@ -374,8 +374,11 @@ main { flex: 1; }
 .doc ul { padding-left: 1.25rem; margin-bottom: 1rem; }
 .doc li { margin-bottom: 0.5rem; }
 .doc strong { font-weight: 500; }
-.doc a { color: var(--magenta); }
-.doc a:hover { text-decoration: underline; }
+/* Prose links only: a plain ".doc a" outweighs .cta--primary and turned the
+   contact page's button label magenta on magenta (#599). The buttons keep
+   their own colours on every page. */
+.doc a:not(.cta) { color: var(--magenta); }
+.doc a:not(.cta):hover { text-decoration: underline; }
 .doc .lead { color: var(--muted); font-size: 1rem; }
 
 /* ============================================================

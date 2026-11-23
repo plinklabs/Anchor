@@ -90,12 +90,22 @@ ABOUT = HEAD.format(title="About", home_current="", about_current=' aria-current
       <h2>Team</h2>
       <p>Back to <a href="index.html#intro">the intro</a> or <a href="./">home</a>.</p>
     </section>
+
+    <section class="callout">
+      <p>Questions? <a href="https://github.com/plinklabs/Anchor/issues">Ask them on GitHub</a>.</p>
+      <div class="cta-row">
+        <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor/issues/new">Open an issue</a>
+      </div>
+    </section>
   </main>
 """ + FOOT
 
 
 # The comment ahead of --muted proves comments are skipped: read as part of
-# the declaration, it would hide --muted from the contrast check.
+# the declaration, it would hide --muted from the contrast check. So does the
+# one ahead of the .doc links, which would read as a rule that reaches the
+# button. The global link rules and ".callout p a" (the button isn't in a
+# <p>) don't reach it either.
 STYLE = """/* Design tokens */
 :root {
   --ink:    #1B1B23;
@@ -106,6 +116,16 @@ STYLE = """/* Design tokens */
 }
 
 body { margin: 0; background: var(--paper); color: var(--ink); }
+a { color: inherit; text-decoration: none; }
+a:hover { color: #DB2777; }
+
+.cta { border: 1.5px solid #DB2777; }
+.cta--primary { background: #DB2777; color: var(--paper); }
+.callout p a { color: #DB2777; }
+
+/* .doc a { color: #DB2777; } reached the button (#599) */
+.doc a:not(.cta) { color: #DB2777; }
+.doc a:not(.cta):hover { text-decoration: underline; }
 """
 
 
@@ -153,6 +173,7 @@ class CheckWebsiteTest(unittest.TestCase):
         self.assertEqual(run.returncode, 1, f"checker passed a broken site:\n{run.stdout}{run.stderr}")
         pattern = re.escape(page) + r":\d+: .*" + re.escape(message)
         self.assertRegex(run.stdout, pattern)
+        return run
 
     # The correct site, with external, root-relative, data: and mailto: links,
     # comments and SVG's self-closed elements, must pass.
@@ -272,6 +293,20 @@ class CheckWebsiteTest(unittest.TestCase):
         self.edit("style.css", "  --muted:  #6E6A62;\n", "")
         self.edit("style.css", "body {", "@media (min-width: 1px) { :root { --muted: #6E6A62; } }\nbody {")
         self.assert_flags("style.css", "contrast: :root (outside @media) defines no --muted")
+
+    # button
+    def test_link_rule_of_a_container_reaches_a_button(self):
+        self.edit("style.css", ".doc a:not(.cta) {", ".doc a {")
+        run = self.assert_flags("style.css", 'button: ".doc a" restyles the button <a class="cta cta--primary"> on about.html:')
+        self.assertIn('Leave the buttons out of it: ".doc a:not(.cta)"', run.stdout)
+
+    def test_hover_rule_of_a_container_reaches_a_button(self):
+        self.edit("style.css", ".doc a:not(.cta):hover {", ".doc a:hover {")
+        self.assert_flags("style.css", 'button: ".doc a:hover" restyles the button <a class="cta cta--primary"> on about.html:')
+
+    def test_link_rule_in_a_selector_list_inside_a_media_query(self):
+        self.edit("style.css", ".cta {", "@media (min-width: 1px) {\n  .hero a, main section > div a { outline: 0; }\n}\n.cta {")
+        self.assert_flags("style.css", 'button: "main section > div a" restyles the button')
 
     # output
     def test_problems_are_annotations_under_github_actions(self):
