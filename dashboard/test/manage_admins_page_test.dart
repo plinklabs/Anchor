@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../integration_test/support/text_contrast.dart';
+
 // Widget tests for the "Manage admins" page (#300): they drive the page against
 // a scripted fake AdminsApi to prove the list renders, search surfaces
 // candidates, promote/demote call through, and the last-admin 409 is shown as a
@@ -70,7 +72,8 @@ class _FakeAdmins extends AdminsApi {
   }
 }
 
-Widget _host(AdminsApi admins) => MaterialApp(
+Widget _host(AdminsApi admins, {ThemeData? theme}) => MaterialApp(
+  theme: theme,
   localizationsDelegates: AppLocalizations.localizationsDelegates,
   supportedLocales: AppLocalizations.supportedLocales,
   home: ManageAdminsPage(admins: admins),
@@ -148,6 +151,35 @@ void main() {
       find.byKey(const Key('manage-admins-no-candidates')),
       findsOneWidget,
     );
+  });
+
+  // #601: an admin's object id and the notices were in the 2.79:1 caption
+  // grey.
+  testWidgets('the admin list, a search and their notices read at WCAG AA '
+      'on paper', (tester) async {
+    _bigWindow(tester);
+    await tester.pumpWidget(
+      _host(_FakeAdmins(admins: []), theme: PlinkTheme.paper),
+    );
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['No admins.']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      _host(
+        _FakeAdmins(admins: [_user('a1', 'Alice Admin')]),
+        theme: PlinkTheme.paper,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['Alice Admin', 'a1-oid']);
+
+    await tester.enterText(
+      find.byKey(const Key('manage-admins-search')),
+      'nobody',
+    );
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['No signed-in user matches.']);
   });
 
   testWidgets('removing an admin confirms then demotes', (tester) async {

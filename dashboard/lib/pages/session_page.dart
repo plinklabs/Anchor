@@ -1153,7 +1153,7 @@ class _StatusLine extends StatelessWidget {
         _gutter,
         PlinkSpacing.s3,
       ),
-      child: Text(text, style: _monoLabel(PlinkColors.muted)),
+      child: Text(text, style: _monoLabel(PlinkColors.ink60)),
     );
   }
 }
@@ -1417,7 +1417,7 @@ class _FeedHeader extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Text(l10n.feedShowAll, style: _monoLabel(PlinkColors.muted)),
+                Text(l10n.feedShowAll, style: _monoLabel(PlinkColors.ink60)),
                 const SizedBox(width: PlinkSpacing.s2),
                 Transform.scale(
                   scale: 0.8,
@@ -1449,7 +1449,7 @@ class _FeedNotice extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: _gutter),
         child: Text(
           text,
-          style: _monoLabel(PlinkColors.muted),
+          style: _monoLabel(PlinkColors.ink60),
           textAlign: TextAlign.center,
         ),
       ),
@@ -1534,7 +1534,7 @@ class _FeedRow extends StatelessWidget {
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 '×${entry.count}',
-                style: _monoSpec(PlinkColors.muted, 12),
+                style: _monoSpec(PlinkColors.ink60, 12),
               ),
             ),
           ],
@@ -1593,6 +1593,14 @@ class _RosterStateStyle {
       default:
         return PlinkColors.muted;
     }
+  }
+
+  /// The label's colour: the error colour for the states to act on, ink-60
+  /// for the rest. A calm state's icon stays in the quieter caption grey, but
+  /// words in it are 2.79:1 on paper, below WCAG AA (#601).
+  Color labelColor(ColorScheme scheme) {
+    final Color iconColor = color(scheme);
+    return iconColor == scheme.error ? iconColor : PlinkColors.ink60;
   }
 }
 
@@ -1719,7 +1727,7 @@ class _RosterRow extends StatelessWidget {
     final color = style.color(theme.colorScheme);
     final Widget stateLabel = Text(
       _rosterStateLabel(l10n, participant.state),
-      style: _monoLabel(color),
+      style: _monoLabel(style.labelColor(theme.colorScheme)),
     );
     return Padding(
       padding: EdgeInsets.symmetric(

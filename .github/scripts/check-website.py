@@ -33,6 +33,34 @@ For every *.html page under the site folder it reports:
   aria-current="page" in the sub-navigation, which must be on the link to the
   page itself and on no other link.
 
+It also reports, in style.css:
+
+- contrast: a text colour below WCAG AA's 4.5:1 on its background, for each
+  (text, background) pair of :root tokens in CONTRAST_PAIRS (#598). The pairs
+  say which background a colour sits on; the check doesn't work that out from
+  the pages. Those tokens must be #RRGGBB or #RGB values in a :root block
+  outside any @media, so the check can read them. Every "color:" in the
+  stylesheet must be var() of one of the pairs' text tokens (or inherit or
+  currentColor), so no text takes a colour the pairs don't check: --magenta,
+  the brand's spark, is 4.30:1 on --paper and only for borders and the mark
+  (#600).
+- button, callout: a rule for the elements inside a container that reaches
+  into a component on any page: a button (class="cta") or a callout
+  (class="callout"), itself or an element inside it. A component's own rules
+  give it the same look on every page; a container's rule changes it in that
+  container only. ".doc a" made the contact page's primary button magenta on
+  magenta (#599), ".doc h2" put 40px between the contact page's callout
+  eyebrow and heading (#602). Write ".doc a:not(.cta)" and
+  ".doc h2:not(.callout *)". A rule is a container's when it reaches the
+  element only through an ancestor outside the component and names none of
+  the component's classes, nor its id: ".callout p", "p a" (in the callout's
+  own <p>) and ".doc .callout" are fine. Selectors are matched against each
+  element's ancestors in the markup; a test the markup can't settle (:hover,
+  ::after, [href^=...]) counts as a match, ">" is read as a descendant
+  combinator, the compound before "+" or "~" isn't checked, and a :not()
+  rules an element out only with simple selectors and descendant
+  combinators, such as :not(.cta) and :not(.callout *).
+
 Under GitHub Actions each problem is printed as an error annotation on its
 file and line. Exits 1 if it found any problem.
 .github/scripts/test-check-website.py proves that each rule still fails a page
@@ -42,6 +70,7 @@ Usage: python3 .github/scripts/check-website.py [SITE_DIR]
 SITE_DIR defaults to website/ in the repo this script is in.
 """
 
+import math
 import os
 import re
 import struct
@@ -63,6 +92,56 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 CHROME = {"header": "<header>", "subnav": '<nav class="subnav">', "footer": "<footer>"}
 REFERENCE_PAGE = "index.html"
 
+STYLESHEET = "style.css"
+# WCAG AA for normal-size text. The site's secondary text is small (captions,
+# the sub-navigation and the footer are 10-11px), so no pair gets the 3:1 of
+# large text.
+CONTRAST_MIN = 4.5
+# (text token, background token, what is written in that colour). Text sits
+# on --paper, except in the callouts, whose tint (--callout) holds --ink and
+# --magenta-press text, and on the buttons filled with magenta. The ratio
+# doesn't depend on which of the two is the text, so the first magenta pair
+# also covers the paper label of a button filled with --magenta-press.
+# --magenta itself (4.30:1 on --paper) is not a text colour (#600).
+CONTRAST_PAIRS = (
+    ("--ink", "--paper", "body text"),
+    ("--muted", "--paper",
+     "secondary text (hero, lead and card paragraphs, sub-navigation, captions, footer)"),
+    ("--magenta-press", "--paper",
+     "magenta text (links, card titles, eyebrows, hover) and the paper label "
+     "of a button filled with it"),
+    ("--magenta-press", "--callout", "a callout's eyebrow and links"),
+    ("--paper", "--magenta-deep", "the primary button's label on hover"),
+)
+# "color:" values that take a colour the pairs already check.
+INHERITED_COLOUR = re.compile(r"inherit|currentcolor", re.I)
+CSS_COLOR_DECLARATION = re.compile(r"(?<![\w-])color\s*:\s*([^;{}]*)")
+CSS_VAR = re.compile(r"var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,[^()]*)?\)")
+CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+CSS_ROOT = re.compile(r":root\s*\{([^{}]*)\}")
+CSS_CUSTOM_PROPERTY = re.compile(r"\s*(--[A-Za-z0-9_-]+)\s*:(.*)", re.S)
+HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
+# The components, by the class each carries: (name, plural). Their own rules
+# give them the same look on every page: .cta--primary and .cta--secondary a
+# button's colours, the .callout rules a callout's spacing.
+COMPONENTS = {"cta": ("button", "buttons"), "callout": ("callout", "callouts")}
+# In a :not() argument, what the markup can't settle or reaches() only
+# approximates: a pseudo-class, a partial attribute match, a combinator other
+# than the descendant one.
+UNSETTLED_NEGATION = re.compile(r"[>+~:]|[|^$*]=")
+# A style rule: its selector list (after the last ";", "{" or "}") and a body
+# without nested blocks, so the rules inside @media are found too.
+CSS_RULE = re.compile(r"([^{};]*)\{[^{}]*\}")
+# One simple selector of a compound one.
+CSS_SIMPLE = re.compile(r"""
+    (?P<type>\*|[A-Za-z][\w-]*)
+  | \.(?P<cls>[\w-]+)
+  | \#(?P<id>[\w-]+)
+  | \[\s*(?P<attr>[\w-]+)\s*
+      (?:(?P<op>[~|^$*]?=)\s*(?P<value>"[^"]*"|'[^']*'|[^\]\s]+)\s*)?\]
+  | ::?(?P<pseudo>[\w-]+)(?:\((?P<arg>(?:[^()]|\([^()]*\))*)\))?
+""", re.X)
+
 
 class Page(HTMLParser):
     """One page's ids, URLs, images, shared blocks and tag problems."""
@@ -75,8 +154,12 @@ class Page(HTMLParser):
         self.images = []        # (line, attrs)
         self.chrome = {}        # name -> (line, [(token, line)])
         self.subnav_links = []  # (line, href, aria-current)
+        # (line, tag, attrs, [(tag, attrs)] of its ancestors, component class,
+        # index of the component in ancestors + [itself]) for every element
+        # that is a component or inside one; the innermost one counts.
+        self.components = []
         self.problems = []      # (line, message)
-        self._open = []         # [(tag, line)]
+        self._open = []         # [(tag, line, attrs)]
         self._capture = None    # [name, depth, line, tokens] inside a shared block
 
     def problem(self, line, message):
@@ -104,6 +187,14 @@ class Page(HTMLParser):
                 self.urls.append((line, value))
         if tag == "img":
             self.images.append((line, values))
+        ancestors = [(t, a) for t, _, a in self._open]
+        chain = ancestors + [(tag, values)]
+        for index in range(len(chain) - 1, -1, -1):
+            classes = (chain[index][1].get("class") or "").split()
+            kind = next((c for c in COMPONENTS if c in classes), None)
+            if kind:
+                self.components.append((line, tag, values, ancestors, kind, index))
+                break
 
         if self._capture is None and self._open and self._open[-1][0] == "body":
             name = None
@@ -127,9 +218,9 @@ class Page(HTMLParser):
         self._token(("end", tag), line)
         if self._open and self._open[-1][0] == tag:
             self._open.pop()
-        elif any(t == tag for t, _ in self._open):
+        elif any(t == tag for t, *_ in self._open):
             while self._open[-1][0] != tag:
-                t, opened = self._open.pop()
+                t, opened, _ = self._open.pop()
                 self.problem(opened, f"<{t}> is not closed before </{tag}> on line {line}")
             self._open.pop()
         else:
@@ -143,15 +234,15 @@ class Page(HTMLParser):
         line = self.getpos()[0]
         self._start(tag, attrs, line)
         if tag not in VOID:
-            self._open.append((tag, line))
+            self._open.append((tag, line, dict(attrs)))
 
     def handle_startendtag(self, tag, attrs):
         line = self.getpos()[0]
         self._start(tag, attrs, line)
         if tag in VOID:
             return
-        self._open.append((tag, line))
-        if not any(t in FOREIGN for t, _ in self._open):
+        self._open.append((tag, line, dict(attrs)))
+        if not any(t in FOREIGN for t, *_ in self._open):
             self.problem(
                 line,
                 f"<{tag}/> leaves <{tag}> open: HTML ignores the slash on an "
@@ -169,7 +260,7 @@ class Page(HTMLParser):
 
     def finish(self):
         self.close()
-        for tag, line in self._open:
+        for tag, line, _ in self._open:
             self.problem(line, f"<{tag}> is never closed")
 
 
@@ -221,6 +312,290 @@ def render(token):
         return f"</{token[1]}>"
     text = token[1] if len(token[1]) <= 60 else token[1][:57] + "..."
     return f'"{text}"'
+
+
+def blank_comments(css):
+    """The stylesheet with its comments blanked out. Their newlines stay, so
+    offsets still give lines."""
+    return CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), css)
+
+
+def root_tokens(css):
+    """{name: (value, line)} for the custom properties in the stylesheet's
+    :root blocks that aren't inside @media or another at-rule. A later
+    definition wins, as it does in the browser."""
+    css = blank_comments(css)
+    tokens = {}
+    for block in CSS_ROOT.finditer(css):
+        if css.count("{", 0, block.start()) != css.count("}", 0, block.start()):
+            continue
+        offset = block.start(1)
+        for declaration in block.group(1).split(";"):
+            match = CSS_CUSTOM_PROPERTY.match(declaration)
+            if match:
+                line = css.count("\n", 0, offset + match.start(1)) + 1
+                tokens[match.group(1)] = (match.group(2).strip(), line)
+            offset += len(declaration) + 1
+    return tokens
+
+
+def relative_luminance(colour):
+    digits = colour[1:]
+    if len(digits) == 3:
+        digits = "".join(d * 2 for d in digits)
+    r, g, b = (
+        c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        for c in (int(digits[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    )
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(a, b):
+    """The WCAG 2 contrast ratio of two #RRGGBB or #RGB colours, 1 to 21."""
+    light, dark = sorted((relative_luminance(a), relative_luminance(b)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def check_contrast(site):
+    """(problems, pairs checked) for CONTRAST_PAIRS in the site's stylesheet."""
+    path = site / STYLESHEET
+    if not path.is_file():
+        return [], 0  # the pages' links to it report that it is missing
+    tokens = root_tokens(path.read_text(encoding="utf-8"))
+    problems, colours = [], {}
+    for name in dict.fromkeys(n for pair in CONTRAST_PAIRS for n in pair[:2]):
+        if name not in tokens:
+            problems.append((
+                path, 1,
+                f"contrast: :root (outside @media) defines no {name}, whose contrast "
+                "CONTRAST_PAIRS in .github/scripts/check-website.py checks; "
+                "if it was renamed, rename it there too",
+            ))
+        elif not HEX_COLOUR.fullmatch(tokens[name][0]):
+            problems.append((
+                path, tokens[name][1],
+                f'contrast: {name} is "{tokens[name][0]}", not a #RRGGBB or #RGB colour, '
+                "so its contrast can't be checked",
+            ))
+        else:
+            colours[name] = tokens[name][0]
+    checked = 0
+    for text, background, use in CONTRAST_PAIRS:
+        if text not in colours or background not in colours:
+            continue
+        checked += 1
+        ratio = contrast_ratio(colours[text], colours[background])
+        if ratio < CONTRAST_MIN:
+            shown = f"{ratio:.2f}"
+            if float(shown) >= CONTRAST_MIN:  # 4.497 must not read as 4.50:1
+                shown = f"{math.floor(ratio * 1000) / 1000:.3f}"
+            problems.append((
+                path, tokens[text][1],
+                f"contrast: {text} {colours[text]} on {background} {colours[background]} "
+                f"is {shown}:1, below the {CONTRAST_MIN}:1 WCAG AA asks of {use}",
+            ))
+    return problems, checked
+
+
+def check_text_colours(site):
+    """(problems, declarations checked) for the stylesheet's "color:"
+    declarations: each must be one of CONTRAST_PAIRS' text tokens."""
+    path = site / STYLESHEET
+    if not path.is_file():
+        return [], 0
+    css = blank_comments(path.read_text(encoding="utf-8"))
+    text_tokens = list(dict.fromkeys(text for text, _, _ in CONTRAST_PAIRS))
+    problems, checked = [], 0
+    for declaration in CSS_COLOR_DECLARATION.finditer(css):
+        checked += 1
+        value = re.sub(r"\s*!\s*important\s*$", "", declaration.group(1).strip(), flags=re.I)
+        token = CSS_VAR.fullmatch(value)
+        if INHERITED_COLOUR.fullmatch(value) or (token and token.group(1) in text_tokens):
+            continue
+        problems.append((
+            path, css.count("\n", 0, declaration.start()) + 1,
+            f"contrast: \"color: {value}\" isn't one of the text colours whose contrast "
+            "CONTRAST_PAIRS in .github/scripts/check-website.py checks "
+            f"({', '.join(f'var({t})' for t in text_tokens)}). Use one of them, or make "
+            "the colour a :root token and add a pair for each background it sits on",
+        ))
+    return problems, checked
+
+
+def selector_list(text):
+    """The selectors of a comma-separated list; a comma inside () or [] is
+    part of its selector."""
+    selectors, depth, current = [], 0, ""
+    for ch in text:
+        depth += (ch in "([") - (ch in ")]")
+        if ch == "," and depth == 0:
+            selectors.append(current)
+            current = ""
+        else:
+            current += ch
+    selectors.append(current)
+    return [s.strip() for s in selectors if s.strip()]
+
+
+def compounds(selector):
+    """[(combinator, compound)] of a selector, left to right. The combinator
+    joins the compound to the one before it: " ", ">", "+" or "~", and "" for
+    the first."""
+    parts, depth, current, combinator = [], 0, "", ""
+    for ch in selector:
+        depth += (ch in "([") - (ch in ")]")
+        if depth == 0 and (ch.isspace() or ch in ">+~"):
+            if current:
+                parts.append((combinator, current))
+                current, combinator = "", " "
+            if ch in ">+~":
+                combinator = ch
+        else:
+            current += ch
+    if current:
+        parts.append((combinator, current))
+    return parts
+
+
+def compound_matches(compound, tag, attrs, ancestors=()):
+    """False if the compound selector can't match the element, whose
+    ancestors are [(tag, attrs)] from <html> down. A test the markup can't
+    settle (a pseudo-class such as :hover, a pseudo-element, an attribute
+    test other than [name] and [name=value], a :not() of one) counts as a
+    match."""
+    classes = (attrs.get("class") or "").split()
+    for m in CSS_SIMPLE.finditer(compound):
+        if m["type"] and m["type"] != "*" and m["type"].lower() != tag:
+            return False
+        if m["cls"] and m["cls"] not in classes:
+            return False
+        if m["id"] and m["id"] != attrs.get("id"):
+            return False
+        if m["attr"]:
+            name = m["attr"].lower()
+            if name not in attrs:
+                return False
+            if m["op"] == "=" and m["value"].strip("\"'") != (attrs[name] or ""):
+                return False
+        if m["pseudo"] == "not" and m["arg"] is not None:
+            for negated in selector_list(m["arg"]):
+                if UNSETTLED_NEGATION.search(negated):
+                    continue
+                if reaches(compounds(negated), tag, attrs, ancestors):
+                    return False
+    return True
+
+
+def reaches(parts, tag, attrs, ancestors):
+    """True if the selector's compounds may match the element, whose
+    ancestors are [(tag, attrs)] from <html> down. ">" is read as " ", and the
+    compound before "+" or "~", a sibling, isn't checked: its ancestors are
+    the next compound's."""
+    if not compound_matches(parts[-1][1], tag, attrs, ancestors):
+        return False
+    level = len(ancestors)
+    for i in range(len(parts) - 2, -1, -1):
+        if parts[i + 1][0] in ("+", "~"):
+            continue
+        # The nearest ancestor that matches leaves the most room for the
+        # compounds further left.
+        while level and not compound_matches(
+                parts[i][1], *ancestors[level - 1], ancestors[:level - 1]):
+            level -= 1
+        if not level:
+            return False
+        level -= 1
+    return True
+
+
+def container_rules(css):
+    """[(selector, compounds, line)] for the stylesheet's rules for the
+    elements inside a container: a compound before the last is an
+    ancestor."""
+    css = blank_comments(css)
+    rules = []
+    for rule in CSS_RULE.finditer(css):
+        prelude = rule.group(1)
+        if prelude.strip().startswith("@"):
+            continue
+        start = rule.start(1) + len(prelude) - len(prelude.lstrip())
+        line = css.count("\n", 0, start) + 1
+        for selector in selector_list(prelude):
+            parts = compounds(selector)
+            if all(combinator in ("+", "~") for combinator, _ in parts[1:]):
+                continue
+            rules.append((" ".join(selector.split()), parts, line))
+    return rules
+
+
+def names(parts, attrs):
+    """True if a compound of the selector names one of the element's classes
+    or its id."""
+    classes = (attrs.get("class") or "").split()
+    return any(
+        (m["cls"] and m["cls"] in classes) or (m["id"] and m["id"] == attrs.get("id"))
+        for _, compound in parts for m in CSS_SIMPLE.finditer(compound)
+    )
+
+
+def start_tag(tag, attrs):
+    return f'<{tag} class="{attrs["class"]}">' if attrs.get("class") else f"<{tag}>"
+
+
+def check_components(site, pages):
+    """(problems, {class: components checked}): a rule for the elements inside
+    a container must not reach into a component, where it changes the
+    component in that container only."""
+    path = site / STYLESHEET
+    elements = [(page, e) for page in pages.values() for e in page.components]
+    counts = {
+        kind: sum(1 for _, e in elements if e[4] == kind and e[5] == len(e[3]))
+        for kind in COMPONENTS
+    }
+    if not path.is_file():
+        return [], counts
+    problems = []
+    for selector, parts, line in container_rules(path.read_text(encoding="utf-8")):
+        for kind, (name, plural) in COMPONENTS.items():
+            reached = []
+            for page, (element_line, tag, attrs, ancestors, element_kind, root) in elements:
+                component = (ancestors + [(tag, attrs)])[root]
+                if element_kind != kind or names(parts, component[1]):
+                    continue
+                # Through an ancestor outside the component only.
+                if (reaches(parts, tag, attrs, ancestors)
+                        and not reaches(parts, tag, attrs, ancestors[root:])):
+                    reached.append((page, element_line, tag, attrs, component, root == len(ancestors)))
+            if not reached:
+                continue
+            page, element_line, tag, attrs, component, is_component = reached[0]
+            more = f" (and {len(reached) - 1} more)" if len(reached) > 1 else ""
+            what = (f"the {name} {start_tag(*component)}" if is_component
+                    else f"the {start_tag(tag, attrs)} in the {name} {start_tag(*component)}")
+            suffix = "".join(dict.fromkeys(
+                f":not(.{kind})" if r[5] else f":not(.{kind} *)" for r in reached))
+            subject = parts[-1][1]
+            if selector.endswith(subject):
+                # Before the subject's pseudo-classes: "a:not(.cta):hover".
+                depth, cut = 0, len(subject)
+                for i, ch in enumerate(subject):
+                    depth += (ch in "([") - (ch in ")]")
+                    if ch == ":" and depth == 0:
+                        cut = i
+                        break
+                head = selector[:len(selector) - len(subject)]
+                fixed = f'"{head}{subject[:cut]}{suffix}{subject[cut:]}"'
+            else:
+                fixed = f"add {suffix} to its last compound"
+            problems.append((
+                path, line,
+                f'{name}: "{selector}" restyles {what} on '
+                f"{page.path.relative_to(site).as_posix()}:{element_line}{more}: a rule for "
+                f"the elements in a container reaches into the {name}, which then looks "
+                f"different there from the {plural} elsewhere. Leave the {plural} out of it: "
+                f"{fixed}",
+            ))
+    return problems, counts
 
 
 def check(site):
@@ -333,6 +708,13 @@ def check(site):
                     ))
                     break
 
+    contrast_problems, stats["contrasts"] = check_contrast(site)
+    problems.extend(contrast_problems)
+    colour_problems, stats["colours"] = check_text_colours(site)
+    problems.extend(colour_problems)
+    component_problems, stats["components"] = check_components(site, pages)
+    problems.extend(component_problems)
+
     problems.sort(key=lambda p: (str(p[0]), p[1]))
     return problems, stats
 
@@ -360,9 +742,14 @@ def main():
     if problems:
         print(f"{len(problems)} problem(s) in the website.")
         return 1
+    components = "".join(
+        f"{stats['components'][kind]} {plural}, " for kind, (_, plural) in COMPONENTS.items()
+    )
     print(
         f"All {stats['pages']} pages pass: {stats['links']} local links and images, "
-        f"{stats['fragments']} fragments, {stats['images']} image sizes checked."
+        f"{stats['fragments']} fragments, {stats['images']} image sizes, "
+        f"{components}{stats['colours']} text colours and "
+        f"{stats['contrasts']} contrasts checked."
     )
     return 0
 

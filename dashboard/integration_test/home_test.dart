@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/e2e_binding.dart';
+import 'support/text_contrast.dart';
 
 // Real-app e2e for the redesigned home page (AD3, #168): boots the actual
 // AnchorDashboard authenticated, with a class to start and a still-running
@@ -159,6 +160,9 @@ void main() {
       // When the session ends (#447): the end of this period by default.
       expect(find.byKey(const Key('end-picker')), findsOneWidget);
       expect(find.text('At the end of this period (10:05)'), findsOneWidget);
+
+      // The resume card's start time was in the 2.79:1 caption grey (#601).
+      expectReadableText(tester, shows: ['STARTED 09:30']);
 
       // No RenderFlex overflow or other exception with the real fonts at this
       // size — the bug an isolated widget test structurally misses.

@@ -5,6 +5,9 @@ import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/manage_schools_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
+
+import '../integration_test/support/text_contrast.dart';
 
 // Widget tests for the "Schools" admin sub-tab (#301): they drive the page
 // against a scripted fake SchoolsApi to prove the list renders with each
@@ -81,7 +84,8 @@ class _FakeSchools extends SchoolsApi {
   }
 }
 
-Widget _host(SchoolsApi schools) => MaterialApp(
+Widget _host(SchoolsApi schools, {ThemeData? theme}) => MaterialApp(
+  theme: theme,
   localizationsDelegates: AppLocalizations.localizationsDelegates,
   supportedLocales: AppLocalizations.supportedLocales,
   home: ManageSchoolsPage(schools: schools),
@@ -149,6 +153,40 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('manage-schools-empty')), findsOneWidget);
+  });
+
+  // #601: an inactive school's line and the notices were in the 2.79:1
+  // caption grey.
+  testWidgets('the school list, the period editor and their notices read at '
+      'WCAG AA on paper', (tester) async {
+    _bigWindow(tester);
+    await tester.pumpWidget(
+      _host(_FakeSchools(schools: const []), theme: PlinkTheme.paper),
+    );
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['No schools found.']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(
+      _host(
+        _FakeSchools(
+          schools: [
+            _school('Sint-Jan', isActive: true),
+            _school('Sint-Maria', isActive: false),
+          ],
+        ),
+        theme: PlinkTheme.paper,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expectReadableText(
+      tester,
+      shows: ['Active · No lesson periods', 'Inactive · No lesson periods'],
+    );
+
+    await tester.tap(find.byKey(const Key('school-periods-Sint-Jan')));
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['No lesson periods yet.']);
   });
 
   testWidgets('a failed toggle surfaces an inline error', (tester) async {

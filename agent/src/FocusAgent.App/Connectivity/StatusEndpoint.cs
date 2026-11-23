@@ -66,6 +66,12 @@ namespace FocusAgent.App.Connectivity;
 ///               -> the focus overlay's row for that allowed app (#453): clicks it
 ///                  on the UI thread, as the student does, without waiting for
 ///                  the click (409 when the overlay isn't up).
+///   POST /overlay-repair
+///               -> the paused-Edge overlay's button (#427), clicked on the UI
+///                  thread as the student does, without waiting for the click:
+///                  unlike /extension-repair, it takes the button's whole path,
+///                  the window it brings forward included (#597) (409 when the
+///                  overlay isn't up).
 ///
 /// And /status carries <c>extensionPolicy</c> (#405): where the Anchor
 /// force-install entry was found (<c>None</c> / <c>Machine</c> / <c>User</c>),
@@ -115,6 +121,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
     private readonly Func<bool>? _onTurnExtensionBackOn;
     private readonly Func<string?>? _overlay;
     private readonly Func<string, bool>? _onClickOverlayApp;
+    private readonly Func<bool>? _onClickOverlayRepair;
     private readonly Func<string?>? _pendingUpdate;
     private readonly Func<DateTimeOffset?>? _lastUpdateCheck;
     private readonly Action? _onCheckUpdate;
@@ -151,7 +158,8 @@ public sealed class StatusEndpoint : IAsyncDisposable
         Func<object?>? logUpload = null,
         Func<object?>? schoolProfile = null,
         Func<nint, bool>? onGoToSchoolProfile = null,
-        Func<object?>? addressBar = null)
+        Func<object?>? addressBar = null,
+        Func<bool>? onClickOverlayRepair = null)
     {
         _connection = connection;
         _coordinator = coordinator;
@@ -177,6 +185,7 @@ public sealed class StatusEndpoint : IAsyncDisposable
         _schoolProfile = schoolProfile;
         _onGoToSchoolProfile = onGoToSchoolProfile;
         _addressBar = addressBar;
+        _onClickOverlayRepair = onClickOverlayRepair;
         _listener = new HttpListener();
     }
 
@@ -297,6 +306,15 @@ public sealed class StatusEndpoint : IAsyncDisposable
                 ctx.Response.StatusCode = string.IsNullOrWhiteSpace(app)
                     ? 400
                     : clicked switch { null => 404, true => 204, false => 409 };
+                ctx.Response.Close();
+                return;
+            }
+
+            if (method == "POST" && path == "/overlay-repair")
+            {
+                // 409 when the overlay isn't up, so a spec can tell "clicked" from "no-op".
+                var clicked = _onClickOverlayRepair?.Invoke();
+                ctx.Response.StatusCode = clicked switch { null => 404, true => 204, false => 409 };
                 ctx.Response.Close();
                 return;
             }

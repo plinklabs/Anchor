@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'support/e2e_binding.dart';
+import 'support/text_contrast.dart';
 
 // Real-app e2e for the "Schools" sub-tab (#301): boots the actual
 // AnchorDashboard (real router, real fonts, real window) and drives the flow a
@@ -179,6 +180,8 @@ void main() {
       find.byKey(const Key('school-toggle-Sint-Maria')),
     );
     expect(toggle.value, isFalse);
+    // An inactive school's line was in the 2.79:1 caption grey (#601).
+    expectReadableText(tester, shows: ['Inactive · No lesson periods']);
 
     expect(tester.takeException(), isNull);
   });

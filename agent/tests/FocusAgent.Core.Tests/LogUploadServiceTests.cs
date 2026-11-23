@@ -120,6 +120,65 @@ public sealed class LogUploadServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Every_section_names_the_students_own_folders_by_their_variables()
+    {
+        // #596: this user's own folders, as a student's are on their laptop, in
+        // every log the upload reads from: in a path a line names, at the end of a
+        // line, followed by a /, in another case, quoted with doubled separators
+        // (as Velopack's log does), and in a real exception's message and text.
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var failure = Assert.Throws<DirectoryNotFoundException>(() => File.ReadAllText(
+            Path.Combine(local, "Anchor.Agent", "anchor-596-" + Guid.NewGuid().ToString("N"), "manifest.json")));
+        var exception = failure.ToString().ReplaceLineEndings("\n").Split('\n');
+        Write("focusagent-20261021.log",
+        [
+            "2026-10-21 09:40:00.000 +02:00 [INF] FocusAgent.App.App: FocusAgent 0.9.3 starting (unpackaged WinUI 3), process 1234 started at 2026-10-21T09:39:59.5000000+02:00",
+            $"2026-10-21 10:15:00.000 +02:00 [WRN] FocusAgent.Core.Tamper.WitnessHostRegistrar: Witness host registration (startup) for %LOCALAPPDATA%\\Anchor.Agent\\current\\anchor-witness-host.exe failed: {failure.Message}",
+            .. exception,
+            $"2026-10-21 10:16:00.000 +02:00 [INF] Test: the profile is {profile}",
+            $"2026-10-21 10:17:00.000 +02:00 [INF] Test: logs in {local.ToUpperInvariant()}\\Anchor\\FocusAgent\\logs",
+        ]);
+        Write("startup-error.log",
+        [
+            "2026-10-21T10:45:00.0000000+02:00",
+            .. exception,
+            "",
+        ]);
+        Write("velopack_Anchor.Agent.log",
+            "[lib-csharp:1234] [09:40:00] [Information] Initializing WindowsVelopackLocator",
+            $"[update:600] [10:20:00] [INFO]     Location: \"{local.Replace(@"\", @"\\")}\\\\Anchor.Agent\\\\Update.exe\"",
+            $"[update:600] [10:20:01] [INFO] Searching for shortcuts in: ShortcutLocationFlags(STARTUP) ({roaming}\\Microsoft\\Windows\\Start Menu\\Programs\\Startup/*.lnk)");
+        Write("witness-host-20261021.log",
+            $"2026-10-21 09:41:01.000 +02:00 [WRN] WitnessHost[900]: Writing {local}\\Anchor\\FocusAgent\\logs\\witness-host-20261021.log failed.");
+        _client.Pending = new PendingLogWindows(1024 * 1024, [_window]);
+
+        await Service().NotifyConnectedAsync();
+
+        var text = Gunzip(Assert.Single(_client.Uploads).Gzip);
+        foreach (var folder in new[] { local, roaming, profile })
+        {
+            Assert.DoesNotContain(folder, text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(folder.Replace('\\', '/'), text, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(folder.Replace(@"\", @"\\"), text, StringComparison.OrdinalIgnoreCase);
+        }
+        var missing = $"Could not find a part of the path '%LOCALAPPDATA%\\Anchor.Agent\\anchor-596-";
+        var agentLog = Section(text, LogUploadDocument.AgentLogSection);
+        Assert.Contains($"(startup) for %LOCALAPPDATA%\\Anchor.Agent\\current\\anchor-witness-host.exe failed: {missing}", agentLog);
+        Assert.Contains($"System.IO.DirectoryNotFoundException: {missing}", agentLog);
+        Assert.Contains("Test: the profile is %USERPROFILE%\n", agentLog);
+        Assert.Contains("Test: logs in %LOCALAPPDATA%\\Anchor\\FocusAgent\\logs\n", agentLog);
+        Assert.Contains($"System.IO.DirectoryNotFoundException: {missing}", Section(text, LogUploadDocument.CrashLogSection));
+        var updaterLog = Section(text, LogUploadDocument.UpdaterLogSection);
+        Assert.Contains("Location: \"%LOCALAPPDATA%\\\\Anchor.Agent\\\\Update.exe\"\n", updaterLog);
+        Assert.Contains("(STARTUP) (%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup/*.lnk)\n", updaterLog);
+        Assert.Contains(
+            "WitnessHost[900]: Writing %LOCALAPPDATA%\\Anchor\\FocusAgent\\logs\\witness-host-20261021.log failed.\n",
+            Section(text, LogUploadDocument.WitnessHostLogSection));
+    }
+
+    [Fact]
     public async Task With_no_windows_pending_nothing_is_read_or_uploaded()
     {
         Write("focusagent-20261021.log", "2026-10-21 10:15:00.000 +02:00 [INF] Inside: a lesson");
@@ -255,6 +314,16 @@ public sealed class LogUploadServiceTests : IDisposable
         Assert.Contains("entries left out to fit the upload limit", text);
         Assert.DoesNotContain(entries[200], text);
         Assert.Null(LogUploadDocument.Build(_window, "0.9.3", sections, maxBytes: 10));
+    }
+
+    /// <summary>The lines of the document's section with <paramref name="title"/>, each ending in a newline.</summary>
+    private static string Section(string text, string title)
+    {
+        var start = text.IndexOf($"\n== {title} ==\n", StringComparison.Ordinal);
+        Assert.True(start >= 0, $"No {title} section in:\n{text}");
+        start = text.IndexOf('\n', start + 1) + 1;
+        var end = text.IndexOf("\n== ", start, StringComparison.Ordinal);
+        return end < 0 ? text[start..] : text[start..(end + 1)];
     }
 
     private static string Gunzip(byte[] gzip)

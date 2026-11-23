@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../integration_test/support/text_contrast.dart';
+
 // Paper redesign of the past-session review (AD7, #172). Verifies the brand
 // contracts the redesign introduced:
 //  - the review reads as paper instrument panels (no Material Card / Chip /
@@ -38,7 +40,7 @@ class _FakeSessions extends SessionsApi {
       unapproved;
 }
 
-SessionDetail _detail() => SessionDetail(
+SessionDetail _detail({bool withEvents = true}) => SessionDetail(
   id: 's1',
   classId: 'c1',
   className: 'Math 101',
@@ -55,13 +57,14 @@ SessionDetail _detail() => SessionDetail(
     ),
   ],
   recentEvents: [
-    SessionRecentEvent(
-      id: 'e1',
-      userId: 'u1',
-      kind: 'BlockedUrl',
-      payloadJson: '{"host":"chat.example.com"}',
-      occurredAt: DateTime(2026, 6, 12, 9, 30, 5),
-    ),
+    if (withEvents)
+      SessionRecentEvent(
+        id: 'e1',
+        userId: 'u1',
+        kind: 'BlockedUrl',
+        payloadJson: '{"host":"chat.example.com"}',
+        occurredAt: DateTime(2026, 6, 12, 9, 30, 5),
+      ),
   ],
   participants: [
     SessionParticipantInfo(
@@ -328,5 +331,25 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
+  });
+
+  // #601: the event log's empty notice was in the 2.79:1 caption grey.
+  testWidgets('the review and an empty event log read at WCAG AA on paper', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      host(_FakeSessions(detail: _detail(withEvents: false))),
+    );
+    await tester.pumpAndSettle();
+
+    expectReadableText(
+      tester,
+      shows: ['Math 101', 'No event detail retained for this session.'],
+    );
   });
 }

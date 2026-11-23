@@ -174,25 +174,36 @@ public sealed partial class FocusOverlayWindow : Window
         return false;
     }
 
+    /// <summary>
+    /// Clicks the paused-Edge overlay's button (#427) through its automation peer,
+    /// as UI Automation does: the same Click a student's click raises. Dev-only,
+    /// for the status endpoint's <c>POST /overlay-repair</c>, which lets the
+    /// headless e2e take the student's way back to Edge (#597). Returns false when
+    /// the overlay shows no such button.
+    /// </summary>
+    internal bool ClickBrowserRepair()
+    {
+        if (_browserPrompt is null || BrowserRepairPanel.Visibility != Visibility.Visible)
+            return false;
+        if (FrameworkElementAutomationPeer.CreatePeerForElement(BrowserRepairButton) is not IInvokeProvider invoke)
+            return false;
+        invoke.Invoke();
+        return true;
+    }
+
     private void OnBrowserRepairClicked(object sender, RoutedEventArgs e)
     {
         if (_browserPrompt is not { } prompt)
             return;
-        if (prompt.Reason is ExtensionPauseReason.OutsideSchoolProfile
-            or ExtensionPauseReason.SchoolProfileWithoutExtension)
-        {
-            // #525: the action closes the paused window and brings the school
-            // profile forward itself; #536: it opens the store listing in the
-            // school profile. Bringing "Edge" forward after it could pick another
-            // profile's window.
-            prompt.TurnBackOn();
-            _onLaunched(prompt.Browser);
-            return;
-        }
         // Open the repair window first, so the foreground change Edge makes when
         // it comes forward already finds it allowed.
         prompt.TurnBackOn();
-        _launcher.LaunchOrActivate(prompt.Browser);
+        // #525: the action closes the paused window and brings the school profile
+        // forward itself; #536: it opens the store listing in the school profile;
+        // #556: it opens the profile the extension was woken in. Bringing "Edge"
+        // forward after those could pick another profile's window (#597).
+        if (prompt.BringsBrowserForward)
+            _launcher.LaunchOrActivate(prompt.Browser);
         _onLaunched(prompt.Browser);
     }
 

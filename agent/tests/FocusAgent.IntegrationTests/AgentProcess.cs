@@ -412,6 +412,19 @@ internal sealed class AgentProcess : IAsyncDisposable
     }
 
     /// <summary>
+    /// Click the paused-Edge overlay's button (#427) via POST /overlay-repair. Unlike
+    /// <see cref="TurnExtensionBackOnAsync"/>, this takes the button's whole path,
+    /// the window it brings forward included (#597). The click runs on the agent's
+    /// UI thread, as the student's does, and this does not wait for it. Returns
+    /// false when the overlay wasn't up.
+    /// </summary>
+    public async Task<bool> ClickOverlayRepairAsync()
+    {
+        using var res = await _http.PostAsync($"{_controlBase}/overlay-repair", content: null);
+        return res.StatusCode == System.Net.HttpStatusCode.NoContent;
+    }
+
+    /// <summary>
     /// Run an update check now (#456) via POST /check-update, as the interval timer
     /// would. Does not wait for the check.
     /// </summary>

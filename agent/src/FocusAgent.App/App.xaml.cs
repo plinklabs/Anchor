@@ -406,6 +406,9 @@ public partial class App : Application
                         reads = addressBar.Reads,
                         reported = addressBar.Reported,
                     },
+                    // #597: click the paused-Edge overlay's button, as the student
+                    // does, so the e2e sees which window it brings forward.
+                    onClickOverlayRepair: () => focusOverlay?.ClickBrowserRepair() ?? false,
                     // #456: when the last update check ran, a check on demand, and
                     // time asleep: the update clock jumps, the timers don't.
                     lastUpdateCheck: () => _updateService?.LastCheckStartedAt,

@@ -5,12 +5,32 @@
    (agent/external/plink-design-system).
    ============================================================ */
 
-/* Design tokens */
+/* Design tokens. .github/scripts/check-website.py checks the contrast of
+   the text colours on their backgrounds against WCAG AA (4.5:1), and that
+   every "color:" below is one of the text colours it checks; keep these as
+   #RRGGBB so it can read them. */
 :root {
   --ink:     #1B1B23;
   --paper:   #FAF7F2;
+  /* The spark: the mark, the active page's underline, the callouts' left
+     rule and the secondary buttons' outline. Not for text: it is only
+     4.30:1 on --paper (#600). */
   --magenta: #DB2777;
-  --muted:   #9A958B;
+  /* Magenta text (links, card titles, eyebrows, hover) and the primary
+     button behind its paper label. This is the design system's
+     --magenta-press: 5.40:1 on --paper, 5.11:1 on --callout. */
+  --magenta-press: #C01F68;
+  /* The primary button on hover: one step darker than --magenta-press, as
+     --magenta-press is of --magenta. Paper on it is 6.65:1. */
+  --magenta-deep:  #A8195B;
+  /* The callouts' tint: --magenta at 4% on --paper, written out so the
+     contrast check can read it. */
+  --callout: #F9EFED;
+  /* Secondary text: the hero, lead and card paragraphs, the sub-navigation,
+     captions and the footer. This is the design system's --ink-60
+     ("body-muted text on paper"), 5.04:1 on --paper. Its --muted, #9A958B,
+     is for captions and disabled items and is only 2.79:1 (#598). */
+  --muted:   #6E6A62;
 
   --ff-display: 'Fraunces', Georgia, serif;
   --ff-ui:      'Hanken Grotesk', system-ui, sans-serif;
@@ -33,7 +53,7 @@ body {
 }
 
 a { color: inherit; text-decoration: none; }
-a:hover { color: var(--magenta); }
+a:hover { color: var(--magenta-press); }
 
 img { max-width: 100%; display: block; }
 
@@ -83,7 +103,7 @@ header nav {
   transition: color 0.15s ease;
 }
 
-.subnav a:hover { color: var(--magenta); }
+.subnav a:hover { color: var(--magenta-press); }
 
 .subnav a[aria-current="page"] {
   color: var(--ink);
@@ -175,16 +195,19 @@ main { flex: 1; }
   padding: 0.75rem 1.4rem;
   border: 1.5px solid var(--magenta);
   border-radius: 2px;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
+/* A button filled with magenta takes --magenta-press, not the spark: paper
+   on --magenta is only 4.30:1 (#600). */
 .cta--primary {
-  background: var(--magenta);
+  background: var(--magenta-press);
+  border-color: var(--magenta-press);
   color: var(--paper);
 }
 .cta--primary:hover {
-  background: #be1f66;
-  border-color: #be1f66;
+  background: var(--magenta-deep);
+  border-color: var(--magenta-deep);
   color: var(--paper);
 }
 
@@ -193,7 +216,8 @@ main { flex: 1; }
   color: var(--ink);
 }
 .cta--secondary:hover {
-  background: var(--magenta);
+  background: var(--magenta-press);
+  border-color: var(--magenta-press);
   color: var(--paper);
 }
 
@@ -230,7 +254,7 @@ main { flex: 1; }
 }
 
 /* Links inside a caption read as links (the global reset makes them plain). */
-.screenshot figcaption a { color: var(--magenta); }
+.screenshot figcaption a { color: var(--magenta-press); }
 .screenshot figcaption a:hover { text-decoration: underline; }
 
 /* ============================================================
@@ -274,7 +298,7 @@ main { flex: 1; }
   font-family: var(--ff-mono);
   font-size: 0.8rem;
   font-weight: 400;
-  color: var(--magenta);
+  color: var(--magenta-press);
   letter-spacing: 0.02em;
   margin-bottom: 0.5rem;
 }
@@ -286,7 +310,7 @@ main { flex: 1; }
 }
 
 /* Links inside a card read as links (the global reset makes them plain). */
-.feature-grid p a { color: var(--magenta); }
+.feature-grid p a { color: var(--magenta-press); }
 .feature-grid p a:hover { text-decoration: underline; }
 
 /* ============================================================
@@ -297,12 +321,12 @@ main { flex: 1; }
   padding: clamp(1.5rem, 4vw, 2rem);
   border: var(--border);
   border-left: 3px solid var(--magenta);
-  background: rgba(219, 39, 119, 0.04);
+  background: var(--callout);
   max-width: 52rem;
 }
 
 .callout .eyebrow {
-  color: var(--magenta);
+  color: var(--magenta-press);
   margin-bottom: 0.75rem;
 }
 
@@ -323,21 +347,27 @@ main { flex: 1; }
 .callout p + p { margin-top: 0.75rem; }
 
 /* Links inside a callout read as links (the global reset makes them plain). */
-.callout p a { color: var(--magenta); }
+.callout p a { color: var(--magenta-press); }
 .callout p a:hover { text-decoration: underline; }
 
 /* ============================================================
    Prose document (privacy / legal copy)
    ============================================================ */
+/* The prose rules stop at a callout: with a plain ".doc h2", ".doc p" and
+   ".doc .eyebrow" the contact page's callout took the prose spacing, 40px
+   between its eyebrow and its heading, where the callouts on the other pages
+   have 12px (#602). Every rule below for the elements in .doc carries
+   :not(.callout *), so they still weigh the same against each other:
+   ".doc .lead" and ".doc .updated" outweigh ".doc p". */
 .doc {
   padding: clamp(3rem, 8vw, 6rem) var(--gutter) clamp(2.5rem, 6vw, 4rem);
   max-width: 46rem;
 }
-.doc .eyebrow {
-  color: var(--magenta);
+.doc .eyebrow:not(.callout *) {
+  color: var(--magenta-press);
   margin-bottom: 1rem;
 }
-.doc h1 {
+.doc h1:not(.callout *) {
   font-family: var(--ff-display);
   font-size: clamp(1.875rem, 4.5vw, 3rem);
   font-weight: 300;
@@ -345,32 +375,35 @@ main { flex: 1; }
   letter-spacing: -0.02em;
   margin-bottom: 0.75rem;
 }
-.doc .updated {
+.doc .updated:not(.callout *) {
   font-family: var(--ff-mono);
   font-size: 0.7rem;
   letter-spacing: 0.04em;
   color: var(--muted);
   margin-bottom: 2.5rem;
 }
-.doc h2 {
+.doc h2:not(.callout *) {
   font-family: var(--ff-display);
   font-size: clamp(1.125rem, 2.5vw, 1.4rem);
   font-weight: 300;
   letter-spacing: -0.01em;
   margin: 2.5rem 0 0.75rem;
 }
-.doc p, .doc li {
+.doc p:not(.callout *), .doc li:not(.callout *) {
   font-size: 0.9375rem;
   line-height: 1.7;
   color: var(--ink);
 }
-.doc p { margin-bottom: 1rem; }
-.doc ul { padding-left: 1.25rem; margin-bottom: 1rem; }
-.doc li { margin-bottom: 0.5rem; }
-.doc strong { font-weight: 500; }
-.doc a { color: var(--magenta); }
-.doc a:hover { text-decoration: underline; }
-.doc .lead { color: var(--muted); font-size: 1rem; }
+.doc p:not(.callout *) { margin-bottom: 1rem; }
+.doc ul:not(.callout *) { padding-left: 1.25rem; margin-bottom: 1rem; }
+.doc li:not(.callout *) { margin-bottom: 0.5rem; }
+.doc strong:not(.callout *) { font-weight: 500; }
+/* Prose links only: a plain ".doc a" outweighs .cta--primary and turned the
+   contact page's button label magenta on magenta (#599). The buttons keep
+   their own colours on every page. */
+.doc a:not(.cta):not(.callout *) { color: var(--magenta-press); }
+.doc a:not(.cta):not(.callout *):hover { text-decoration: underline; }
+.doc .lead:not(.callout *) { color: var(--muted); font-size: 1rem; }
 
 /* ============================================================
    Footer ("Built in Belgium…", GPL-3.0) — reused from parent site.
