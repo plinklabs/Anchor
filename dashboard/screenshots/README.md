@@ -22,10 +22,17 @@ fake-API seam the dashboard integration tests already use (see
 | `dashboard-session.png` | Live session view | `lib/pages/session_page.dart` |
 | `dashboard-bundles.png` | Bundles editor | `lib/pages/bundles_page.dart` |
 | `dashboard-classes.png` | Classes / roster | `lib/pages/classes_page.dart` |
-| `dashboard-history.png` | History archive | `lib/pages/history_page.dart` |
 | `dashboard-past-session.png` | Past session review | `lib/pages/past_session_page.dart` |
 
-All are 1440×900, written into `../../website/assets/`.
+All are 1440 wide, written into `../../website/assets/`, and 900 high except
+the past session, which is shot at 1320 so the whole page shows (#514). Each one
+is used on a website page; the History list itself isn't shot, since one row of
+dates adds nothing there.
+
+The past session in the demo holds only what the intended product keeps (an
+access request and its approval, a tamper signal, an agent that stopped
+reporting, a declined session), never the pilot's test-phase reports (#515).
+[`test/demo_data_test.dart`](../test/demo_data_test.dart) keeps it that way.
 
 ## Regenerating
 
@@ -46,7 +53,7 @@ node generate-screenshots.mjs --no-build
 ```
 
 Output is deterministic: fixed demo data, a fixed clock baked into the data, a
-fixed 1440×900 viewport, and `go_router`'s hash routes (`#/`, `#/session/…`,
+fixed viewport, and `go_router`'s hash routes (`#/`, `#/session/…`,
 `#/admin/bundles`, …) so no server-side rewrites are needed.
 
 The shots are always in US English. The dashboard follows the browser

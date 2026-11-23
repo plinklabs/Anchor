@@ -9,7 +9,7 @@
     headlessly the way the Flutter dashboard can. So this drives the very same
     `--show-test-*` self-tests the visual-enforcement e2e uses (real surfaces,
     presentable demo content from FocusAgent.App.SelfTestDemoContent — "Ms Rivera",
-    class PLINK-3B, a readable allowlist — no backend, no auth, no secrets), finds
+    class 3B, a readable allowlist — no backend, no auth, no secrets), finds
     each surface's HWND, BitBlts its rect, and saves a fixed, named PNG into
     `website/assets/`.
 

@@ -10,7 +10,7 @@
 // Output → store-listing/screenshot-*.png
 
 import { chromium } from '@playwright/test';
-import { createReadStream, statSync } from 'node:fs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,10 +32,12 @@ const MIME = {
 
 // A representative active session for a year-9 class — enough allowlist entries
 // to show the list, with a join code, so the popup paints its full "active" face.
+// The code is six digits, as the backend hands them out (#586), and the same one
+// the dashboard's demo shows (dashboard/test/demo_data_test.dart checks it).
 const DEMO_SESSION = {
   sessionId: 'demo-session',
   classId: 'class-3b',
-  joinCode: 'PLINK-3B',
+  joinCode: '482917',
   startedAt: new Date().toISOString(),
   domains: [
     { matchType: 'Suffix', value: 'wikipedia.org' },
@@ -45,9 +47,15 @@ const DEMO_SESSION = {
   ],
 };
 
+// The pages fill their copy from chrome.i18n (#322); without it they show the
+// message keys. The listing is English, so the stub serves the built `en`
+// catalogue, resolving `$name$` placeholders the way chrome.i18n does.
+const EN_MESSAGES = JSON.parse(readFileSync(join(distDir, '_locales', 'en', 'messages.json'), 'utf8'));
+
 // Injected before any page/iframe script runs. Covers what the block page
-// (runtime) and the popup (storage.session) touch at load.
+// (runtime, i18n) and the popup (storage.session, i18n) touch at load.
 const stub = `
+  const messages = ${JSON.stringify(EN_MESSAGES)};
   globalThis.chrome = {
     runtime: {
       id: 'demo',
@@ -58,6 +66,17 @@ const stub = `
     storage: {
       session: { get: async () => ({ activeSession: ${JSON.stringify(DEMO_SESSION)} }) },
       local: { get: async () => ({}) },
+    },
+    i18n: {
+      getUILanguage: () => 'en',
+      getMessage: (key, subs) => {
+        const entry = messages[key];
+        if (!entry) return '';
+        const args = subs === undefined ? [] : [].concat(subs);
+        return entry.message
+          .replace(/\\$(\\w+)\\$/g, (m, name) => entry.placeholders?.[name.toLowerCase()]?.content ?? m)
+          .replace(/\\$(\\d)/g, (m, n) => args[n - 1] ?? '');
+      },
     },
   };`;
 

@@ -25,6 +25,14 @@
            UA so native scrollbars/controls render dark too — and is deliberately
            NOT a prefers-color-scheme swap. Do not reintroduce one. */
         color-scheme: dark;
+        /* #587 (as #318 on the block page): the DS computes `--surface-inset:
+           var(--paper-3)` once at :root, off the *light* paper. The ink
+           treatment remaps `--paper-3` to its dark value but never re-derives
+           `--surface-inset`, so on this fixed-ink surface the inset keeps the
+           light :root value, which painted the join-code chip cream behind its
+           on-ink code. Re-derive it here from the now-remapped ink paper so the
+           inset tracks the ink palette. */
+        --surface-inset: var(--paper-3, #2b2b38);
         /* A toolbar popup has no viewport of its own — it sizes to content.
            Pin a comfortable reading width and let the allowlist scroll. */
         width: 320px;
@@ -63,8 +71,12 @@
       .joincode__value {
         font-size: var(--text-base);
         letter-spacing: 0.12em;
-        color: var(--on-ink);
-        background: var(--surface-inset);
+        /* #587: an explicit inset background + on-ink text PAIR, each with a
+           literal fallback (the ink values: paper-3 / on-ink), so the code is a
+           dark chip with light text even if plink.css or its tokens never
+           resolve, instead of collapsing to light-on-light. */
+        color: var(--on-ink, #faf7f2);
+        background: var(--surface-inset, #2b2b38);
         border: var(--border-width) solid var(--border);
         border-radius: var(--radius);
         padding: var(--space-1) var(--space-2);
@@ -138,7 +150,7 @@
         <h1 data-i18n="popupActiveTitle">You're in focus</h1>
         <p class="muted" data-i18n="popupActiveBody">Anchor is keeping you on the sites your teacher allowed. Everything else is paused until the session ends.</p>
         <p class="joincode" data-joincode hidden>
-          <span data-i18n="popupClassCode">Class code</span>
+          <span data-i18n="popupJoinCode">Join code</span>
           <span class="joincode__value" data-joincode-value>—</span>
         </p>
         <p class="allowlist__label" data-i18n="popupAllowedSites">Allowed sites</p>

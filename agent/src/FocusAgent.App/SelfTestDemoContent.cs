@@ -8,8 +8,8 @@ namespace FocusAgent.App;
 /// string like "Self-Test Teacher" or "CONNECTED — SELF-TEST".
 ///
 /// The values deliberately match the teacher dashboard's demo data
-/// (<c>dashboard/lib/demo/demo_data.dart</c> — "Ms Rivera", class "3B",
-/// <c>PLINK-3B</c>) so the agent and dashboard shots on the website tell one
+/// (<c>dashboard/lib/demo/demo_data.dart</c> — "Ms Rivera", class "3B", join
+/// code <c>482917</c>) so the agent and dashboard shots on the website tell one
 /// coherent story: the same teacher, the same class, seen from both sides.
 /// Centralised here so every surface stays in step and a future copy change is a
 /// single edit.
@@ -19,8 +19,12 @@ internal static class SelfTestDemoContent
     /// <summary>The teacher who started the focus session (join toast).</summary>
     public const string TeacherName = "Ms Rivera";
 
-    /// <summary>The class join code (join toast / join-by-code).</summary>
-    public const string JoinCode = "PLINK-3B";
+    /// <summary>
+    /// The session's join code, carried by the join toast's payload. Six digits,
+    /// the only shape the backend hands out (#586); the dashboard's demo shows the
+    /// same code, which <c>dashboard/test/demo_data_test.dart</c> checks.
+    /// </summary>
+    public const string JoinCode = "482917";
 
     /// <summary>The signed-in student shown on the agent main window / tray.</summary>
     public const string StudentName = "Ada Lovelace";
