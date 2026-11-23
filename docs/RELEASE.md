@@ -54,7 +54,12 @@ hosts several projects). On a `website/**` push to `main`, the workflow syncs
 repo's root files and other projects are never touched) and is **idempotent**
 (the commit is guarded by `git diff --cached --quiet`, so a re-run with no source
 change is a clean no-op). The cross-repo push needs a scoped credential —
-`GITHUB_TOKEN` only reaches this repo — see the secrets inventory below.
+`GITHUB_TOKEN` only reaches this repo — see the secrets inventory below. The
+deploy itself checks nothing; [Website CI](../.github/workflows/website-ci.yml)
+checks every pull request that touches `website/**` (local links and images,
+`#fragment` targets across pages, duplicate ids, unclosed tags, image sizes, and
+the header, sub-navigation and footer every page carries a copy of), and the CI
+Gate waits for it (#583).
 
 > **One-time manual front-page link (NOT automated).** The Anchor card in
 > `plinklabs.github.io/index.html` is currently unlinked; it should be turned

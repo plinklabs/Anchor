@@ -7,6 +7,8 @@ name: Website Deploy
 # occupies only its `anchor/` subfolder. On a push to `main` that touches
 # `website/**`, this workflow mirrors `website/` into `plinklabs.github.io`'s
 # `anchor/` folder and pushes, so the published site never drifts from source.
+# It publishes without checking: Website CI (website-ci.yml) checks the pages'
+# links, anchors and markup on the pull request, and the CI Gate waits for it.
 #
 # Scope: the sync writes ONLY `anchor/` in the Pages repo (rsync target is the
 # `anchor/` subdir, with `--delete` confined to that subtree). Files the Pages
