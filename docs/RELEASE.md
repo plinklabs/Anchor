@@ -533,6 +533,11 @@ gzipped text file (`.txt.gz`) or several students of one session as one
 Students (and parents) should be told that technical logs are collected while
 it is on.
 
+In production (`anchor-api-arcadia`) it is **on for the pilot**: `true` since
+2026-11-20, with the other `LogUpload` settings at their defaults (#555). Set
+it back to `false` once the pilot ends, unless the uploads have by then been
+made a deliberate part of real use.
+
 Every download is recorded (#566). The download states its purpose, one of
 the two the privacy policy allows (`TechnicalDiagnosis`, or `FraudSuspicion`:
 a concrete suspicion of fraud during a test or exam, at the request of the
