@@ -401,7 +401,7 @@ public class FocusEnforcerWindowTests
             await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
             "The window with the foreground was not minimized.");
         Assert.True(
-            offList.MinimizedItself == true,
+            await HowItMinimizedAsync(offList) == true,
             "The window with the foreground was minimized by the agent's thread rather than its own: it stays the " +
             "foreground window and gets what the student types (#560).");
         await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout + TimeSpan.FromMilliseconds(300));
@@ -421,7 +421,7 @@ public class FocusEnforcerWindowTests
         Assert.True(
             await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
             "The window was not minimized.");
-        Assert.True(offList.MinimizedItself == false, "A window minimized from the agent minimized itself.");
+        Assert.True(await HowItMinimizedAsync(offList) == false, "A window minimized from the agent minimized itself.");
     }
 
     [Fact]
@@ -450,7 +450,7 @@ public class FocusEnforcerWindowTests
         Assert.True(
             await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
             "The window did not go down once its app responded again.");
-        Assert.True(offList.MinimizedItself == true, "The window that responded again did not minimize itself.");
+        Assert.True(await HowItMinimizedAsync(offList) == true, "The window that responded again did not minimize itself.");
     }
 
     [Fact]
@@ -788,6 +788,20 @@ public class FocusEnforcerWindowTests
     private static void MakeTopmost(nint hwnd) =>
         NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+
+    /// <summary>
+    /// <see cref="TestWindow.MinimizedItself"/> once the window's thread learned of
+    /// its minimize (<c>WM_SIZE</c>), or null when it did not within a moment.
+    /// Windows parks a minimized window off the screen before that thread gets
+    /// <c>WM_SIZE</c>: on a locked workstation 400 ms before, where a test that read
+    /// it the moment the window <see cref="TestWindow.HasGoneDown"/> saw no minimize
+    /// at all (#576).
+    /// </summary>
+    private static async Task<bool?> HowItMinimizedAsync(TestWindow window)
+    {
+        await WaitUntilAsync(() => window.MinimizedItself != null, TimeSpan.FromSeconds(2));
+        return window.MinimizedItself;
+    }
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {

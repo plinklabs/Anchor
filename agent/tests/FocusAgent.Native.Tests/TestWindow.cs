@@ -90,7 +90,9 @@ internal sealed class TestWindow : IDisposable
     /// out itself (<c>ShowWindowAsync</c>), which hands the foreground on (#438,
     /// #560); false when another thread carried it out on the window (a
     /// <c>ShowWindow</c> from the agent), which Windows sends to the window's thread
-    /// and which leaves it the foreground window; null before any minimize.
+    /// and which leaves it the foreground window; null before any minimize. Set when
+    /// the window's thread gets <c>WM_SIZE</c>, which can come a moment after the
+    /// window is parked off the screen (#576).
     /// </summary>
     public bool? MinimizedItself => Volatile.Read(ref _minimizedItself) switch
     {
