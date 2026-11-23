@@ -44,22 +44,37 @@ It also reports, in style.css:
   currentColor), so no text takes a colour the pairs don't check: --magenta,
   the brand's spark, is 4.30:1 on --paper and only for borders and the mark
   (#600).
-- button, callout: a rule for the elements inside a container that reaches
-  into a component on any page: a button (class="cta") or a callout
-  (class="callout"), itself or an element inside it. A component's own rules
-  give it the same look on every page; a container's rule changes it in that
-  container only. ".doc a" made the contact page's primary button magenta on
-  magenta (#599), ".doc h2" put 40px between the contact page's callout
-  eyebrow and heading (#602). Write ".doc a:not(.cta)" and
-  ".doc h2:not(.callout *)". A rule is a container's when it reaches the
-  element only through an ancestor outside the component and names none of
-  the component's classes, nor its id: ".callout p", "p a" (in the callout's
-  own <p>) and ".doc .callout" are fine. Selectors are matched against each
-  element's ancestors in the markup; a test the markup can't settle (:hover,
-  ::after, [href^=...]) counts as a match, ">" is read as a descendant
-  combinator, the compound before "+" or "~" isn't checked, and a :not()
-  rules an element out only with simple selectors and descendant
-  combinators, such as :not(.cta) and :not(.callout *).
+- button, callout, eyebrow: a rule for the elements inside a container that
+  reaches into a component on any page: a button (class="cta"), a callout
+  (class="callout") or an eyebrow (class="eyebrow"), itself or an element
+  inside it. A component's own rules give it the same look on every page; a
+  container's rule changes it in that container only. ".doc a" made the
+  contact page's primary button magenta on magenta (#599), ".doc h2" put 40px
+  between the contact page's callout eyebrow and heading (#602), and the
+  eyebrow is a <p>, so ".callout p" and ".doc p" set the callouts' and prose
+  pages' eyebrows at 15px for 10.4px (#603). Write ".doc a:not(.cta)",
+  ".doc h2:not(.callout *)" and ".callout p:not(.eyebrow)"; a rule that has a
+  :not() already takes the component in it, ".doc p:not(.callout *, .eyebrow)",
+  as a second :not() would add to its weight. A rule is a container's when it
+  reaches the element only through an ancestor outside the component and
+  names none of the component's classes, nor its id: for the callout,
+  ".callout p", "p a" (in the callout's own <p>) and ".doc .callout" are fine.
+  An element inside two components, such as a callout's eyebrow, is checked
+  for each. Selectors are matched against each element's ancestors in the
+  markup; a test the markup can't settle (:hover, ::after, [href^=...])
+  counts as a match, ">" is read as a descendant combinator, the compound
+  before "+" or "~" isn't checked (so ".callout p + p" reaches an eyebrow
+  too), and a :not() rules an element out only with simple selectors and
+  descendant combinators, such as :not(.cta) and :not(.callout *).
+- gutter: an element that takes the page's side gutter, a left or right
+  margin or padding of var(--gutter), inside an element that has it already.
+  The page's sections hold the gutter between the page's edge and their
+  content, as the prose pages' column (.doc) does with its padding; a
+  callout in .doc took it again from ".callout" and sat 48px in from the
+  contact page's text at 1280px wide (#604). Write ".callout:not(.doc *)".
+  The rule that gives the gutter must not reach the element: the check
+  doesn't weigh the cascade, so a later rule that takes the gutter back
+  doesn't count. Selectors are matched as for the components above.
 
 Under GitHub Actions each problem is printed as an error annotation on its
 file and line. Exits 1 if it found any problem.
@@ -123,8 +138,23 @@ CSS_CUSTOM_PROPERTY = re.compile(r"\s*(--[A-Za-z0-9_-]+)\s*:(.*)", re.S)
 HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
 # The components, by the class each carries: (name, plural). Their own rules
 # give them the same look on every page: .cta--primary and .cta--secondary a
-# button's colours, the .callout rules a callout's spacing.
-COMPONENTS = {"cta": ("button", "buttons"), "callout": ("callout", "callouts")}
+# button's colours, the .callout rules a callout's spacing, .eyebrow an
+# eyebrow's size.
+COMPONENTS = {
+    "cta": ("button", "buttons"),
+    "callout": ("callout", "callouts"),
+    "eyebrow": ("eyebrow", "eyebrows"),
+}
+# The page's side gutter: the space between the page's edge and its text,
+# which the page's sections and the prose column each hold once (#604).
+GUTTER = "--gutter"
+# A margin or padding declaration: its longhand's side ("-left", "-inline",
+# ...; none for the shorthand) and its value.
+CSS_SPACING = re.compile(
+    r"(?<![\w-])(?:margin|padding)"
+    r"(-(?:left|right|top|bottom|inline|block)(?:-start|-end)?)?\s*:\s*([^;{}]*)"
+)
+IMPORTANT = re.compile(r"\s*!\s*important\s*$", re.I)
 # In a :not() argument, what the markup can't settle or reaches() only
 # approximates: a pseudo-class, a partial attribute match, a combinator other
 # than the descendant one.
@@ -156,8 +186,11 @@ class Page(HTMLParser):
         self.subnav_links = []  # (line, href, aria-current)
         # (line, tag, attrs, [(tag, attrs)] of its ancestors, component class,
         # index of the component in ancestors + [itself]) for every element
-        # that is a component or inside one; the innermost one counts.
+        # that is a component or inside one: one entry for each kind of
+        # component it is or is in, the innermost of that kind. An eyebrow in
+        # a callout is both.
         self.components = []
+        self.elements = []      # (line, tag, attrs, [(tag, attrs)] of its ancestors)
         self.problems = []      # (line, message)
         self._open = []         # [(tag, line, attrs)]
         self._capture = None    # [name, depth, line, tokens] inside a shared block
@@ -188,13 +221,15 @@ class Page(HTMLParser):
         if tag == "img":
             self.images.append((line, values))
         ancestors = [(t, a) for t, _, a in self._open]
+        self.elements.append((line, tag, values, ancestors))
         chain = ancestors + [(tag, values)]
+        found = set()
         for index in range(len(chain) - 1, -1, -1):
             classes = (chain[index][1].get("class") or "").split()
-            kind = next((c for c in COMPONENTS if c in classes), None)
-            if kind:
-                self.components.append((line, tag, values, ancestors, kind, index))
-                break
+            for kind in COMPONENTS:
+                if kind in classes and kind not in found:
+                    found.add(kind)
+                    self.components.append((line, tag, values, ancestors, kind, index))
 
         if self._capture is None and self._open and self._open[-1][0] == "body":
             name = None
@@ -408,7 +443,7 @@ def check_text_colours(site):
     problems, checked = [], 0
     for declaration in CSS_COLOR_DECLARATION.finditer(css):
         checked += 1
-        value = re.sub(r"\s*!\s*important\s*$", "", declaration.group(1).strip(), flags=re.I)
+        value = IMPORTANT.sub("", declaration.group(1).strip())
         token = CSS_VAR.fullmatch(value)
         if INHERITED_COLOUR.fullmatch(value) or (token and token.group(1) in text_tokens):
             continue
@@ -572,8 +607,8 @@ def check_components(site, pages):
             more = f" (and {len(reached) - 1} more)" if len(reached) > 1 else ""
             what = (f"the {name} {start_tag(*component)}" if is_component
                     else f"the {start_tag(tag, attrs)} in the {name} {start_tag(*component)}")
-            suffix = "".join(dict.fromkeys(
-                f":not(.{kind})" if r[5] else f":not(.{kind} *)" for r in reached))
+            negated = ", ".join(dict.fromkeys(
+                f".{kind}" if r[5] else f".{kind} *" for r in reached))
             subject = parts[-1][1]
             if selector.endswith(subject):
                 # Before the subject's pseudo-classes: "a:not(.cta):hover".
@@ -584,9 +619,23 @@ def check_components(site, pages):
                         cut = i
                         break
                 head = selector[:len(selector) - len(subject)]
-                fixed = f'"{head}{subject[:cut]}{suffix}{subject[cut:]}"'
+                rest = subject[cut:]
+                if rest.startswith(":not("):
+                    # Into the :not() the subject has, so the rule keeps its
+                    # weight: "p:not(.callout *, .eyebrow)". A second :not()
+                    # adds a class's weight, and ".doc p" would then beat
+                    # ".doc .lead".
+                    depth = 0
+                    for i, ch in enumerate(rest):
+                        depth += (ch in "([") - (ch in ")]")
+                        if ch == ")" and depth == 0:
+                            break
+                    rest = f"{rest[:i]}, {negated}{rest[i:]}"
+                else:
+                    rest = f":not({negated}){rest}"
+                fixed = f'"{head}{subject[:cut]}{rest}"'
             else:
-                fixed = f"add {suffix} to its last compound"
+                fixed = f"add :not({negated}) to its last compound"
             problems.append((
                 path, line,
                 f'{name}: "{selector}" restyles {what} on '
@@ -596,6 +645,103 @@ def check_components(site, pages):
                 f"{fixed}",
             ))
     return problems, counts
+
+
+def value_words(value):
+    """A declaration's value, split at the spaces outside ()."""
+    words, depth, current = [], 0, ""
+    for ch in value:
+        depth += (ch == "(") - (ch == ")")
+        if ch.isspace() and depth == 0:
+            if current:
+                words.append(current)
+            current = ""
+        else:
+            current += ch
+    if current:
+        words.append(current)
+    return words
+
+
+def side_values(side, value):
+    """What a margin or padding declaration gives an element's left and right
+    sides; side is its longhand's ("-left", "-inline", ...), "" for the
+    shorthand: top [right [bottom [left]]]."""
+    words = value_words(IMPORTANT.sub("", value.strip()))
+    if side:
+        return words if side.startswith(("-left", "-right", "-inline")) else []
+    return {1: words, 2: words[1:2], 3: words[1:2], 4: words[1::2]}.get(len(words), [])
+
+
+def gutter_rules(css):
+    """[(selector, compounds, line)] for the stylesheet's rules that give an
+    element a left or right margin or padding of var(--gutter)."""
+    css = blank_comments(css)
+    rules = []
+    for rule in CSS_RULE.finditer(css):
+        prelude = rule.group(1)
+        if prelude.strip().startswith("@"):
+            continue
+        body = css[rule.end(1) + 1:rule.end() - 1]
+        if not any(
+                var.group(1) == GUTTER
+                for declaration in CSS_SPACING.finditer(body)
+                for side in side_values(declaration.group(1) or "", declaration.group(2))
+                for var in CSS_VAR.finditer(side)):
+            continue
+        start = rule.start(1) + len(prelude) - len(prelude.lstrip())
+        line = css.count("\n", 0, start) + 1
+        for selector in selector_list(prelude):
+            rules.append((" ".join(selector.split()), compounds(selector), line))
+    return rules
+
+
+def check_gutters(site, pages):
+    """(problems, elements checked): an element that takes the page's side
+    gutter must not be inside one that has it already, where it sits a
+    gutter further in than the text around it."""
+    path = site / STYLESHEET
+    if not path.is_file():
+        return [], 0
+    rules = gutter_rules(path.read_text(encoding="utf-8"))
+
+    def gutters(tag, attrs, ancestors):
+        return [rule for rule in rules if reaches(rule[1], tag, attrs, ancestors)]
+
+    found, checked = {}, 0
+    for page in pages.values():
+        for line, tag, attrs, ancestors in page.elements:
+            inner = gutters(tag, attrs, ancestors)
+            if not inner:
+                continue
+            checked += 1
+            # The nearest ancestor that has the gutter.
+            for level in range(len(ancestors) - 1, -1, -1):
+                outer = gutters(*ancestors[level], ancestors[:level])
+                if outer:
+                    for selector, parts, rule_line in inner:
+                        # A rule that reaches the element without the
+                        # container can leave the container out; one written
+                        # for the container's elements can't.
+                        own = reaches(parts, tag, attrs, ancestors[level + 1:])
+                        found.setdefault((selector, rule_line), []).append(
+                            (page, line, tag, attrs, ancestors[level], outer[0], own))
+                    break
+    problems = []
+    for (selector, rule_line), reached in found.items():
+        page, line, tag, attrs, container, (outer, _, outer_line), own = reached[0]
+        more = f" (and {len(reached) - 1} more)" if len(reached) > 1 else ""
+        fix = (f'"{selector}:not({outer} *)"' if own
+               else f'leave it out of "{selector}", as "{outer}" holds it')
+        problems.append((
+            path, rule_line,
+            f'gutter: "{selector}" gives the {start_tag(tag, attrs)} on '
+            f"{page.path.relative_to(site).as_posix()}:{line}{more} the page's side gutter "
+            f"(var({GUTTER})) inside the {start_tag(*container)}, which has it already "
+            f'from "{outer}" on line {outer_line}: it then sits a gutter further in than the '
+            f"text around it. Give the gutter once: {fix}",
+        ))
+    return problems, checked
 
 
 def check(site):
@@ -714,6 +860,8 @@ def check(site):
     problems.extend(colour_problems)
     component_problems, stats["components"] = check_components(site, pages)
     problems.extend(component_problems)
+    gutter_problems, stats["gutters"] = check_gutters(site, pages)
+    problems.extend(gutter_problems)
 
     problems.sort(key=lambda p: (str(p[0]), p[1]))
     return problems, stats
@@ -748,7 +896,7 @@ def main():
     print(
         f"All {stats['pages']} pages pass: {stats['links']} local links and images, "
         f"{stats['fragments']} fragments, {stats['images']} image sizes, "
-        f"{components}{stats['colours']} text colours and "
+        f"{components}{stats['gutters']} side gutters, {stats['colours']} text colours and "
         f"{stats['contrasts']} contrasts checked."
     )
     return 0

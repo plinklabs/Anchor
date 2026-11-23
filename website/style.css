@@ -317,13 +317,19 @@ main { flex: 1; }
    Callout block
    ============================================================ */
 .callout {
-  margin: clamp(2rem, 5vw, 3rem) var(--gutter);
+  margin: clamp(2rem, 5vw, 3rem) 0;
   padding: clamp(1.5rem, 4vw, 2rem);
   border: var(--border);
   border-left: 3px solid var(--magenta);
   background: var(--callout);
   max-width: 52rem;
 }
+
+/* A callout between the page's sections holds the page's side gutter itself,
+   as they do. In .doc, whose padding holds it already, it takes none and
+   lines up with the prose around it: with the gutter on both, the contact
+   page's callout sat 48px in from its text at 1280px (#604). */
+.callout:not(.doc *) { margin-inline: var(--gutter); }
 
 .callout .eyebrow {
   color: var(--magenta-press);
@@ -338,13 +344,16 @@ main { flex: 1; }
   margin-bottom: 0.5rem;
 }
 
-.callout p {
+/* The callout's paragraph rules leave its eyebrow out: the eyebrow is a <p>,
+   and a plain ".callout p" outweighs ".eyebrow" and set the callouts'
+   eyebrows at 15px, where the feature sections' are 10.4px (#603). */
+.callout p:not(.eyebrow) {
   font-size: 0.9375rem;
   line-height: 1.65;
   color: var(--ink);
 }
 
-.callout p + p { margin-top: 0.75rem; }
+.callout p + p:not(.eyebrow) { margin-top: 0.75rem; }
 
 /* Links inside a callout read as links (the global reset makes them plain). */
 .callout p a { color: var(--magenta-press); }
@@ -358,7 +367,9 @@ main { flex: 1; }
    between its eyebrow and its heading, where the callouts on the other pages
    have 12px (#602). Every rule below for the elements in .doc carries
    :not(.callout *), so they still weigh the same against each other:
-   ".doc .lead" and ".doc .updated" outweigh ".doc p". */
+   ".doc .lead" and ".doc .updated" outweigh ".doc p". The paragraph rules
+   leave the eyebrows out too, in the same :not(): ".doc p" set them at 15px
+   (#603), and a second :not() would make it outweigh ".doc .lead". */
 .doc {
   padding: clamp(3rem, 8vw, 6rem) var(--gutter) clamp(2.5rem, 6vw, 4rem);
   max-width: 46rem;
@@ -389,12 +400,12 @@ main { flex: 1; }
   letter-spacing: -0.01em;
   margin: 2.5rem 0 0.75rem;
 }
-.doc p:not(.callout *), .doc li:not(.callout *) {
+.doc p:not(.callout *, .eyebrow), .doc li:not(.callout *) {
   font-size: 0.9375rem;
   line-height: 1.7;
   color: var(--ink);
 }
-.doc p:not(.callout *) { margin-bottom: 1rem; }
+.doc p:not(.callout *, .eyebrow) { margin-bottom: 1rem; }
 .doc ul:not(.callout *) { padding-left: 1.25rem; margin-bottom: 1rem; }
 .doc li:not(.callout *) { margin-bottom: 0.5rem; }
 .doc strong:not(.callout *) { font-weight: 500; }
