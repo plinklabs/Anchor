@@ -13,7 +13,8 @@ namespace FocusAgent.IntegrationTests;
 /// that the extension is installed in an open profile, waits the grace period,
 /// wakes it by opening Edge in that profile at a page the session allows, waits
 /// once more, then pauses Edge and tells the teacher it isn't connected (not that
-/// it was switched off). A link that comes up at last lifts the pause.
+/// it was switched off). A link that comes up at last lifts the pause. A device
+/// without the extension in any profile is still left alone.
 ///
 /// The real agent, backend and witness pipe, with the stand-ins of
 /// <see cref="ExtensionOffInOneProfileTests"/>: a <c>User Data</c> folder of the
@@ -126,6 +127,65 @@ public sealed class ExtensionNeverConnectedTests
             window?.Dispose();
             try { Directory.Delete(root, recursive: true); } catch { /* best-effort */ }
         }
+    }
+
+    [Fact]
+    public async Task A_device_without_the_extension_in_any_profile_is_left_alone()
+    {
+        // The other side of the same rule: Edge has the school profile (Default) and
+        // a personal one (Profile 1), and the extension in neither: never installed,
+        // or not yet. Its link never comes up. Nothing filters Edge on this device,
+        // so pausing it, waking an extension that isn't there, or telling the
+        // teacher would only stop a student who did nothing: both guards stay off,
+        // as before #556.
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(
+            _backend.Url, api, signedIn: true, schoolProfileHasExtension: false, extensionConnects: false,
+            personalProfileHasExtension: false, grace: Grace);
+
+        // A window of each profile on screen. The agent reads the school profile as
+        // one without the extension: where the extension is installed in another
+        // profile, Edge is paused for that, and the teacher told (#536, #519).
+        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge");
+        var personal = await run.OpenWindowAsync("Anchor e2e - Personal - Microsoft Edge", "MSEdge.UserData.Profile1");
+        await run.WaitForAsync(
+            s => s.SchoolProfile is { Status: "Missing", WithoutExtension: "Default" }
+                 && s.ExtensionGuard?.WitnessConnected == false,
+            TimeSpan.FromSeconds(10), "the agent to read the school profile as one without the extension");
+
+        // Two grace periods (where it is installed: the wake, then the pause) and
+        // the report time go by. The guard stays Off throughout, nothing is opened
+        // to wake it, no window is paused and no overlay comes up.
+        var states = new HashSet<string>();
+        var overlays = new HashSet<string>();
+        var schoolPaused = false;
+        var personalPaused = false;
+        StatusSnapshot? last = null;
+        var until = DateTime.UtcNow + Grace + Grace + SchoolProfileRun.Report + TimeSpan.FromSeconds(3);
+        while (DateTime.UtcNow < until)
+        {
+            last = await run.Agent.TryGetStatusAsync() ?? last;
+            if (last?.ExtensionGuard?.State is { } state) states.Add(state);
+            if (last?.Overlay is { } overlay) overlays.Add(overlay);
+            schoolPaused |= WindowCapture.IsIconic(school.Handle);
+            personalPaused |= WindowCapture.IsIconic(personal.Handle);
+            await Task.Delay(250);
+        }
+        Assert.True(
+            states.SetEquals(["Off"]),
+            $"The guard left Off on a device without the extension (states seen: {string.Join(", ", states)}).");
+        Assert.Null(last!.SchoolProfile?.LastOpened);
+        Assert.Empty(overlays);
+        Assert.False(schoolPaused, "The school profile's window was paused on a device without the extension.");
+        Assert.False(personalPaused, "The personal profile's window was paused on a device without the extension.");
+
+        // And the teacher heard nothing.
+        foreach (var kind in new[]
+                 {
+                     "extension_not_connected", "extension_disabled", "outside_school_profile",
+                     "school_profile_without_extension", "school_profile_missing",
+                 })
+            Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, kind));
     }
 
     /// <summary>

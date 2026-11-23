@@ -50,11 +50,16 @@ namespace FocusAgent.Core.Tamper;
 /// <see cref="TamperKinds.InPrivateOpened"/>, which waits as long
 /// (<see cref="InPrivateWitnessMonitor"/>, #148, #535).
 ///
-/// Like the extension pause, the rule leaves a device alone where the extension
-/// never connected since the agent started: there Edge isn't filtered in any
-/// profile, and pausing one wouldn't change that. The rule is off as well while
-/// the school profile can't be told (<see cref="SchoolProfileStatus.Unknown"/>).
-/// When the session ends, nothing is paused any more.
+/// The rule guards the devices the extension pause guards. It leaves a device
+/// alone where the extension never connected since the agent started and isn't
+/// installed in any Edge profile either: there Edge isn't filtered in any
+/// profile, and pausing one wouldn't change that. Where it is installed, though
+/// its link never came up (#556), the rule is in force all the same (#519): a
+/// profile that never had the extension, a Guest window and an InPrivate window
+/// would otherwise browse unfiltered next to the profile that has it, and nobody
+/// would hear of it. The rule is off as well while the school profile can't be
+/// told (<see cref="SchoolProfileStatus.Unknown"/>). When the session ends,
+/// nothing is paused any more.
 /// </summary>
 public sealed class SchoolProfileGuard : IDisposable
 {
@@ -64,6 +69,7 @@ public sealed class SchoolProfileGuard : IDisposable
     private readonly IBrowserWindowReader _windows;
     private readonly SignedInAccount _account;
     private readonly ITamperReporter _reporter;
+    private readonly ExtensionWakeUp? _wakeUp;
     private readonly TimeProvider _clock;
     private readonly TimeSpan _interval;
     private readonly TimeSpan _reportAfter;
@@ -77,6 +83,10 @@ public sealed class SchoolProfileGuard : IDisposable
 
     private Guid? _sessionId;
     private ITimer? _timer;
+    // #519: the extension is installed in an Edge profile though its link wasn't
+    // up at the join, as the extension pause reads it then (#556). With a link up
+    // since, the device is guarded anyway.
+    private bool _installedAtJoin;
     private SchoolProfileReading _reading = SchoolProfileReading.Unknown;
     // The name Edge shows for the school profile, from the title of one of its
     // browser windows (#537); kept while none is open.
@@ -93,6 +103,12 @@ public sealed class SchoolProfileGuard : IDisposable
     private bool _reportedOutside;
     private bool _reportedMissing;
 
+    /// <param name="wakeUp">
+    /// Tells whether the extension is installed in an Edge profile, as the extension
+    /// pause reads it at the join (#556): where it is, the rule is in force though
+    /// the link never came up (#519). Null: only a device where the link came up is
+    /// guarded.
+    /// </param>
     public SchoolProfileGuard(
         SessionCoordinator sessions,
         ExtensionWitnessMonitor witness,
@@ -103,7 +119,8 @@ public sealed class SchoolProfileGuard : IDisposable
         IOptions<SessionSettings> settings,
         IOptions<WitnessSettings> witnessSettings,
         TimeProvider? clock = null,
-        ILogger<SchoolProfileGuard>? log = null)
+        ILogger<SchoolProfileGuard>? log = null,
+        ExtensionWakeUp? wakeUp = null)
     {
         _sessions = sessions;
         _witness = witness;
@@ -111,6 +128,7 @@ public sealed class SchoolProfileGuard : IDisposable
         _windows = windows;
         _account = account;
         _reporter = reporter;
+        _wakeUp = wakeUp;
         _clock = clock ?? TimeProvider.System;
         _interval = TimeSpan.FromSeconds(Math.Max(1, settings.Value.SchoolProfileScanSeconds));
         _reportAfter = TimeSpan.FromSeconds(Math.Max(1, settings.Value.SchoolProfileReportSeconds));
@@ -192,7 +210,8 @@ public sealed class SchoolProfileGuard : IDisposable
     /// (not minimized), with those windows, on a timer thread: the focus
     /// controller pauses them. Raised on every such scan, so a window the student
     /// restored without a foreground change goes down again too. Not raised where
-    /// the extension never connected (the rule leaves such a device alone).
+    /// the extension never connected and isn't installed in any profile (the rule
+    /// leaves such a device alone).
     /// </summary>
     public event EventHandler<IReadOnlyList<nint>>? WindowsOutside;
 
@@ -260,12 +279,16 @@ public sealed class SchoolProfileGuard : IDisposable
     private void OnSessionJoined(object? sender, SessionStartedPayload payload)
     {
         var sessionId = payload.SessionId;
+        // #519: read as the extension pause reads it at the join (#556), so the two
+        // guard the same devices. Outside the gate: it reads files.
+        var installed = !_witness.HasConnected && _wakeUp?.IsInstalled() == true;
         ITimer? previous;
         lock (_gate)
         {
             previous = _timer;
             _sessionId = sessionId;
             ResetLocked();
+            _installedAtJoin = installed;
             // The first scan comes one interval after the join, not at once: what it
             // finds must reach the extension guard and the focus controller, which
             // hear of the session after this does. A window outside the school
@@ -299,6 +322,7 @@ public sealed class SchoolProfileGuard : IDisposable
         _missingExtension = false;
         _reportedOutside = false;
         _reportedMissing = false;
+        _installedAtJoin = false;
     }
 
     private void OnTimer(Guid sessionId)
@@ -348,17 +372,20 @@ public sealed class SchoolProfileGuard : IDisposable
             .Select(w => (Window: w, Profile: _probe.Classify(reading.Profile, w.AppId, w.Title, schoolName)))
             .Where(w => EdgeSchoolProfileProbe.IsOutside(w.Profile))
             .ToList();
-        // The rule leaves a device alone where the extension never connected, as the
-        // extension pause does (ExtensionGuardState.Off).
-        var guarded = _witness.HasConnected;
         var now = _clock.GetUtcNow();
 
-        bool missingChanged, missing;
+        bool missingChanged, missing, guarded;
         SchoolProfileReading previous;
         string? reportKind = null;
         lock (_gate)
         {
             if (_sessionId != sessionId) return;
+            // The rule leaves a device alone where the extension never connected and
+            // isn't installed either, as the extension pause does
+            // (ExtensionGuardState.Off). Installed but never connected is guarded
+            // (#519): its profile is the one to work in, and a window of a profile
+            // that never had the extension browses unfiltered.
+            guarded = _witness.HasConnected || _installedAtJoin;
             previous = _reading;
             _reading = reading;
             _schoolProfileName = schoolName;

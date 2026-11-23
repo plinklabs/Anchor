@@ -1655,7 +1655,9 @@ public partial class App : Application
         // nothing and nobody heard of it. The guard (below) reads where it is
         // installed and which of those profiles is open, wakes it by opening Edge
         // there at a page the session allows, and pauses Edge if it still doesn't
-        // connect. The relay is read only when waking, so no cycle.
+        // connect. The relay is read only when waking, so no cycle. #519 -- the
+        // school-profile guard (above) takes it too, so the school-profile rule
+        // guards the same devices: installed but never connected included.
         builder.Services.AddSingleton(sp => new ExtensionWakeUp(
             sp.GetRequiredService<IOpenProfileExtensionProbe>(),
             sp.GetRequiredService<IBrowserProfileLauncher>(),
