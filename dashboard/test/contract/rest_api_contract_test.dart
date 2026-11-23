@@ -6,6 +6,7 @@ import 'package:anchor_dashboard/api/admins_api.dart';
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/classes_api.dart';
+import 'package:anchor_dashboard/api/logs_api.dart';
 import 'package:anchor_dashboard/api/schools_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,13 +33,15 @@ class _Apis {
       classes = ClassesApi(client),
       bundles = BundlesApi(client),
       admins = AdminsApi(client),
-      schools = SchoolsApi(client);
+      schools = SchoolsApi(client),
+      logs = LogsApi(client);
 
   final SessionsApi sessions;
   final ClassesApi classes;
   final BundlesApi bundles;
   final AdminsApi admins;
   final SchoolsApi schools;
+  final LogsApi logs;
 }
 
 /// A backend that records each request and answers it with [body].
@@ -355,6 +358,41 @@ final _calls = <_Call>[
       LessonPeriod(start: '08:25', end: '09:15'),
     ]),
     (j) => School.fromJson(_map(j)),
+  ),
+  _Call(
+    'GET admin/log-uploads',
+    'LogsApi.listUploads',
+    (a) => a.logs.listUploads(),
+    (j) => _list(j, LogUpload.fromJson),
+  ),
+  _Call(
+    'POST admin/log-uploads/download',
+    'LogsApi.download',
+    (a) => a.logs.download(
+      sessionId: 's1',
+      userIds: ['u1', 'u2'],
+      purpose: LogAccessPurpose.fraudSuspicion,
+      reason: 'Suspected use of a chat site during the test.',
+      requestedBy: 'The principal',
+    ),
+  ),
+  _Call(
+    'POST admin/log-uploads/download',
+    'LogsApi.download',
+    (a) => a.logs.download(
+      sessionId: 's1',
+      userIds: ['u1'],
+      purpose: LogAccessPurpose.technicalDiagnosis,
+      reason: 'The agent never joined this session.',
+    ),
+    null,
+    'without who asked',
+  ),
+  _Call(
+    'GET admin/log-access',
+    'LogsApi.accessHistory',
+    (a) => a.logs.accessHistory(),
+    (j) => _list(j, LogAccessRecord.fromJson),
   ),
 ];
 

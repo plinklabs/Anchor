@@ -41,10 +41,8 @@
       <h1>What it takes to run Anchor for your school.</h1>
       <p>Anchor is self-hosted: your school runs its own backend in your own Azure tenant, and student devices talk only to that. This page is the IT summary — requirements, how it deploys, rollout, and the network shape. For the authoritative, step-by-step setup it hands you straight off to the GitHub docs, which are kept current with the code.</p>
       <!--
-        CTA target assumption: the Edge Add-ons listing is not public yet, so
-        "Add to Edge" points at the repository for now, matching the home page.
-        Repoint it to the canonical Edge Add-ons URL once the extension is
-        published. (Issue #254)
+        "Add to Edge" opens the extension's Edge Add-ons store listing, as on
+        the home page.
 
         "Publish your agent" leads to the agent section of docs/RELEASE.md,
         not to upstream's GitHub Releases: that Setup.exe is built for
@@ -53,7 +51,7 @@
       -->
       <div class="cta-row">
         <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor/blob/main/docs/SETUP.md">Deploy your backend</a>
-        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor">Add to Edge</a>
+        <a class="cta cta--secondary" href="https://microsoftedge.microsoft.com/addons/detail/dnkimhodjfogjibnbbfdjdapgmmiojio">Add to Edge</a>
         <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor/blob/main/docs/RELEASE.md#agent-agent-v">Publish your agent</a>
       </div>
     </section>
@@ -109,7 +107,7 @@
         <article>
           <p class="step">02</p>
           <h3>The agent</h3>
-          <p>Push an agent release tag on your repository. The release workflow builds a <code>Setup.exe</code> with your backend's address and Entra IDs baked in and publishes it on your repository's GitHub Releases, together with an install script for Intune. On school-managed laptops, package the two as an Intune Win32 app that installs for the signed-in student and starts the agent right away; the <a href="https://github.com/plinklabs/Anchor/blob/main/docs/INTUNE.md">Intune guide</a> has the settings. After that, the agent updates itself, so there is nothing to push per release. On their own laptop, a student runs the <code>Setup.exe</code> themselves: no admin rights needed, though the installer isn't code-signed yet, so Windows SmartScreen asks them to confirm once.</p>
+          <p>Push an agent release tag on your repository. The release workflow builds a <code>Setup.exe</code> with your backend's address and Entra IDs baked in and publishes it on your repository's GitHub Releases, together with an install script for Intune. On school-managed laptops, package the two as an Intune Win32 app that installs for the signed-in student and starts the agent right away; the <a href="https://github.com/plinklabs/Anchor/blob/main/docs/INTUNE.md">Intune guide</a> has the settings. After that the agent updates itself. A new release needs Intune only when you raise the detection rule's minimum version, to reach laptops whose agent hasn't updated itself; the Intune guide explains when. On their own laptop, a student runs the <code>Setup.exe</code> themselves: no admin rights needed, though the installer isn't code-signed yet, so Windows SmartScreen asks them to confirm once.</p>
         </article>
         <article>
           <p class="step">03</p>
@@ -126,7 +124,7 @@
       <p class="eyebrow">Network</p>
       <h2>Plain HTTPS outbound — no proxy surgery</h2>
       <p>Everything runs over <strong>HTTPS/TLS</strong>. Each student device makes <strong>outbound</strong> connections to your school's App Service (by default <code>anchor-api-&lt;suffix&gt;.azurewebsites.net</code>), which serves both the API and the realtime session channel. The realtime channel runs inside the API itself, so there is no separate SignalR service to allow — just make sure outbound HTTPS to that host permits <strong>WebSocket upgrades</strong>. Beyond that, devices sign in through Microsoft Entra ID (<code>login.microsoftonline.com</code>), and the agent checks your repository's GitHub Releases for updates.</p>
-      <p>Anchor needs <strong>no proxy certificate, no TLS interception, and no MITM</strong> on its connections. Because enforcement and reporting are device-resident and outbound-only, it is <strong>BYOD-friendly</strong>: it does not depend on devices sitting behind a particular network, so it works on school Wi-Fi and at home alike.</p>
+      <p>Anchor needs <strong>no proxy certificate, no TLS interception, and no MITM</strong> on its connections. Because enforcement and reporting are device-resident and outbound-only, it is <strong>BYOD-friendly</strong>: it does not depend on devices sitting behind a particular network, so it works on whatever network the laptop is on.</p>
     </section>
 
     <!-- ============================================================
@@ -165,14 +163,13 @@
       <h2>Deploy the backend, then roll out the clients</h2>
       <p>Stand up your school's backend first, then publish an agent release from your repository. Push it through Intune to your managed laptops, together with the Edge extension policy, and share its <code>Setup.exe</code> with students on their own laptops. The setup guide walks the backend end to end, the release guide covers the agent release, and the Intune guide the rollout to managed laptops.</p>
       <!--
-        "Add to Edge" points at the repository until the Edge Add-ons listing is
-        public, mirroring the home page. Repoint once published. (Issue #254)
+        "Add to Edge" opens the Edge Add-ons store listing, as in the hero.
         "Publish your agent" leads to the agent release guide, as in the hero.
         (Issue #361)
       -->
       <div class="cta-row">
         <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor/blob/main/docs/SETUP.md">Deploy your backend</a>
-        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor">Add to Edge</a>
+        <a class="cta cta--secondary" href="https://microsoftedge.microsoft.com/addons/detail/dnkimhodjfogjibnbbfdjdapgmmiojio">Add to Edge</a>
         <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor/blob/main/docs/RELEASE.md#agent-agent-v">Publish your agent</a>
       </div>
     </section>

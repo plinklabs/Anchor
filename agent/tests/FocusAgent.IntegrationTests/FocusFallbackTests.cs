@@ -135,6 +135,131 @@ public sealed class FocusFallbackTests
         });
     }
 
+    /// <summary>
+    /// #563: an off-list app restored from another thread, as the spec's
+    /// <see cref="WindowCapture.RestoreWindow"/> does. Windows carries that out in
+    /// steps it sends to the window's thread: the window is activated, which the
+    /// agent blocks, and the window's thread can carry the block's minimize out
+    /// before the step that moves the window back on screen, which then puts it
+    /// there while it counts as minimized. The block on the restore's second event
+    /// (MINIMIZEEND) changes nothing. On CI that happened once by chance; the spec
+    /// makes it happen: it restores the window without activating it, and the
+    /// window activates itself right before the move and holds the restore there
+    /// until the agent's minimize has landed
+    /// (<see cref="OffListWindow.MinimizeInTheMiddleOfTheNextRestore"/>). The window
+    /// is shown without being activated, so that activating it is a foreground
+    /// change the agent hears of, whichever spec ran before.
+    /// </summary>
+    [Fact]
+    public async Task ABlockThatLandsInTheMiddleOfARestore_StillTakesTheAppDown_AndGivesTheKeyboardBack()
+    {
+        await RunWithOffListWindowAsync(async (_, _, notepad, offList) =>
+        {
+            // The student works in Notepad...
+            Assert.True(
+                WindowCapture.BringToForeground(notepad),
+                "Notepad could not be brought to the foreground " +
+                $"(foreground: {WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}).");
+
+            // ...then another thread brings up the off-list app, and the agent's block
+            // lands in the middle of that.
+            offList.MinimizeInTheMiddleOfTheNextRestore();
+            WindowCapture.RestoreWithoutActivating(offList.Handle);
+            Assert.True(
+                offList.ActivatedInTheMiddleOfARestore,
+                "The off-list app could not take the foreground in the middle of its restore: Windows no longer let the " +
+                "spec's process give a window the foreground, so the agent had no event to block it on before the " +
+                "restore was done. Someone using the desktop takes that away; run the spec again without touching it " +
+                $"(foreground: {WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())}).");
+            Assert.True(
+                offList.MinimizedInTheMiddleOfARestore,
+                $"The agent did not block the off-list app while it was restored: no minimize landed in the " +
+                $"{OffListWindow.HoldARestoreFor.TotalSeconds:N0} s the spec held the restore " +
+                $"({WindowCapture.DescribePlacement(offList.Handle)}, foreground: " +
+                $"{WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())}).");
+            Assert.True(
+                offList.CameBackOnScreenWhileMinimized,
+                "The rest of the restore did not put the off-list app back on screen while it counted as minimized; " +
+                "the spec does not reproduce #563.");
+
+            Assert.True(
+                await WaitUntilAsync(
+                    () => offList.HasGoneDown && WindowCapture.ForegroundWindow() == notepad, TimeSpan.FromSeconds(5)),
+                "A block whose minimize landed in the middle of a restore from another thread left the off-list app " +
+                $"up (off-list app: {WindowCapture.DescribePlacement(offList.Handle)}, gone down: {offList.HasGoneDown}, " +
+                $"Notepad: {WindowCapture.DescribePlacement(notepad)}, foreground: " +
+                $"{WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())} " +
+                $"[{WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}]) (#563).");
+        }, activateOffList: false);
+    }
+
+    /// <summary>
+    /// #580: the other order of #563. The off-list app takes the foreground in the
+    /// middle of a restore from another thread before the restore starts to move it
+    /// back on screen, as a <c>SW_RESTORE</c> activates the window first, and the
+    /// agent's block lands there
+    /// (<see cref="OffListWindow.MinimizeInTheMiddleOfTheNextRestore"/> with
+    /// <c>beforeTheMove</c>). The app stays down, but Windows took its spot, parked
+    /// off the screen, as the place it goes back to: restored once the session is
+    /// over, it would come back off every monitor, out of the student's sight. The
+    /// agent saw the app on screen when the session-start sweep took it down, and
+    /// must give it back that place.
+    /// </summary>
+    [Fact]
+    public async Task ABlockThatLandsBeforeARestoreMovesTheApp_LeavesItComingBackWhereItWas()
+    {
+        await RunWithOffListWindowAsync(async (_, _, notepad, offList) =>
+        {
+            var restorePlace = WindowCapture.RestorePlace(offList.Handle);
+            Assert.True(
+                WindowCapture.IsOnPrimaryMonitor(offList.Handle),
+                $"The off-list app does not go back to the primary monitor before the spec starts " +
+                $"({WindowCapture.DescribePlacement(offList.Handle)}).");
+
+            // The student works in Notepad...
+            Assert.True(
+                WindowCapture.BringToForeground(notepad),
+                "Notepad could not be brought to the foreground " +
+                $"(foreground: {WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}).");
+
+            // ...then another thread brings up the off-list app, and the agent's block
+            // lands before the restore moves it.
+            offList.MinimizeInTheMiddleOfTheNextRestore(beforeTheMove: true);
+            WindowCapture.RestoreWithoutActivating(offList.Handle);
+            Assert.True(
+                offList.ActivatedInTheMiddleOfARestore,
+                "The off-list app could not take the foreground in the middle of its restore: Windows no longer let the " +
+                "spec's process give a window the foreground, so the agent had no event to block it on before the " +
+                "restore was done. Someone using the desktop takes that away; run the spec again without touching it " +
+                $"(foreground: {WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())}).");
+            Assert.True(
+                offList.MinimizedInTheMiddleOfARestore,
+                $"The agent did not block the off-list app while it was restored: no minimize landed in the " +
+                $"{OffListWindow.HoldARestoreFor.TotalSeconds:N0} s the spec held the restore " +
+                $"({WindowCapture.DescribePlacement(offList.Handle)}, foreground: " +
+                $"{WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())}).");
+            Assert.True(
+                offList.HasGoneDown && !offList.CameBackOnScreenWhileMinimized,
+                "The rest of the restore brought the off-list app up; the spec does not reproduce #580 " +
+                $"({WindowCapture.DescribePlacement(offList.Handle)}).");
+
+            Assert.True(
+                await WaitUntilAsync(
+                    () => WindowCapture.RestorePlace(offList.Handle) == restorePlace, TimeSpan.FromSeconds(5)),
+                "A block whose minimize landed before a restore from another thread moved the off-list app left it " +
+                $"coming back somewhere else ({WindowCapture.DescribePlacement(offList.Handle)}, goes back to " +
+                $"{WindowCapture.RestorePlace(offList.Handle)}, was {restorePlace}) (#580).");
+            Assert.True(
+                offList.HasGoneDown && WindowCapture.IsOnPrimaryMonitor(offList.Handle),
+                $"The off-list app is not down, going back to the primary monitor ({WindowCapture.DescribePlacement(offList.Handle)}).");
+            Assert.True(
+                await WaitUntilAsync(() => WindowCapture.ForegroundWindow() == notepad, TimeSpan.FromSeconds(5)),
+                "Notepad did not get the keyboard back " +
+                $"(foreground: {WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())} " +
+                $"[{WindowCapture.GetClassName(WindowCapture.ForegroundWindow())}]).");
+        }, activateOffList: false);
+    }
+
     [Fact]
     public async Task BlockingAnApp_NeverPutsAHiddenAllowedWindowBackOnScreen()
     {
@@ -454,7 +579,20 @@ public sealed class FocusFallbackTests
     /// session-start sweep, and Notepad judged by the agent as the student's
     /// current allowed app, without it taking the foreground.
     /// </summary>
-    private async Task RunAsync(Func<BackendClient, Guid, IntPtr, IntPtr, Task> scenario)
+    private Task RunAsync(Func<BackendClient, Guid, IntPtr, IntPtr, Task> scenario) =>
+        RunWithOffListWindowAsync((api, sessionId, notepad, offList) => scenario(api, sessionId, notepad, offList.Handle));
+
+    /// <summary>
+    /// <see cref="RunAsync"/>, for a scenario that needs the off-list window itself
+    /// rather than its handle. An off-list window shown without
+    /// <paramref name="activateOffList"/> never takes the foreground, nor is it the
+    /// active window of its own thread, which it stays when Windows does not let it
+    /// take the foreground: minimized from the agent by the session-start sweep, it
+    /// would then be made the foreground window, without a foreground event, as it
+    /// is restored.
+    /// </summary>
+    private async Task RunWithOffListWindowAsync(
+        Func<BackendClient, Guid, IntPtr, OffListWindow, Task> scenario, bool activateOffList = true)
     {
         var api = new BackendClient(_backend.Url);
 
@@ -462,7 +600,8 @@ public sealed class FocusFallbackTests
         var notepad = await TestNotepad.OpenOnPrimaryMonitorAsync();
         try
         {
-            using var offList = await OffListWindow.OpenAsync("Anchor e2e off-list app", TimeSpan.FromSeconds(10));
+            using var offList = await OffListWindow.OpenAsync(
+                "Anchor e2e off-list app", TimeSpan.FromSeconds(10), activate: activateOffList);
 
             await using var agent = AgentProcess.Launch(_backend.Url, TestConfig.StudentOid, autoJoin: true);
             await agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
@@ -496,7 +635,7 @@ public sealed class FocusFallbackTests
                     "Notepad could not be restored.");
                 await WaitForLatestReportAsync(api, session.Id, TestConfig.AppProcessName, "Notepad");
 
-                await scenario(api, session.Id, notepad, offList.Handle);
+                await scenario(api, session.Id, notepad, offList);
             }
             finally
             {

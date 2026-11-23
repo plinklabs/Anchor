@@ -15,7 +15,10 @@ namespace FocusAgent.IntegrationTests;
 /// restore it, like any app. It
 /// can stop handling messages for a while (<see cref="Freeze"/>,
 /// <see cref="HangWhenMinimized"/>), as an app that is not responding (#440), or
-/// be brought back while it goes down (<see cref="RestoreWhenMinimized"/>, #476).
+/// be brought back while it goes down (<see cref="RestoreWhenMinimized"/>, #476),
+/// or have the agent's minimize land in the middle of a restore from another thread
+/// (<see cref="MinimizeInTheMiddleOfTheNextRestore"/>, #563), or before that restore
+/// moves it back on screen (#580).
 /// It can share another app's input and come to the top as that app's own windows
 /// do (<see cref="ShareInputWith"/>, #477). And it counts the keystrokes it
 /// receives (#441), so a spec can tell whether
@@ -43,6 +46,11 @@ internal sealed class OffListWindow : IDisposable
     private TimeSpan _hangFor;
     private int _hangWhenMinimized;
     private int _restoreWhenMinimized;
+    private int _minimizeInTheMiddleOfTheNextRestore;
+    private int _holdingARestore;
+    private int _minimizedInTheMiddleOfARestore;
+    private int _backOnScreenWhileMinimized;
+    private int _activatedInTheMiddleOfARestore;
     private int _keystrokes;
     private uint _threadId;
 
@@ -137,6 +145,66 @@ internal sealed class OffListWindow : IDisposable
         PrepareHang(duration);
         Volatile.Write(ref _restoreWhenMinimized, 1);
     }
+
+    /// <summary>
+    /// The next time another thread restores the window, as
+    /// <see cref="WindowCapture.RestoreWithoutActivating"/> does, activate the window
+    /// in the middle of the restore, once Windows marked it restored and before it
+    /// moved it back on screen, then hold the restore there until a minimize posted to
+    /// the window (the agent's block, <c>ShowWindowAsync</c>) has been carried out, for
+    /// no longer than <see cref="HoldARestoreFor"/> (#563). Windows carries a restore
+    /// from another thread out in steps it sends to the window's thread, which handles
+    /// what is posted to it in between. A restore that activates the window
+    /// (<c>SW_RESTORE</c>) mostly does that first, which raises the foreground event
+    /// the agent blocks the window on, though not always before the move: the spec
+    /// does it itself, right before the move. The rest of the restore then puts the
+    /// window back on screen, while it counts as minimized.
+    /// <para>
+    /// <paramref name="beforeTheMove"/> does that one step earlier, as Windows starts
+    /// to move the window (<c>WM_WINDOWPOSCHANGING</c>), where a <c>SW_RESTORE</c>
+    /// activates it (#580). The window then stays down, but Windows took its spot,
+    /// parked off the screen, as the place it goes back to.
+    /// </para>
+    /// </summary>
+    public void MinimizeInTheMiddleOfTheNextRestore(bool beforeTheMove = false)
+    {
+        Volatile.Write(ref _holdingARestore, 0);
+        Volatile.Write(ref _activatedInTheMiddleOfARestore, 0);
+        Volatile.Write(ref _minimizedInTheMiddleOfARestore, 0);
+        Volatile.Write(ref _backOnScreenWhileMinimized, 0);
+        Volatile.Write(ref _minimizeInTheMiddleOfTheNextRestore, beforeTheMove ? HoldBeforeTheMove : HoldAtTheMove);
+    }
+
+    private const int HoldAtTheMove = 1;
+    private const int HoldBeforeTheMove = 2;
+
+    /// <summary>
+    /// How long <see cref="MinimizeInTheMiddleOfTheNextRestore"/> holds a restore for
+    /// a minimize to land in the middle of it: well past the moment the agent takes
+    /// to block the window on the restore's first event, and short of the 5 s after
+    /// which Windows would take the restore for an app that does not respond.
+    /// </summary>
+    public static readonly TimeSpan HoldARestoreFor = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// Whether a minimize was carried out in the middle of the restore held by
+    /// <see cref="MinimizeInTheMiddleOfTheNextRestore"/>.
+    /// </summary>
+    public bool MinimizedInTheMiddleOfARestore => Volatile.Read(ref _minimizedInTheMiddleOfARestore) == 1;
+
+    /// <summary>
+    /// Whether the rest of that restore put the window back on screen while it
+    /// counted as minimized, which no minimize asked of it changes (#563).
+    /// </summary>
+    public bool CameBackOnScreenWhileMinimized => Volatile.Read(ref _backOnScreenWhileMinimized) == 1;
+
+    /// <summary>
+    /// Whether <see cref="MinimizeInTheMiddleOfTheNextRestore"/> got the window the
+    /// foreground in the middle of the restore, which raises the foreground event the
+    /// agent blocks it on. Windows lets it only while the spec's process may give a
+    /// window the foreground: it had the last input (<see cref="WindowCapture.BringToForeground"/>).
+    /// </summary>
+    public bool ActivatedInTheMiddleOfARestore => Volatile.Read(ref _activatedInTheMiddleOfARestore) == 1;
 
     /// <summary>
     /// Share the input of the app that shows <paramref name="window"/>
@@ -250,6 +318,21 @@ internal sealed class OffListWindow : IDisposable
             hanging.Hang();
             return IntPtr.Zero;
         }
+        // A restore from another thread sends WM_WINDOWPOSCHANGING as it starts to
+        // move the window back on screen, and WM_NCCALCSIZE as it moves it: marked
+        // restored, the window is still parked off it.
+        var holdAt = msg == WmNcCalcSize ? HoldAtTheMove : msg == WmWindowPosChanging ? HoldBeforeTheMove : 0;
+        if (holdAt != 0 && InSendMessage() && !IsIconic(hwnd) && IsParked(hwnd) &&
+            Open.TryGetValue(hwnd, out var restoring) &&
+            Interlocked.CompareExchange(ref restoring._minimizeInTheMiddleOfTheNextRestore, 0, holdAt) == holdAt)
+        {
+            restoring.HoldRestoreUntilMinimized(hwnd);
+        }
+        if (msg == WmWindowPosChanged && Open.TryGetValue(hwnd, out var moved) &&
+            Volatile.Read(ref moved._holdingARestore) == 1 && IsIconic(hwnd) && !IsParked(hwnd))
+        {
+            Volatile.Write(ref moved._backOnScreenWhileMinimized, 1);
+        }
         if (msg == WmSize && wParam == SizeMinimized && Open.TryGetValue(hwnd, out var minimized))
         {
             if (Interlocked.Exchange(ref minimized._restoreWhenMinimized, 0) == 1)
@@ -271,6 +354,40 @@ internal sealed class OffListWindow : IDisposable
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
+    /// <summary>
+    /// Gets the window the foreground in the middle of a restore, then handles its
+    /// messages, as its thread does while it waits for the next step of the restore,
+    /// until a minimize posted to it has been carried out
+    /// (<see cref="MinimizeInTheMiddleOfTheNextRestore"/>). Only a message loop that
+    /// takes what is posted from the queue gets to a <c>ShowWindowAsync</c> behind it.
+    /// </summary>
+    private void HoldRestoreUntilMinimized(IntPtr hwnd)
+    {
+        Volatile.Write(ref _holdingARestore, 1);
+        if (SetForegroundWindow(hwnd))
+            Volatile.Write(ref _activatedInTheMiddleOfARestore, 1);
+        var held = System.Diagnostics.Stopwatch.StartNew();
+        while (!IsIconic(hwnd) && held.Elapsed < HoldARestoreFor)
+        {
+            if (PeekMessageW(out var pending, IntPtr.Zero, 0, 0, PmRemove))
+            {
+                if (pending.message == WmQuit)
+                {
+                    PostQuitMessage((int)pending.wParam);
+                    break;
+                }
+                TranslateMessage(ref pending);
+                DispatchMessageW(ref pending);
+                continue;
+            }
+            Thread.Sleep(1);
+        }
+        Volatile.Write(ref _minimizedInTheMiddleOfARestore, IsIconic(hwnd) ? 1 : 0);
+    }
+
+    private static bool IsParked(IntPtr hwnd) =>
+        GetWindowRect(hwnd, out var rect) && rect.Left <= MinimizedPosition;
+
     public void Dispose()
     {
         _thaw.Set();
@@ -283,6 +400,11 @@ internal sealed class OffListWindow : IDisposable
 
     private const uint WmDestroy = 0x0002;
     private const uint WmSize = 0x0005;
+    private const uint WmQuit = 0x0012;
+    private const uint WmWindowPosChanged = 0x0047;
+    private const uint WmWindowPosChanging = 0x0046;
+    private const uint WmNcCalcSize = 0x0083;
+    private const uint PmRemove = 0x0001;
     private const uint WmClose = 0x0010;
     private const uint WmKeyDown = 0x0100;
     private const uint WmSysKeyDown = 0x0104;
@@ -383,6 +505,18 @@ internal sealed class OffListWindow : IDisposable
 
     [DllImport("user32.dll")]
     private static extern void PostQuitMessage(int nExitCode);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PeekMessageW(out Msg lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool InSendMessage();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     private static extern void DisableProcessWindowsGhosting();

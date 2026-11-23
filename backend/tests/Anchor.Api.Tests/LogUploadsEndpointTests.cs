@@ -286,6 +286,9 @@ public sealed class LogUploadsEndpointTests
     [Fact]
     public async Task Only_admins_can_list_and_download_an_upload()
     {
+        // The upload as the agent sent it, listed and downloaded by an admin.
+        // The download's record and its other rules (#566) are in
+        // AdminLogDownloadTests.
         var (teacher, students, @class) = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_on, studentCount: 1);
         var student = students[0];
         var admin = await TestSeed.AddUserAsync(_on, UserRole.Admin, "Admin " + Guid.NewGuid().ToString("N")[..6]);
@@ -295,12 +298,14 @@ public sealed class LogUploadsEndpointTests
         var body = Gzip("the student's lines");
         using (var upload = await UploadAsync(StudentClient(student), session.Id, window.To, body, agentVersion: "0.9.3"))
             Assert.Equal(HttpStatusCode.NoContent, upload.StatusCode);
-        var download = $"/admin/log-uploads/{session.Id}/{student.Id}";
+        const string download = "/admin/log-uploads/download";
+        var request = new DownloadLogUploadsRequest(
+            session.Id, [student.Id], LogAccessPurpose.TechnicalDiagnosis, "The agent never joined this session.", null);
         var list = $"/admin/log-uploads?sessionId={session.Id}";
 
         var adminClient = _on.CreateClient();
         TestAuth.SetAdmin(adminClient, admin);
-        using (var res = await adminClient.GetAsync(download))
+        using (var res = await adminClient.PostAsJsonAsync(download, request))
         {
             Assert.Equal(HttpStatusCode.OK, res.StatusCode);
             Assert.Equal("application/gzip", res.Content.Headers.ContentType?.MediaType);
@@ -309,10 +314,10 @@ public sealed class LogUploadsEndpointTests
         var summaries = await adminClient.GetFromJsonAsync<List<LogUploadSummary>>(list);
         var summary = Assert.Single(summaries!);
         Assert.Equal(
-            new LogUploadSummary(session.Id, student.Id, student.DisplayName, window.From, window.To,
-                IsComplete: true, now, "0.9.3", body.Length),
+            new LogUploadSummary(session.Id, student.Id, student.DisplayName, @class.Name, session.StartedAt,
+                window.From, window.To, IsComplete: true, now, "0.9.3", body.Length),
             summary);
-        using (var unknown = await adminClient.GetAsync($"/admin/log-uploads/{session.Id}/{Guid.NewGuid()}"))
+        using (var unknown = await adminClient.PostAsJsonAsync(download, request with { UserIds = [Guid.NewGuid()] }))
             Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
 
         var teacherClient = _on.CreateClient();
@@ -320,7 +325,7 @@ public sealed class LogUploadsEndpointTests
         var studentClient = StudentClient(student);
         foreach (var client in new[] { teacherClient, studentClient })
         {
-            using (var res = await client.GetAsync(download))
+            using (var res = await client.PostAsJsonAsync(download, request))
                 Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
             using (var res = await client.GetAsync(list))
                 Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);

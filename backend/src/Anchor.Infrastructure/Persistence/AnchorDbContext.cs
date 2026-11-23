@@ -29,6 +29,7 @@ public sealed class AnchorDbContext : DbContext
     public DbSet<Event> Events => Set<Event>();
     public DbSet<SessionEventSummary> SessionEventSummaries => Set<SessionEventSummary>();
     public DbSet<SessionLogUpload> SessionLogUploads => Set<SessionLogUpload>();
+    public DbSet<LogAccess> LogAccesses => Set<LogAccess>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
