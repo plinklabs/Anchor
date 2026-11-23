@@ -366,8 +366,10 @@ public sealed class SchoolProfileGuardTests : IDisposable
     }
 
     [Fact]
-    public async Task A_device_where_the_extension_never_connected_is_left_alone()
+    public async Task A_device_where_the_extension_never_connected_and_isnt_installed_is_left_alone()
     {
+        _h.Profiles.Remove("Default");
+        _h.Profiles.Remove("Profile 1");
         _h.Windows.Open(School, Personal);
         await _h.JoinAsync();
         _h.FirstScan();
@@ -375,6 +377,40 @@ public sealed class SchoolProfileGuardTests : IDisposable
 
         Assert.Empty(_h.OutsideEvents);
         Assert.Empty(_h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Where_the_extension_is_installed_but_never_connected_a_profile_that_never_had_it_is_handed_over_and_told()
+    {
+        // #519: the extension is in the school profile, but its link never came up
+        // (#556). The student browses in the personal profile, which never had it:
+        // unfiltered, and outside the school profile all the same.
+        _h.Profiles.Remove("Default");
+        _h.Windows.Open(School with { Minimized = true }, Personal, Guest);
+        var sessionId = await _h.JoinAsync();
+        _h.FirstScan();
+
+        Assert.Equal(SchoolProfileStatus.Found, _h.Guard.Status);
+        Assert.Equal(new nint[] { 0x20, 0x30 }, Assert.Single(_h.OutsideEvents).Order());
+
+        _h.Run(Report + Scan);
+        Assert.Equal(new[] { (sessionId, TamperKinds.OutsideSchoolProfile) }, _h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Where_the_extension_is_installed_but_never_connected_no_school_profile_is_told()
+    {
+        // #519: installed in the personal profile only, never connected, and no
+        // profile signed in with the school account.
+        _h.Profiles.Remove("Profile 1");
+        _h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", "", null));
+        var sessionId = await _h.JoinAsync();
+        _h.FirstScan();
+        Assert.True(_h.Guard.IsMissing);
+
+        _h.Run(Report + Scan);
+
+        Assert.Equal(new[] { (sessionId, TamperKinds.SchoolProfileMissing) }, _h.Reporter.Calls);
     }
 
     [Fact]
@@ -439,10 +475,9 @@ public sealed class SchoolProfileGuardTests : IDisposable
                 Options.Create(new RealtimeSettings { JoinConfirmationDuration = TimeSpan.FromSeconds(5) }),
                 Clock);
             var account = new SignedInAccount { Current = new SchoolAccount(SchoolAddress, SchoolOid) };
-            var probe = new EdgeSchoolProfileProbe(
-                Profiles.UserData,
-                new EdgeOpenProfileExtensionProbe(Profiles.UserData, new NoAppIds(), "msedge", new[] { FakeEdgeProfiles.ExtensionId }),
-                apps: Profiles.Apps());
+            var extension = new EdgeOpenProfileExtensionProbe(
+                Profiles.UserData, new NoAppIds(), "msedge", new[] { FakeEdgeProfiles.ExtensionId });
+            var probe = new EdgeSchoolProfileProbe(Profiles.UserData, extension, apps: Profiles.Apps());
             Guard = new SchoolProfileGuard(
                 Coordinator,
                 new ExtensionWitnessMonitor(Transport),
@@ -456,7 +491,10 @@ public sealed class SchoolProfileGuardTests : IDisposable
                     SchoolProfileReportSeconds = (int)Report.TotalSeconds,
                 }),
                 Options.Create(new WitnessSettings()),
-                Clock);
+                Clock,
+                // As the agent has it: where the extension is installed, though its
+                // link never came up, the rule is in force too (#519).
+                wakeUp: new ExtensionWakeUp(extension, new NoLauncher(), () => Array.Empty<AllowedDomainDto>()));
             Guard.WindowsOutside += (_, windows) => OutsideEvents.Add(windows);
             Guard.MissingChanged += (_, missing) => MissingEvents.Add(missing);
         }
@@ -526,6 +564,12 @@ public sealed class SchoolProfileGuardTests : IDisposable
     private sealed class NoAppIds : IBrowserWindowAppIds
     {
         public IReadOnlyList<string> GetWindowAppIds(string processName) => Array.Empty<string>();
+    }
+
+    private sealed class NoLauncher : IBrowserProfileLauncher
+    {
+        public void CloseWindow(nint windowHandle) { }
+        public void OpenProfile(string profile, string? url = null) { }
     }
 
     internal sealed class FakeTransport : IExtensionWitnessTransport

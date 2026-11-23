@@ -154,7 +154,13 @@ public enum ExtensionPauseReason
 /// gives it another grace period. Only if it still doesn't connect is Edge paused
 /// for <see cref="ExtensionPauseReason.NotConnected"/>, and the teacher told
 /// (<see cref="TamperKinds.ExtensionNotConnected"/>). With Edge open only in
-/// profiles that never had the extension, nothing is paused (#519).
+/// profiles that never had the extension, there is nothing to wake and nothing
+/// was switched off (#519): those profiles are outside the school profile. With a
+/// school profile, <see cref="SchoolProfileGuard"/> pauses their windows one by
+/// one, as it does with the link up; without one, Edge is paused for that
+/// (<see cref="ExtensionPauseReason.NoSchoolProfile"/> or
+/// <see cref="ExtensionPauseReason.SchoolProfileWithoutExtension"/>), and once
+/// there is one, the link is waited for again.
 ///
 /// The link also drops when Edge closes or the extension updates or reloads, and
 /// pausing must not get in the way of the extension coming back:
@@ -575,6 +581,7 @@ public sealed class ExtensionGuard : IDisposable
     {
         Pause? pause = null;
         var lifted = false;
+        var waiting = false;
         lock (_gate)
         {
             // Off: no extension on this device (or no session), so nothing is guarded.
@@ -600,6 +607,16 @@ public sealed class ExtensionGuard : IDisposable
                 else if (_state == ExtensionGuardState.Paused && _reason != problem)
                     pause = PauseLocked(problem);
             }
+            else if (_state == ExtensionGuardState.Paused
+                     && _reason is ExtensionPauseReason.NoSchoolProfile or ExtensionPauseReason.SchoolProfileWithoutExtension)
+            {
+                // #519: paused for the school profile while no link was up (Edge open
+                // only in profiles that never had the extension). It is there now, so
+                // the pause for it is over, and the link is waited for as at the join:
+                // its extension is woken, or Edge paused, if it still doesn't come.
+                StartTimerLocked(ExtensionGuardState.Waiting, _grace);
+                waiting = true;
+            }
         }
 
         if (pause is not null)
@@ -607,6 +624,11 @@ public sealed class ExtensionGuard : IDisposable
         else if (lifted)
             _log.LogInformation(
                 "An Edge profile is signed in with the school account again; {Browser} is no longer paused", _browser);
+        else if (waiting)
+            _log.LogInformation(
+                "An Edge profile is signed in with the school account and has the extension; " +
+                "{Browser} is no longer paused for it, waiting {GraceSeconds}s for the extension to connect",
+                _browser, (int)_grace.TotalSeconds);
     }
 
     /// <summary>
@@ -687,9 +709,18 @@ public sealed class ExtensionGuard : IDisposable
                         ? problem
                         : ExtensionPauseReason.ExtensionOff);
             else if (open.Count == 0)
-                // Edge is open only in profiles that never had the extension: not
-                // "switched off" (#518), and not this guard's to pause (#519).
-                SetStateLocked(ExtensionGuardState.Dormant);
+            {
+                // Edge is open only in profiles that never had the extension (#519):
+                // not "switched off" (#518), and nothing to wake. They are outside the
+                // school profile. With one, the school-profile rule pauses their
+                // windows one by one; without one (or with one that lacks the
+                // extension), Edge is paused for that, as it is with the link up.
+                // While the school profile can't be told, nothing is.
+                if (SchoolProfileProblemLocked() is { } school)
+                    pause = PauseLocked(school);
+                else
+                    SetStateLocked(ExtensionGuardState.Dormant);
+            }
             else if (open.All(p => !p.On))
                 // Installed, but switched off in every open profile that has it.
                 pause = PauseLocked(ExtensionPauseReason.ExtensionOff);
@@ -721,7 +752,8 @@ public sealed class ExtensionGuard : IDisposable
         {
             if (browserOnScreen)
                 _log.LogInformation(
-                    "The extension never connected, and no open {Browser} profile has it installed; not pausing",
+                    "The extension never connected, and no open {Browser} profile has it installed; " +
+                    "leaving their windows to the school-profile rule",
                     _browser);
             else
                 // Edge was closed (or minimized): nothing to pause, nothing to tell.
@@ -734,8 +766,14 @@ public sealed class ExtensionGuard : IDisposable
         Announce(pause, pause.Reason switch
         {
             ExtensionPauseReason.NoSiteAccess => $"the extension still may not work on all sites after {expired}",
+            ExtensionPauseReason.NoSchoolProfile when neverConnected =>
+                $"the extension never connected, Edge is open only in profiles without it, " +
+                $"and no Edge profile is signed in with the school account (after {expired})",
             ExtensionPauseReason.NoSchoolProfile =>
                 $"still no Edge profile signed in with the school account after {expired}",
+            ExtensionPauseReason.SchoolProfileWithoutExtension when neverConnected =>
+                $"the extension never connected, Edge is open only in profiles without it, " +
+                $"and the school profile doesn't have it either (after {expired})",
             ExtensionPauseReason.SchoolProfileWithoutExtension =>
                 $"the school profile still doesn't have the extension after {expired}",
             ExtensionPauseReason.NotConnected =>

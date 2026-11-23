@@ -1142,10 +1142,11 @@ public class ExtensionGuardTests
     }
 
     [Fact]
-    public async Task Edge_open_only_in_a_profile_that_never_had_the_extension_is_not_paused()
+    public async Task Edge_open_only_in_a_profile_that_never_had_the_extension_is_not_paused_as_a_whole()
     {
         // Installed in Profile 1, which is closed; the student browses in Default,
-        // which never had it. Not "switched off" (#518), and not this pause's (#519).
+        // which never had it. Not "switched off" (#518), and nothing to wake. With
+        // no school-profile rule to say otherwise, it isn't paused as a whole (#519).
         using var h = new Harness(wakeUp: true);
         h.Profiles.SwitchOn("Profile 1");
         h.Profiles.Remove("Default");
@@ -1159,6 +1160,119 @@ public class ExtensionGuardTests
         Assert.Equal(0, h.PausedEvents);
         Assert.Empty(h.Launcher.Opened);
         Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Edge_open_only_in_a_profile_that_never_had_the_extension_next_to_the_school_profile_is_left_to_its_rule()
+    {
+        // #519: installed in the school profile (Default), which is closed, and never
+        // connected; the student browses in Profile 1, which never had it. That
+        // profile's windows are outside the school profile: the school-profile rule
+        // pauses them one by one. Edge as a whole isn't paused, nor the extension
+        // woken, and the guard tells nothing.
+        using var h = new Harness(schoolProfile: true, wakeUp: true);
+        h.Profiles.Remove("Profile 1");
+        h.AppIds.Open("Profile 1");
+        h.EdgeOnScreen();
+
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+        Assert.Equal(SchoolProfileStatus.Found, h.SchoolProfile!.Status);
+        h.Run(Grace * 3);
+
+        Assert.Equal(ExtensionGuardState.Dormant, h.Guard.State);
+        Assert.Equal(0, h.PausedEvents);
+        Assert.Empty(h.Launcher.Opened);
+        Assert.Empty(h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Edge_open_only_in_a_profile_that_never_had_the_extension_without_a_school_profile_is_paused_for_it()
+    {
+        // #519: installed in a personal profile (Default), which is closed, and never
+        // connected; no profile is signed in with the school account, and the
+        // student browses in Profile 1, which never had the extension. Edge is paused
+        // as it is with the link up: for the missing school profile, which the
+        // school-profile guard tells the teacher, not as "switched off" or "isn't
+        // connected".
+        using var h = new Harness(schoolProfile: true, wakeUp: true);
+        h.Profiles.Remove("Profile 1");
+        h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", "", null));
+        h.AppIds.Open("Profile 1");
+        h.EdgeOnScreen();
+        var session = await h.JoinAsync();
+        h.FirstSchoolScan();
+        // The link is waited for first, as for any installed extension (#556).
+        Assert.Equal(ExtensionGuardState.Waiting, h.Guard.State);
+
+        h.Run(Grace);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+        Assert.Equal(1, h.PausedEvents);
+        Assert.Empty(h.Launcher.Opened);
+
+        h.Run(SchoolReport);
+        Assert.Equal(new[] { (session, TamperKinds.SchoolProfileMissing) }, h.Reporter.Calls);
+    }
+
+    [Fact]
+    public async Task Edge_open_only_in_a_school_profile_that_never_had_the_extension_is_paused_to_add_it()
+    {
+        // #519, #536: installed in a personal profile (Default), which is closed, and
+        // never connected; the student browses in Profile 1, signed in with the
+        // school account, which never had the extension.
+        using var h = new Harness(schoolProfile: true, wakeUp: true);
+        h.Profiles.Remove("Profile 1");
+        h.Profiles.WriteLocalState(("Default", "ada.personal@outlook.com", null), ("Profile 1", SchoolAddress, SchoolOid));
+        h.AppIds.Open("Profile 1");
+        h.EdgeOnScreen();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+
+        h.Run(Grace);
+
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.SchoolProfileWithoutExtension, h.Guard.PauseReason);
+        // Its button opens the store listing in that profile, as with the link up.
+        Assert.True(h.Guard.BeginRepair());
+        Assert.Equal(new[] { ("Profile 1", (string?)EdgeExtensionPolicy.StoreListingUrl) }, h.Launcher.Opened);
+    }
+
+    [Fact]
+    public async Task A_school_profile_that_turns_up_while_paused_for_it_without_a_link_waits_for_the_link_again()
+    {
+        // #519: paused for the missing school profile on a device whose extension
+        // never connected. Once the profile with the extension is signed in with the
+        // school account, that pause is over, and the link is waited for as at the
+        // join: woken once that profile is open, then paused if it still doesn't come.
+        using var h = new Harness(schoolProfile: true, wakeUp: true);
+        h.Profiles.Remove("Profile 1");
+        h.Profiles.WriteLocalState(("Default", "", null), ("Profile 1", "", null));
+        h.AppIds.Open("Profile 1");
+        h.EdgeOnScreen();
+        await h.JoinAsync();
+        h.FirstSchoolScan();
+        h.Run(Grace);
+        Assert.Equal(ExtensionPauseReason.NoSchoolProfile, h.Guard.PauseReason);
+
+        h.Profiles.WriteLocalState(("Default", SchoolAddress, SchoolOid), ("Profile 1", "", null));
+        h.Clock.Advance(SchoolScan);
+
+        Assert.Equal(ExtensionGuardState.Waiting, h.Guard.State);
+        // Still only Profile 1 open: its windows are the school-profile rule's.
+        h.Run(Grace);
+        Assert.Equal(ExtensionGuardState.Dormant, h.Guard.State);
+
+        // The student opens the school profile: its extension is woken, and Edge
+        // paused if it still doesn't connect.
+        h.AppIds.Open("Default");
+        h.Guard.NoteBrowserForeground();
+        h.Run(Grace);
+        Assert.Equal(new[] { ("Default", (string?)"https://smartschool.be/") }, h.Launcher.Opened);
+        h.Run(Grace);
+        Assert.True(h.Guard.IsBrowserPaused);
+        Assert.Equal(ExtensionPauseReason.NotConnected, h.Guard.PauseReason);
     }
 
     [Fact]
@@ -1304,6 +1418,12 @@ public class ExtensionGuardTests
             }
             if (selfCheck)
                 SelfCheck = new ExtensionSelfCheckWatch(Transport, Coordinator, Reporter, settings, Clock);
+            var wake = wakeUp
+                ? new ExtensionWakeUp(
+                    new EdgeOpenProfileExtensionProbe(Profiles.UserData, AppIds, "msedge", new[] { FakeEdgeProfiles.ExtensionId }),
+                    Launcher,
+                    () => Domains)
+                : null;
             if (schoolProfile)
             {
                 Profiles.SwitchOn("Default");
@@ -1319,14 +1439,10 @@ public class ExtensionGuardTests
                     Reporter,
                     settings,
                     Options.Create(new WitnessSettings()),
-                    Clock);
+                    Clock,
+                    // As the agent has it: the rule guards the devices the pause does (#519).
+                    wakeUp: wake);
             }
-            var wake = wakeUp
-                ? new ExtensionWakeUp(
-                    new EdgeOpenProfileExtensionProbe(Profiles.UserData, AppIds, "msedge", new[] { FakeEdgeProfiles.ExtensionId }),
-                    Launcher,
-                    () => Domains)
-                : null;
             Guard = new ExtensionGuard(
                 Coordinator,
                 Witness,
