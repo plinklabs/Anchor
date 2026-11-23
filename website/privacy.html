@@ -48,13 +48,13 @@
     <h1>Privacy Policy</h1>
     <p class="updated">Last updated 23 November 2026</p>
 
-    <p class="lead">Anchor is open-source classroom software made by teachers. During a lesson it blocks the apps and websites the lesson doesn't need; it doesn't keep watch on students. It acts only while a teacher has a focus session running, it tells the teacher only a few things, and what it sends stays inside the school that runs it.</p>
+    <p class="lead">Anchor is open-source classroom software made by teachers. During a lesson it blocks the apps and websites the lesson doesn't need; it doesn't keep watch on students. It tells the teacher only a few things, and what it sends stays inside the school that runs it.</p>
 
     <h2>What Anchor is</h2>
     <p>Anchor is a school-internal focus-session system for managed and bring-your-own-device classroom laptops. A teacher starts a session for a class; for its duration each student's laptop holds to a teacher-defined allowlist of apps and websites. What may open is decided on the laptop, and those decisions aren't reported to the teacher. The teacher is told who joined, declined or left the session or quit the agent, which sites students ask to open, and tamper signals and lost connections. The home page explains <a href="index.html#soft-enforcement">why it works this way</a>. The builds used in the current pilot report more; see <a href="#pilot">Pilot builds</a>.</p>
     <p>This policy covers what runs on the student's laptop: the <strong>Anchor agent</strong> (a Windows app), the <strong>witness host</strong> (the small helper program Edge starts so the extension can reach the agent), and the <strong>Anchor Microsoft Edge extension</strong>. It describes what they look at, what they keep on the laptop, and what they send to the school's Anchor backend.</p>
 
-    <h2>Who controls your data</h2>
+    <h2 id="controller">Who controls your data</h2>
     <p>Anchor is <strong>backend-agnostic and self-hosted</strong>: each school or organisation runs its own Anchor backend, and the agent on the student's laptop is set up to sign in to that backend. The extension sends nothing to any server: it hands what it reports to the agent on the same laptop, and the agent sends it on. The <strong>school that deploys Anchor is the data controller</strong> and decides how the data is stored, retained, and used, under its own policies and applicable law.</p>
     <p>Plink Labs publishes the software as open source. Plink Labs does <strong>not</strong> operate a backend, does not receive any data the agent or the extension collects, and has no access to any school's data.</p>
 
@@ -68,7 +68,7 @@
     </ul>
     <p>The results stay on the laptop, apart from the reports listed in the next section and the agent's technical log described under <a href="#local">Where data is stored locally</a>. Outside a session none of these checks run. The agent then only keeps itself set up (for example, that Edge can find the extension) and stays signed in and connected to the backend, so that it hears when a session starts; it reports nothing about what the student does.</p>
 
-    <h2>What is sent to the school's backend</h2>
+    <h2 id="sent">What is sent to the school's backend</h2>
     <p>The agent signs in with the student's school Microsoft account. The backend receives the account's ID and the student's name, and keeps them with the student's role and the classes a teacher has added them to.</p>
     <p>During a session the agent sends the following, tied to that account:</p>
     <ul>
@@ -91,7 +91,7 @@
     <h2>What the extension hands to the agent</h2>
     <p>The extension talks only to the agent on the same laptop, through the witness host. During a session it hands over the student's access requests; the site of each page it blocks, which only the pilot builds pass on; and two of its own settings: whether its site access is "On all sites" (the agent pauses Edge until it is) and whether it may run in InPrivate windows. When its link to the agent was down, it also hands over Edge's error message for it, how often the link failed and since when; the agent writes that to its log.</p>
 
-    <h2>Diagnostic logs (optional)</h2>
+    <h2 id="logs">Diagnostic logs (optional)</h2>
     <p>A school can switch on <strong>diagnostic log uploads</strong>, which are off by default. The agent then uploads its own log lines, and those of the witness host and the agent's updater, from 30 minutes before each session starts to 10 minutes after it ends, with any crash report from that time and the agent's version number, for the students on that session's roster and for nothing else. The log lines are technical: sign-in and connection status, updates, errors, which apps the agent let through, paused or blocked during the session (by program name), and the hostnames of off-list sites it handled. They include the student's school account name. They contain no window titles, page contents, keystrokes, screenshots, or passwords. Before and after the session itself they hold only technical messages, because the agent doesn't watch apps then.</p>
     <p>Some of these lines are about the link between the extension and the agent. The witness host's lines say when it started, which extension Edge started it for, whether it reached the agent, and why it stopped. When a student joins a session and the extension isn't connected to the agent, the agent checks that link and logs what it finds: how the witness host is registered with Edge, which Anchor extensions are installed in which Edge profile (by folder name, such as <code>Edge\Profile 1</code>), and Edge's policies for such helper programs. Paths in these lines name the student's own Windows folder by its variable (such as <code>%LOCALAPPDATA%</code>), not by their user name. The error the extension hands over after its link was down is logged as well. None of these lines contain anything the student browses.</p>
     <p>Only the administrators of the school's Anchor backend can download diagnostic logs; teachers can't. Every download of a student's log is recorded: which administrator downloaded it, when, which session and student it concerned, the purpose (one of the two under <a href="#use">How the data is used</a>), the reason they gave and, for a suspicion of fraud, who in the school's leadership asked for it. Anchor offers no way to change or delete these records. By default the backend keeps them for one year, long after the logs themselves are gone; the administrators can list them and export them, so the school's leadership or data protection officer can review who opened which logs and why.</p>
@@ -130,7 +130,7 @@
     <p>Heartbeats are not stored. A school can change the periods for events, diagnostic logs and download records in its backend's settings. Questions about how long your data is kept, or requests to access or delete it, should be directed to your school or its IT administrator, who controls the Anchor deployment.</p>
 
     <h2>Children's privacy</h2>
-    <p>Anchor is used in schools, including with students who may be minors, under the authority and direction of the school. The school is responsible for the lawful basis (including any required parental notice or consent) for using Anchor with its students. A school that switches on diagnostic log uploads should tell students and parents that it does, and for which purposes. Plink Labs does not knowingly collect data directly from children — it operates no backend and receives no data.</p>
+    <p>Anchor is used in schools, including with students who may be minors, under the authority and direction of the school. The school is responsible for the lawful basis (including any required parental notice or consent) for using Anchor with its students. A school that switches on diagnostic log uploads should tell students and parents that it does, and for which purposes. Plink Labs does not knowingly collect data directly from children (see <a href="#controller">Who controls your data</a>).</p>
 
     <h2>Open source</h2>
     <p>Anchor's full source code, including exactly what the extension and the agent collect and send, is public and auditable at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>.</p>

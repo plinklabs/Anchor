@@ -69,7 +69,7 @@
         <article>
           <p class="step">02</p>
           <h3>Devices keep to the allowlist</h3>
-          <p>For the session's duration, each signed-in student's device softly enforces that allowlist. Off-list apps get pushed to the background; off-list pages show a friendly block page.</p>
+          <p>For the session's duration, each signed-in student's device softly enforces that allowlist: anything off-list is calmly set aside, and a student can ask for a site they need.</p>
         </article>
         <article>
           <p class="step">03</p>
@@ -83,21 +83,22 @@
       Soft enforcement: the one home for what the teacher is told during a
       session, what they are not, and why Anchor isn't tamper-proof (#510).
       Other pages link here (index.html#soft-enforcement) rather than restate
-      it. The pilot builds report more; that lives in faq.html#pilot.
+      it. The data behind it (every kind of tamper signal, what is sent and
+      kept, the pilot builds' extra reports) lives in privacy.html (#511).
     -->
     <section class="callout" id="soft-enforcement">
       <p class="eyebrow">Soft enforcement</p>
       <h2>Anchor blocks. It doesn't keep watch.</h2>
-      <p>The agent and the Edge extension decide on the device, from the allowlist, what may open. Those decisions aren't reported to the teacher. During a session the teacher sees who joined, declined or left the session or quit the agent; the sites students ask to open; and tamper signals (an InPrivate window opened, the extension switched off or its access to websites taken away) as well as laptops that lose their connection. The teacher does <strong>not</strong> see which apps a student used or which blocked pages a student tried to open.</p>
+      <p>The agent and the Edge extension decide on the device, from the allowlist, what may open. Those decisions aren't reported to the teacher. During a session the teacher sees who joined, declined or left the session or quit the agent; the sites students ask to open; and tamper signals, such as an InPrivate window left open or the extension switched off (the privacy policy <a href="privacy.html#sent">lists every kind</a>), as well as laptops that lose their connection. The teacher does <strong>not</strong> see which apps a student used or which blocked pages a student tried to open.</p>
       <p>Anchor doesn't pretend to be tamper-proof. A determined student can step around it, and that is by design: Anchor is not an arms race against teenagers. When a student does, what the teacher gets is the tamper signal, not a log of what the student did.</p>
-      <p>Anchor acts only while a teacher has a session running; nothing is recorded between sessions. A teacher set it up, it ends when the lesson ends, and what is sent stays inside the school that runs it.</p>
-      <p>The builds in the current pilot report more than this. The <a href="faq.html#pilot">FAQ lists what</a>.</p>
+      <p>Anchor acts only while a teacher has a session running; nothing is recorded between sessions. What is sent goes to the school's own backend; the <a href="privacy.html">privacy policy</a> says what it is and how long it is kept.</p>
+      <p>The builds in the current pilot report more than this. The privacy policy <a href="privacy.html#pilot">lists what</a>.</p>
     </section>
 
     <!-- How it works — teacher → backend → student devices + the five components -->
     <section class="feature-section">
       <p class="eyebrow">How it works</p>
-      <p class="lead" style="max-width: 52rem; color: var(--muted); line-height: 1.65; margin-bottom: 1.75rem;">A teacher starts a session from the dashboard. The backend pushes it to every signed-in student device over a realtime channel, and each device enforces the allowlist on its own. What comes back to the dashboard is who is in the session, access requests and tamper signals. Five small components do the work:</p>
+      <p class="lead">A teacher starts a session from the dashboard. The backend pushes it to every signed-in student device over a realtime channel, and each device enforces the allowlist on its own; only what needs the teacher comes back to the dashboard. Five small components do the work:</p>
       <div class="feature-grid">
         <article>
           <h3>Agent</h3>
@@ -122,31 +123,29 @@
       </div>
     </section>
 
-    <!-- See it — dashboard session view + student block overlay -->
+    <!--
+      See it — one teacher and one student screen. The teachers' page is the
+      home for the walkthrough and for every surface a student sees (#513).
+    -->
     <figure class="screenshot">
-      <figure>
-        <img src="assets/dashboard-session.png" alt="Anchor teacher dashboard during a live focus session, showing each student's state, a pending access request and the activity feed" width="1280" height="800">
-        <figcaption>The teacher's view — a live session: who is in it, the access requests waiting for an answer, and the events that need the teacher.</figcaption>
-      </figure>
+      <img src="assets/dashboard-session.png" alt="Anchor teacher dashboard during a live focus session, showing each student's state, a pending access request and the activity feed" width="1440" height="900">
+      <figcaption>The teacher's view of a live session. The <a href="teachers.html">teachers' page</a> walks through it.</figcaption>
     </figure>
 
     <figure class="screenshot">
-      <figure>
-        <img src="assets/agent-block-overlay.png" alt="Anchor block overlay on a student device explaining that the current focus session does not allow this app" width="1280" height="800">
-        <figcaption>The student's view — when something off-list takes focus, Anchor calmly explains the session and steps back out of the way.</figcaption>
-      </figure>
+      <img src="assets/agent-block-overlay.png" alt="Anchor block overlay on a student device explaining that the current focus session does not allow this app" width="2880" height="1800">
+      <figcaption>The student's view when an off-list app takes focus. The teachers' page shows <a href="teachers.html#students">everything a student sees</a>.</figcaption>
     </figure>
 
-    <!-- CTAs / resources -->
-    <section class="callout">
+    <!--
+      Free & open source: the one home for the licence and "made by
+      teachers" (#513). The CTAs are in the hero; Plink Labs' role in the
+      data flow is stated in privacy.html and one FAQ answer.
+    -->
+    <section class="callout" id="open-source">
       <p class="eyebrow">Free &amp; open source</p>
       <h2>Made by teachers, free for everyone</h2>
-      <p>Anchor is GPL-3.0 licensed and self-hostable. Each school runs its own backend; Plink Labs operates none and receives no student data. The full source — including exactly what each component collects — is public and auditable. Students get the agent from their school's IT, which builds it for the school's own backend.</p>
-      <div class="cta-row">
-        <a class="cta cta--primary" href="https://microsoftedge.microsoft.com/addons/detail/dnkimhodjfogjibnbbfdjdapgmmiojio">Add to Edge</a>
-        <a class="cta cta--secondary" href="it.html">Get the agent from your IT</a>
-        <a class="cta cta--secondary" href="https://github.com/plinklabs/Anchor">Source on GitHub</a>
-      </div>
+      <p>Anchor is GPL-3.0 licensed and self-hosted: each school runs its own backend. The full source — including exactly what each component collects — is public and auditable.</p>
     </section>
 
     <section class="links">
@@ -155,7 +154,6 @@
         <li><a href="teachers.html">For teachers</a></li>
         <li><a href="it.html">For IT staff</a></li>
         <li><a href="privacy.html">Privacy Policy</a></li>
-        <li><a href="it.html">Get the agent (from your school's IT)</a></li>
         <li><a href="https://github.com/plinklabs/Anchor">Source code on GitHub</a></li>
       </ul>
     </section>
