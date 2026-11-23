@@ -46,14 +46,14 @@
       <p class="eyebrow" id="privacy-heading">Privacy &amp; surveillance</p>
 
       <h2>Is this spyware? Does it watch students all the time?</h2>
-      <p>No. Anchor only does anything <strong>while a teacher has a focus session running</strong> — outside a session it inspects nothing and sends nothing. During a session, the agent and the extension decide on the device which apps and pages may open, and those decisions aren't reported to the teacher (the pilot builds still report some, <a href="#pilot">see below</a>). The teacher is told only what the next answer lists. Anchor does not record keystrokes, page contents, screenshots or passwords.</p>
+      <p>No. Anchor only does anything <strong>while a teacher has a focus session running</strong> — outside a session it inspects nothing and reports nothing. During a session, the agent and the extension decide on the device which apps and pages may open, and those decisions aren't reported to the teacher (the pilot builds still report some, <a href="#pilot">see below</a>). The teacher is told only what the next answer lists. Anchor does not record keystrokes, page contents, screenshots or passwords.</p>
 
       <h2 id="what-the-teacher-sees">What does the teacher see, and what is sent for it?</h2>
       <p>During a session the teacher sees:</p>
       <ul>
         <li>who joined, declined or left the session, or quit the agent;</li>
-        <li>access requests: the site a student asks to open, sent only when the student clicks <strong>Request access</strong>;</li>
-        <li>tamper signals (an InPrivate window opened, the Anchor extension switched off or its access to websites taken away) and laptops that lose their connection or never join.</li>
+        <li>access requests: the page a student asks to open (its address and site), sent only when the student clicks <strong>Request access</strong>;</li>
+        <li>tamper signals (such as an InPrivate window left open, the Anchor extension switched off, or its access to websites taken away) and laptops that lose their connection or never join.</li>
       </ul>
       <p>The teacher does <strong>not</strong> see which apps a student used or which blocked pages a student tried to open.</p>
       <p>For this, the student's device sends the school's Anchor backend those events, tied to the signed-in student, and a regular heartbeat so that a laptop that drops out is noticed. Sending stops when the session ends; what was sent is kept as described under <a href="#retention">How long is the data kept?</a> The <a href="privacy.html">privacy policy</a> has the details, and the source is public so you can verify it.</p>
@@ -119,7 +119,7 @@
       <p>Anchor is <strong>self-hosted</strong>: each school runs its own backend in its own Azure subscription, and student devices and the dashboard talk only to that. Your data stays in your Azure. The teacher who runs a session sees <a href="#what-the-teacher-sees">what's listed above</a> for their class, live and afterwards in History. If the school switches on diagnostic log uploads, only its backend administrators can download them. Access beyond that is governed by the school, which is the data controller. <strong>Plink Labs operates no backend, receives no student data, and has no access to any school's deployment.</strong></p>
 
       <h2 id="retention">How long is the data kept?</h2>
-      <p>Retention is set by the school, because the school runs the backend. As a default the backend prunes raw session events after 14 days and keeps summaries, and it deletes diagnostic log uploads 14 days after they arrive, but each deployment can configure this. Requests to access or delete data should go to your school or its IT administrator, who controls the deployment.</p>
+      <p>Retention is set by the school, because the school runs the backend. As a default the backend prunes raw session events after 14 days and keeps summaries, and it deletes diagnostic log uploads 14 days after they arrive, but each deployment can configure this. The <a href="privacy.html#retention">privacy policy</a> lists each kind of data and how long it is kept. Requests to access or delete data should go to your school or its IT administrator, who controls the deployment.</p>
 
       <h2>Can we audit what it actually collects?</h2>
       <p>Yes. Anchor's full source code — including exactly what each component collects and sends — is public at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>. Nothing about the data flow is hidden.</p>
