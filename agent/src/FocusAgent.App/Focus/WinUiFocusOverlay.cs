@@ -155,6 +155,33 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         });
     }
 
+    /// <summary>
+    /// Clicks the paused-Edge overlay's button (#427) on the UI thread, where the
+    /// student's click runs too. Dev-only, for the status endpoint: lets the
+    /// headless e2e take the button's whole path, the window it brings forward
+    /// included (#597). Returns whether the overlay was up to click; it does not
+    /// wait for the click itself.
+    /// </summary>
+    public bool ClickBrowserRepair()
+    {
+        if (_disposed || Showing is null) return false;
+        return _dispatcher.TryEnqueue(() =>
+        {
+            FocusOverlayWindow? window;
+            lock (_gate) window = _window;
+            try
+            {
+                _log.LogInformation("Clicking the focus overlay's button for the paused browser");
+                if (window is null || !window.ClickBrowserRepair())
+                    _log.LogWarning("The focus overlay has no button for a paused browser to click");
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Clicking the focus overlay's button for the paused browser failed");
+            }
+        });
+    }
+
     public void Close()
     {
         if (_disposed) return;
