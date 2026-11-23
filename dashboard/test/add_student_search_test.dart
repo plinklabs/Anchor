@@ -3,6 +3,9 @@ import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/add_student_search.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
+
+import 'support/text_contrast.dart';
 
 DirectoryUser _user(String name, {String? upn}) => DirectoryUser(
   entraOid: '00000000-0000-0000-0000-000000000001',
@@ -14,9 +17,11 @@ Future<void> _pumpSearch(
   WidgetTester tester, {
   required Future<List<DirectoryUser>> Function(String) onSearch,
   required Future<void> Function(String, String?) onAdd,
+  ThemeData? theme,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      theme: theme,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -72,6 +77,23 @@ void main() {
       expect(queries, ['al']);
       expect(find.text('Alice Example'), findsOneWidget);
       expect(find.text('alice@example.com'), findsOneWidget);
+    });
+
+    testWidgets('"No matches" reads at WCAG AA on paper (#601)', (
+      tester,
+    ) async {
+      await _pumpSearch(
+        tester,
+        onSearch: (_) async => const <DirectoryUser>[],
+        onAdd: (_, _) async {},
+        theme: PlinkTheme.paper,
+      );
+
+      await tester.enterText(find.byType(TextField), 'zz');
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+
+      expectReadableText(tester, shows: ['No matches.']);
     });
 
     testWidgets('selecting a result calls onAdd with the OID and name', (

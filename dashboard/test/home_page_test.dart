@@ -1,12 +1,15 @@
 import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
+import 'package:anchor_dashboard/auth/msal_auth_service.dart';
 import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/home_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
+
+import 'support/text_contrast.dart';
 
 // AD3 (#168): the redesigned home page. These guard the page in isolation
 // (real router, fake network): the paper composer (the oversized Fraunces
@@ -351,6 +354,48 @@ void main() {
     expect(find.byKey(const Key('start-session')), findsNothing);
     expect(find.byKey(const Key('home-headline')), findsOneWidget);
   });
+  // #601: the department kicker and a running session's start time were in
+  // the 2.79:1 caption grey.
+  testWidgets('the composer and a still-running session read at WCAG AA on '
+      'paper', (tester) async {
+    _bigWindow(tester);
+    final tokens = AuthTokenStore()
+      ..setSession(
+        token: 't',
+        account: const AccountInfo(
+          homeAccountId: 'h1',
+          username: 'teacher@school.test',
+          displayName: 'Teacher',
+          department: 'Math 101',
+        ),
+      );
+    await tester.pumpWidget(
+      _host(
+        sessions: _StillRunning(classesList: <ClassSummary>[_math]),
+        tokens: tokens,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expectReadableText(
+      tester,
+      shows: ['YOUR DEPARTMENT · MATH 101', 'STARTED 09:15'],
+    );
+  });
+}
+
+/// One session of Math 101 still running, for its resume card.
+class _StillRunning extends _FakeSessions {
+  _StillRunning({super.classesList});
+
+  @override
+  Future<List<ActiveSession>> activeSessions() async => <ActiveSession>[
+    ActiveSession(
+      id: 's1',
+      classId: 'c1',
+      startedAt: DateTime(2026, 6, 14, 9, 15),
+    ),
+  ];
 }
 
 final _math = ClassSummary(id: 'c1', name: 'Math 101', schoolYear: '2026');

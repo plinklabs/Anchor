@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import 'support/text_contrast.dart';
+
 // Paper redesign of the bundles editor (AD5, #170). Verifies the brand
 // contracts the redesign introduced: a version spec rendered as a mono badge,
 // and a single magenta spark — the Save/Create commit is the only ElevatedButton
@@ -62,12 +64,23 @@ class _FakeBundles extends BundlesApi {
   Future<BundleDetail> get(String id) async => _detail;
 }
 
+class _NoBundles extends BundlesApi {
+  _NoBundles() : super(_dummyClient());
+
+  @override
+  Future<List<BundleSummary>> list({bool includeArchived = false}) async =>
+      const [];
+}
+
 void main() {
-  Widget host() => MaterialApp(
+  Widget host([BundlesApi? bundles]) => MaterialApp(
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     theme: PlinkTheme.paper,
-    home: BundlesPage(bundles: _FakeBundles(), sessions: _FakeSessions()),
+    home: BundlesPage(
+      bundles: bundles ?? _FakeBundles(),
+      sessions: _FakeSessions(),
+    ),
   );
 
   testWidgets(
@@ -117,4 +130,39 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // #601: the list header's "Archived", the notices and the editor's footer
+  // were in the 2.79:1 caption grey.
+  testWidgets('the list, the editor and their notices read at WCAG AA on '
+      'paper', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(host(_NoBundles()));
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['Archived', 'No bundles.']);
+
+    // A new page, not an update of the one before.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(host());
+    await tester.pumpAndSettle();
+    expectReadableText(
+      tester,
+      shows: ['Exam apps', 'Select a bundle, or start a new one.'],
+    );
+
+    // Selected, the row turns paper-2 under its name and version.
+    await tester.tap(find.text('Exam apps'));
+    await tester.pumpAndSettle();
+    expectReadableText(
+      tester,
+      shows: [
+        'V3',
+        'No apps entries.',
+        'Edits take effect at the next session start.',
+      ],
+    );
+  });
 }

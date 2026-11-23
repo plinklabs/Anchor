@@ -9,6 +9,7 @@ import 'package:anchor_dashboard/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test/support/text_contrast.dart';
 import 'support/e2e_binding.dart';
 
 // Real-app e2e for the "Manage admins" sub-tab (#300): boots the actual
@@ -156,6 +157,8 @@ void main() {
       // Current admins render in the real composition.
       expect(find.text('Alice Admin'), findsOneWidget);
       expect(find.text('Bob Admin'), findsOneWidget);
+      // Each admin's object id was in the 2.79:1 caption grey (#601).
+      expectReadableText(tester, shows: ['a1-oid', 'a2-oid']);
 
       // Search + promote a signed-in user.
       await tester.enterText(

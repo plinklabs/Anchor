@@ -180,7 +180,7 @@ class _AddStudentSearchState extends State<AddStudentSearch> {
         ),
         child: Text(
           AppLocalizations.of(context).addStudentNoMatches,
-          style: _monoLabel(PlinkColors.muted),
+          style: _monoLabel(PlinkColors.ink60),
         ),
       );
     }

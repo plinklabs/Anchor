@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../test/support/text_contrast.dart';
 import 'support/e2e_binding.dart';
 
 // Real-app e2e for the paper redesign of the bundles editor (AD5, #170).
@@ -142,6 +143,12 @@ void main() {
 
       // The catalogue row carries the version as a mono badge (upper-cased).
       expect(find.widgetWithText(PlinkBadge, 'V3'), findsOneWidget);
+      // "Archived" and the editor's placeholder were in the 2.79:1 caption
+      // grey (#601).
+      expectReadableText(
+        tester,
+        shows: ['Archived', 'Select a bundle, or start a new one.'],
+      );
 
       // Open the seeded bundle — renders the editor.
       await tester.tap(find.text('Exam apps'));
@@ -155,6 +162,10 @@ void main() {
       expect(
         find.descendant(of: save, matching: find.text('Save')),
         findsOneWidget,
+      );
+      expectReadableText(
+        tester,
+        shows: ['Exam apps', 'Edits take effect at the next session start.'],
       );
 
       // Real fonts, real layout — no RenderFlex overflow anywhere on the page.

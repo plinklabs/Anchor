@@ -592,7 +592,7 @@ class _ClassesPageState extends State<ClassesPage> {
                           ? ApiErrorText(_error!, textAlign: TextAlign.center)
                           : Text(
                               AppLocalizations.of(context).classesPickClass,
-                              style: monoLabel(PlinkColors.muted),
+                              style: monoLabel(PlinkColors.ink60),
                             ),
                     ),
                   )
@@ -674,7 +674,7 @@ class _ClassList extends StatelessWidget {
               ),
               // The way back to archived classes (#395), as on the Bundles
               // page: a quiet switch on the header line.
-              Text(l10n.badgeArchived, style: monoLabel(PlinkColors.muted)),
+              Text(l10n.badgeArchived, style: monoLabel(PlinkColors.ink60)),
               const SizedBox(width: PlinkSpacing.s2),
               Tooltip(
                 message: l10n.classesShowArchived,
@@ -722,7 +722,7 @@ class _ClassList extends StatelessWidget {
                   padding: const EdgeInsets.all(PlinkSpacing.s4),
                   child: Text(
                     l10n.classesEmpty,
-                    style: monoLabel(PlinkColors.muted),
+                    style: monoLabel(PlinkColors.ink60),
                   ),
                 )
               : ListView.separated(
@@ -1173,7 +1173,7 @@ class _RosterTable extends StatelessWidget {
     if (members.isEmpty) {
       return Align(
         alignment: Alignment.topLeft,
-        child: Text(l10n.classesNoMembers, style: monoLabel(PlinkColors.muted)),
+        child: Text(l10n.classesNoMembers, style: monoLabel(PlinkColors.ink60)),
       );
     }
     // A hairline-bounded panel, not a raised card — the system uses borders,

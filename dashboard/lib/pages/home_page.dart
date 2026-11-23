@@ -351,7 +351,7 @@ class _HomePageState extends State<HomePage> {
                     Text(
                       l10n.homeYourDepartment(department.toUpperCase()),
                       style: text.labelSmall?.copyWith(
-                        color: PlinkColors.muted,
+                        color: PlinkColors.ink60,
                       ),
                     ),
                     const SizedBox(height: PlinkSpacing.s3),
@@ -625,7 +625,7 @@ class _ActiveSessionCard extends StatelessWidget {
                 AppLocalizations.of(
                   context,
                 ).homeStartedAt(_startedTime(startedAt)),
-                style: text.labelSmall?.copyWith(color: PlinkColors.muted),
+                style: text.labelSmall?.copyWith(color: PlinkColors.ink60),
               ),
             ],
           ),

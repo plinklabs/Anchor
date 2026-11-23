@@ -266,7 +266,7 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
         padding: const EdgeInsets.symmetric(vertical: PlinkSpacing.s3),
         child: Text(
           AppLocalizations.of(context).adminsSearching,
-          style: _monoLabel(PlinkColors.muted),
+          style: _monoLabel(PlinkColors.ink60),
         ),
       );
     }
@@ -276,7 +276,7 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
         child: Text(
           AppLocalizations.of(context).adminsNoCandidates,
           key: const Key('manage-admins-no-candidates'),
-          style: _monoLabel(PlinkColors.muted),
+          style: _monoLabel(PlinkColors.ink60),
         ),
       );
     }
@@ -315,7 +315,7 @@ class _ManageAdminsPageState extends State<ManageAdminsPage> {
     if (admins == null || admins.isEmpty) {
       return Text(
         AppLocalizations.of(context).adminsNoAdmins,
-        style: _monoLabel(PlinkColors.muted),
+        style: _monoLabel(PlinkColors.ink60),
       );
     }
     return Container(
@@ -440,7 +440,7 @@ Widget _identity(BuildContext context, AdminUser user) => Column(
       user.entraOid,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: _monoSpec(PlinkColors.muted, PlinkType.textSm),
+      style: _monoSpec(PlinkColors.ink60, PlinkType.textSm),
     ),
   ],
 );

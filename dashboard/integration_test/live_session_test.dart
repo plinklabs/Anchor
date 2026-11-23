@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../test/support/text_contrast.dart';
 import 'support/e2e_binding.dart';
 
 // Real-app e2e for the teacher dashboard's live-session view (#132).
@@ -864,6 +865,9 @@ void main() {
       // Right after the start Bo's laptop may still be on its way: calm.
       expect(find.text('Not joined'), findsOneWidget);
       expect(find.text('Students (1/2 in session)'), findsOneWidget);
+      // Calm, but readable: the label and the feed header were in the 2.79:1
+      // caption grey (#601).
+      expectReadableText(tester, shows: ['Not joined', 'Show all activity']);
       final error = Theme.of(tester.element(find.text('Bo'))).colorScheme.error;
       expect(
         tester.widget<Text>(find.text('Not joined')).style?.color,

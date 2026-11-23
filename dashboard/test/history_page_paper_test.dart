@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import 'support/text_contrast.dart';
+
 // Paper redesign of the history list (AD7, #172). Verifies the brand contracts
 // the redesign introduced:
 //  - past sessions render as hairline rows (no Material ListTile / Card / Divider);
@@ -170,5 +172,24 @@ void main() {
 
     expect(tapped, 'abc');
     expect(find.text('past-session-stub'), findsOneWidget);
+  });
+
+  // #601: the empty archive's notice was in the 2.79:1 caption grey.
+  testWidgets('the archive and its empty notice read at WCAG AA on paper', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(host(_FakeSessions(const [])));
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['No past sessions yet.']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(host(_FakeSessions([_entry('1', 'Math 101')])));
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['Math 101', 'ENDED']);
   });
 }
