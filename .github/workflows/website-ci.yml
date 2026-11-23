@@ -1,0 +1,50 @@
+name: Website CI
+
+# Check the public website before it is published (#583). website-deploy.yml
+# mirrors website/ to the live site after a merge to main and checks nothing,
+# and the site has no build step: hand-written pages that link to each other's
+# sections and each carry their own copy of the header, sub-navigation and
+# footer. .github/scripts/check-website.py reports a local link or image that
+# doesn't resolve, a #fragment that names no id on its target page, a duplicate
+# id, an unclosed or stray tag, an <img> whose size isn't the PNG's, and a
+# header, sub-navigation or footer that differs from index.html's. Run
+# `python3 .github/scripts/check-website.py` from the repo root to get the same
+# result locally. .github/scripts/test-check-website.py first proves each rule
+# still fails a page that breaks it, so a checker that passes everything fails
+# here instead.
+#
+# External links (GitHub, the Edge Add-ons listing, Google Fonts) are not
+# checked: that would fail a pull request on someone else's outage.
+#
+# Wired into the CI Gate: keep its `website` filter identical to the
+# pull_request paths below.
+
+on:
+  pull_request:
+    paths:
+      - 'website/**'
+      - '.github/scripts/check-website.py'
+      - '.github/scripts/test-check-website.py'
+      - '.github/workflows/website-ci.yml'
+  push:
+    branches: [main, develop]
+    paths:
+      - 'website/**'
+      - '.github/scripts/check-website.py'
+      - '.github/scripts/test-check-website.py'
+      - '.github/workflows/website-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Self-test the checker
+        run: python3 .github/scripts/test-check-website.py
+
+      - name: Check the website
+        run: python3 .github/scripts/check-website.py

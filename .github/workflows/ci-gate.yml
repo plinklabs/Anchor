@@ -3,9 +3,9 @@ name: CI Gate
 # Single always-present status check that stands in for the path-filtered CI
 # workflows. Each of those (backend-ci, agent-e2e, dashboard-e2e,
 # dashboard-deploy, extension-e2e, extension-ci, infra-ci, scripts-ci,
-# workflows-ci) only runs when a PR touches its paths, so none of them can be a
-# GitHub *required* status check on its own: a required check that doesn't run
-# is reported "pending" forever and blocks the PR permanently.
+# workflows-ci, website-ci) only runs when a PR touches its paths, so none of
+# them can be a GitHub *required* status check on its own: a required check
+# that doesn't run is reported "pending" forever and blocks the PR permanently.
 #
 # This gate runs on EVERY pull request (no path filter), so it always reports.
 # It detects which areas the PR changed (mirroring each workflow's exact PR path
@@ -106,6 +106,11 @@ jobs:
               - '.github/actions/**'
               - '.github/scripts/**'
               - '.github/workflows/workflows-ci.yml'
+            website:
+              - 'website/**'
+              - '.github/scripts/check-website.py'
+              - '.github/scripts/test-check-website.py'
+              - '.github/workflows/website-ci.yml'
 
       # Each wait targets a suite's check by its (now unique) job name and only
       # runs when that suite's paths changed — exactly when the suite itself runs.
@@ -201,6 +206,16 @@ jobs:
           wait-interval: 20
           allowed-conclusions: success
 
+      - name: Wait for Website CI
+        if: steps.changes.outputs.website == 'true'
+        uses: lewagon/wait-on-check-action@v1.8.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          check-name: check-website
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 20
+          allowed-conclusions: success
+
       - name: Gate summary
         run: |
           echo "Changed areas:"
@@ -213,4 +228,5 @@ jobs:
           echo "  infra=${{ steps.changes.outputs.infra }}"
           echo "  scripts=${{ steps.changes.outputs.scripts }}"
           echo "  workflows=${{ steps.changes.outputs.workflows }}"
+          echo "  website=${{ steps.changes.outputs.website }}"
           echo "All triggered suites passed (or none were triggered)."
