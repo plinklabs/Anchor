@@ -44,22 +44,28 @@ It also reports, in style.css:
   currentColor), so no text takes a colour the pairs don't check: --magenta,
   the brand's spark, is 4.30:1 on --paper and only for borders and the mark
   (#600).
-- button, callout: a rule for the elements inside a container that reaches
-  into a component on any page: a button (class="cta") or a callout
-  (class="callout"), itself or an element inside it. A component's own rules
-  give it the same look on every page; a container's rule changes it in that
-  container only. ".doc a" made the contact page's primary button magenta on
-  magenta (#599), ".doc h2" put 40px between the contact page's callout
-  eyebrow and heading (#602). Write ".doc a:not(.cta)" and
-  ".doc h2:not(.callout *)". A rule is a container's when it reaches the
-  element only through an ancestor outside the component and names none of
-  the component's classes, nor its id: ".callout p", "p a" (in the callout's
-  own <p>) and ".doc .callout" are fine. Selectors are matched against each
-  element's ancestors in the markup; a test the markup can't settle (:hover,
-  ::after, [href^=...]) counts as a match, ">" is read as a descendant
-  combinator, the compound before "+" or "~" isn't checked, and a :not()
-  rules an element out only with simple selectors and descendant
-  combinators, such as :not(.cta) and :not(.callout *).
+- button, callout, eyebrow: a rule for the elements inside a container that
+  reaches into a component on any page: a button (class="cta"), a callout
+  (class="callout") or an eyebrow (class="eyebrow"), itself or an element
+  inside it. A component's own rules give it the same look on every page; a
+  container's rule changes it in that container only. ".doc a" made the
+  contact page's primary button magenta on magenta (#599), ".doc h2" put 40px
+  between the contact page's callout eyebrow and heading (#602), and the
+  eyebrow is a <p>, so ".callout p" and ".doc p" set the callouts' and prose
+  pages' eyebrows at 15px for 10.4px (#603). Write ".doc a:not(.cta)",
+  ".doc h2:not(.callout *)" and ".callout p:not(.eyebrow)"; a rule that has a
+  :not() already takes the component in it, ".doc p:not(.callout *, .eyebrow)",
+  as a second :not() would add to its weight. A rule is a container's when it
+  reaches the element only through an ancestor outside the component and
+  names none of the component's classes, nor its id: for the callout,
+  ".callout p", "p a" (in the callout's own <p>) and ".doc .callout" are fine.
+  An element inside two components, such as a callout's eyebrow, is checked
+  for each. Selectors are matched against each element's ancestors in the
+  markup; a test the markup can't settle (:hover, ::after, [href^=...])
+  counts as a match, ">" is read as a descendant combinator, the compound
+  before "+" or "~" isn't checked (so ".callout p + p" reaches an eyebrow
+  too), and a :not() rules an element out only with simple selectors and
+  descendant combinators, such as :not(.cta) and :not(.callout *).
 
 Under GitHub Actions each problem is printed as an error annotation on its
 file and line. Exits 1 if it found any problem.
@@ -123,8 +129,13 @@ CSS_CUSTOM_PROPERTY = re.compile(r"\s*(--[A-Za-z0-9_-]+)\s*:(.*)", re.S)
 HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
 # The components, by the class each carries: (name, plural). Their own rules
 # give them the same look on every page: .cta--primary and .cta--secondary a
-# button's colours, the .callout rules a callout's spacing.
-COMPONENTS = {"cta": ("button", "buttons"), "callout": ("callout", "callouts")}
+# button's colours, the .callout rules a callout's spacing, .eyebrow an
+# eyebrow's size.
+COMPONENTS = {
+    "cta": ("button", "buttons"),
+    "callout": ("callout", "callouts"),
+    "eyebrow": ("eyebrow", "eyebrows"),
+}
 # In a :not() argument, what the markup can't settle or reaches() only
 # approximates: a pseudo-class, a partial attribute match, a combinator other
 # than the descendant one.
@@ -156,7 +167,9 @@ class Page(HTMLParser):
         self.subnav_links = []  # (line, href, aria-current)
         # (line, tag, attrs, [(tag, attrs)] of its ancestors, component class,
         # index of the component in ancestors + [itself]) for every element
-        # that is a component or inside one; the innermost one counts.
+        # that is a component or inside one: one entry for each kind of
+        # component it is or is in, the innermost of that kind. An eyebrow in
+        # a callout is both.
         self.components = []
         self.problems = []      # (line, message)
         self._open = []         # [(tag, line, attrs)]
@@ -189,12 +202,13 @@ class Page(HTMLParser):
             self.images.append((line, values))
         ancestors = [(t, a) for t, _, a in self._open]
         chain = ancestors + [(tag, values)]
+        found = set()
         for index in range(len(chain) - 1, -1, -1):
             classes = (chain[index][1].get("class") or "").split()
-            kind = next((c for c in COMPONENTS if c in classes), None)
-            if kind:
-                self.components.append((line, tag, values, ancestors, kind, index))
-                break
+            for kind in COMPONENTS:
+                if kind in classes and kind not in found:
+                    found.add(kind)
+                    self.components.append((line, tag, values, ancestors, kind, index))
 
         if self._capture is None and self._open and self._open[-1][0] == "body":
             name = None
@@ -572,8 +586,8 @@ def check_components(site, pages):
             more = f" (and {len(reached) - 1} more)" if len(reached) > 1 else ""
             what = (f"the {name} {start_tag(*component)}" if is_component
                     else f"the {start_tag(tag, attrs)} in the {name} {start_tag(*component)}")
-            suffix = "".join(dict.fromkeys(
-                f":not(.{kind})" if r[5] else f":not(.{kind} *)" for r in reached))
+            negated = ", ".join(dict.fromkeys(
+                f".{kind}" if r[5] else f".{kind} *" for r in reached))
             subject = parts[-1][1]
             if selector.endswith(subject):
                 # Before the subject's pseudo-classes: "a:not(.cta):hover".
@@ -584,9 +598,23 @@ def check_components(site, pages):
                         cut = i
                         break
                 head = selector[:len(selector) - len(subject)]
-                fixed = f'"{head}{subject[:cut]}{suffix}{subject[cut:]}"'
+                rest = subject[cut:]
+                if rest.startswith(":not("):
+                    # Into the :not() the subject has, so the rule keeps its
+                    # weight: "p:not(.callout *, .eyebrow)". A second :not()
+                    # adds a class's weight, and ".doc p" would then beat
+                    # ".doc .lead".
+                    depth = 0
+                    for i, ch in enumerate(rest):
+                        depth += (ch in "([") - (ch in ")]")
+                        if ch == ")" and depth == 0:
+                            break
+                    rest = f"{rest[:i]}, {negated}{rest[i:]}"
+                else:
+                    rest = f":not({negated}){rest}"
+                fixed = f'"{head}{subject[:cut]}{rest}"'
             else:
-                fixed = f"add {suffix} to its last compound"
+                fixed = f"add :not({negated}) to its last compound"
             problems.append((
                 path, line,
                 f'{name}: "{selector}" restyles {what} on '
