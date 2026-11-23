@@ -94,6 +94,21 @@ ABOUT = HEAD.format(title="About", home_current="", about_current=' aria-current
 """ + FOOT
 
 
+# The comment ahead of --muted proves comments are skipped: read as part of
+# the declaration, it would hide --muted from the contrast check.
+STYLE = """/* Design tokens */
+:root {
+  --ink:    #1B1B23;
+  --paper:  #FAF7F2;
+  /* was --muted: #9A958B, 2.79:1 on paper */
+  --muted:  #6E6A62;
+  --border: 1px solid rgba(27, 27, 35, 0.15);
+}
+
+body { margin: 0; background: var(--paper); color: var(--ink); }
+"""
+
+
 def png(width, height):
     def chunk(kind, data):
         return (struct.pack(">I", len(data)) + kind + data
@@ -113,7 +128,7 @@ class CheckWebsiteTest(unittest.TestCase):
         (self.site / "assets").mkdir(parents=True)
         (self.site / "index.html").write_text(INDEX, encoding="utf-8")
         (self.site / "about.html").write_text(ABOUT, encoding="utf-8")
-        (self.site / "style.css").write_text("body { margin: 0; }\n", encoding="utf-8")
+        (self.site / "style.css").write_text(STYLE, encoding="utf-8")
         (self.site / "assets" / "shot.png").write_bytes(png(3, 2))
         (self.root / "outside.html").write_text(ABOUT, encoding="utf-8")
 
@@ -231,6 +246,32 @@ class CheckWebsiteTest(unittest.TestCase):
     def test_subnav_with_aria_current_on_another_page(self):
         self.edit("about.html", '<a href="index.html">', '<a href="index.html" aria-current="page">')
         self.assert_flags("about.html", 'aria-current on the sub-navigation link to "index.html"')
+
+    # contrast
+    def test_text_colour_below_wcag_aa(self):
+        self.edit("style.css", "--muted:  #6E6A62;", "--muted:  #9A958B;")
+        self.assert_flags("style.css", "contrast: --muted #9A958B on --paper #FAF7F2 is 2.79:1, below the 4.5:1")
+
+    def test_ratio_just_short_of_the_minimum_does_not_round_up_to_it(self):
+        self.edit("style.css", "--muted:  #6E6A62;", "--muted:  #60748B;")
+        self.assert_flags("style.css", "contrast: --muted #60748B on --paper #FAF7F2 is 4.498:1")
+
+    def test_background_below_wcag_aa(self):
+        self.edit("style.css", "--paper:  #FAF7F2;", "--paper:  #888;")
+        self.assert_flags("style.css", "contrast: --muted #6E6A62 on --paper #888 is")
+
+    def test_contrast_token_missing(self):
+        self.edit("style.css", "  --muted:  #6E6A62;\n", "")
+        self.assert_flags("style.css", "contrast: :root (outside @media) defines no --muted")
+
+    def test_contrast_token_that_is_not_a_hex_colour(self):
+        self.edit("style.css", "--muted:  #6E6A62;", "--muted:  rgba(27, 27, 35, 0.6);")
+        self.assert_flags("style.css", 'contrast: --muted is "rgba(27, 27, 35, 0.6)", not a #RRGGBB or #RGB colour')
+
+    def test_contrast_token_only_in_a_media_query(self):
+        self.edit("style.css", "  --muted:  #6E6A62;\n", "")
+        self.edit("style.css", "body {", "@media (min-width: 1px) { :root { --muted: #6E6A62; } }\nbody {")
+        self.assert_flags("style.css", "contrast: :root (outside @media) defines no --muted")
 
     # output
     def test_problems_are_annotations_under_github_actions(self):

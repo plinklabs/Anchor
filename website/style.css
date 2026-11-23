@@ -5,12 +5,18 @@
    (agent/external/plink-design-system).
    ============================================================ */
 
-/* Design tokens */
+/* Design tokens. .github/scripts/check-website.py checks the contrast of
+   the text colours on --paper against WCAG AA (4.5:1); keep these as
+   #RRGGBB so it can read them. */
 :root {
   --ink:     #1B1B23;
   --paper:   #FAF7F2;
   --magenta: #DB2777;
-  --muted:   #9A958B;
+  /* Secondary text: the hero, lead and card paragraphs, the sub-navigation,
+     captions and the footer. This is the design system's --ink-60
+     ("body-muted text on paper"), 5.04:1 on --paper. Its --muted, #9A958B,
+     is for captions and disabled items and is only 2.79:1 (#598). */
+  --muted:   #6E6A62;
 
   --ff-display: 'Fraunces', Georgia, serif;
   --ff-ui:      'Hanken Grotesk', system-ui, sans-serif;

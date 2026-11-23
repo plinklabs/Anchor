@@ -33,6 +33,14 @@ For every *.html page under the site folder it reports:
   aria-current="page" in the sub-navigation, which must be on the link to the
   page itself and on no other link.
 
+It also reports, in style.css:
+
+- contrast: a text colour below WCAG AA's 4.5:1 on its background, for each
+  (text, background) pair of :root tokens in CONTRAST_PAIRS (#598). The pairs
+  say which background a colour sits on; the check doesn't work that out from
+  the pages. Those tokens must be #RRGGBB or #RGB values in a :root block
+  outside any @media, so the check can read them.
+
 Under GitHub Actions each problem is printed as an error annotation on its
 file and line. Exits 1 if it found any problem.
 .github/scripts/test-check-website.py proves that each rule still fails a page
@@ -42,6 +50,7 @@ Usage: python3 .github/scripts/check-website.py [SITE_DIR]
 SITE_DIR defaults to website/ in the repo this script is in.
 """
 
+import math
 import os
 import re
 import struct
@@ -62,6 +71,25 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 # The shared blocks, in page order, and how each is named in messages.
 CHROME = {"header": "<header>", "subnav": '<nav class="subnav">', "footer": "<footer>"}
 REFERENCE_PAGE = "index.html"
+
+STYLESHEET = "style.css"
+# WCAG AA for normal-size text. The site's secondary text is small (captions,
+# the sub-navigation and the footer are 10-11px), so no pair gets the 3:1 of
+# large text.
+CONTRAST_MIN = 4.5
+# (text token, background token, what is written in that colour). Every piece
+# of text in these colours sits on --paper: the callouts' tinted background
+# holds only --ink and --magenta text. --magenta (links, card titles, the
+# primary button) is 4.30:1 and isn't listed until #600 fixes it.
+CONTRAST_PAIRS = (
+    ("--ink", "--paper", "body text"),
+    ("--muted", "--paper",
+     "secondary text (hero, lead and card paragraphs, sub-navigation, captions, footer)"),
+)
+CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+CSS_ROOT = re.compile(r":root\s*\{([^{}]*)\}")
+CSS_CUSTOM_PROPERTY = re.compile(r"\s*(--[A-Za-z0-9_-]+)\s*:(.*)", re.S)
+HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
 
 
 class Page(HTMLParser):
@@ -223,6 +251,84 @@ def render(token):
     return f'"{text}"'
 
 
+def root_tokens(css):
+    """{name: (value, line)} for the custom properties in the stylesheet's
+    :root blocks that aren't inside @media or another at-rule. A later
+    definition wins, as it does in the browser."""
+    # Blank comments out but keep their newlines, so offsets still give lines.
+    css = CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), css)
+    tokens = {}
+    for block in CSS_ROOT.finditer(css):
+        if css.count("{", 0, block.start()) != css.count("}", 0, block.start()):
+            continue
+        offset = block.start(1)
+        for declaration in block.group(1).split(";"):
+            match = CSS_CUSTOM_PROPERTY.match(declaration)
+            if match:
+                line = css.count("\n", 0, offset + match.start(1)) + 1
+                tokens[match.group(1)] = (match.group(2).strip(), line)
+            offset += len(declaration) + 1
+    return tokens
+
+
+def relative_luminance(colour):
+    digits = colour[1:]
+    if len(digits) == 3:
+        digits = "".join(d * 2 for d in digits)
+    r, g, b = (
+        c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        for c in (int(digits[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    )
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(a, b):
+    """The WCAG 2 contrast ratio of two #RRGGBB or #RGB colours, 1 to 21."""
+    light, dark = sorted((relative_luminance(a), relative_luminance(b)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def check_contrast(site):
+    """(problems, pairs checked) for CONTRAST_PAIRS in the site's stylesheet."""
+    path = site / STYLESHEET
+    if not path.is_file():
+        return [], 0  # the pages' links to it report that it is missing
+    tokens = root_tokens(path.read_text(encoding="utf-8"))
+    problems, colours = [], {}
+    for name in dict.fromkeys(n for pair in CONTRAST_PAIRS for n in pair[:2]):
+        if name not in tokens:
+            problems.append((
+                path, 1,
+                f"contrast: :root (outside @media) defines no {name}, whose contrast "
+                "CONTRAST_PAIRS in .github/scripts/check-website.py checks; "
+                "if it was renamed, rename it there too",
+            ))
+        elif not HEX_COLOUR.fullmatch(tokens[name][0]):
+            problems.append((
+                path, tokens[name][1],
+                f'contrast: {name} is "{tokens[name][0]}", not a #RRGGBB or #RGB colour, '
+                "so its contrast can't be checked",
+            ))
+        else:
+            colours[name] = tokens[name][0]
+    checked = 0
+    for text, background, use in CONTRAST_PAIRS:
+        if text not in colours or background not in colours:
+            continue
+        checked += 1
+        ratio = contrast_ratio(colours[text], colours[background])
+        if ratio < CONTRAST_MIN:
+            shown = f"{ratio:.2f}"
+            if float(shown) >= CONTRAST_MIN:  # 4.497 must not read as 4.50:1
+                shown = f"{math.floor(ratio * 1000) / 1000:.3f}"
+            problems.append((
+                path, tokens[text][1],
+                f"contrast: {text} {colours[text]} on {background} {colours[background]} "
+                f"is {shown}:1, below the {CONTRAST_MIN}:1 WCAG AA asks of {use}",
+            ))
+    return problems, checked
+
+
 def check(site):
     """Return (problems, stats): problems are (path, line, message)."""
     site = Path(os.path.normpath(site.resolve()))
@@ -333,6 +439,9 @@ def check(site):
                     ))
                     break
 
+    contrast_problems, stats["contrasts"] = check_contrast(site)
+    problems.extend(contrast_problems)
+
     problems.sort(key=lambda p: (str(p[0]), p[1]))
     return problems, stats
 
@@ -362,7 +471,8 @@ def main():
         return 1
     print(
         f"All {stats['pages']} pages pass: {stats['links']} local links and images, "
-        f"{stats['fragments']} fragments, {stats['images']} image sizes checked."
+        f"{stats['fragments']} fragments, {stats['images']} image sizes and "
+        f"{stats['contrasts']} text colour contrasts checked."
     )
     return 0
 
