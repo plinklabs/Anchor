@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Anchor for teachers — a walkthrough of the dashboard: sign in, pick a class, start a focus session, add or remove bundles, watch the live events feed, approve unblock requests, and end the session. Plus what your students see on their devices.">
+  <meta name="description" content="Anchor for teachers — a walkthrough of the dashboard: sign in, pick a class, start a focus session, add or remove bundles, follow the live feed, answer access requests, and end the session. Plus what your students see on their devices.">
   <title>Anchor for teachers · Plink Labs</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><path d='M 10.44 20.86 A 9 9 0 1 1 13.56 20.86' stroke='%23DB2777' stroke-width='1.5' stroke-linecap='round'/><circle cx='12' cy='12' r='1.8' fill='%23DB2777'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -39,7 +39,7 @@
     <!-- Hero — what a teacher does with Anchor, in one breath -->
     <section class="hero">
       <h1>Run a focus session from start to finish.</h1>
-      <p>Anchor puts you in control of one lesson at a time. You sign in, pick a class, and start a session; each student's device keeps to the apps and websites you allowed, and anything off task surfaces on your dashboard while it happens. Here is the whole flow, with the real screens you'll use.</p>
+      <p>Anchor puts you in control of one lesson at a time. You sign in, pick a class, and start a session; each student's device keeps to the apps and websites you allowed, and your dashboard tells you when something needs you. Here is the whole flow, with the real screens you'll use.</p>
     </section>
 
     <!-- ============================================================
@@ -71,13 +71,13 @@
         </article>
         <article>
           <p class="step">05</p>
-          <h3>Watch the live feed</h3>
-          <p>The session view shows each student's state and a running events feed — joins, off-list pages, requests — as they happen, not as a report afterwards.</p>
+          <h3>Follow the live feed</h3>
+          <p>The session view shows who is in the session and a feed of what needs you, as it happens: a student who declines or leaves, a site a student asks for, a tamper signal, a laptop that drops out. It doesn't show which apps students use or which pages get blocked.</p>
         </article>
         <article>
           <p class="step">06</p>
           <h3>End the session</h3>
-          <p>"End session" stops enforcement everywhere at once. If you don't click it, the session ends by itself at the end you chose when you started it, such as the end of this or the next lesson period. Devices go back to normal, and Anchor stops observing. The lesson is over; so is Anchor's reach.</p>
+          <p>"End session" stops enforcement everywhere at once. If you don't click it, the session ends by itself at the end you chose when you started it, such as the end of this or the next lesson period. Devices go back to normal, and Anchor stops enforcing and stops reporting. The lesson is over; so is Anchor's reach.</p>
         </article>
       </div>
     </section>
@@ -109,15 +109,21 @@
     <!-- Live session: events feed, unblock requests, end -->
     <figure class="screenshot">
       <figure>
-        <img src="assets/dashboard-session.png" alt="Anchor live session view for class 3B showing the join code PLINK-3B, a pending unblock request for docs.google.com with an Approve button, the per-student state list, the allowed bundles, and a live activity feed" width="1440" height="900">
+        <img src="assets/dashboard-session.png" alt="Anchor live session view for class 3B showing the join code PLINK-3B, a pending access request for docs.google.com from two students, each with Approve and Deny buttons, the per-student state list, the allowed bundles, and an activity feed of a student's agent that stopped reporting, the two access requests and a declined session" width="1440" height="900">
         <figcaption>The live session — the join code, each student's state, the bundles in force, and the events feed. A student asking for a blocked site appears under "Pending requests"; one click on <strong>Approve</strong> opens it for that student for the rest of the session, or <strong>Approve for whole class</strong> opens it for everyone. "End session" is always one click away, top right.</figcaption>
       </figure>
     </figure>
 
-    <section class="callout">
-      <p class="eyebrow">A note on the live view</p>
-      <h2>It's a window into the lesson, not a record of it</h2>
-      <p>The events feed and student states are live — they exist so you can quietly nudge a student back on task in the moment, the way you'd glance around the room. When the session ends, the live view is gone. Anchor keeps a short session history so you can look back at the last few weeks, but it isn't a permanent dossier and it never follows a student home.</p>
+    <!--
+      The one home for what a past session's page holds (#510). Retention
+      itself lives in faq.html#retention; the pilot's extra reports in
+      faq.html#pilot.
+    -->
+    <section class="callout" id="history">
+      <p class="eyebrow">After the session</p>
+      <h2>What the history keeps</h2>
+      <p>When the session ends, the live view closes and the session moves to History. Its page shows who took part and when they joined, declined or left, the sites students asked for and what you approved or turned down, and any tamper signals or laptops that dropped out. It holds nothing about which apps a student used or which pages were blocked, and nothing from outside the session.</p>
+      <p>The detailed events are deleted after a while; what stays is a count per student of each kind of event. How long is up to your school: see <a href="faq.html#retention">How long is the data kept?</a> During the pilot the history also shows the extra test reports <a href="faq.html#pilot">listed in the FAQ</a>.</p>
     </section>
 
     <!-- ============================================================
@@ -182,10 +188,9 @@
          Section 3 — Tone / philosophy reassurance
          ============================================================ -->
     <section class="callout">
-      <p class="eyebrow">Calm by design, not surveillance</p>
-      <h2>It ends when the lesson ends</h2>
-      <p>Anchor is built for <strong>soft enforcement</strong>. It pulls focus back and makes off-task activity visible to you in the moment — it does not pretend to be tamper-proof, and a determined student can step around it. That's deliberate: the goal is to make drifting off task <strong>visible to a teacher</strong>, the way it already is in a physical room, not to wage a technical arms race against teenagers.</p>
-      <p>And it only watches while you have a session running. On-allowlist pages are never logged, and for apps it notes only the program's name — never window titles or what's on screen. <strong>Nothing is tracked between sessions.</strong> The moment you click "End session", Anchor stops observing and the devices go back to normal. There's no background monitoring, no location, no keystrokes, no screen recording, and the data that does exist stays inside the school that runs the backend — not with us.</p>
+      <p class="eyebrow">Soft enforcement</p>
+      <h2>When a student steps around it</h2>
+      <p>Anchor keeps devices to the lesson; it doesn't keep watch on your students. It doesn't pretend to be tamper-proof either: a determined student can step around it, and <a href="index.html#soft-enforcement">that is by design</a>. What you get then is a tamper signal in your feed (an InPrivate window opened, the extension switched off or its access to websites taken away) or a laptop that drops out of the session, not a log of what the student did. Anchor records no keystrokes, no screen and no location.</p>
     </section>
 
     <!-- CTAs / resources -->

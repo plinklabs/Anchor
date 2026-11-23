@@ -300,6 +300,12 @@ main { flex: 1; }
   color: var(--ink);
 }
 
+.callout p + p { margin-top: 0.75rem; }
+
+/* Links inside a callout read as links (the global reset makes them plain). */
+.callout p a { color: var(--magenta); }
+.callout p a:hover { text-decoration: underline; }
+
 /* ============================================================
    Prose document (privacy / legal copy)
    ============================================================ */
