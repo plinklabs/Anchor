@@ -208,7 +208,10 @@ never overwrites the committed images). Regenerate with one command:
 
 That builds the agent, sets the gate, runs the generator, and writes
 `agent-join-toast.png`, `agent-block-overlay.png`, `agent-main-window.png`, and
-`agent-tray-menu.png` into `website/assets/`. The browser-side shots (the
+`agent-tray-menu.png` into `website/assets/`. Every surface is shot in US
+English (`--ui-language en-US`), whatever the machine's display language, and
+only its visible frame is captured, so nothing of the desktop behind it shows
+at the edges (#514). The browser-side shots (the
 extension block page + popup) are reused from `extension/store-listing/` and are
 not regenerated here. See [`website/assets/README.md`](../website/assets/README.md).
 

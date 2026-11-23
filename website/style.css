@@ -210,11 +210,13 @@ main { flex: 1; }
 
 /* The img's width/height attributes give the image's real size so the
    browser can reserve its space; height: auto keeps that aspect ratio
-   once the width is scaled to the frame (otherwise the height attribute
-   wins and the screenshot is stretched). */
+   once the width is scaled down to the frame (otherwise the height
+   attribute wins and the screenshot is stretched). A screenshot narrower
+   than the frame, such as the agent's tray menu, keeps its own size,
+   centred, rather than being blown up. */
 .screenshot img {
-  width: 100%;
   height: auto;
+  margin-inline: auto;
   border: var(--border);
 }
 
@@ -282,6 +284,10 @@ main { flex: 1; }
   line-height: 1.55;
   color: var(--muted);
 }
+
+/* Links inside a card read as links (the global reset makes them plain). */
+.feature-grid p a { color: var(--magenta); }
+.feature-grid p a:hover { text-decoration: underline; }
 
 /* ============================================================
    Callout block

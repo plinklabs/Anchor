@@ -6,7 +6,7 @@ by the screenshot generators — do not hand-edit the images here.
 ## Dashboard screenshots (`dashboard-*.png`)
 
 The teacher-dashboard shots (`dashboard-home.png`, `dashboard-session.png`,
-`dashboard-bundles.png`, `dashboard-classes.png`, `dashboard-history.png`,
+`dashboard-bundles.png`, `dashboard-classes.png`,
 `dashboard-past-session.png`) are generated from the real Flutter Web dashboard
 rendered against deterministic demo data — no backend, no real auth, no secrets.
 

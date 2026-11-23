@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Anchor for IT staff — requirements, how it's deployed, rollout, and network notes for school administrators. A guided summary that hands off to the GitHub docs for the authoritative setup detail.">
+  <meta name="description" content="Anchor for IT staff — requirements, how it's deployed, rollout, network notes, the dashboard's admin pages and the retention settings for school administrators. A guided summary that hands off to the GitHub docs for the authoritative setup detail.">
   <title>Anchor for IT staff · Plink Labs</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'><path d='M 10.44 20.86 A 9 9 0 1 1 13.56 20.86' stroke='%23DB2777' stroke-width='1.5' stroke-linecap='round'/><circle cx='12' cy='12' r='1.8' fill='%23DB2777'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -39,7 +39,7 @@
     <!-- Hero — what IT staff get from this page, and the hand-off promise -->
     <section class="hero">
       <h1>What it takes to run Anchor for your school.</h1>
-      <p>Anchor is self-hosted: your school runs its own backend in your own Azure tenant, and student devices talk only to that. This page is the IT summary — requirements, how it deploys, rollout, and the network shape. For the authoritative, step-by-step setup it hands you straight off to the GitHub docs, which are kept current with the code.</p>
+      <p>Anchor is self-hosted: your school runs its own backend in your own Azure tenant, and student devices talk only to that. This page is the IT summary — requirements, how it deploys, rollout, the network shape, and running it: the admin pages and what is kept for how long. For the authoritative, step-by-step setup it hands you straight off to the GitHub docs, which are kept current with the code.</p>
       <!--
         "Add to Edge" opens the extension's Edge Add-ons store listing, as on
         the home page.
@@ -125,6 +125,50 @@
       <h2>Plain HTTPS outbound — no proxy surgery</h2>
       <p>Everything runs over <strong>HTTPS/TLS</strong>. Each student device makes <strong>outbound</strong> connections to your school's App Service (by default <code>anchor-api-&lt;suffix&gt;.azurewebsites.net</code>), which serves both the API and the realtime session channel. The realtime channel runs inside the API itself, so there is no separate SignalR service to allow — just make sure outbound HTTPS to that host permits <strong>WebSocket upgrades</strong>. Beyond that, devices sign in through Microsoft Entra ID (<code>login.microsoftonline.com</code>), and the agent checks your repository's GitHub Releases for updates.</p>
       <p>Anchor needs <strong>no proxy certificate, no TLS interception, and no MITM</strong> on its connections. Because enforcement and reporting are device-resident and outbound-only, it is <strong>BYOD-friendly</strong>: it does not depend on devices sitting behind a particular network, so it works on whatever network the laptop is on.</p>
+    </section>
+
+    <!-- ============================================================
+         Admin pages — the one home for the dashboard's Admin tab and the
+         school directory (#514). What the diagnostic logs hold lives in
+         privacy.html#logs.
+         ============================================================ -->
+    <section class="feature-section" id="admin">
+      <p class="eyebrow">Running it</p>
+      <p class="lead">Once the backend runs, the school is set up from the dashboard itself. Its admins see one more tab there, Admin, which holds the pages below.</p>
+      <div class="feature-grid">
+        <article>
+          <h3>Admins</h3>
+          <p>Admin isn't an Entra role: Anchor keeps it in its own database. You promote the first admin once, with <code>scripts/promote-admin.ps1</code>, as the <a href="https://github.com/plinklabs/Anchor/blob/main/docs/SETUP.md#how-authorization-works-the-role-model">setup guide</a> describes. After that, admins promote others under Admin → Admins, from the people who have signed in to the dashboard at least once. The last admin can't be removed.</p>
+        </article>
+        <article>
+          <h3>Bundles</h3>
+          <p>The catalogue teachers pick from when they start a session: each bundle is a named set of websites and apps. Only admins create, edit, archive, import and export bundles; an edit applies from the next session that starts. A bundle a session has used can be archived, not deleted.</p>
+        </article>
+        <article>
+          <h3>Schools and lesson periods</h3>
+          <p>Schools come from your directory: each <code>companyName</code> on your Entra ID users is a school, active until an admin switches it off, and teachers see only the active ones. For each school an admin enters its lesson periods, one timetable for every school day; its teachers can then end a session at the end of this or the next period.</p>
+        </article>
+        <article>
+          <h3>School directory</h3>
+          <p>Teachers fill their classes from Entra ID: they search students by name, import a CSV of their sign-in names, or add every user whose <code>companyName</code> is the class's school and whose <code>department</code> is its class code. Keep those two attributes filled in. The backend reads the directory through Microsoft Graph, on behalf of the teacher, with the <code>User.Read.All</code> permission the setup consents to.</p>
+        </article>
+        <article>
+          <h3>Agent logs</h3>
+          <p>Diagnostic log uploads are off until you set the App Service setting <code>LogUpload__Enabled</code> to <code>true</code>; tell students and parents before you do. Each agent then uploads its log lines from around each session its student was on the class list of, and nothing else. Only admins can download them, under Admin → Logs, giving a purpose and a reason; every download is recorded, and the access history exports as CSV for the school's leadership or data protection officer. The privacy policy says <a href="privacy.html#logs">what the logs hold and what they may be used for</a>.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         Retention settings — where the defaults in privacy.html#retention
+         are configured (#514): EventRetentionOptions, LogUploadOptions and
+         LogAccessOptions in backend/.
+         ============================================================ -->
+    <section class="callout" id="retention">
+      <p class="eyebrow">Retention</p>
+      <h2>Where the retention periods are set</h2>
+      <p>How long the backend keeps data is set in its App Service application settings: <code>EventRetention__RawEventDays</code> (default 14) for a session's events, <code>LogUpload__RetentionDays</code> (14) for diagnostic logs, and <code>LogAccess__RetentionDays</code> (365) for the records of their downloads. <a href="https://github.com/plinklabs/Anchor/blob/main/docs/RELEASE.md#azure-app-service--application-settings">docs/RELEASE.md</a> lists every setting.</p>
+      <p>No setting covers the rest. Per-student summaries and the sessions themselves, with who took part, are kept until a teacher deletes their class together with its sessions, and Anchor deletes no account by itself. The privacy policy lists <a href="privacy.html#retention">what each kind of data holds</a>.</p>
     </section>
 
     <!-- ============================================================

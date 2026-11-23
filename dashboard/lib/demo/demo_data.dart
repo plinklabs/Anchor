@@ -267,6 +267,18 @@ List<SessionHistoryEntry> demoHistory() => [
   ),
 ];
 
+/// An access request the teacher approved for one student, a tamper signal
+/// and an agent that stopped reporting for a while (#514): what the past
+/// session page keeps in the intended product (website teachers.html#history).
+/// Never the pilot's test-phase reports (an app switch, a blocked site, an
+/// unfiltered site; #515): the website describes the product without them.
+/// test/demo_data_test.dart keeps it that way.
+final DateTime _demoPastRequestAt = DateTime(2026, 6, 12, 9, 22, 10);
+final DateTime _demoPastApprovedAt = DateTime(2026, 6, 12, 9, 23, 40);
+final DateTime _demoPastTamperAt = DateTime(2026, 6, 12, 9, 31, 5);
+final DateTime _demoPastLostAt = DateTime(2026, 6, 12, 9, 44, 30);
+final DateTime _demoPastBackAt = DateTime(2026, 6, 12, 9, 46, 50);
+
 /// The detail behind the past session opened from history.
 SessionDetail demoPastSessionDetail() => SessionDetail(
   id: demoPastSessionId,
@@ -278,33 +290,91 @@ SessionDetail demoPastSessionDetail() => SessionDetail(
   summaries: [
     SessionEventSummary(
       userId: 'u1',
-      kind: 'ForegroundChange',
-      count: 12,
-      firstAt: demoPastSessionStartedAt,
-      lastAt: demoPastSessionEndedAt,
+      kind: 'UnblockRequest',
+      count: 1,
+      firstAt: _demoPastRequestAt,
+      lastAt: _demoPastRequestAt,
+    ),
+    SessionEventSummary(
+      userId: 'u1',
+      kind: 'UnblockApproved',
+      count: 1,
+      firstAt: _demoPastApprovedAt,
+      lastAt: _demoPastApprovedAt,
     ),
     SessionEventSummary(
       userId: 'u2',
-      kind: 'BlockedUrl',
-      count: 4,
+      kind: 'TamperDetected',
+      count: 1,
+      firstAt: _demoPastTamperAt,
+      lastAt: _demoPastTamperAt,
+    ),
+    SessionEventSummary(
+      userId: 'u3',
+      kind: 'HeartbeatLost',
+      count: 1,
+      firstAt: _demoPastLostAt,
+      lastAt: _demoPastLostAt,
+    ),
+    SessionEventSummary(
+      userId: 'u3',
+      kind: 'AgentReconnected',
+      count: 1,
+      firstAt: _demoPastBackAt,
+      lastAt: _demoPastBackAt,
+    ),
+    SessionEventSummary(
+      userId: 'u4',
+      kind: 'JoinDeclined',
+      count: 1,
       firstAt: demoPastSessionStartedAt,
-      lastAt: demoPastSessionEndedAt,
+      lastAt: demoPastSessionStartedAt,
     ),
   ],
+  // Newest first, as the backend returns them.
   recentEvents: [
     SessionRecentEvent(
-      id: 'e1',
+      id: 'e6',
+      userId: 'u3',
+      kind: 'AgentReconnected',
+      payloadJson: '{"reconnectedAt":"2026-06-12T07:46:50Z"}',
+      occurredAt: _demoPastBackAt,
+    ),
+    SessionRecentEvent(
+      id: 'e5',
+      userId: 'u3',
+      kind: 'HeartbeatLost',
+      payloadJson: '{"lastSeenAt":"2026-06-12T07:44:10Z"}',
+      occurredAt: _demoPastLostAt,
+    ),
+    SessionRecentEvent(
+      id: 'e4',
       userId: 'u2',
-      kind: 'BlockedUrl',
-      payloadJson: '{"host":"youtube.com"}',
-      occurredAt: DateTime(2026, 6, 12, 9, 30, 5),
+      kind: 'TamperDetected',
+      payloadJson: '{"kind":"inprivate_opened"}',
+      occurredAt: _demoPastTamperAt,
+    ),
+    SessionRecentEvent(
+      id: 'e3',
+      userId: 'u1',
+      kind: 'UnblockApproved',
+      payloadJson: '{"host":"docs.google.com","scope":"student"}',
+      occurredAt: _demoPastApprovedAt,
     ),
     SessionRecentEvent(
       id: 'e2',
       userId: 'u1',
-      kind: 'ForegroundChange',
-      payloadJson: '{"app":"Notes"}',
-      occurredAt: DateTime(2026, 6, 12, 9, 42, 0),
+      kind: 'UnblockRequest',
+      payloadJson:
+          '{"host":"docs.google.com","url":"https://docs.google.com/document/"}',
+      occurredAt: _demoPastRequestAt,
+    ),
+    SessionRecentEvent(
+      id: 'e1',
+      userId: 'u4',
+      kind: 'JoinDeclined',
+      payloadJson: '{}',
+      occurredAt: demoPastSessionStartedAt,
     ),
   ],
   participants: [
@@ -323,10 +393,34 @@ SessionDetail demoPastSessionDetail() => SessionDetail(
       declinedAt: null,
       leftAt: demoPastSessionEndedAt,
       state: ParticipantLiveState.left,
+      tampered: true,
+    ),
+    SessionParticipantInfo(
+      userId: 'u3',
+      displayName: 'Grace Hopper',
+      joinedAt: demoPastSessionStartedAt,
+      declinedAt: null,
+      leftAt: demoPastSessionEndedAt,
+      state: ParticipantLiveState.left,
+    ),
+    SessionParticipantInfo(
+      userId: 'u4',
+      displayName: 'Katherine Johnson',
+      joinedAt: null,
+      declinedAt: demoPastSessionStartedAt,
+      leftAt: null,
+      state: ParticipantLiveState.declined,
     ),
   ],
   bundles: [SessionBundleInfo(id: 'b-exam', name: 'Exam apps')],
-  grants: const [],
+  grants: [
+    SessionUnblockGrantInfo(
+      userId: 'u1',
+      displayName: 'Ada Lovelace',
+      host: 'docs.google.com',
+      grantedAt: _demoPastApprovedAt,
+    ),
+  ],
 );
 
 /// The live session detail (running, no `endedAt`).
