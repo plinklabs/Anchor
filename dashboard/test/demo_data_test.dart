@@ -1,5 +1,15 @@
+import 'dart:io';
+
 import 'package:anchor_dashboard/demo/demo_data.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Issue #586: a join code is six digits. The backend hands out nothing else
+/// (`SessionsController.GenerateUniqueJoinCodeAsync`) and turns anything else
+/// away (`JoinByCode`: "Join code must be 6 digits."), and the agent's "Join
+/// by code" takes six digits and nothing else. No client shares that rule, so
+/// it is written out here. The demo once gave the live session shot the code
+/// PLINK-3B, which no student could type in.
+final RegExp _joinCodeShape = RegExp(r'^\d{6}$');
 
 /// Issue #514: the website's dashboard screenshots are taken from the demo
 /// data (screenshots/generate-screenshots.mjs), and the website describes the
@@ -17,6 +27,37 @@ const Set<String> _testPhaseKinds = {
 };
 
 void main() {
+  test('every join code the demo hands out has the shape of a real one', () {
+    expect(demoJoinCode, matches(_joinCodeShape));
+    expect(demoLiveSessionDetail().joinCode, matches(_joinCodeShape));
+    expect(demoPastSessionDetail().joinCode, matches(_joinCodeShape));
+    final started = demoLiveEvents().firstWhere(
+      (e) => e.kind == 'SessionStarted',
+    );
+    expect(started.payload['joinCode'], matches(_joinCodeShape));
+  });
+
+  test('the agent and extension screenshot demos show the same code', () {
+    // The website's agent and extension shots come from their own demo
+    // content; the three tell one story (#251), so they share one code.
+    final agent = File(
+      '../agent/src/FocusAgent.App/SelfTestDemoContent.cs',
+    ).readAsStringSync();
+    final extension = File(
+      '../extension/store-listing/generate-screenshots.mjs',
+    ).readAsStringSync();
+    expect(
+      RegExp(r'JoinCode = "([^"]*)"').firstMatch(agent)?.group(1),
+      demoJoinCode,
+      reason: 'SelfTestDemoContent.JoinCode',
+    );
+    expect(
+      RegExp(r"joinCode: '([^']*)'").firstMatch(extension)?.group(1),
+      demoJoinCode,
+      reason: 'DEMO_SESSION.joinCode in the store-listing generator',
+    );
+  });
+
   test('the past session holds none of the pilot test-phase reports', () {
     final detail = demoPastSessionDetail();
     expect(

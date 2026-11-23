@@ -27,7 +27,12 @@ const String demoSchoolTag = 'SSM';
 
 /// The live demo session (home resume card + live session view).
 const String demoSessionId = 'demo-session-3b';
-const String demoJoinCode = 'PLINK-3B';
+
+/// Six digits, the only shape the backend hands out and the agent's "Join by
+/// code" accepts (#586). The live session shot shows it, so a student could
+/// type it in. The agent's and the extension's screenshot demos use the same
+/// code (test/demo_data_test.dart).
+const String demoJoinCode = '482917';
 
 /// Fixed clock anchors — never `DateTime.now()`, so output stays deterministic.
 final DateTime demoSessionStartedAt = DateTime(2026, 6, 16, 9, 5);

@@ -26,7 +26,7 @@ for details.
 The student-facing agent shots (`agent-join-toast.png`,
 `agent-block-overlay.png`, `agent-main-window.png`, `agent-tray-menu.png`) are
 captured from the real agent's WinUI surfaces rendered against presentable demo
-content — teacher "Ms Rivera", class code `PLINK-3B`, a readable allowlist,
+content — teacher "Ms Rivera", class 3B, a readable allowlist,
 matched to the dashboard's demo data so both sides tell one story. No backend,
 no real auth, no secrets.
 

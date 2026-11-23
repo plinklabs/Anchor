@@ -193,7 +193,7 @@ The same self-test surfaces double as the source for the student-facing
 screenshots on the [Anchor website](../website). A separate opt-in generator,
 `WebsiteScreenshots`, drives the join toast, the app-block overlay, the main
 window, and the tray menu through the identical launch + capture path, but
-against presentable demo content (teacher "Ms Rivera", class `PLINK-3B`, a
+against presentable demo content (teacher "Ms Rivera", class 3B, a
 readable allowlist — see `FocusAgent.App.SelfTestDemoContent`, matched to the
 dashboard's demo data) and writes a fixed, named PNG set straight into
 `website/assets/` instead of the timestamped `TestResults/` triage dump.

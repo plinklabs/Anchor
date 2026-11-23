@@ -15,7 +15,7 @@ namespace FocusAgent.IntegrationTests;
 /// the <see cref="VisualArtifacts"/> helper produces).
 ///
 /// The surfaces render presentable demo content (a real teacher "Ms Rivera",
-/// class code <c>PLINK-3B</c>, a readable allowlist — see
+/// class 3B, a readable allowlist — see
 /// <c>FocusAgent.App.SelfTestDemoContent</c>), matched to the dashboard's demo
 /// data so the agent and dashboard shots tell one coherent story. No backend, no
 /// real auth, no secrets.

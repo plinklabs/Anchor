@@ -27,7 +27,7 @@ tooling is needed (ImageMagick's SVG renderer is not available/usable here).
 
 - **Logo + tiles** are rendered from the Anchor brand mark/lockup in `../../design/`.
 - **Screenshots** load the *actual* shipped `dist/` pages (block page, popup) with
-  a stubbed `chrome` API and a representative demo session (class code `PLINK-3B`,
+  a stubbed `chrome` API and a representative demo session (join code `482917`,
   a small sample allowlist) — so they always match what a student really sees.
 
 ## Notes
