@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
 import 'support/e2e_binding.dart';
+import 'support/text_contrast.dart';
 
 // Real-app e2e for the paper redesign of the classes / roster page (AD6, #171).
 //
@@ -162,6 +163,9 @@ void main() {
       final save = find.byKey(const Key('classes-save-codes-button'));
       expect(save, findsOneWidget);
       expect(find.byType(ElevatedButton), findsOneWidget);
+
+      // The list header's "Archived" was in the 2.79:1 caption grey (#601).
+      expectReadableText(tester, shows: ['Archived', 'Alice Adams']);
 
       // Real fonts, real layout — no RenderFlex overflow anywhere on the page.
       expect(tester.takeException(), isNull);

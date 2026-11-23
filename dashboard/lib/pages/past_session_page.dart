@@ -528,7 +528,7 @@ class _EventLog extends StatelessWidget {
         ),
         child: Text(
           AppLocalizations.of(context).pastNoEventDetail,
-          style: pastMonoLabel(PlinkColors.muted),
+          style: pastMonoLabel(PlinkColors.ink60),
         ),
       );
     }

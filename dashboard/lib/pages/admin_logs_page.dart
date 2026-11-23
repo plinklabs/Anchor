@@ -292,7 +292,7 @@ class _AdminLogsPageState extends State<AdminLogsPage> {
         Text(
           l10n.logsEmpty,
           key: const Key('logs-empty'),
-          style: pastMonoLabel(PlinkColors.muted),
+          style: pastMonoLabel(PlinkColors.ink60),
         ),
       ];
     }
@@ -327,7 +327,7 @@ class _AdminLogsPageState extends State<AdminLogsPage> {
         Text(
           l10n.logsNoMatch,
           key: const Key('logs-no-match'),
-          style: pastMonoLabel(PlinkColors.muted),
+          style: pastMonoLabel(PlinkColors.ink60),
         )
       else
         _Framed(
@@ -467,7 +467,7 @@ class _AdminLogsPageState extends State<AdminLogsPage> {
         Text(
           l10n.logsHistoryEmpty,
           key: const Key('logs-history-empty'),
-          style: pastMonoLabel(PlinkColors.muted),
+          style: pastMonoLabel(PlinkColors.ink60),
         )
       else
         _Framed(
@@ -578,10 +578,10 @@ class _UploadRow extends StatelessWidget {
                     spec,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: pastMonoSpec(
-                      u.isComplete ? PlinkColors.ink60 : PlinkColors.muted,
-                      PlinkType.textSm,
-                    ),
+                    // One colour for complete and partial: the word says
+                    // which, and the caption grey a partial upload had is
+                    // too faint for words on paper (#601).
+                    style: pastMonoSpec(PlinkColors.ink60, PlinkType.textSm),
                   ),
                 ],
               ),

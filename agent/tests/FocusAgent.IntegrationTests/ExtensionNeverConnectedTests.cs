@@ -13,8 +13,10 @@ namespace FocusAgent.IntegrationTests;
 /// that the extension is installed in an open profile, waits the grace period,
 /// wakes it by opening Edge in that profile at a page the session allows, waits
 /// once more, then pauses Edge and tells the teacher it isn't connected (not that
-/// it was switched off). A link that comes up at last lifts the pause. A device
-/// without the extension in any profile is still left alone.
+/// it was switched off). A link that comes up at last lifts the pause. The
+/// overlay's button opens that profile again and brings no other Edge window
+/// forward (#597). A device without the extension in any profile is still left
+/// alone.
 ///
 /// The real agent, backend and witness pipe, with the stand-ins of
 /// <see cref="ExtensionOffInOneProfileTests"/>: a <c>User Data</c> folder of the
@@ -127,6 +129,77 @@ public sealed class ExtensionNeverConnectedTests
             window?.Dispose();
             try { Directory.Delete(root, recursive: true); } catch { /* best-effort */ }
         }
+    }
+
+    [Fact]
+    public async Task The_overlays_button_opens_the_woken_profile_again_and_brings_no_other_edge_window_forward()
+    {
+        // #597: Edge is open in the school profile (Default), where the extension is
+        // installed but never connects, and in a personal profile (Profile 1) that
+        // never had it. Edge is paused as not connected. The overlay's button opens
+        // Edge in the profile the extension was woken in; real Edge brings that
+        // profile's window forward itself. The overlay must bring no Edge window
+        // forward after it: "Edge" can be the personal profile's window, which the
+        // school-profile rule then pauses, and the student gets a second pause
+        // instead of their school profile.
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(
+            _backend.Url, api, signedIn: true, extensionConnects: false, personalProfileHasExtension: false,
+            grace: Grace);
+        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge");
+        var personal = await run.OpenWindowAsync("Anchor e2e - Personal - Microsoft Edge", "MSEdge.UserData.Profile1");
+
+        // 1. The extension is woken in the school profile, then Edge is paused as
+        //    not connected: both windows go down, and the overlay says why.
+        await run.WaitForAsync(
+            s => s.SchoolProfile?.LastOpened is { Profile: "Default" }, Grace + TimeSpan.FromSeconds(10),
+            "the agent to wake the extension in the school profile");
+        await run.WaitForAsync(
+            s => s.ExtensionGuard is { State: "Paused", PauseReason: "NotConnected" } && s.Overlay == "NotConnectedPaused",
+            Grace + TimeSpan.FromSeconds(10), "Edge to be paused as not connected, with its overlay up");
+        foreach (var (window, what) in new[] { (school, "school profile's"), (personal, "personal profile's") })
+            Assert.True(
+                await BrowserPauseRun.WaitForIconicAsync(window.Handle, expected: true, TimeSpan.FromSeconds(5)),
+                $"Edge was paused as not connected, but the {what} window was not minimized.");
+
+        // Bringing "Edge" forward brings the main window of a process with the
+        // browser's name forward (AppIdentifier). Here that is one of these two, or
+        // this spec could not tell.
+        using (var self = Process.GetCurrentProcess())
+        {
+            var mains = Process.GetProcessesByName(self.ProcessName)
+                .Select(p => { using (p) return p.MainWindowHandle; })
+                .Where(h => h != IntPtr.Zero)
+                .ToArray();
+            Assert.True(
+                mains.Length == 1 && (mains[0] == school.Handle || mains[0] == personal.Handle),
+                $"Bringing the browser forward would pick {string.Join(", ", mains.Select(h => $"0x{h:X}"))}, " +
+                $"not one of the spec's Edge windows (0x{school.Handle:X}, 0x{personal.Handle:X}).");
+        }
+
+        // 2. The student clicks the overlay's button: the repair window opens, in
+        //    the profile the extension was woken in...
+        using var sampler = new ForegroundSampler(run.Agent.Pid);
+        sampler.Name(school.Handle, "school profile's window");
+        sampler.Name(personal.Handle, "personal profile's window");
+        sampler.Mark("clicking the overlay's button");
+        Assert.True(await run.Agent.ClickOverlayRepairAsync(), "The overlay was not up to click.");
+        var repairing = await run.WaitForAsync(
+            s => s.ExtensionGuard is { State: "Repairing", PauseReason: "NotConnected" }, TimeSpan.FromSeconds(5),
+            "the overlay's button to open Edge for the repair window");
+        Assert.Equal("Default", repairing!.SchoolProfile?.LastOpened?.Profile);
+        Assert.StartsWith("https://", repairing.SchoolProfile!.LastOpened!.Url);
+
+        // ...and no Edge window is brought back by the overlay, not even for a
+        // moment: the spec's Edge is never started, so only the overlay could.
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        foreach (var (window, what) in new[] { (school, "school profile's"), (personal, "personal profile's") })
+            Assert.False(
+                sampler.SawSince("clicking the overlay's button", window.Handle, "restored")
+                || !WindowCapture.IsIconic(window.Handle),
+                $"The overlay's button brought the {what} window forward itself. It must leave that to the " +
+                $"woken profile's Edge: with several profiles open, bringing Edge forward can pick another " +
+                $"profile's window (#597). Foreground: {sampler.Describe()}");
     }
 
     [Fact]

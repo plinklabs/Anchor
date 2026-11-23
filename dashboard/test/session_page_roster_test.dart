@@ -6,6 +6,9 @@ import 'package:anchor_dashboard/l10n/app_localizations.dart';
 import 'package:anchor_dashboard/pages/session_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
+
+import '../integration_test/support/text_contrast.dart';
 
 ApiClient _dummyClient() => ApiClient(
   baseUrl: Uri.parse('http://localhost'),
@@ -63,9 +66,11 @@ Future<void> _pumpSession(
   WidgetTester tester,
   List<SessionParticipantInfo> participants, {
   Locale? locale,
+  ThemeData? theme,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      theme: theme,
       locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -104,6 +109,31 @@ void main() {
     expect(find.text('Not joined'), findsOneWidget);
     // Header counts joined-in-session over total.
     expect(find.text('Students (1/5 in session)'), findsOneWidget);
+  });
+
+  testWidgets('every state label reads at WCAG AA on paper (#601)', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    // The calm states (left, declined, not joined, unknown) had their label
+    // in the 2.79:1 caption grey; their icon may stay quiet, the word not.
+    await _pumpSession(tester, [
+      _participant('Ada', ParticipantLiveState.joined),
+      _participant('Bo', ParticipantLiveState.heartbeatStale),
+      _participant('Cy', ParticipantLiveState.declined),
+      _participant('Di', ParticipantLiveState.left),
+      _participant('Ed', ParticipantLiveState.neverJoined),
+      _participant('Fa', ParticipantLiveState.unknown),
+    ], theme: PlinkTheme.paper);
+
+    expectReadableText(
+      tester,
+      shows: ['In session', 'Declined', 'Left', 'Not joined', 'Unknown'],
+    );
   });
 
   testWidgets('roster sorts attention-first: stale above joined (#100)', (

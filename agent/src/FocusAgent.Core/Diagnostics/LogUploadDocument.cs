@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO.Compression;
 using System.Text;
+using FocusAgent.Core.Logging;
 
 namespace FocusAgent.Core.Diagnostics;
 
@@ -8,7 +9,9 @@ namespace FocusAgent.Core.Diagnostics;
 /// The text the agent uploads for one session window (#446), gzipped: a short
 /// header (agent version, session, window) and the entries cut from each log,
 /// one section per log. Nothing else goes in: no time of the upload, no line
-/// from outside the window.
+/// from outside the window. The student's own folders are written as their
+/// variables everywhere in it (#596, see <see cref="LogPath.RedactText(string)"/>),
+/// whichever log and whichever line they are in.
 /// </summary>
 public static class LogUploadDocument
 {
@@ -68,7 +71,7 @@ public static class LogUploadDocument
             for (var i = count - tail; i < count; i++)
                 text.Append(section.Entries[i]).Append('\n');
         }
-        return text.ToString();
+        return LogPath.RedactText(text.ToString());
     }
 
     private static int Kept(int count, double keep) => keep >= 1.0 ? count : (int)Math.Floor(count * keep);

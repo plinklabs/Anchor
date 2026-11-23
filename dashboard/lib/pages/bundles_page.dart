@@ -1011,7 +1011,7 @@ class _BundlesPageState extends State<BundlesPage> {
               ),
               Text(
                 AppLocalizations.of(context).badgeArchived,
-                style: _monoLabel(PlinkColors.muted),
+                style: _monoLabel(PlinkColors.ink60),
               ),
               const SizedBox(width: PlinkSpacing.s2),
               // Compact so the toggle sits on the label baseline rather than
@@ -1106,7 +1106,7 @@ class _BundlesPageState extends State<BundlesPage> {
         ? Center(
             child: Text(
               AppLocalizations.of(context).bundlesNoBundles,
-              style: _monoLabel(PlinkColors.muted),
+              style: _monoLabel(PlinkColors.ink60),
             ),
           )
         : ListView.separated(
@@ -1165,7 +1165,7 @@ class _BundlesPageState extends State<BundlesPage> {
                 )
               : Text(
                   l10n.bundlesSelectOrNew,
-                  style: _monoLabel(PlinkColors.muted),
+                  style: _monoLabel(PlinkColors.ink60),
                   textAlign: TextAlign.center,
                 ),
         ),
@@ -1291,7 +1291,7 @@ class _BundlesPageState extends State<BundlesPage> {
               const SizedBox(height: PlinkSpacing.s3),
               Text(
                 l10n.bundlesEditsFooter,
-                style: _monoLabel(PlinkColors.muted),
+                style: _monoLabel(PlinkColors.ink60),
               ),
             ],
           ),
@@ -1675,7 +1675,7 @@ class _EntrySection extends StatelessWidget {
             kind == BundleEntryKind.domain
                 ? AppLocalizations.of(context).bundlesNoDomainEntries
                 : AppLocalizations.of(context).bundlesNoAppEntries,
-            style: _monoLabel(PlinkColors.muted),
+            style: _monoLabel(PlinkColors.ink60),
           )
         else
           for (final row in rows)

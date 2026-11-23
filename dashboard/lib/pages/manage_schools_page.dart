@@ -172,7 +172,7 @@ class _ManageSchoolsPageState extends State<ManageSchoolsPage> {
       return Text(
         AppLocalizations.of(context).schoolsEmpty,
         key: const Key('manage-schools-empty'),
-        style: _monoLabel(PlinkColors.muted),
+        style: _monoLabel(PlinkColors.ink60),
       );
     }
     return Container(
@@ -247,10 +247,10 @@ class _SchoolRow extends StatelessWidget {
                   key: Key('school-state-${school.name}'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: _monoSpec(
-                    school.isActive ? PlinkColors.ink60 : PlinkColors.muted,
-                    PlinkType.textSm,
-                  ),
+                  // One colour for active and inactive: the word says which,
+                  // and the caption grey an inactive school had is too faint
+                  // for words on paper (#601).
+                  style: _monoSpec(PlinkColors.ink60, PlinkType.textSm),
                 ),
               ],
             ),
@@ -418,7 +418,7 @@ class _LessonPeriodsDialogState extends State<_LessonPeriodsDialog> {
                 Text(
                   l10n.schoolsLessonPeriodsEmpty,
                   key: const Key('lesson-periods-empty'),
-                  style: _monoLabel(PlinkColors.muted),
+                  style: _monoLabel(PlinkColors.ink60),
                 ),
               for (var i = 0; i < _rows.length; i++)
                 _PeriodRowEditor(

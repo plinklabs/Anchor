@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
+using FocusAgent.Core.Logging;
 
 namespace FocusAgent.IntegrationTests;
 
@@ -29,6 +30,13 @@ namespace FocusAgent.IntegrationTests;
 /// and nothing from before or after. Downloading needs an admin, so the spec
 /// promotes the seeded teacher at the end and resets the backend's database
 /// afterwards.
+/// </para>
+///
+/// <para>
+/// #596: inside the window each log also has lines naming this user's own
+/// folders, as a student's laptop has them (an exception's text, Velopack's
+/// quoted paths, a folder at the end of a line, in another case, followed by a
+/// /). No upload names those folders: each has their variables in their place.
 /// </para>
 /// </summary>
 [Collection(AgentE2ECollection.Name)]
@@ -59,6 +67,17 @@ public sealed class LogUploadTests
         {
             // --- seed: lines before and inside the coming window --------------
             var seededAt = DateTimeOffset.Now;
+            // #596: this user's own folders, which the agent under test (run as
+            // the same user) knows as a student's agent knows theirs, and a real
+            // exception's text naming one.
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var failure = Assert.Throws<DirectoryNotFoundException>(() => File.ReadAllText(
+                Path.Combine(local, "Anchor.Agent", "anchor-596-e2e", "manifest.json")));
+            var exceptionLine = $"{failure.GetType().FullName}: {failure.Message}";
+            var redactedExceptionLine = exceptionLine.Replace(local, "%LOCALAPPDATA%", StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(@"'%LOCALAPPDATA%\Anchor.Agent\anchor-596-e2e\manifest.json'", redactedExceptionLine);
             var today = Path.Combine(logs, $"focusagent-{seededAt:yyyyMMdd}.log");
             File.WriteAllLines(Path.Combine(logs, $"focusagent-{seededAt.AddDays(-3):yyyyMMdd}.log"),
             [
@@ -70,6 +89,10 @@ public sealed class LogUploadTests
                 "   at Seed.Before.Frame() SEED-BEFORE-TRACE",
                 AgentLine(seededAt.AddMinutes(-10), "Seed.Inside: SEED-INSIDE agent started before class"),
                 "   at Seed.Inside.Frame() SEED-INSIDE-TRACE",
+                AgentLine(seededAt.AddMinutes(-9), $"Seed.Paths: SEED-PATHS registration failed: {failure.Message}"),
+                exceptionLine,
+                $"   at Seed.Paths.Frame() in {profile.ToUpperInvariant()}\\source\\Seed.cs:line 596",
+                AgentLine(seededAt.AddMinutes(-9), $"Seed.Paths: SEED-PATHS-PROFILE profile is {profile}"),
             ]);
             // #561: the witness host's own log, which it writes next to the agent's.
             var hostLog = Path.Combine(logs, $"witness-host-{seededAt:yyyyMMdd}.log");
@@ -77,11 +100,13 @@ public sealed class LogUploadTests
             [
                 AgentLine(seededAt.AddHours(-2), "WitnessHost[4242]: SEED-HOST-BEFORE started at home"),
                 AgentLine(seededAt.AddMinutes(-10), "WitnessHost[4242]: SEED-HOST-INSIDE pipe connect failed (attempt 1)"),
+                AgentLine(seededAt.AddMinutes(-9), $"WitnessHost[4242]: SEED-HOST-PATH started from {local}/Anchor.Agent/current/anchor-witness-host.exe"),
             ]);
             File.WriteAllLines(Path.Combine(logs, "startup-error.log"),
             [
                 CrashLine(seededAt.AddHours(-2)), "System.Exception: SEED-CRASH-BEFORE", "",
                 CrashLine(seededAt.AddMinutes(-10)), "System.Exception: SEED-CRASH-INSIDE", "",
+                CrashLine(seededAt.AddMinutes(-9)), exceptionLine, "",
             ]);
 
             // --- uploads off (the shared backend's default): nothing goes -----
@@ -134,6 +159,9 @@ public sealed class LogUploadTests
                 $"[update:4242] [{seededAt.AddHours(-2):HH:mm:ss}] [INFO] SEED-UPDATER-BEFORE",
                 $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(1):HH:mm:ss}] [Information] Initializing WindowsVelopackLocator",
                 $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-INSIDE",
+                // #596: paths as Velopack writes them, quoted with doubled separators and followed by a /.
+                $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-PATH Location: \"{local.Replace(@"\", @"\\")}\\\\Anchor.Agent\\\\Update.exe\"",
+                $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-SHORTCUTS ({roaming}\\Microsoft\\Windows\\Start Menu\\Programs\\Startup/*.lnk)",
                 $"[update:4243] [{endedAt.ToLocalTime() + WindowAfter + TimeSpan.FromSeconds(2):HH:mm:ss}] [INFO] SEED-UPDATER-AFTER",
             ]);
 
@@ -193,7 +221,23 @@ public sealed class LogUploadTests
 
                 Assert.Contains($"Session: {of.Id}", sections[""]);
                 Assert.Contains($"Agent version: {TestConfig.ExpectedAgentVersion}", sections[""]);
-                Assert.Equal(EntriesInside(logs, upload.WindowFrom, upload.WindowTo), Entries(sections["Agent log"]));
+                // #596: the upload names none of the user's own folders, however
+                // a line spells them.
+                foreach (var folder in new[] { local, roaming, profile })
+                {
+                    foreach (var spelling in new[] { folder, folder.Replace('\\', '/'), folder.Replace(@"\", @"\\") })
+                    {
+                        var naming = text.Split('\n')
+                            .Where(l => l.Contains(spelling, StringComparison.OrdinalIgnoreCase)).ToList();
+                        Assert.True(naming.Count == 0,
+                            $"The upload names the user's own folder in:\n{string.Join('\n', naming)}");
+                    }
+                }
+                // The entries as the upload writes them (#596): with the user's own
+                // folders as their variables. The agent's own lines name them too.
+                Assert.Equal(
+                    EntriesInside(logs, upload.WindowFrom, upload.WindowTo).Select(LogPath.RedactText),
+                    Entries(sections["Agent log"]));
                 foreach (var outside in new[]
                          {
                              "SEED-OLD-FILE", "SEED-BEFORE", "SEED-AFTER", "SEED-CRASH-BEFORE", "SEED-CRASH-AFTER",
@@ -203,22 +247,37 @@ public sealed class LogUploadTests
                     Assert.DoesNotContain(outside, text);
                 }
                 Assert.Equal(
-                    [CrashLine(seededAt.AddMinutes(-10)), "System.Exception: SEED-CRASH-INSIDE"],
+                    [
+                        CrashLine(seededAt.AddMinutes(-10)), "System.Exception: SEED-CRASH-INSIDE",
+                        CrashLine(seededAt.AddMinutes(-9)), redactedExceptionLine,
+                    ],
                     sections["Crash log"]);
                 Assert.Equal(
                     [
                         $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(1):HH:mm:ss}] [Information] Initializing WindowsVelopackLocator",
                         $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-INSIDE",
+                        $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-PATH Location: \"%LOCALAPPDATA%\\\\Anchor.Agent\\\\Update.exe\"",
+                        $"[lib-csharp:{firstPid}] [{firstStartedAt.AddSeconds(2):HH:mm:ss}] [Information] SEED-UPDATER-SHORTCUTS (%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup/*.lnk)",
                     ],
                     sections["Updater log"]);
                 // #561: the witness host's log, a section of its own, cut to the window.
                 Assert.Equal(
-                    [AgentLine(seededAt.AddMinutes(-10), "WitnessHost[4242]: SEED-HOST-INSIDE pipe connect failed (attempt 1)")],
+                    [
+                        AgentLine(seededAt.AddMinutes(-10), "WitnessHost[4242]: SEED-HOST-INSIDE pipe connect failed (attempt 1)"),
+                        AgentLine(seededAt.AddMinutes(-9), "WitnessHost[4242]: SEED-HOST-PATH started from %LOCALAPPDATA%/Anchor.Agent/current/anchor-witness-host.exe"),
+                    ],
                     sections["Witness host log"]);
                 // #561: the lesson was joined with no extension connected (no Edge
                 // here), so the link self-check's lines are in its window: what the
                 // registration says, and the re-registration's outcome.
                 var agentText = string.Join('\n', sections["Agent log"]);
+                // #596: the seeded lines naming the user's folders, with the variables in their place.
+                Assert.Contains(
+                    $"Seed.Paths: SEED-PATHS registration failed: {failure.Message.Replace(local, "%LOCALAPPDATA%", StringComparison.OrdinalIgnoreCase)}\n" +
+                    $"{redactedExceptionLine}\n" +
+                    "   at Seed.Paths.Frame() in %USERPROFILE%\\source\\Seed.cs:line 596\n",
+                    agentText);
+                Assert.Contains("Seed.Paths: SEED-PATHS-PROFILE profile is %USERPROFILE%\n", agentText + "\n");
                 Assert.True(
                     // Serilog quotes the id, as in every agent log line naming a session.
                     agentText.Contains($"Witness link self-check: session \"{of.Id}\" joined with no extension connected"),

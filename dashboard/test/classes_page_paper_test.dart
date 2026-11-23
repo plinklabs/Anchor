@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
+import '../integration_test/support/text_contrast.dart';
+
 // Paper redesign of the classes / roster page (AD6, #171). Verifies the brand
 // contracts the redesign introduced:
 //  - the roster renders members as hairline rows (no Material DataTable) with
@@ -210,4 +212,42 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  // #601: the list header's "Archived" and the notices were in the 2.79:1
+  // caption grey.
+  testWidgets('the class list, the roster and their notices read at WCAG AA '
+      'on paper', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final empty = ClassMembersResponse(
+      id: 'c1',
+      name: '3A',
+      schoolYear: '2025-2026',
+      schoolTag: 'SSM',
+      classCode: '3A',
+      members: const [],
+    );
+    await tester.pumpWidget(host(_FakeSessions(const []), _FakeClasses(empty)));
+    await tester.pumpAndSettle();
+    expectReadableText(
+      tester,
+      shows: ['Archived', 'No classes you teach.', 'Pick a class on the left.'],
+    );
+
+    final klass = ClassSummary(
+      id: 'c1',
+      name: '3A',
+      schoolYear: '2025-2026',
+      schoolTag: 'SSM',
+      classCode: '3A',
+    );
+    // A new page, not an update of the one before.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(host(_FakeSessions([klass]), _FakeClasses(empty)));
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['No members yet.']);
+  });
 }

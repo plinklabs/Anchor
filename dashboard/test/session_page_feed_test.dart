@@ -15,6 +15,9 @@ import 'package:anchor_dashboard/realtime/session_hub_client.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
+
+import '../integration_test/support/text_contrast.dart';
 
 // #491: the live page's activity feed reads as plain sentences, and by
 // default shows only what needs the teacher's attention; a switch on its
@@ -174,6 +177,7 @@ Future<_StubHub> _pump(
   LiveAlertSettings settings, {
   Locale locale = const Locale('en'),
   _FakeSessions? sessions,
+  ThemeData? theme,
 }) async {
   tester.view.physicalSize = const Size(1400, 1000);
   tester.view.devicePixelRatio = 1.0;
@@ -186,7 +190,7 @@ Future<_StubHub> _pump(
     MaterialApp(
       // NoSplash avoids loading the ink_sparkle fragment shader, which fails
       // to decode under the test engine when a tap triggers a ripple.
-      theme: ThemeData(splashFactory: NoSplash.splashFactory),
+      theme: theme ?? ThemeData(splashFactory: NoSplash.splashFactory),
       locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -398,6 +402,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Bo left the session.'), findsNWidgets(3));
     expect(find.text('×3'), findsNothing);
+  });
+
+  testWidgets("the feed header, its notices and a row's count read at WCAG "
+      'AA on paper (#601)', (tester) async {
+    final hub = await _pump(
+      tester,
+      LiveAlertSettings(),
+      theme: PlinkTheme.paper,
+    );
+    expectReadableText(tester, shows: [_showAll, _waiting]);
+
+    hub.state(_boId, 'Bo', 'Left');
+    hub.state(_boId, 'Bo', 'Joined');
+    hub.state(_boId, 'Bo', 'Left');
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: [_showAll, 'Bo left the session.', '×2']);
   });
 
   testWidgets('the time is local, and the raw event waits behind a '

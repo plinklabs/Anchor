@@ -11,6 +11,9 @@ import 'package:anchor_dashboard/logs/log_file_io.dart';
 import 'package:anchor_dashboard/pages/admin_logs_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plink_design_system/plink_design_system.dart';
+
+import '../integration_test/support/text_contrast.dart';
 
 // Widget tests for Admin → Logs (#566), against a scripted fake LogsApi: the
 // uploads list and its filters, the Download button that stays disabled until
@@ -128,6 +131,7 @@ Future<void> _pump(
   WidgetTester tester,
   _FakeLogs logs, {
   _FakeFileIo? io,
+  ThemeData? theme,
 }) async {
   tester.view.physicalSize = const Size(1600, 1200);
   tester.view.devicePixelRatio = 1.0;
@@ -135,6 +139,7 @@ Future<void> _pump(
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
     MaterialApp(
+      theme: theme,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: AdminLogsPage(logs: logs, fileIo: io ?? _FakeFileIo()),
@@ -286,6 +291,37 @@ void main() {
 
       expect(_button(tester, 'logs-download').onPressed, isNull);
     });
+  });
+
+  // #601: the notices and a partial upload's line were in the 2.79:1 caption
+  // grey.
+  testWidgets('its notices and every upload line read at WCAG AA on paper', (
+    tester,
+  ) async {
+    await _pump(tester, _FakeLogs(uploads: []), theme: PlinkTheme.paper);
+    expectReadableText(tester, shows: ['No logs are stored.']);
+    await tester.tap(find.byKey(const Key('logs-tab-history')));
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['No logs have been downloaded yet.']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pump(
+      tester,
+      _FakeLogs(
+        uploads: [
+          _upload('s1', 'u1', 'Bram'),
+          _upload('s1', 'u2', 'Chloé', isComplete: false),
+        ],
+      ),
+      theme: PlinkTheme.paper,
+    );
+    expectReadableText(tester, shows: ['· complete ·', '· partial ·']);
+    await tester.enterText(
+      find.byKey(const Key('logs-filter-student')),
+      'nobody',
+    );
+    await tester.pumpAndSettle();
+    expectReadableText(tester, shows: ['No logs match these filters.']);
   });
 
   group('the download dialog', () {

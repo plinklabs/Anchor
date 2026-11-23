@@ -60,7 +60,11 @@ public interface IFocusOverlay
 /// <summary>
 /// The "turn the extension back on" action the paused-Edge overlay offers (#427).
 /// </summary>
-/// <param name="Browser">The paused browser, brought forward once the repair window is open.</param>
+/// <param name="Browser">
+/// The paused browser, brought forward once the repair window is open, unless
+/// <paramref name="TurnBackOn"/> opens a window of one profile itself
+/// (<see cref="BringsBrowserForward"/>).
+/// </param>
 /// <param name="RepairWindow">How long the browser opens for.</param>
 /// <param name="TurnBackOn">
 /// Opens the repair window. Called before <paramref name="Browser"/> is brought
@@ -81,8 +85,10 @@ public interface IFocusOverlay
 /// (#536), or the extension installed but never connected (#556). For
 /// <see cref="ExtensionPauseReason.OutsideSchoolProfile"/> and
 /// <see cref="ExtensionPauseReason.SchoolProfileWithoutExtension"/>,
-/// <paramref name="TurnBackOn"/> opens the school profile's window itself, so the
-/// overlay brings no Edge window forward after it: that could be another profile's.
+/// <paramref name="TurnBackOn"/> opens the school profile's window itself, and for
+/// <see cref="ExtensionPauseReason.NotConnected"/> the window of the profile the
+/// extension was woken in. So the overlay brings no Edge window forward after it:
+/// that could be another profile's (#597, see <see cref="BringsBrowserForward"/>).
 /// </param>
 /// <param name="Account">
 /// The school account Edge must be signed in with, which the pause for
@@ -93,4 +99,17 @@ public sealed record BrowserPausedPrompt(
     TimeSpan RepairWindow,
     Func<bool> TurnBackOn,
     ExtensionPauseReason Reason = ExtensionPauseReason.ExtensionOff,
-    string? Account = null);
+    string? Account = null)
+{
+    /// <summary>
+    /// Whether the overlay brings <see cref="Browser"/> forward after
+    /// <see cref="TurnBackOn"/>. False when that action opens a window of one
+    /// profile itself: the school profile's (#525, #536) or the one the extension
+    /// was woken in (#556). With several profiles open, bringing the browser
+    /// forward after it could pick another profile's window (#597).
+    /// </summary>
+    public bool BringsBrowserForward => Reason is not (
+        ExtensionPauseReason.OutsideSchoolProfile
+        or ExtensionPauseReason.SchoolProfileWithoutExtension
+        or ExtensionPauseReason.NotConnected);
+}

@@ -99,7 +99,7 @@ class _HistoryPageState extends State<HistoryPage> {
           padding: const EdgeInsets.all(PlinkSpacing.s6),
           child: Text(
             AppLocalizations.of(context).historyEmpty,
-            style: pastMonoLabel(PlinkColors.muted),
+            style: pastMonoLabel(PlinkColors.ink60),
             textAlign: TextAlign.center,
           ),
         ),
