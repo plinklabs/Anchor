@@ -745,7 +745,8 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     /// <param name="extensionConnects">
     /// False: the extension is installed, but its link never comes up (#556): the
     /// fake extension stays away, and the session is joined with the guard waiting
-    /// for it.
+    /// for it. With the extension in neither profile as well, a device without it:
+    /// the session is joined with the guard left off.
     /// </param>
     /// <param name="personalProfileHasExtension">
     /// False: Profile 1, the personal profile, never had the extension (#519).
@@ -817,11 +818,17 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
                 await run.WaitForAsync(
                     s => s.JoinedSessionId == session.Id && s.ExtensionGuard?.State is "Present" or "Paused",
                     TimeSpan.FromSeconds(10), "the session to be joined with the extension present");
-            else
+            else if (schoolProfileHasExtension || personalProfileHasExtension)
                 // Installed, so guarded, not Off (#556): the link is waited for.
                 await run.WaitForAsync(
                     s => s.JoinedSessionId == session.Id && s.ExtensionGuard?.State is "Waiting" or "Dormant" or "Paused",
                     TimeSpan.FromSeconds(10), "the session to be joined with the guard waiting for the extension");
+            else
+                // Installed in no profile: the device is left alone (#556). Off before
+                // the join as after it, so the spec holds it there to tell.
+                await run.WaitForAsync(
+                    s => s.JoinedSessionId == session.Id && s.StartupSweep is not null && s.ExtensionGuard is not null,
+                    TimeSpan.FromSeconds(10), "the session to be joined");
             var allowed = await run.Agent.WaitForAsync(
                 s => (s.AllowedApps ?? []).Contains(self.ProcessName, StringComparer.OrdinalIgnoreCase),
                 TimeSpan.FromSeconds(5));
