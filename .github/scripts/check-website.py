@@ -39,7 +39,11 @@ It also reports, in style.css:
   (text, background) pair of :root tokens in CONTRAST_PAIRS (#598). The pairs
   say which background a colour sits on; the check doesn't work that out from
   the pages. Those tokens must be #RRGGBB or #RGB values in a :root block
-  outside any @media, so the check can read them.
+  outside any @media, so the check can read them. Every "color:" in the
+  stylesheet must be var() of one of the pairs' text tokens (or inherit or
+  currentColor), so no text takes a colour the pairs don't check: --magenta,
+  the brand's spark, is 4.30:1 on --paper and only for borders and the mark
+  (#600).
 - button: a rule for the links inside a container that reaches a button, an
   element with class="cta" on any page. Such a rule's last compound selects
   <a> without a class or id of its own, after an ancestor: ".doc a". It
@@ -87,15 +91,26 @@ STYLESHEET = "style.css"
 # the sub-navigation and the footer are 10-11px), so no pair gets the 3:1 of
 # large text.
 CONTRAST_MIN = 4.5
-# (text token, background token, what is written in that colour). Every piece
-# of text in these colours sits on --paper: the callouts' tinted background
-# holds only --ink and --magenta text. --magenta (links, card titles, the
-# primary button) is 4.30:1 and isn't listed until #600 fixes it.
+# (text token, background token, what is written in that colour). Text sits
+# on --paper, except in the callouts, whose tint (--callout) holds --ink and
+# --magenta-press text, and on the buttons filled with magenta. The ratio
+# doesn't depend on which of the two is the text, so the first magenta pair
+# also covers the paper label of a button filled with --magenta-press.
+# --magenta itself (4.30:1 on --paper) is not a text colour (#600).
 CONTRAST_PAIRS = (
     ("--ink", "--paper", "body text"),
     ("--muted", "--paper",
      "secondary text (hero, lead and card paragraphs, sub-navigation, captions, footer)"),
+    ("--magenta-press", "--paper",
+     "magenta text (links, card titles, eyebrows, hover) and the paper label "
+     "of a button filled with it"),
+    ("--magenta-press", "--callout", "a callout's eyebrow and links"),
+    ("--paper", "--magenta-deep", "the primary button's label on hover"),
 )
+# "color:" values that take a colour the pairs already check.
+INHERITED_COLOUR = re.compile(r"inherit|currentcolor", re.I)
+CSS_COLOR_DECLARATION = re.compile(r"(?<![\w-])color\s*:\s*([^;{}]*)")
+CSS_VAR = re.compile(r"var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,[^()]*)?\)")
 CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 CSS_ROOT = re.compile(r":root\s*\{([^{}]*)\}")
 CSS_CUSTOM_PROPERTY = re.compile(r"\s*(--[A-Za-z0-9_-]+)\s*:(.*)", re.S)
@@ -362,6 +377,31 @@ def check_contrast(site):
     return problems, checked
 
 
+def check_text_colours(site):
+    """(problems, declarations checked) for the stylesheet's "color:"
+    declarations: each must be one of CONTRAST_PAIRS' text tokens."""
+    path = site / STYLESHEET
+    if not path.is_file():
+        return [], 0
+    css = blank_comments(path.read_text(encoding="utf-8"))
+    text_tokens = list(dict.fromkeys(text for text, _, _ in CONTRAST_PAIRS))
+    problems, checked = [], 0
+    for declaration in CSS_COLOR_DECLARATION.finditer(css):
+        checked += 1
+        value = re.sub(r"\s*!\s*important\s*$", "", declaration.group(1).strip(), flags=re.I)
+        token = CSS_VAR.fullmatch(value)
+        if INHERITED_COLOUR.fullmatch(value) or (token and token.group(1) in text_tokens):
+            continue
+        problems.append((
+            path, css.count("\n", 0, declaration.start()) + 1,
+            f"contrast: \"color: {value}\" isn't one of the text colours whose contrast "
+            "CONTRAST_PAIRS in .github/scripts/check-website.py checks "
+            f"({', '.join(f'var({t})' for t in text_tokens)}). Use one of them, or make "
+            "the colour a :root token and add a pair for each background it sits on",
+        ))
+    return problems, checked
+
+
 def selector_list(text):
     """The selectors of a comma-separated list; a comma inside () or [] is
     part of its selector."""
@@ -612,6 +652,8 @@ def check(site):
 
     contrast_problems, stats["contrasts"] = check_contrast(site)
     problems.extend(contrast_problems)
+    colour_problems, stats["colours"] = check_text_colours(site)
+    problems.extend(colour_problems)
     button_problems, stats["buttons"] = check_buttons(site, pages)
     problems.extend(button_problems)
 
@@ -645,7 +687,8 @@ def main():
     print(
         f"All {stats['pages']} pages pass: {stats['links']} local links and images, "
         f"{stats['fragments']} fragments, {stats['images']} image sizes, "
-        f"{stats['buttons']} buttons and {stats['contrasts']} text colour contrasts checked."
+        f"{stats['buttons']} buttons, {stats['colours']} text colours and "
+        f"{stats['contrasts']} contrasts checked."
     )
     return 0
 

@@ -104,27 +104,35 @@ ABOUT = HEAD.format(title="About", home_current="", about_current=' aria-current
 # The comment ahead of --muted proves comments are skipped: read as part of
 # the declaration, it would hide --muted from the contrast check. So does the
 # one ahead of the .doc links, which would read as a rule that reaches the
-# button. The global link rules and ".callout p a" (the button isn't in a
-# <p>) don't reach it either.
+# button, and as a text colour the contrast pairs don't check. The global
+# link rules and ".callout p a" (the button isn't in a <p>) don't reach it
+# either. --magenta colours only borders: "border-color" and
+# "background-color" aren't text colours.
 STYLE = """/* Design tokens */
 :root {
   --ink:    #1B1B23;
   --paper:  #FAF7F2;
   /* was --muted: #9A958B, 2.79:1 on paper */
   --muted:  #6E6A62;
+  --magenta: #DB2777;
+  --magenta-press: #C01F68;
+  --magenta-deep: #A8195B;
+  --callout: #F9EFED;
   --border: 1px solid rgba(27, 27, 35, 0.15);
 }
 
 body { margin: 0; background: var(--paper); color: var(--ink); }
 a { color: inherit; text-decoration: none; }
-a:hover { color: #DB2777; }
+a:hover { color: var(--magenta-press); }
 
-.cta { border: 1.5px solid #DB2777; }
-.cta--primary { background: #DB2777; color: var(--paper); }
-.callout p a { color: #DB2777; }
+.cta { border: 1.5px solid var(--magenta); }
+.cta--primary { background: var(--magenta-press); color: var(--paper); }
+.cta--primary:hover { background-color: var(--magenta-deep); border-color: var(--magenta-deep); }
+.callout { background: var(--callout); border-left: 3px solid var(--magenta); }
+.callout p a { color: var(--magenta-press); }
 
 /* .doc a { color: #DB2777; } reached the button (#599) */
-.doc a:not(.cta) { color: #DB2777; }
+.doc a:not(.cta) { color: var(--magenta-press); }
 .doc a:not(.cta):hover { text-decoration: underline; }
 """
 
@@ -293,6 +301,28 @@ class CheckWebsiteTest(unittest.TestCase):
         self.edit("style.css", "  --muted:  #6E6A62;\n", "")
         self.edit("style.css", "body {", "@media (min-width: 1px) { :root { --muted: #6E6A62; } }\nbody {")
         self.assert_flags("style.css", "contrast: :root (outside @media) defines no --muted")
+
+    # The site's magenta text (#600): --magenta itself is 4.30:1 on paper.
+    def test_magenta_text_below_wcag_aa(self):
+        self.edit("style.css", "--magenta-press: #C01F68;", "--magenta-press: #DB2777;")
+        self.assert_flags("style.css", "contrast: --magenta-press #DB2777 on --paper #FAF7F2 is 4.30:1, below the 4.5:1")
+
+    def test_magenta_text_that_passes_on_paper_but_not_on_the_callout_tint(self):
+        self.edit("style.css", "--magenta-press: #C01F68;", "--magenta-press: #D02470;")
+        run = self.assert_flags("style.css", "contrast: --magenta-press #D02470 on --callout #F9EFED is 4.46:1")
+        self.assertNotIn("on --paper", run.stdout)
+
+    def test_button_label_below_wcag_aa_on_hover(self):
+        self.edit("style.css", "--magenta-deep: #A8195B;", "--magenta-deep: #DB2777;")
+        self.assert_flags("style.css", "contrast: --paper #FAF7F2 on --magenta-deep #DB2777 is 4.30:1")
+
+    def test_text_in_a_colour_the_pairs_do_not_check(self):
+        self.edit("style.css", ".callout p a { color: var(--magenta-press); }", ".callout p a { color: var(--magenta); }")
+        self.assert_flags("style.css", "contrast: \"color: var(--magenta)\" isn't one of the text colours")
+
+    def test_text_in_a_colour_that_is_not_a_token(self):
+        self.edit("style.css", "a:hover { color: var(--magenta-press); }", "a:hover { color: #C01F68 !important; }")
+        self.assert_flags("style.css", "contrast: \"color: #C01F68\" isn't one of the text colours")
 
     # button
     def test_link_rule_of_a_container_reaches_a_button(self):
