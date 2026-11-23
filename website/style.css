@@ -317,13 +317,19 @@ main { flex: 1; }
    Callout block
    ============================================================ */
 .callout {
-  margin: clamp(2rem, 5vw, 3rem) var(--gutter);
+  margin: clamp(2rem, 5vw, 3rem) 0;
   padding: clamp(1.5rem, 4vw, 2rem);
   border: var(--border);
   border-left: 3px solid var(--magenta);
   background: var(--callout);
   max-width: 52rem;
 }
+
+/* A callout between the page's sections holds the page's side gutter itself,
+   as they do. In .doc, whose padding holds it already, it takes none and
+   lines up with the prose around it: with the gutter on both, the contact
+   page's callout sat 48px in from its text at 1280px (#604). */
+.callout:not(.doc *) { margin-inline: var(--gutter); }
 
 .callout .eyebrow {
   color: var(--magenta-press);

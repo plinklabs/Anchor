@@ -112,7 +112,9 @@ ABOUT = HEAD.format(title="About", home_current="", about_current=' aria-current
 # don't reach the button either, and the .callout rules reach into the
 # callout through the callout itself. The paragraph rules leave the eyebrows
 # out, and the eyebrow rules name them. --magenta colours only borders:
-# "border-color" and "background-color" aren't text colours.
+# "border-color" and "background-color" aren't text colours. The hero, the
+# screenshot and the prose column (.doc) hold the side gutter once each; the
+# callout takes it only outside .doc, whose padding holds it already.
 STYLE = """/* Design tokens */
 :root {
   --ink:    #1B1B23;
@@ -124,16 +126,23 @@ STYLE = """/* Design tokens */
   --magenta-deep: #A8195B;
   --callout: #F9EFED;
   --border: 1px solid rgba(27, 27, 35, 0.15);
+  --gutter: clamp(1.25rem, 5vw, 3rem);
 }
 
 body { margin: 0; background: var(--paper); color: var(--ink); }
 a { color: inherit; text-decoration: none; }
 a:hover { color: var(--magenta-press); }
 
+.hero { padding: 3rem var(--gutter) 2rem; }
+.screenshot { margin: clamp(2rem, 5vw, 3rem) var(--gutter); }
+.doc { padding: 3rem var(--gutter) 2rem; }
+
 .cta { border: 1.5px solid var(--magenta); }
 .cta--primary { background: var(--magenta-press); color: var(--paper); }
 .cta--primary:hover { background-color: var(--magenta-deep); border-color: var(--magenta-deep); }
-.callout { background: var(--callout); border-left: 3px solid var(--magenta); }
+.callout { margin: 2rem 0; background: var(--callout); border-left: 3px solid var(--magenta); }
+/* .callout { margin: 2rem var(--gutter); } put the gutter twice (#604) */
+.callout:not(.doc *) { margin-inline: var(--gutter); }
 .callout .eyebrow { margin-bottom: 0.75rem; }
 .callout h2 { margin-bottom: 0.5rem; }
 .callout p:not(.eyebrow) { font-size: 0.9375rem; line-height: 1.65; }
@@ -392,6 +401,32 @@ class CheckWebsiteTest(unittest.TestCase):
     # the callout is a <section>) styles every callout the same.
     def test_rules_that_reach_a_callout_through_the_callout_pass(self):
         self.edit("style.css", ".cta {", ".doc .callout h2 { margin-top: 0; }\np a { text-underline-offset: 2px; }\nsection h2 { letter-spacing: 0; }\n.cta {")
+        run = self.run_checker()
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    # gutter (#604): .doc's padding holds the side gutter, and a callout in it
+    # that takes the gutter as well sits a gutter in from the prose.
+    def test_callout_that_takes_the_gutter_inside_the_prose_column(self):
+        self.edit("style.css", ".callout:not(.doc *) {", ".callout {")
+        run = self.assert_flags("style.css", 'gutter: ".callout" gives the <section class="callout"> on about.html:')
+        self.assertIn('inside the <main class="doc">, which has it already from ".doc"', run.stdout)
+        self.assertIn('Give the gutter once: ".callout:not(.doc *)"', run.stdout)
+
+    def test_gutter_in_the_margin_shorthand_inside_the_prose_column(self):
+        self.edit("style.css", ".callout { margin: 2rem 0;", ".callout { margin: 2rem var(--gutter) !important;")
+        self.assert_flags("style.css", 'gutter: ".callout" gives the <section class="callout"> on about.html:')
+
+    # A rule written for the column's elements can't leave the column out.
+    def test_left_gutter_of_a_rule_for_the_prose_column(self):
+        self.edit("style.css", ".doc h2:not(.callout *) { margin: 2.5rem 0 0.75rem; }",
+                  ".doc h2:not(.callout *) { margin: 2.5rem 0 0.75rem calc(var(--gutter) / 2); }")
+        run = self.assert_flags("style.css", 'gutter: ".doc h2:not(.callout *)" gives the <h2> on about.html:')
+        self.assertIn('leave it out of ".doc h2:not(.callout *)", as ".doc" holds it', run.stdout)
+
+    # A gutter above and below is not a side gutter.
+    def test_gutter_above_and_below_inside_the_prose_column_passes(self):
+        self.edit("style.css", ".callout { margin: 2rem 0;", ".callout { margin: var(--gutter) 0 var(--gutter);")
+        self.edit("style.css", ".callout:not(.doc *) { margin-inline:", ".callout { margin-block:")
         run = self.run_checker()
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 

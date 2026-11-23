@@ -66,6 +66,15 @@ It also reports, in style.css:
   before "+" or "~" isn't checked (so ".callout p + p" reaches an eyebrow
   too), and a :not() rules an element out only with simple selectors and
   descendant combinators, such as :not(.cta) and :not(.callout *).
+- gutter: an element that takes the page's side gutter, a left or right
+  margin or padding of var(--gutter), inside an element that has it already.
+  The page's sections hold the gutter between the page's edge and their
+  content, as the prose pages' column (.doc) does with its padding; a
+  callout in .doc took it again from ".callout" and sat 48px in from the
+  contact page's text at 1280px wide (#604). Write ".callout:not(.doc *)".
+  The rule that gives the gutter must not reach the element: the check
+  doesn't weigh the cascade, so a later rule that takes the gutter back
+  doesn't count. Selectors are matched as for the components above.
 
 Under GitHub Actions each problem is printed as an error annotation on its
 file and line. Exits 1 if it found any problem.
@@ -136,6 +145,16 @@ COMPONENTS = {
     "callout": ("callout", "callouts"),
     "eyebrow": ("eyebrow", "eyebrows"),
 }
+# The page's side gutter: the space between the page's edge and its text,
+# which the page's sections and the prose column each hold once (#604).
+GUTTER = "--gutter"
+# A margin or padding declaration: its longhand's side ("-left", "-inline",
+# ...; none for the shorthand) and its value.
+CSS_SPACING = re.compile(
+    r"(?<![\w-])(?:margin|padding)"
+    r"(-(?:left|right|top|bottom|inline|block)(?:-start|-end)?)?\s*:\s*([^;{}]*)"
+)
+IMPORTANT = re.compile(r"\s*!\s*important\s*$", re.I)
 # In a :not() argument, what the markup can't settle or reaches() only
 # approximates: a pseudo-class, a partial attribute match, a combinator other
 # than the descendant one.
@@ -171,6 +190,7 @@ class Page(HTMLParser):
         # component it is or is in, the innermost of that kind. An eyebrow in
         # a callout is both.
         self.components = []
+        self.elements = []      # (line, tag, attrs, [(tag, attrs)] of its ancestors)
         self.problems = []      # (line, message)
         self._open = []         # [(tag, line, attrs)]
         self._capture = None    # [name, depth, line, tokens] inside a shared block
@@ -201,6 +221,7 @@ class Page(HTMLParser):
         if tag == "img":
             self.images.append((line, values))
         ancestors = [(t, a) for t, _, a in self._open]
+        self.elements.append((line, tag, values, ancestors))
         chain = ancestors + [(tag, values)]
         found = set()
         for index in range(len(chain) - 1, -1, -1):
@@ -422,7 +443,7 @@ def check_text_colours(site):
     problems, checked = [], 0
     for declaration in CSS_COLOR_DECLARATION.finditer(css):
         checked += 1
-        value = re.sub(r"\s*!\s*important\s*$", "", declaration.group(1).strip(), flags=re.I)
+        value = IMPORTANT.sub("", declaration.group(1).strip())
         token = CSS_VAR.fullmatch(value)
         if INHERITED_COLOUR.fullmatch(value) or (token and token.group(1) in text_tokens):
             continue
@@ -626,6 +647,103 @@ def check_components(site, pages):
     return problems, counts
 
 
+def value_words(value):
+    """A declaration's value, split at the spaces outside ()."""
+    words, depth, current = [], 0, ""
+    for ch in value:
+        depth += (ch == "(") - (ch == ")")
+        if ch.isspace() and depth == 0:
+            if current:
+                words.append(current)
+            current = ""
+        else:
+            current += ch
+    if current:
+        words.append(current)
+    return words
+
+
+def side_values(side, value):
+    """What a margin or padding declaration gives an element's left and right
+    sides; side is its longhand's ("-left", "-inline", ...), "" for the
+    shorthand: top [right [bottom [left]]]."""
+    words = value_words(IMPORTANT.sub("", value.strip()))
+    if side:
+        return words if side.startswith(("-left", "-right", "-inline")) else []
+    return {1: words, 2: words[1:2], 3: words[1:2], 4: words[1::2]}.get(len(words), [])
+
+
+def gutter_rules(css):
+    """[(selector, compounds, line)] for the stylesheet's rules that give an
+    element a left or right margin or padding of var(--gutter)."""
+    css = blank_comments(css)
+    rules = []
+    for rule in CSS_RULE.finditer(css):
+        prelude = rule.group(1)
+        if prelude.strip().startswith("@"):
+            continue
+        body = css[rule.end(1) + 1:rule.end() - 1]
+        if not any(
+                var.group(1) == GUTTER
+                for declaration in CSS_SPACING.finditer(body)
+                for side in side_values(declaration.group(1) or "", declaration.group(2))
+                for var in CSS_VAR.finditer(side)):
+            continue
+        start = rule.start(1) + len(prelude) - len(prelude.lstrip())
+        line = css.count("\n", 0, start) + 1
+        for selector in selector_list(prelude):
+            rules.append((" ".join(selector.split()), compounds(selector), line))
+    return rules
+
+
+def check_gutters(site, pages):
+    """(problems, elements checked): an element that takes the page's side
+    gutter must not be inside one that has it already, where it sits a
+    gutter further in than the text around it."""
+    path = site / STYLESHEET
+    if not path.is_file():
+        return [], 0
+    rules = gutter_rules(path.read_text(encoding="utf-8"))
+
+    def gutters(tag, attrs, ancestors):
+        return [rule for rule in rules if reaches(rule[1], tag, attrs, ancestors)]
+
+    found, checked = {}, 0
+    for page in pages.values():
+        for line, tag, attrs, ancestors in page.elements:
+            inner = gutters(tag, attrs, ancestors)
+            if not inner:
+                continue
+            checked += 1
+            # The nearest ancestor that has the gutter.
+            for level in range(len(ancestors) - 1, -1, -1):
+                outer = gutters(*ancestors[level], ancestors[:level])
+                if outer:
+                    for selector, parts, rule_line in inner:
+                        # A rule that reaches the element without the
+                        # container can leave the container out; one written
+                        # for the container's elements can't.
+                        own = reaches(parts, tag, attrs, ancestors[level + 1:])
+                        found.setdefault((selector, rule_line), []).append(
+                            (page, line, tag, attrs, ancestors[level], outer[0], own))
+                    break
+    problems = []
+    for (selector, rule_line), reached in found.items():
+        page, line, tag, attrs, container, (outer, _, outer_line), own = reached[0]
+        more = f" (and {len(reached) - 1} more)" if len(reached) > 1 else ""
+        fix = (f'"{selector}:not({outer} *)"' if own
+               else f'leave it out of "{selector}", as "{outer}" holds it')
+        problems.append((
+            path, rule_line,
+            f'gutter: "{selector}" gives the {start_tag(tag, attrs)} on '
+            f"{page.path.relative_to(site).as_posix()}:{line}{more} the page's side gutter "
+            f"(var({GUTTER})) inside the {start_tag(*container)}, which has it already "
+            f'from "{outer}" on line {outer_line}: it then sits a gutter further in than the '
+            f"text around it. Give the gutter once: {fix}",
+        ))
+    return problems, checked
+
+
 def check(site):
     """Return (problems, stats): problems are (path, line, message)."""
     site = Path(os.path.normpath(site.resolve()))
@@ -742,6 +860,8 @@ def check(site):
     problems.extend(colour_problems)
     component_problems, stats["components"] = check_components(site, pages)
     problems.extend(component_problems)
+    gutter_problems, stats["gutters"] = check_gutters(site, pages)
+    problems.extend(gutter_problems)
 
     problems.sort(key=lambda p: (str(p[0]), p[1]))
     return problems, stats
@@ -776,7 +896,7 @@ def main():
     print(
         f"All {stats['pages']} pages pass: {stats['links']} local links and images, "
         f"{stats['fragments']} fragments, {stats['images']} image sizes, "
-        f"{components}{stats['colours']} text colours and "
+        f"{components}{stats['gutters']} side gutters, {stats['colours']} text colours and "
         f"{stats['contrasts']} contrasts checked."
     )
     return 0
