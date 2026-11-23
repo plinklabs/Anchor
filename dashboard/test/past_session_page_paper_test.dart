@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
-import 'support/text_contrast.dart';
+import '../integration_test/support/text_contrast.dart';
 
 // Paper redesign of the past-session review (AD7, #172). Verifies the brand
 // contracts the redesign introduced:

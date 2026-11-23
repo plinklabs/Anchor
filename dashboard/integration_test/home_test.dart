@@ -9,8 +9,8 @@ import 'package:anchor_dashboard/widgets/anchor_mark.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../test/support/text_contrast.dart';
 import 'support/e2e_binding.dart';
+import 'support/text_contrast.dart';
 
 // Real-app e2e for the redesigned home page (AD3, #168): boots the actual
 // AnchorDashboard authenticated, with a class to start and a still-running

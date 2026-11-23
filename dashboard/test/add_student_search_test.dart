@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
-import 'support/text_contrast.dart';
+import '../integration_test/support/text_contrast.dart';
 
 DirectoryUser _user(String name, {String? upn}) => DirectoryUser(
   entraOid: '00000000-0000-0000-0000-000000000001',

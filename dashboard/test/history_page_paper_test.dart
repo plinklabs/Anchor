@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
-import 'support/text_contrast.dart';
+import '../integration_test/support/text_contrast.dart';
 
 // Paper redesign of the history list (AD7, #172). Verifies the brand contracts
 // the redesign introduced:

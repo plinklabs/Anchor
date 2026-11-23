@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
-import 'support/text_contrast.dart';
+import '../integration_test/support/text_contrast.dart';
 
 // AD3 (#168): the redesigned home page. These guard the page in isolation
 // (real router, fake network): the paper composer (the oversized Fraunces

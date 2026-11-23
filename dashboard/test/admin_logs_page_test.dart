@@ -13,7 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
-import 'support/text_contrast.dart';
+import '../integration_test/support/text_contrast.dart';
 
 // Widget tests for Admin → Logs (#566), against a scripted fake LogsApi: the
 // uploads list and its filters, the Download button that stays disabled until

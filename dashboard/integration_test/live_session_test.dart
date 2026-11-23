@@ -18,8 +18,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:plink_design_system/plink_design_system.dart';
 
-import '../test/support/text_contrast.dart';
 import 'support/e2e_binding.dart';
+import 'support/text_contrast.dart';
 
 // Real-app e2e for the teacher dashboard's live-session view (#132).
 //

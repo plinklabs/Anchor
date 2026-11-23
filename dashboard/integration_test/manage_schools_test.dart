@@ -9,8 +9,8 @@ import 'package:anchor_dashboard/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../test/support/text_contrast.dart';
 import 'support/e2e_binding.dart';
+import 'support/text_contrast.dart';
 
 // Real-app e2e for the "Schools" sub-tab (#301): boots the actual
 // AnchorDashboard (real router, real fonts, real window) and drives the flow a

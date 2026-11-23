@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 
-import 'support/text_contrast.dart';
+import '../integration_test/support/text_contrast.dart';
 
 // Widget tests for the "Manage admins" page (#300): they drive the page against
 // a scripted fake AdminsApi to prove the list renders, search surfaces
