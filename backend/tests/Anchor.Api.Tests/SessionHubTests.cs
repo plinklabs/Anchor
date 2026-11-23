@@ -393,42 +393,25 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
-    public async Task ExtensionHeartbeat_from_active_participant_records_under_extension_source()
+    public async Task ExtensionHeartbeat_is_taken_and_records_nothing()
     {
+        // #569: retired. Agents in the field still send it, for a session they
+        // are in or one they have left, and get no error back; it no longer
+        // tracks the extension, nor starts the wait for the agent.
         var (student, session) = await SeedSessionWithStudentAsync();
-
-        await using var connection = BuildConnection(student.EntraOid, "Student");
-        await connection.StartAsync();
-
-        await connection.InvokeAsync<JoinSessionResult>(
-            "JoinSession",
-            new JoinSessionRequest(session.Id, JoinCode: null));
-
-        await connection.InvokeAsync("ExtensionHeartbeat", session.Id);
-
-        var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
-        Assert.True(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
-        // The whole point of the source dimension (#149): the extension's ping
-        // must not register as the agent's, or it would mask a dead agent. The
-        // join only started waiting for the agent (#444); nothing came from it.
-        Assert.True(tracker.TryGet(session.Id, student.Id, out var agent, WitnessSource.Agent));
-        Assert.True(agent.AwaitingFirstPing);
-    }
-
-    [Fact]
-    public async Task ExtensionHeartbeat_from_non_joined_user_is_rejected()
-    {
-        var (_, session) = await SeedSessionWithStudentAsync();
         var stranger = await SeedUserAsync(UserRole.Student, "Stranger");
 
-        await using var connection = BuildConnection(stranger.EntraOid, "Student");
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await using var strangerConnection = BuildConnection(stranger.EntraOid, "Student");
         await connection.StartAsync();
+        await strangerConnection.StartAsync();
 
-        var ex = await Assert.ThrowsAsync<HubException>(() =>
-            connection.InvokeAsync("ExtensionHeartbeat", session.Id));
-        Assert.Contains("Not an active participant", ex.Message);
+        await connection.InvokeAsync("ExtensionHeartbeat", session.Id);
+        await strangerConnection.InvokeAsync("ExtensionHeartbeat", session.Id);
 
         var tracker = _factory.Services.GetRequiredService<HeartbeatTracker>();
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Extension));
+        Assert.False(tracker.TryGet(session.Id, student.Id, out _, WitnessSource.Agent));
         Assert.False(tracker.TryGet(session.Id, stranger.Id, out _, WitnessSource.Extension));
     }
 
@@ -575,6 +558,66 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task GetSessionAllowlist_is_the_bundles_and_the_callers_own_grants_and_no_classmates()
+    {
+        // #570: what a reconnecting agent asks while it is in a session. An
+        // approval made while it was offline must be in the answer, as must the
+        // session's bundles; a classmate's grant must not.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var (student, classmate) = (scenario.Students[0], scenario.Students[1]);
+        var bundle = await TestSeed.AddBundleAsync(_factory, "Bundle-" + Guid.NewGuid().ToString("N")[..6]);
+        await TestSeed.AddBundleEntryAsync(
+            _factory, bundle.Id, BundleEntryKind.Domain, "allowlist-bundle.example", BundleEntryMatchType.Suffix);
+        await TestSeed.AddBundleEntryAsync(
+            _factory, bundle.Id, BundleEntryKind.App, "allowlist-bundle-app", BundleEntryMatchType.Exact);
+        using var teacher = _factory.CreateClient();
+        TestAuth.SetTeacher(teacher, scenario.Teacher);
+        var started = await teacher.PostAsJsonAsync("/sessions", new StartSessionRequest(scenario.Class.Id, new[] { bundle.Id }));
+        started.EnsureSuccessStatusCode();
+        var sessionId = (await started.Content.ReadFromJsonAsync<StartSessionResponse>())!.Id;
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+        await JoinAsync(connection, sessionId);
+
+        (await teacher.PostAsJsonAsync($"/sessions/{sessionId}/unblock", new UnblockGrantRequest(student.Id, "own-grant-reconnect.example")))
+            .EnsureSuccessStatusCode();
+        await TestSeed.AddUnblockGrantAsync(_factory, sessionId, classmate.Id, "classmate-grant-reconnect.example");
+
+        // Asked over a new connection, as after a reconnect.
+        await using var reconnected = BuildConnection(student.EntraOid, "Student");
+        await reconnected.StartAsync();
+        var payload = await reconnected.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", sessionId);
+
+        Assert.NotNull(payload);
+        Assert.Equal(sessionId, payload.SessionId);
+        Assert.Contains(payload.Domains, d => d.Value == "allowlist-bundle.example");
+        Assert.Contains(payload.Apps, a => a.Value == "allowlist-bundle-app");
+        Assert.Contains(payload.Domains, d => d.Value == "own-grant-reconnect.example");
+        Assert.DoesNotContain(payload.Domains, d => d.Value == "classmate-grant-reconnect.example");
+    }
+
+    [Fact]
+    public async Task GetSessionAllowlist_is_null_outside_the_session()
+    {
+        // Not joined yet, left, or never a participant: the agent keeps what it
+        // has, and IsInSession decides whether it leaves.
+        var (student, session) = await SeedSessionWithStudentAsync();
+        var stranger = await SeedUserAsync(UserRole.Student, "Outsider");
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await using var outside = BuildConnection(stranger.EntraOid, "Student");
+        await connection.StartAsync();
+        await outside.StartAsync();
+
+        Assert.Null(await connection.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", session.Id));
+        await JoinAsync(connection, session.Id);
+        Assert.NotNull(await connection.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", session.Id));
+        Assert.Null(await outside.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", session.Id));
+
+        await connection.InvokeAsync("LeaveSession", session.Id);
+        Assert.Null(await connection.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", session.Id));
+    }
+
+    [Fact]
     public async Task GetStartedSession_returns_a_session_started_straight_after_the_connection_opened()
     {
         // #356: what a client asks right after it connects. Its start completed
@@ -602,6 +645,30 @@ public sealed class SessionHubTests : IClassFixture<AnchorApiFactory>
         Assert.Equal(started.JoinCode, payload.JoinCode);
         // The allowlist the SessionStarted broadcast carried.
         Assert.Contains(payload.Domains, d => d.Value == "started-session.example");
+    }
+
+    [Fact]
+    public async Task GetStartedSession_carries_the_callers_own_grants_and_no_classmates()
+    {
+        // #568: the catch-up replaces the allowlist the agent and extension had,
+        // and it is what offers the session again when a silent rejoin failed.
+        // A host approved for this student only must be in it; a classmate's
+        // must not.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var (student, classmate) = (scenario.Students[0], scenario.Students[1]);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id, classmate.Id });
+        await TestSeed.AddUnblockGrantAsync(_factory, session.Id, student.Id, "own-grant-catch-up.example");
+        await TestSeed.AddUnblockGrantAsync(_factory, session.Id, classmate.Id, "classmate-grant-catch-up.example");
+        await using var connection = BuildConnection(student.EntraOid, "Student");
+        await connection.StartAsync();
+
+        var payload = await connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession");
+
+        Assert.NotNull(payload);
+        Assert.Equal(session.Id, payload.SessionId);
+        Assert.Contains(payload.Domains, d => d.MatchType == "Suffix" && d.Value == "own-grant-catch-up.example");
+        Assert.DoesNotContain(payload.Domains, d => d.Value == "classmate-grant-catch-up.example");
     }
 
     [Fact]

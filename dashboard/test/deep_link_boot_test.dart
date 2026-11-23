@@ -5,6 +5,7 @@ import 'package:anchor_dashboard/api/api_client.dart';
 import 'package:anchor_dashboard/api/auth_token_store.dart';
 import 'package:anchor_dashboard/api/bundles_api.dart';
 import 'package:anchor_dashboard/api/classes_api.dart';
+import 'package:anchor_dashboard/api/logs_api.dart';
 import 'package:anchor_dashboard/api/schools_api.dart';
 import 'package:anchor_dashboard/api/sessions_api.dart';
 import 'package:anchor_dashboard/auth/msal_auth_service.dart';
@@ -498,6 +499,7 @@ void main() {
         classes: _FakeClasses(),
         admins: AdminsApi(_dummyClient()),
         schools: SchoolsApi(_dummyClient()),
+        logs: LogsApi(_dummyClient()),
         apiBaseUrl: Uri.parse('http://localhost'),
       ).configuration;
     });
@@ -513,6 +515,7 @@ void main() {
         '/admin/bundles',
         '/admin/admins',
         '/admin/schools',
+        '/admin/logs',
         '/bundles',
       ]) {
         expect(

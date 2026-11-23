@@ -31,6 +31,13 @@ internal static class TestConfig
     public const string AppProcessName = "notepad";
 
     /// <summary>
+    /// Dev bundle (see DevDataSeeder) that allows the test host's own process,
+    /// whose windows play Edge's in the school-profile specs (#549), as the
+    /// session baseline allows <c>msedge</c>.
+    /// </summary>
+    public const string EdgeStandInBundleName = "Edge stand-in (dev)";
+
+    /// <summary>
     /// Dedicated e2e backend port — deliberately NOT the dev default (5276) so a
     /// running dev backend (and its real anchor.dev.db) is never reused or
     /// polluted. Also one above the extension harness's 5281 so both suites can

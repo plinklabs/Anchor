@@ -45,6 +45,16 @@ public sealed record SessionBundlesUpdatedPayload(
     IReadOnlyList<AllowedDomainDto> Domains);
 
 /// <summary>
+/// One student's whole allowlist in a running session, as the agent asks for
+/// it after a reconnect (#570): the same lists a
+/// <see cref="SessionBundlesUpdatedPayload"/> carries, and replaced the same way.
+/// </summary>
+public sealed record SessionAllowlistPayload(
+    Guid SessionId,
+    IReadOnlyList<AllowedAppDto> Apps,
+    IReadOnlyList<AllowedDomainDto> Domains);
+
+/// <summary>
 /// The teacher-facing live state of one class member in a session (#100).
 /// Serialised as its name on the wire and mirrored by the dashboard. The
 /// taxonomy lives here so the staleness threshold (<see cref="HeartbeatOptions"/>)

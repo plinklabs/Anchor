@@ -7,7 +7,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FocusAgent.Core.Diagnostics;
 
 /// <summary>Where the logs the agent uploads from live (#446).</summary>
-/// <param name="LogDirectory">The agent's own logs: the daily <c>focusagent-YYYYMMDD.log</c> files and the crash log.</param>
+/// <param name="LogDirectory">
+/// The agent's own logs: the daily <c>focusagent-YYYYMMDD.log</c> files and the crash log, and
+/// the witness host's daily <c>witness-host-YYYYMMDD.log</c> files (#561).
+/// </param>
 /// <param name="UpdaterLogPath">Velopack's log for this app.</param>
 public sealed record LogUploadSources(string LogDirectory, string UpdaterLogPath)
 {
@@ -20,9 +23,9 @@ public sealed record LogUploadStatus(int Passes, int Uploaded, DateTimeOffset? L
 /// <summary>
 /// The test phase's log uploads (#446), run on every connect. Asks the backend
 /// which session windows still need an upload from this student, cuts the log
-/// lines inside each window out of the agent's own logs, the crash log and the
-/// updater log, and uploads them gzipped, with the agent's version. Nothing from
-/// outside a window leaves the laptop (see <see cref="AgentLogCutter"/> and
+/// lines inside each window out of the agent's own logs, the crash log, the
+/// updater log and the witness host's log (#561), and uploads them gzipped,
+/// with the agent's version. Nothing from outside a window leaves the laptop (see <see cref="AgentLogCutter"/> and
 /// <see cref="UpdaterLogCutter"/>). Uploads are off unless the backend turns
 /// them on: switched off, it reports no windows, and the agent sends nothing.
 ///
@@ -41,6 +44,11 @@ public sealed class LogUploadService
     // when it had to roll to a new file the same day.
     private static readonly Regex AgentLogFileName = new(
         @"^focusagent-(?<date>\d{8})(_\d{3})?\.log$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    // The witness host's daily files (#561): witness-host-20261021.log.
+    private static readonly Regex WitnessHostLogFileName = new(
+        @"^witness-host-(?<date>\d{8})\.log$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     /// <summary>How much of the end of the updater and crash logs is read. Both are small.</summary>
@@ -158,6 +166,7 @@ public sealed class LogUploadService
             new(LogUploadDocument.AgentLogSection, logs.AgentLog(window)),
             new(LogUploadDocument.CrashLogSection, logs.CrashLog(window)),
             new(LogUploadDocument.UpdaterLogSection, logs.UpdaterLog(window)),
+            new(LogUploadDocument.WitnessHostLogSection, logs.WitnessHostLog(window)),
         };
         var gzip = LogUploadDocument.Build(window, _agentVersion, sections, maxBytes);
         if (gzip is null)
@@ -187,6 +196,7 @@ public sealed class LogUploadService
     {
         private readonly IReadOnlyList<LogEntry> _agentEntries;
         private readonly IReadOnlyList<LogEntry> _crashEntries;
+        private readonly IReadOnlyList<LogEntry> _witnessHostEntries;
         private readonly IReadOnlyList<string> _updaterLines;
         private readonly IReadOnlyList<AgentProcessStart> _starts;
         private readonly DateTimeOffset _now;
@@ -203,7 +213,7 @@ public sealed class LogUploadService
             var firstDay = TimeZoneInfo.ConvertTime(windows.Min(w => w.From), timeZone).Date.AddDays(-1);
             var agentEntries = new List<LogEntry>();
             var starts = new List<AgentProcessStart>();
-            foreach (var path in AgentLogFiles(sources.LogDirectory, firstDay))
+            foreach (var path in DailyFiles(sources.LogDirectory, "focusagent-*.log", AgentLogFileName, firstDay))
             {
                 var lines = ReadLines(path, tailBytes: null, log);
                 // File by file: an entry never runs on from one daily file into the next.
@@ -215,6 +225,13 @@ public sealed class LogUploadService
             _crashEntries = AgentLogCutter.ParseCrashLog(
                 ReadLines(Path.Combine(sources.LogDirectory, LogUploadSources.CrashLogFileName), TailBytes, log));
             _updaterLines = ReadLines(sources.UpdaterLogPath, TailBytes, log);
+            // The witness host writes its lines in the agent log's format (#561);
+            // one host per Edge profile shares each daily file, every line
+            // carrying its process id.
+            var witnessHostEntries = new List<LogEntry>();
+            foreach (var path in DailyFiles(sources.LogDirectory, "witness-host-*.log", WitnessHostLogFileName, firstDay))
+                witnessHostEntries.AddRange(AgentLogCutter.ParseAgentLog(ReadLines(path, tailBytes: null, log)));
+            _witnessHostEntries = witnessHostEntries;
             // After the reads: every line read was written before it.
             _now = clock.GetUtcNow();
         }
@@ -226,11 +243,13 @@ public sealed class LogUploadService
         public IReadOnlyList<string> UpdaterLog(LogWindow window) =>
             UpdaterLogCutter.Cut(_updaterLines, _starts, window, _now, _timeZone);
 
-        private static IEnumerable<string> AgentLogFiles(string directory, DateTime firstDay)
+        public IReadOnlyList<string> WitnessHostLog(LogWindow window) => AgentLogCutter.Cut(_witnessHostEntries, window).ToList();
+
+        private static IEnumerable<string> DailyFiles(string directory, string pattern, Regex fileName, DateTime firstDay)
         {
             if (!Directory.Exists(directory)) return [];
-            return Directory.EnumerateFiles(directory, "focusagent-*.log")
-                .Select(path => (Path: path, Match: AgentLogFileName.Match(Path.GetFileName(path))))
+            return Directory.EnumerateFiles(directory, pattern)
+                .Select(path => (Path: path, Match: fileName.Match(Path.GetFileName(path))))
                 .Where(f => f.Match.Success
                             && DateTime.TryParseExact(f.Match.Groups["date"].Value, "yyyyMMdd",
                                 CultureInfo.InvariantCulture, DateTimeStyles.None, out var day)

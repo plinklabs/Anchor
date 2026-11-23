@@ -313,6 +313,7 @@ so no spec touches the public internet):
 | `amend-bundles` | bundle changes re-scan or release tabs (#93, #426); an approved unblock request releases its tab (#73) |
 | `restore-on-end` | the end of the session sends blocked tabs back (#121) |
 | `end-after-reconnect` | an end the extension missed while its SW was stopped still releases its tabs (#354) |
+| `link-retry-alarm` | with the host unstartable and the SW stopped, the link to the agent comes back on its own once the host can start, with no browsing to wake the SW (#572) |
 | `unblock-request` | "Request access" reaches the agent, and its answer — or its absence — shows on the block page (#73) |
 | `self-check` | the extension tells the agent what its settings allow when a session starts and as "Site access" / "Allow in InPrivate" change on its own page in Edge, and opens that page when the agent asks (#524) |
 | `no-inprivate-report` | an InPrivate window opened during a session is filtered, and the extension sends the agent no report of it: the agent's own InPrivate witness reports it (#535, #539) |
@@ -521,7 +522,24 @@ and the [`nativeMessaging`](src/manifest.json) permission). Two things ride on i
 
 If the agent goes away mid-session the extension keeps enforcing the session it
 has until the agent is back and says otherwise; the teacher sees the agent's
-missing heartbeat. Host, pipe protocol, and dev registration:
+missing heartbeat.
+
+When the link drops, the extension tries again with a backoff (1 s, 2 s, 4 s …
+up to 60 s). Edge stops an idle service worker after about 30 s and its timers
+go with it, so while the link is down a repeating 30 s alarm runs as well (the
+[`alarms`](src/manifest.json) permission, which shows no permission warning):
+it wakes a stopped worker, which opens the link again, and cuts a long backoff
+short in one still awake. It is cleared once the host relays a message (#572,
+[`link-retry.ts`](src/shared/link-retry.ts)).
+
+Each time the port drops (or `connectNative` throws), the extension reads Edge's
+reason from `chrome.runtime.lastError` ("Specified native messaging host not
+found.", "… is forbidden.", "Native host has exited.") and keeps it, with how
+often the link failed and since when, in `chrome.storage.session`, so a worker
+the alarm wakes still has it. Once the link is up again it sends the agent
+`link_error` with those three, and the agent logs it for its log upload (#561,
+[`link-trouble.ts`](src/shared/link-trouble.ts)). Only Edge's message: nothing
+the student browses. Host, pipe protocol, and dev registration:
 [`agent/src/FocusAgent.WitnessHost/README.md`](../agent/src/FocusAgent.WitnessHost/README.md).
 
 ## Stable extension ID

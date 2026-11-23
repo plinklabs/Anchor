@@ -20,17 +20,25 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
     private static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(5);
     // Messages the extension sent before the pipe was up, kept for when it is.
     private const int MaxPending = 64;
+    // Failed connect attempts logged one by one (#561); after that one line a
+    // minute (every RetryDelay), so an agent that stays away for hours doesn't
+    // fill the log.
+    private const int AttemptsLoggedEach = 5;
+    private const int AttemptsLoggedEvery = 30;
 
     private readonly string _pipeName;
+    private readonly WitnessHostLog _log;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private CancellationTokenSource? _cts;
     private Task? _loop;
     private NamedPipeClientStream? _pipe;
     private readonly System.Collections.Concurrent.ConcurrentQueue<string> _pending = new();
 
-    public NamedPipeAgentLink(string pipeName)
+    /// <param name="log">Where each connect attempt and drop is written (#561); none by default.</param>
+    public NamedPipeAgentLink(string pipeName, WitnessHostLog? log = null)
     {
         _pipeName = pipeName;
+        _log = log ?? WitnessHostLog.None;
     }
 
     public event Action? Connected;
@@ -46,8 +54,10 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
 
     private async Task ConnectLoopAsync(CancellationToken ct)
     {
+        var attempt = 0;
         while (!ct.IsCancellationRequested)
         {
+            attempt++;
             var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             try
             {
@@ -55,9 +65,18 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
                 connectCts.CancelAfter(ConnectTimeout);
                 await pipe.ConnectAsync(connectCts.Token).ConfigureAwait(false);
             }
-            catch (Exception) when (!ct.IsCancellationRequested)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 // Agent not running yet — back off and retry.
+                if (attempt <= AttemptsLoggedEach || attempt % AttemptsLoggedEvery == 0)
+                {
+                    // A connect that timed out is cancelled, which says nothing:
+                    // no agent is listening on the pipe.
+                    var why = ex is OperationCanceledException
+                        ? $"no answer within {ConnectTimeout.TotalSeconds:0}s (no agent listening on it, or none free)"
+                        : WitnessHostLog.Describe(ex);
+                    _log.Warn($"Connecting to the agent's pipe {_pipeName} failed (attempt {attempt}): {why}; retrying every {RetryDelay.TotalSeconds:0}s.");
+                }
                 await pipe.DisposeAsync().ConfigureAwait(false);
                 await DelayQuietly(RetryDelay, ct).ConfigureAwait(false);
                 continue;
@@ -69,6 +88,8 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
             }
 
             _pipe = pipe;
+            _log.Info($"Connected to the agent's pipe {_pipeName} (attempt {attempt}).");
+            attempt = 0;
             Connected?.Invoke();
             using (var linkCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
@@ -78,7 +99,9 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
                 {
                     // Either side ending means the agent is gone: a keepalive write
                     // threw (the pipe broke), or the agent closed its end (EOF).
-                    await Task.WhenAny(reading, keeping).ConfigureAwait(false);
+                    var ended = await Task.WhenAny(reading, keeping).ConfigureAwait(false);
+                    if (!ct.IsCancellationRequested)
+                        _log.Warn($"The agent's pipe dropped: {DropReason(ended, ended == reading)}.");
                 }
                 finally
                 {
@@ -95,6 +118,13 @@ public sealed class NamedPipeAgentLink : IAgentLink, IAsyncDisposable
                 await DelayQuietly(RetryDelay, ct).ConfigureAwait(false);
             }
         }
+    }
+
+    private static string DropReason(Task ended, bool reading)
+    {
+        if (ended.Exception?.GetBaseException() is { } ex)
+            return (reading ? "reading from it failed: " : "writing to it failed: ") + WitnessHostLog.Describe(ex);
+        return reading ? "the agent closed its end" : "the keepalive stopped";
     }
 
     private async Task KeepAliveAsync(CancellationToken ct)

@@ -22,7 +22,6 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
 
     public ConcurrentBag<SessionStartedCall> SessionStartedCalls { get; } = new();
     public ConcurrentBag<SessionEndedCall> SessionEndedCalls { get; } = new();
-    public ConcurrentBag<ParticipationEndedCall> ParticipationEndedCalls { get; } = new();
     public ConcurrentBag<SessionBundlesUpdatedCall> SessionBundlesUpdatedCalls { get; } = new();
     public ConcurrentBag<ParticipantStateChangedPayload> ParticipantStateChangedCalls { get; } = new();
     public ConcurrentBag<HeartbeatLostPayload> HeartbeatLostCalls { get; } = new();
@@ -49,12 +48,6 @@ public sealed class RecordingSessionBroadcaster : ISessionBroadcaster
     {
         SessionEndedCalls.Add(new SessionEndedCall(sessionId, recipientUserIds.ToArray()));
         return _inner.SessionEndedAsync(sessionId, recipientUserIds, cancellationToken);
-    }
-
-    public Task ParticipationEndedAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
-    {
-        ParticipationEndedCalls.Add(new ParticipationEndedCall(sessionId, userId));
-        return _inner.ParticipationEndedAsync(sessionId, userId, cancellationToken);
     }
 
     public Task SessionBundlesUpdatedAsync(Guid userId, SessionBundlesUpdatedPayload payload, CancellationToken cancellationToken = default)
@@ -119,8 +112,6 @@ public sealed record SessionStartedCall(SessionStartedPayload Payload, IReadOnly
 }
 
 public sealed record SessionEndedCall(Guid SessionId, IReadOnlyList<Guid> RecipientUserIds);
-
-public sealed record ParticipationEndedCall(Guid SessionId, Guid UserId);
 
 public sealed record SessionBundlesUpdatedCall(Guid UserId, SessionBundlesUpdatedPayload Payload)
 {

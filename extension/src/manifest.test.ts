@@ -99,6 +99,22 @@ describe('permissions (#489)', () => {
   it('declares nativeMessaging, the link the agent hands the session down', () => {
     expect(manifest.permissions).toContain('nativeMessaging');
   });
+
+  // #572: the retry alarm wakes a stopped worker while the agent link is down.
+  // "alarms" shows no permission warning, so adding it doesn't switch a store
+  // install off on update until the student approves it again.
+  it('declares alarms, which keeps the agent link retrying while the worker is stopped', () => {
+    expect(manifest.permissions).toContain('alarms');
+  });
+
+  // A permission that shows a warning switches a store install off on update
+  // until the student approves it, so a new one is a decision, not a side
+  // effect: check its warning (Chrome's permissions list) before adding it here.
+  it('declares exactly the permissions whose warnings were checked', () => {
+    expect([...(manifest.permissions ?? [])].sort()).toEqual(
+      ['alarms', 'nativeMessaging', 'storage', 'tabs', 'webNavigation'].sort(),
+    );
+  });
 });
 
 // Issue #163 (AF2): the extension ships the Anchor brand icons for the toolbar

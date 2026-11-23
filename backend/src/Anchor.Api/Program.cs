@@ -146,6 +146,8 @@ if (enableEventPruner)
 // The agents' log uploads of the test phase (#446): off unless LogUpload:Enabled.
 // Uploads are pruned whether or not the switch is on.
 builder.Services.Configure<LogUploadOptions>(builder.Configuration.GetSection(LogUploadOptions.SectionName));
+// The records of admins' downloads of them (#566), kept far longer than the logs.
+builder.Services.Configure<LogAccessOptions>(builder.Configuration.GetSection(LogAccessOptions.SectionName));
 var logUploadSection = builder.Configuration.GetSection(LogUploadOptions.SectionName);
 var enableLogUploadPruner = logUploadSection.GetValue<bool?>(nameof(LogUploadOptions.EnablePruner)) ?? true;
 if (enableLogUploadPruner)

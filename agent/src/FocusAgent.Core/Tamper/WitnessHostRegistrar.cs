@@ -1,4 +1,5 @@
 using FocusAgent.Core.Extension;
+using FocusAgent.Core.Logging;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -72,6 +73,44 @@ public sealed class WitnessHostRegistrar
     }
 
     /// <summary>
+    /// Register the host exe shipped at <paramref name="hostExePath"/>, never
+    /// throwing, and log the outcome either way (#561): the agent-startup
+    /// registration and the link self-check at session join. A missing exe (a
+    /// dev or debug build, or an install that lost it) leaves any registration
+    /// in place rather than pointing Edge at a path that won't launch. Returns
+    /// whether any write happened.
+    /// </summary>
+    /// <param name="hostExePath">The host exe next to the running agent.</param>
+    /// <param name="occasion">What asked, for the log line ("startup", "self-check").</param>
+    public bool TryEnsureRegistered(string hostExePath, string occasion)
+    {
+        try
+        {
+            if (!_store.FileExists(hostExePath))
+            {
+                _log.LogWarning(
+                    "Witness host registration ({Occasion}): {HostExe} doesn't exist; not registering it, " +
+                    "and leaving any registration in place.",
+                    occasion, LogPath.Redact(hostExePath));
+                return false;
+            }
+
+            var wrote = EnsureRegistered(hostExePath);
+            _log.LogInformation(
+                "Witness host registration ({Occasion}) for {HostExe}: {Outcome}.",
+                occasion, LogPath.Redact(hostExePath), wrote ? "rewrote it" : "already up to date");
+            return wrote;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex,
+                "Witness host registration ({Occasion}) for {HostExe} failed: {Error}",
+                occasion, LogPath.Redact(hostExePath), ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Remove the host's HKCU key — called from the uninstall hook so uninstalling the
     /// agent un-registers the host it installed (the manifest goes away with the
     /// install dir). Best-effort and idempotent: a missing key is fine,
@@ -94,12 +133,12 @@ public sealed class WitnessHostRegistrar
     {
         if (string.Equals(_store.ReadFile(path), content, StringComparison.Ordinal))
         {
-            _log.LogInformation("Witness {Label} already up to date at {Path}; not re-writing.", label, path);
+            _log.LogInformation("Witness {Label} already up to date at {Path}; not re-writing.", label, LogPath.Redact(path));
             return false;
         }
 
         _store.WriteFile(path, content);
-        _log.LogInformation("Wrote witness {Label} to {Path}.", label, path);
+        _log.LogInformation("Wrote witness {Label} to {Path}.", label, LogPath.Redact(path));
         return true;
     }
 
@@ -110,7 +149,7 @@ public sealed class WitnessHostRegistrar
             string.Equals(current.Trim(), manifestPath.Trim(), StringComparison.OrdinalIgnoreCase))
         {
             _log.LogInformation(
-                "Witness host key already points at {ManifestPath}; not re-writing.", manifestPath);
+                "Witness host key already points at {ManifestPath}; not re-writing.", LogPath.Redact(manifestPath));
             return false;
         }
 
@@ -119,7 +158,7 @@ public sealed class WitnessHostRegistrar
             current is null
                 ? "Wrote witness host key: HKCU\\{Key}\\(default) = {ManifestPath}"
                 : "Updated witness host key: HKCU\\{Key}\\(default) = {ManifestPath}",
-            WitnessHostManifest.RegistryKeyPath, manifestPath);
+            WitnessHostManifest.RegistryKeyPath, LogPath.Redact(manifestPath));
         return true;
     }
 }

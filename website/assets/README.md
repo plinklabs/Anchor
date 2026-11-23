@@ -6,7 +6,7 @@ by the screenshot generators — do not hand-edit the images here.
 ## Dashboard screenshots (`dashboard-*.png`)
 
 The teacher-dashboard shots (`dashboard-home.png`, `dashboard-session.png`,
-`dashboard-bundles.png`, `dashboard-classes.png`, `dashboard-history.png`,
+`dashboard-bundles.png`, `dashboard-classes.png`,
 `dashboard-past-session.png`) are generated from the real Flutter Web dashboard
 rendered against deterministic demo data — no backend, no real auth, no secrets.
 
@@ -26,7 +26,7 @@ for details.
 The student-facing agent shots (`agent-join-toast.png`,
 `agent-block-overlay.png`, `agent-main-window.png`, `agent-tray-menu.png`) are
 captured from the real agent's WinUI surfaces rendered against presentable demo
-content — teacher "Ms Rivera", class code `PLINK-3B`, a readable allowlist,
+content — teacher "Ms Rivera", class 3B, a readable allowlist,
 matched to the dashboard's demo data so both sides tell one story. No backend,
 no real auth, no secrets.
 

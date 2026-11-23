@@ -15,6 +15,9 @@ internal static class NativeMethods
     // ShowWindow
     public const int SW_MINIMIZE = 6;
     public const int SW_SHOWNOACTIVATE = 4;
+    public const int SW_SHOWMINIMIZED = 2;
+    public const int SW_SHOWMAXIMIZED = 3;
+    public const int SW_SHOWMINNOACTIVE = 7;
     public const int SW_RESTORE = 9;
 
     // GetWindowLong index + extended window styles
@@ -179,4 +182,94 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PostMessageW(nint hWnd, uint msg, nint wParam, nint lParam);
+
+    // Where a window is and goes back to (#563).
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPLACEMENT
+    {
+        public int length;
+        public int flags;
+        public int showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT rcNormalPosition;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(nint hWnd, out RECT lpRect);
+
+    /// <summary><see cref="WINDOWPLACEMENT.flags"/>: a minimized window comes back maximized (#580).</summary>
+    public const int WPF_RESTORETOMAXIMIZED = 0x0002;
+
+    /// <summary>
+    /// <see cref="MonitorFromWindow"/>: none, when the window is on no monitor. For a
+    /// minimized window, where it goes back to counts.
+    /// </summary>
+    public const uint MONITOR_DEFAULTTONULL = 0x00000000;
+
+    [DllImport("user32.dll")]
+    public static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowPlacement(nint hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    /// <summary>
+    /// Sends to the thread that owns <paramref name="hWnd"/>, and waits until it
+    /// handles messages: never on a thread that must not wait for another app.
+    /// </summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowPlacement(nint hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    /// <summary>Where Windows parks a minimized top-level window, off every screen.</summary>
+    public const int MINIMIZED_POSITION = -32000;
+
+    // SystemParametersInfo: how Windows arranges minimized windows (#563).
+    public const uint SPI_GETMINIMIZEDMETRICS = 0x002B;
+
+    /// <summary>The primary monitor's work area, without the taskbar, in screen coordinates (#580).</summary>
+    public const uint SPI_GETWORKAREA = 0x0030;
+
+    /// <summary>
+    /// <see cref="MINIMIZEDMETRICS.iArrange"/>: minimized windows are hidden, parked
+    /// off the screen at <see cref="MINIMIZED_POSITION"/>, as the Windows shell has
+    /// them.
+    /// </summary>
+    public const int ARW_HIDE = 0x0008;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MINIMIZEDMETRICS
+    {
+        public int cbSize;
+        public int iWidth;
+        public int iHorzGap;
+        public int iVertGap;
+        public int iArrange;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, ref MINIMIZEDMETRICS pvParam, uint fWinIni);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);
 }

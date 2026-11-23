@@ -281,6 +281,18 @@
   <data name="Overlay_BrowserPaused_Hint" xml:space="preserve">
     <value>Edge gaat {0} seconden open. Ga naar edge://extensions en zet Anchor aan.</value>
   </data>
+  <data name="Overlay_NotConnected_Headline" xml:space="preserve">
+    <value>Edge staat even op pauze</value>
+  </data>
+  <data name="Overlay_NotConnected_Message" xml:space="preserve">
+    <value>De Anchor-extensie in Edge is niet verbonden met Anchor, dus je kunt Edge in deze sessie pas weer gebruiken als ze dat is. Je leerkracht weet het. Ga intussen verder met een van deze apps.</value>
+  </data>
+  <data name="Overlay_NotConnected_TurnBackOn" xml:space="preserve">
+    <value>Probeer Edge opnieuw</value>
+  </data>
+  <data name="Overlay_NotConnected_Hint" xml:space="preserve">
+    <value>Edge gaat {0} seconden open. Maakt Anchor in die tijd verbinding, dan blijft Edge open.</value>
+  </data>
   <data name="Overlay_SiteAccess_Headline" xml:space="preserve">
     <value>Anchor mag niet op alle sites werken</value>
   </data>

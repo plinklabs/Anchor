@@ -21,13 +21,15 @@ namespace FocusAgent.IntegrationTests;
 /// with <c>[InPrivate]</c> in the title; measured on Edge 157). The agent reads
 /// those from the real windows.
 ///
-/// The spec's windows are no allowed app, so they are opened without taking the
+/// The spec's process is allowed in the session as Edge is (#549), so its windows
+/// are judged as Edge's: those outside the school profile are paused by the
+/// school-profile rule, which comes before the allow-list, and the school
+/// profile's stay up whenever they get the foreground, from Windows as the others
+/// go down (#547) or from the overlay's button. They are opened without taking the
 /// foreground: what this asserts comes from the agent's own scans and
-/// <c>ShowWindow</c> calls, not from foreground events, which are the flaky part
-/// on a headless desktop. That alone doesn't keep the foreground away from them:
-/// each window the agent minimizes hands it to the window on top of those left,
-/// so a school-profile window that must stay up while the others go down is one
-/// Windows never hands it to (#547). The overlays are <see cref="SchoolProfileOverlayTests"/>'.
+/// <c>ShowWindow</c> calls, not from foreground events the spec causes, which are
+/// the flaky part on a headless desktop. The overlays are
+/// <see cref="SchoolProfileOverlayTests"/>'.
 ///
 /// #537 adds the windows of sites installed as apps: each carries its package's
 /// ID in every profile, so the run also stands in the packages (a folder of the
@@ -51,10 +53,10 @@ public sealed class SchoolProfileTests
             "the agent to find the school profile (Default)");
 
         // 1. The student has their school profile open, and opens a personal
-        //    profile's window, a Guest window and an InPrivate window. The school
-        //    profile's window is never handed the foreground by the others going
-        //    down (#547): the spec's process plays Edge but isn't allowed as Edge is.
-        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge", neverActivated: true);
+        //    profile's window, a Guest window and an InPrivate window. As the others
+        //    go down, Windows may hand the school profile's window the foreground,
+        //    as it does Edge's (#547); allowed as Edge is, it stays up.
+        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge");
         var personal = await run.OpenWindowAsync("Anchor e2e - Personal - Microsoft Edge", "MSEdge.UserData.Profile1");
         var guest = await run.OpenWindowAsync("Anchor e2e - [Guest] - Microsoft Edge", "MSEdge.UserData.GuestProfile");
         var inPrivate = await run.OpenWindowAsync("Anchor e2e - [InPrivate] - Microsoft Edge", "MSEdge");
@@ -102,13 +104,14 @@ public sealed class SchoolProfileTests
         Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "school_profile_missing"));
 
         // 4. The overlay's button for the personal window closes it, as its close
-        //    button does, and leaves the school profile's window be.
+        //    button does, and brings the school profile's window forward: the
+        //    student is left working in it, not looking at another pause (#549).
         Assert.True(await run.Agent.GoToSchoolProfileAsync(personal.Handle), "The agent refused to go to the school profile.");
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (WindowCapture.IsWindow(personal.Handle) && DateTime.UtcNow < deadline)
             await Task.Delay(100);
         Assert.False(WindowCapture.IsWindow(personal.Handle), "The button did not close the personal profile's window.");
-        Assert.True(WindowCapture.IsWindow(school.Handle), "The button closed the school profile's window.");
+        await AssertSchoolWindowWorksAsync(run, school.Handle);
 
         // 5. The session ends: every paused window can be used again.
         await run.EndSessionAsync();
@@ -140,13 +143,13 @@ public sealed class SchoolProfileTests
         var teams = run.InstallApp("localhost-AB457204_ebq0fnkrwaj2c", "abjckpmkhelphnmlbbjeehohmjbopiio", "Default");
         var games = run.InstallApp("localhost-15D39BB8_ts9w021fep8jm", "poiahfjabbbejmkahpdcpdgnnfmbakcf", "Profile 1");
         var outlook = run.InstallApp("localhost-5C0FFEE1_q1w2e3r4t5y6u", "faolnafnngnfdaknnbpnkhgohbobgegn", "Profile 1", "Default");
-        // The school profile's windows are never handed the foreground by the others
-        // going down: the spec's process plays Edge but isn't allowed as Edge is.
-        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge", neverActivated: true);
-        var schoolTeams = await run.OpenWindowAsync("Anchor e2e Teams", teams, neverActivated: true);
+        // Windows may hand any of the school profile's windows the foreground as the
+        // others go down (#547); allowed as Edge's are, they stay up.
+        var school = await run.OpenWindowAsync("Anchor e2e - School - Microsoft Edge", "MSEdge");
+        var schoolTeams = await run.OpenWindowAsync("Anchor e2e Teams", teams);
         var personalGames = await run.OpenWindowAsync("Anchor e2e Games", games);
         // An app in two profiles: Edge ends each window's title with its profile's name.
-        var schoolOutlook = await run.OpenWindowAsync("Anchor e2e Outlook - School", outlook, neverActivated: true);
+        var schoolOutlook = await run.OpenWindowAsync("Anchor e2e Outlook - School", outlook);
         var personalOutlook = await run.OpenWindowAsync("Anchor e2e Outlook - Personal", outlook);
 
         // The personal profile's app windows are paused within a few seconds...
@@ -210,13 +213,15 @@ public sealed class SchoolProfileTests
         await run.WaitForAsync(s => s.InPrivateOpen == 1, TimeSpan.FromSeconds(5), "the agent to see the InPrivate window");
         Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "inprivate_opened"));
 
-        // 2. The overlay's button closes it within the report time: the teacher
-        //    hears nothing of it, not even after.
+        // 2. The overlay's button closes it within the report time, and brings the
+        //    school profile's window forward to work in (#549): the teacher hears
+        //    nothing of it, not even after.
         Assert.True(await run.Agent.GoToSchoolProfileAsync(first.Handle), "The agent refused to go to the school profile.");
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (WindowCapture.IsWindow(first.Handle) && DateTime.UtcNow < deadline)
             await Task.Delay(100);
         Assert.False(WindowCapture.IsWindow(first.Handle), "The button did not close the InPrivate window.");
+        await AssertSchoolWindowWorksAsync(run, school.Handle);
         await run.WaitForAsync(s => s.InPrivateOpen == 0, TimeSpan.FromSeconds(5), "the agent to see the InPrivate window gone");
         await Task.Delay(report + TimeSpan.FromSeconds(3));
         Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "inprivate_opened"));
@@ -283,6 +288,32 @@ public sealed class SchoolProfileTests
         await Task.Delay(SchoolProfileRun.Repair);
         Assert.Equal("Present", (await run.Agent.TryGetStatusAsync())?.ExtensionGuard?.State);
         Assert.Equal(1, await TamperReports.CountAsync(api, run.SessionId, "school_profile_missing"));
+
+        // 4. Edge works again: its window, paused until now, stays up when the
+        //    student brings it back (#549).
+        WindowCapture.RestoreWithoutActivating(school.Handle);
+        Assert.True(
+            await SchoolProfileRun.StaysUpAsync(school.Handle),
+            "The school profile's window went down again when the student brought it back after the pause was over.");
+    }
+
+    /// <summary>
+    /// After the overlay's "go to my school profile" (#525): the school profile's
+    /// window is still there and stays up once the button brought it forward, as
+    /// Edge's does. The stand-in judged as an off-list app went down a moment later
+    /// (#549).
+    /// </summary>
+    private static async Task AssertSchoolWindowWorksAsync(SchoolProfileRun run, IntPtr school)
+    {
+        Assert.True(WindowCapture.IsWindow(school), "The button closed the school profile's window.");
+        var up = await SchoolProfileRun.StaysUpAsync(school);
+        // What the overlay shows says which way it went down: "Blocked" as an
+        // off-list app, a pause for Edge as a whole, or nothing at all.
+        var status = await run.Agent.TryGetStatusAsync();
+        Assert.True(
+            up,
+            $"The button left the school profile's window paused (minimized) (overlay: {status?.Overlay ?? "none"}, " +
+            $"guard: {status?.ExtensionGuard?.State ?? "<none>"}/{status?.ExtensionGuard?.PauseReason ?? "<none>"}).");
     }
 }
 
@@ -385,6 +416,128 @@ public sealed class SchoolProfileWithoutExtensionTests
         await Task.Delay(report + TimeSpan.FromSeconds(3));
         foreach (var kind in new[] { "school_profile_without_extension", "school_profile_missing", "extension_disabled" })
             Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, kind));
+
+        // 3. Edge works again: its window, paused until now, stays up when the
+        //    student brings it back (#549).
+        WindowCapture.RestoreWithoutActivating(school.Handle);
+        Assert.True(
+            await SchoolProfileRun.StaysUpAsync(school.Handle),
+            "The school profile's window went down again when the student brought it back after the pause was over.");
+    }
+}
+
+/// <summary>
+/// Asserting e2e for #519: an Edge profile that never had the extension browsed
+/// unfiltered next to the profile that has it, where that profile's extension is
+/// installed but its link never came up (#556). The extension pause guards such a
+/// device, but the school-profile rule left it alone, and the pause left Edge open
+/// only in profiles without the extension alone too. Now the rule guards the same
+/// devices the pause does: a window of a profile that never had the extension is
+/// paused as outside the school profile and reaches the teacher as such; and
+/// without a school profile, Edge is paused for that, as it is with the link up.
+/// The same stand-ins as <see cref="SchoolProfileTests"/>, with the fake extension
+/// staying away for the whole run.
+/// </summary>
+[Collection(AgentE2ECollection.Name)]
+[SupportedOSPlatform("windows")]
+public sealed class ProfileWithoutExtensionNeverConnectedTests
+{
+    // Long enough for the window, opened after the join, to be on screen when it
+    // runs out: the guard only pauses an Edge it sees.
+    private static readonly TimeSpan Grace = TimeSpan.FromSeconds(8);
+
+    private readonly BackendFixture _backend;
+    public ProfileWithoutExtensionNeverConnectedTests(BackendFixture backend) => _backend = backend;
+
+    [Fact]
+    public async Task AWindowOfAProfileThatNeverHadTheExtension_IsPausedAsOutsideTheSchoolProfile_AndReachesTheTeacher()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(
+            _backend.Url, api, signedIn: true, extensionConnects: false, personalProfileHasExtension: false);
+        await run.WaitForAsync(
+            s => s.SchoolProfile is { Status: "Found", Profile: "Default" } && s.ExtensionGuard?.WitnessConnected == false,
+            TimeSpan.FromSeconds(10), "the agent to find the school profile (Default) with no link up");
+
+        // 1. The school profile, which has the extension, is closed. The student
+        //    browses in the personal profile, which never had it.
+        var personal = await run.OpenWindowAsync("Anchor e2e - Personal - Microsoft Edge", "MSEdge.UserData.Profile1");
+
+        // It is paused within a few seconds, as a window outside the school profile...
+        Assert.True(
+            await BrowserPauseRun.WaitForIconicAsync(personal.Handle, expected: true, TimeSpan.FromSeconds(6)),
+            "The window of the profile that never had the extension was not paused (minimized) within a few seconds.");
+        var found = await run.WaitForAsync(
+            s => (s.SchoolProfile?.OutsideWindows ?? []).Contains((long)personal.Handle), TimeSpan.FromSeconds(5),
+            "the agent to list the personal profile's window as outside the school profile");
+        // ...Edge as a whole isn't, and nothing is woken: the profile with the
+        // extension isn't open.
+        Assert.NotEqual("Paused", found!.ExtensionGuard?.State);
+        Assert.Null(found.SchoolProfile!.LastOpened);
+
+        // 2. Left open past the report time: the teacher is told once, as a window
+        //    outside the school profile; never "switched off" or "isn't connected".
+        Assert.True(
+            await TamperReports.WaitForAsync(
+                api, run.SessionId, "outside_school_profile", 1, SchoolProfileRun.Report + TimeSpan.FromSeconds(10)),
+            "The personal profile's window stayed open past the report time, but the teacher was not told (once).");
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "extension_disabled"));
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "extension_not_connected"));
+
+        // 3. The session ends: the window can be used again.
+        await run.EndSessionAsync();
+        await run.WaitForAsync(
+            s => s.JoinedSessionId is null && s.SchoolProfile?.Status == "Unknown", TimeSpan.FromSeconds(10),
+            "the session to end on the agent");
+        WindowCapture.RestoreWithoutActivating(personal.Handle);
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        Assert.False(WindowCapture.IsIconic(personal.Handle), "The personal profile's window was paused after the session ended.");
+    }
+
+    [Fact]
+    public async Task WithoutASchoolProfile_EdgeOpenOnlyInAProfileThatNeverHadTheExtension_IsPausedForIt_UntilTheStudentSignsIn()
+    {
+        var api = new BackendClient(_backend.Url);
+        await using var run = await SchoolProfileRun.StartAsync(
+            _backend.Url, api, signedIn: false, extensionConnects: false, personalProfileHasExtension: false,
+            grace: Grace);
+        await run.WaitForAsync(
+            s => s.SchoolProfile is { Status: "Missing", WithoutExtension: null }, TimeSpan.FromSeconds(10),
+            "the agent to find no profile signed in with the school account");
+
+        // 1. The Default profile has the extension but isn't signed in with the
+        //    school account, and is closed. The student browses in the personal
+        //    profile, which never had the extension. Once the link has had its grace
+        //    period, Edge is paused for the missing school profile, its window too.
+        var personal = await run.OpenWindowAsync("Anchor e2e - Personal - Microsoft Edge", "MSEdge.UserData.Profile1");
+        await run.WaitForAsync(
+            s => s.ExtensionGuard is { State: "Paused", PauseReason: "NoSchoolProfile" },
+            Grace + TimeSpan.FromSeconds(6), "Edge to be paused for the missing school profile");
+        Assert.True(
+            await BrowserPauseRun.WaitForIconicAsync(personal.Handle, expected: true, TimeSpan.FromSeconds(5)),
+            "Edge was paused for the missing school profile, but its window was not minimized.");
+        Assert.Null((await run.Agent.TryGetStatusAsync())?.SchoolProfile?.LastOpened);
+
+        // 2. Not resolved in time: the teacher is told once, as a missing school
+        //    profile; never "switched off" or "isn't connected".
+        Assert.True(
+            await TamperReports.WaitForAsync(
+                api, run.SessionId, "school_profile_missing", 1, SchoolProfileRun.Report + TimeSpan.FromSeconds(10)),
+            "No school profile past the report time, but the teacher was not told (once).");
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "extension_disabled"));
+        Assert.Equal(0, await TamperReports.CountAsync(api, run.SessionId, "extension_not_connected"));
+
+        // 3. The student signs in to the profile with the extension: the pause for
+        //    the school profile is over, and the personal profile's window is now
+        //    outside it, so it stays down on its own.
+        run.WriteLocalState(signedIn: true);
+        await run.WaitForAsync(
+            s => s.SchoolProfile is { Status: "Found", Profile: "Default" }
+                 && s.ExtensionGuard?.State is "Waiting" or "Dormant"
+                 && (s.SchoolProfile.OutsideWindows ?? []).Contains((long)personal.Handle),
+            TimeSpan.FromSeconds(6), "the pause for the school profile to be over, the personal window outside it");
+        Assert.True(WindowCapture.IsIconic(personal.Handle), "The personal profile's window came back up.");
+        Assert.Equal(1, await TamperReports.CountAsync(api, run.SessionId, "school_profile_missing"));
     }
 }
 
@@ -397,6 +550,10 @@ public sealed class SchoolProfileWithoutExtensionTests
 /// both languages is <c>I18nTests</c>' and their rendering <c>OverlayVisualTests</c>';
 /// this is the live rule bringing them up. Depends on the real foreground, so it
 /// runs in the non-blocking Visual lane, like <see cref="ExtensionSiteAccessOverlayTests"/>.
+///
+/// The school-profile overlay's button is taken here with no window of the school
+/// profile open: it closes the window and opens Edge in the school profile (#552).
+/// <see cref="SchoolProfileTests"/> takes it with one open, which it brings forward.
 /// </summary>
 [Trait("Category", "Visual")]
 [Collection(AgentE2ECollection.Name)]
@@ -422,12 +579,9 @@ public sealed class SchoolProfileOverlayTests
 
         await AssertOverlayAsync(run, personal.Handle, "SchoolProfilePaused");
 
-        // Its button closes the window.
-        Assert.True(await run.Agent.GoToSchoolProfileAsync(IntPtr.Zero), "The agent refused to go to the school profile.");
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (WindowCapture.IsWindow(personal.Handle) && DateTime.UtcNow < deadline)
-            await Task.Delay(100);
-        Assert.False(WindowCapture.IsWindow(personal.Handle), "The overlay's button did not close the window it was shown for.");
+        // Its button closes the window and, with no window of the school profile
+        // open, opens Edge in it (#552).
+        await AssertButtonClosesAndOpensTheSchoolProfileAsync(run, personal.Handle, "window");
     }
 
     [Fact]
@@ -445,12 +599,9 @@ public sealed class SchoolProfileOverlayTests
 
         await AssertOverlayAsync(run, app.Handle, "SchoolProfilePaused");
 
-        // Its button closes the app window.
-        Assert.True(await run.Agent.GoToSchoolProfileAsync(IntPtr.Zero), "The agent refused to go to the school profile.");
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (WindowCapture.IsWindow(app.Handle) && DateTime.UtcNow < deadline)
-            await Task.Delay(100);
-        Assert.False(WindowCapture.IsWindow(app.Handle), "The overlay's button did not close the app window it was shown for.");
+        // Its button closes the app window and, with no window of the school
+        // profile open, opens Edge in it (#552).
+        await AssertButtonClosesAndOpensTheSchoolProfileAsync(run, app.Handle, "app window");
     }
 
     [Fact]
@@ -511,6 +662,35 @@ public sealed class SchoolProfileOverlayTests
             $"The overlay does not have the keyboard (foreground: " +
             $"{WindowCapture.GetProcessName(WindowCapture.ForegroundWindow())}).");
     }
+
+    /// <summary>
+    /// The overlay's "go to my school profile" (#525) with no window of the school
+    /// profile open: it closes <paramref name="window"/>, the one the overlay was
+    /// shown for, and opens Edge in the school profile (#552). The e2e's Edge is a
+    /// stand-in that is never started, so what the button opened is read from
+    /// /status, as the store listing is (#536). Nothing was opened before the
+    /// button, so what is there after it is the button's.
+    /// </summary>
+    private static async Task AssertButtonClosesAndOpensTheSchoolProfileAsync(SchoolProfileRun run, IntPtr window, string what)
+    {
+        var before = (await run.Agent.TryGetStatusAsync())?.SchoolProfile;
+        Assert.True(before is not null, "The agent's /status said nothing of the school profile before the button.");
+        Assert.True(
+            before.LastOpened is null,
+            $"Edge was opened in profile {before.LastOpened?.Profile} at {before.LastOpened?.Url ?? "-"} before the " +
+            "button: what the button opens can't be told from it.");
+
+        Assert.True(await run.Agent.GoToSchoolProfileAsync(IntPtr.Zero), "The agent refused to go to the school profile.");
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (WindowCapture.IsWindow(window) && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        Assert.False(WindowCapture.IsWindow(window), $"The overlay's button did not close the {what} it was shown for.");
+
+        var opened = await run.WaitForAsync(
+            s => s.SchoolProfile?.LastOpened is not null, TimeSpan.FromSeconds(3),
+            "the button to open Edge in the school profile, no window of which was open");
+        Assert.Equal(new ProfileOpenedSnapshot("Default", null), opened!.SchoolProfile!.LastOpened);
+    }
 }
 
 /// <summary>
@@ -518,7 +698,10 @@ public sealed class SchoolProfileOverlayTests
 /// extension connected, a <c>User Data</c> folder of the spec's own in which the
 /// Default profile is the school profile (signed in with the impersonated
 /// student's account, by its object ID) and Profile 1 a personal one, both with
-/// the extension on, and a joined session. The spec's own windows play Edge's.
+/// the extension on, and a joined session. The spec's own windows play Edge's,
+/// and the session allows the spec's process through the dev
+/// <see cref="TestConfig.EdgeStandInBundleName"/> bundle, as every session's
+/// baseline allows Edge (#549).
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal sealed class SchoolProfileRun : IAsyncDisposable
@@ -559,9 +742,20 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     /// it, and its extension is the one connected.
     /// </param>
     /// <param name="report">How long the teacher's reports wait; <see cref="Report"/> by default.</param>
+    /// <param name="extensionConnects">
+    /// False: the extension is installed, but its link never comes up (#556): the
+    /// fake extension stays away, and the session is joined with the guard waiting
+    /// for it. With the extension in neither profile as well, a device without it:
+    /// the session is joined with the guard left off.
+    /// </param>
+    /// <param name="personalProfileHasExtension">
+    /// False: Profile 1, the personal profile, never had the extension (#519).
+    /// </param>
+    /// <param name="grace">How long the guard waits for a link that is down; the agent's default when null.</param>
     public static async Task<SchoolProfileRun> StartAsync(
         string backendUrl, BackendClient api, bool signedIn, bool schoolProfileHasExtension = true,
-        TimeSpan? report = null)
+        TimeSpan? report = null, bool extensionConnects = true, bool personalProfileHasExtension = true,
+        TimeSpan? grace = null)
     {
         var stale = await api.GetRejoinableSessionIdsAsync();
         Assert.True(
@@ -573,16 +767,12 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
         try
         {
             run.WritePreferences("Default", withExtension: schoolProfileHasExtension);
-            run.WritePreferences("Profile 1");
+            run.WritePreferences("Profile 1", withExtension: personalProfileHasExtension);
             run.WriteLocalState(signedIn);
 
             var pipeName = "anchor-witness-e2e-" + Guid.NewGuid().ToString("N");
             using var self = Process.GetCurrentProcess();
-            run._agent = AgentProcess.Launch(
-                backendUrl,
-                TestConfig.StudentOid,
-                autoJoin: true,
-                extraEnvironment: new Dictionary<string, string>
+            var environment = new Dictionary<string, string>
                 {
                     ["Witness__PipeName"] = pipeName,
                     // The spec's own windows play Edge's.
@@ -599,20 +789,54 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
                     // InPrivate window after the same report time (#535).
                     ["Session__InPrivateScanIntervalSeconds"] = "1",
                     ["Session__ExtensionRepairSeconds"] = ((int)Repair.TotalSeconds).ToString(),
-                });
+                };
+            if (grace is { } g)
+                environment["Session__ExtensionGraceSeconds"] = ((int)g.TotalSeconds).ToString();
+            run._agent = AgentProcess.Launch(
+                backendUrl,
+                TestConfig.StudentOid,
+                autoJoin: true,
+                extraEnvironment: environment);
             await run.Agent.WaitForConnectedAsync(TimeSpan.FromSeconds(20));
 
-            // The extension is installed and running before the lesson starts.
-            run._extension = new FakeExtensionWitness(pipeName);
-            await run._extension.ConnectAsync();
-            await run.WaitForAsync(s => s.ExtensionGuard?.WitnessConnected == true, TimeSpan.FromSeconds(10), "the witness to connect");
+            // The extension is installed and running before the lesson starts, or
+            // (#556) installed with a link that never comes up.
+            if (extensionConnects)
+            {
+                run._extension = new FakeExtensionWitness(pipeName);
+                await run._extension.ConnectAsync();
+                await run.WaitForAsync(s => s.ExtensionGuard?.WitnessConnected == true, TimeSpan.FromSeconds(10), "the witness to connect");
+            }
 
+            // Edge is allowed in every session (the baseline's msedge); the spec's
+            // process that plays it, through the dev bundle that allows it (#549).
             var classId = await api.FindClassIdAsync();
-            var session = await api.StartSessionAsync(classId);
+            var standIn = await api.FindBundleIdAsync(TestConfig.EdgeStandInBundleName);
+            var session = await api.StartSessionAsync(classId, new[] { standIn });
             run._sessionId = session.Id;
-            await run.WaitForAsync(
-                s => s.JoinedSessionId == session.Id && s.ExtensionGuard?.State is "Present" or "Paused",
-                TimeSpan.FromSeconds(10), "the session to be joined with the extension present");
+            if (extensionConnects)
+                await run.WaitForAsync(
+                    s => s.JoinedSessionId == session.Id && s.ExtensionGuard?.State is "Present" or "Paused",
+                    TimeSpan.FromSeconds(10), "the session to be joined with the extension present");
+            else if (schoolProfileHasExtension || personalProfileHasExtension)
+                // Installed, so guarded, not Off (#556): the link is waited for.
+                await run.WaitForAsync(
+                    s => s.JoinedSessionId == session.Id && s.ExtensionGuard?.State is "Waiting" or "Dormant" or "Paused",
+                    TimeSpan.FromSeconds(10), "the session to be joined with the guard waiting for the extension");
+            else
+                // Installed in no profile: the device is left alone (#556). Off before
+                // the join as after it, so the spec holds it there to tell.
+                await run.WaitForAsync(
+                    s => s.JoinedSessionId == session.Id && s.StartupSweep is not null && s.ExtensionGuard is not null,
+                    TimeSpan.FromSeconds(10), "the session to be joined");
+            var allowed = await run.Agent.WaitForAsync(
+                s => (s.AllowedApps ?? []).Contains(self.ProcessName, StringComparer.OrdinalIgnoreCase),
+                TimeSpan.FromSeconds(5));
+            Assert.True(
+                (allowed?.AllowedApps ?? []).Contains(self.ProcessName, StringComparer.OrdinalIgnoreCase),
+                $"The session doesn't allow the spec's process {self.ProcessName}, which plays Edge, as it allows Edge " +
+                $"(allowed: {string.Join(", ", allowed?.AllowedApps ?? [])}). " +
+                $"The {TestConfig.EdgeStandInBundleName} bundle (DevDataSeeder) must name the test host's process.");
             return run;
         }
         catch
@@ -625,37 +849,20 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
     /// <summary>
     /// Opens one of "Edge's" windows: the spec's own, without taking the
     /// foreground unless <paramref name="activate"/>, carrying
-    /// <paramref name="appId"/> as Edge gives each profile's windows.
+    /// <paramref name="appId"/> as Edge gives each profile's windows. Windows may
+    /// still hand it the foreground later, as it does Edge's: the agent's
+    /// <c>SW_MINIMIZE</c> on another window passes the foreground to the one on
+    /// top of those left whenever Windows lets it (#547), and the overlay's button
+    /// brings a school-profile window forward. The session allows the spec's
+    /// process as it allows Edge (#549), so that is no reason to take it down.
     /// </summary>
-    /// <param name="neverActivated">
-    /// Windows doesn't hand it the foreground when another window is minimized
-    /// (<c>WS_EX_NOACTIVATE</c>): the agent's <c>SW_MINIMIZE</c> hands it to the
-    /// window on top of those left on screen whenever Windows lets the agent pass
-    /// the foreground on, as the CI runner's desktop can (#547). For a window that
-    /// must stay up while others are paused around it: Edge is an allowed app in a
-    /// session, but the spec's process that plays it isn't, and a stand-in that
-    /// ends up with the foreground that way is taken down as an off-list app,
-    /// which Edge never is.
-    /// </param>
-    public async Task<OffListWindow> OpenWindowAsync(
-        string title, string appId, bool activate = false, bool neverActivated = false)
+    public async Task<OffListWindow> OpenWindowAsync(string title, string appId, bool activate = false)
     {
         var window = await OffListWindow.OpenAsync(title, TimeSpan.FromSeconds(10), activate: activate);
         _windows.Add(window);
-        if (neverActivated)
-            SetWindowLongPtrW(window.Handle, GwlExStyle, GetWindowLongPtrW(window.Handle, GwlExStyle) | WsExNoActivate);
         WindowAppId.Set(window.Handle, appId);
         return window;
     }
-
-    private const int GwlExStyle = -20;
-    private const nint WsExNoActivate = 0x08000000;
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern nint GetWindowLongPtrW(IntPtr hwnd, int index);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern nint SetWindowLongPtrW(IntPtr hwnd, int index, nint value);
 
     /// <summary>
     /// Edge's <c>Local State</c>: the Default profile signed in with the school
@@ -769,6 +976,15 @@ internal sealed class SchoolProfileRun : IAsyncDisposable
         File.WriteAllText(temp, preferences.ToJsonString());
         File.Move(temp, Path.Combine(folder, "Secure Preferences"), overwrite: true);
     }
+
+    /// <summary>
+    /// True when <paramref name="window"/> is there and still up a few seconds
+    /// later: the agent judges a window as it comes forward or back, and one it
+    /// takes down goes down within a moment.
+    /// </summary>
+    public static async Task<bool> StaysUpAsync(IntPtr window) =>
+        WindowCapture.IsWindow(window)
+        && !await BrowserPauseRun.WaitForIconicAsync(window, expected: true, TimeSpan.FromSeconds(3));
 
     /// <summary>Poll /status until it matches, or fail naming what was awaited.</summary>
     public async Task<StatusSnapshot?> WaitForAsync(Func<StatusSnapshot, bool> predicate, TimeSpan timeout, string what)

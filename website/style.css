@@ -203,16 +203,20 @@ main { flex: 1; }
 .screenshot {
   margin: clamp(2rem, 5vw, 3rem) var(--gutter);
   max-width: 60rem;
-}
-
-.screenshot figure {
   border: var(--border);
   background: var(--paper);
   padding: clamp(0.5rem, 2vw, 1rem);
 }
 
+/* The img's width/height attributes give the image's real size so the
+   browser can reserve its space; height: auto keeps that aspect ratio
+   once the width is scaled down to the frame (otherwise the height
+   attribute wins and the screenshot is stretched). A screenshot narrower
+   than the frame, such as the agent's tray menu, keeps its own size,
+   centred, rather than being blown up. */
 .screenshot img {
-  width: 100%;
+  height: auto;
+  margin-inline: auto;
   border: var(--border);
 }
 
@@ -225,12 +229,24 @@ main { flex: 1; }
   line-height: 1.5;
 }
 
+/* Links inside a caption read as links (the global reset makes them plain). */
+.screenshot figcaption a { color: var(--magenta); }
+.screenshot figcaption a:hover { text-decoration: underline; }
+
 /* ============================================================
    How-it-works / feature grid
    ============================================================ */
 .feature-section {
   padding: clamp(2.5rem, 6vw, 4rem) var(--gutter);
   border-top: var(--border);
+}
+
+/* Intro paragraph between a section's eyebrow and its grid. */
+.feature-section .lead {
+  max-width: 52rem;
+  color: var(--muted);
+  line-height: 1.65;
+  margin-bottom: 1.75rem;
 }
 
 .feature-grid {
@@ -269,6 +285,10 @@ main { flex: 1; }
   color: var(--muted);
 }
 
+/* Links inside a card read as links (the global reset makes them plain). */
+.feature-grid p a { color: var(--magenta); }
+.feature-grid p a:hover { text-decoration: underline; }
+
 /* ============================================================
    Callout block
    ============================================================ */
@@ -299,6 +319,12 @@ main { flex: 1; }
   line-height: 1.65;
   color: var(--ink);
 }
+
+.callout p + p { margin-top: 0.75rem; }
+
+/* Links inside a callout read as links (the global reset makes them plain). */
+.callout p a { color: var(--magenta); }
+.callout p a:hover { text-decoration: underline; }
 
 /* ============================================================
    Prose document (privacy / legal copy)

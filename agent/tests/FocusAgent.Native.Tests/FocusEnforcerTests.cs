@@ -226,4 +226,66 @@ public class FocusEnforcerTests
     {
         Assert.False(FocusEnforcer.AsksPostponedMinimize(shown, minimized, appWindowMinimized));
     }
+
+    // --- #563: a minimize a restore from another thread undid -----------------
+
+    [Fact]
+    public void A_window_that_counts_as_minimized_but_is_on_screen_had_its_minimize_undone_by_a_restore()
+    {
+        // The minimize landed between the steps of a restore from another thread,
+        // and the rest of the restore put the window back where it was.
+        Assert.Equal(
+            FocusEnforcer.OwnThreadMinimizeOutcome.UndoneByRestore,
+            FocusEnforcer.JudgeOwnThreadMinimize(shown: true, minimized: true, parked: false, minimizedWindowsParked: true));
+    }
+
+    [Fact]
+    public void A_window_on_screen_and_not_minimized_has_an_app_that_is_not_responding()
+    {
+        Assert.Equal(
+            FocusEnforcer.OwnThreadMinimizeOutcome.NotResponding,
+            FocusEnforcer.JudgeOwnThreadMinimize(shown: true, minimized: false, parked: false, minimizedWindowsParked: true));
+    }
+
+    [Theory]
+    [InlineData(true, true, true, true)]    // minimized and parked off the screen
+    [InlineData(false, true, false, true)]  // hidden
+    [InlineData(false, false, false, true)] // hidden
+    [InlineData(true, true, false, false)]  // where Windows shows minimized windows as title bars
+    public void A_window_that_is_down_is_left_alone(bool shown, bool minimized, bool parked, bool minimizedWindowsParked)
+    {
+        Assert.Equal(
+            FocusEnforcer.OwnThreadMinimizeOutcome.Down,
+            FocusEnforcer.JudgeOwnThreadMinimize(shown, minimized, parked, minimizedWindowsParked));
+    }
+
+    // --- #580: a minimize that lands before a restore moves the window ----------
+
+    [Fact]
+    public void A_window_down_that_comes_back_off_every_monitor_goes_back_where_the_agent_saw_it()
+    {
+        Assert.Equal(
+            FocusEnforcer.RestorePlaceFix.Remembered,
+            FocusEnforcer.PlanRestorePlace(minimized: true, restoresOnAMonitor: false, remembered: true));
+    }
+
+    [Fact]
+    public void A_window_down_that_comes_back_off_every_monitor_the_agent_never_saw_goes_back_on_the_primary_monitor()
+    {
+        Assert.Equal(
+            FocusEnforcer.RestorePlaceFix.OnPrimaryMonitor,
+            FocusEnforcer.PlanRestorePlace(minimized: true, restoresOnAMonitor: false, remembered: false));
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]    // minimized, comes back on a monitor
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]  // not minimized: nothing to come back
+    [InlineData(false, true, false)]
+    public void Where_a_window_goes_back_to_is_left_alone(bool minimized, bool restoresOnAMonitor, bool remembered)
+    {
+        Assert.Equal(
+            FocusEnforcer.RestorePlaceFix.None,
+            FocusEnforcer.PlanRestorePlace(minimized, restoresOnAMonitor, remembered));
+    }
 }

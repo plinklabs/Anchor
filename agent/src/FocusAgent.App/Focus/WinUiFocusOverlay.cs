@@ -52,7 +52,8 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
     /// because no Edge profile is signed in with the school account and
     /// <c>SchoolProfilePaused</c> for one window outside the school profile (#525),
     /// <c>SchoolExtensionPaused</c> for one paused because the school profile lacks
-    /// the extension (#536);
+    /// the extension (#536), <c>NotConnectedPaused</c> for one paused because the
+    /// extension is installed but never connected (#556);
     /// null while it is hidden or closed. Dev-only, for /status: lets the headless
     /// e2e tell which overlay the student is on (#452).
     /// </summary>
@@ -99,6 +100,7 @@ public sealed class WinUiFocusOverlay : IFocusOverlay, IDisposable
         ExtensionPauseReason.NoSchoolProfile => "SchoolAccountPaused",
         ExtensionPauseReason.SchoolProfileWithoutExtension => "SchoolExtensionPaused",
         ExtensionPauseReason.OutsideSchoolProfile => "SchoolProfilePaused",
+        ExtensionPauseReason.NotConnected => "NotConnectedPaused",
         _ => "BrowserPaused",
     };
 

@@ -4,7 +4,9 @@ namespace FocusAgent.Core.Extension;
 /// The <c>type</c> of each message on the witness link between the agent and the
 /// Edge extension (#489). The extension repeats these strings in
 /// <c>extension/src/shared/witness.ts</c>; the native host forwards the messages
-/// unchanged, so the two ends must agree on them.
+/// unchanged, so the two ends must agree on them. contracts/witness.json (#573)
+/// lists every message here with its fields, and both ends' tests check
+/// themselves against it.
 /// </summary>
 public static class ExtensionMessages
 {
@@ -56,6 +58,12 @@ public static class ExtensionMessages
     // ---- extension → agent -------------------------------------------------
 
     /// <summary>
+    /// The extension's keepalive, every 15 seconds while the link is up. It keeps
+    /// the pipe busy; the agent needs nothing from it.
+    /// </summary>
+    public const string Ping = "ping";
+
+    /// <summary>
     /// The extension blocked a navigation; reported as a <c>BlockedUrl</c> event
     /// that names the host only, never the URL (#527).
     /// </summary>
@@ -82,4 +90,16 @@ public static class ExtensionMessages
     /// <see cref="Tamper.ExtensionSelfCheckWatch"/>.
     /// </summary>
     public const string SelfCheck = "self_check";
+
+    /// <summary>
+    /// Why the extension's link to the agent was down before it came up (#561):
+    /// the reason Edge gave when the link last failed (<c>error</c>,
+    /// <c>chrome.runtime.lastError</c>: "Specified native messaging host not
+    /// found.", "Access to the specified native messaging host is forbidden.",
+    /// "Native host has exited."), how often it failed (<c>failedAttempts</c>) and
+    /// since when (<c>since</c>). Sent once the link is up again; the agent logs
+    /// it, so the log upload says what was wrong. Only Edge's message: nothing
+    /// the student browses.
+    /// </summary>
+    public const string LinkError = "link_error";
 }

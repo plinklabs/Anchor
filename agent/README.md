@@ -128,7 +128,10 @@ keeps its own logs (#463): the suite sets `Diagnostics__LogDirectory`, which the
 agent honours on any dev launch, crash log and self-tests included. Set
 `Diagnostics__LogDirectory` yourself before `dotnet test` to keep the logs of a
 run in a folder of your choice. The suite runs in CI on a Windows runner via
-[`.github/workflows/agent-e2e.yml`](../.github/workflows/agent-e2e.yml).
+[`.github/workflows/agent-e2e.yml`](../.github/workflows/agent-e2e.yml), which
+does just that (#548): the run's `agent-e2e-results` artifact holds the trx
+files, the visual PNGs and the agents' logs, under `agent-logs/state` and
+`agent-logs/visual`.
 
 ### Published package (#403)
 
@@ -190,7 +193,7 @@ The same self-test surfaces double as the source for the student-facing
 screenshots on the [Anchor website](../website). A separate opt-in generator,
 `WebsiteScreenshots`, drives the join toast, the app-block overlay, the main
 window, and the tray menu through the identical launch + capture path, but
-against presentable demo content (teacher "Ms Rivera", class `PLINK-3B`, a
+against presentable demo content (teacher "Ms Rivera", class 3B, a
 readable allowlist — see `FocusAgent.App.SelfTestDemoContent`, matched to the
 dashboard's demo data) and writes a fixed, named PNG set straight into
 `website/assets/` instead of the timestamped `TestResults/` triage dump.
@@ -205,7 +208,10 @@ never overwrites the committed images). Regenerate with one command:
 
 That builds the agent, sets the gate, runs the generator, and writes
 `agent-join-toast.png`, `agent-block-overlay.png`, `agent-main-window.png`, and
-`agent-tray-menu.png` into `website/assets/`. The browser-side shots (the
+`agent-tray-menu.png` into `website/assets/`. Every surface is shot in US
+English (`--ui-language en-US`), whatever the machine's display language, and
+only its visible frame is captured, so nothing of the desktop behind it shows
+at the edges (#514). The browser-side shots (the
 extension block page + popup) are reused from `extension/store-listing/` and are
 not regenerated here. See [`website/assets/README.md`](../website/assets/README.md).
 

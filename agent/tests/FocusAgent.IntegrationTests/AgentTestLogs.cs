@@ -29,7 +29,8 @@ namespace FocusAgent.IntegrationTests;
 /// while Windows still holds the log of the agent the last spec killed, so the next
 /// run also deletes the folders of runs whose test host is gone. To keep the logs of
 /// a local run, set <c>Diagnostics__LogDirectory</c> before <c>dotnet test</c>: the
-/// suite then logs to that folder and leaves it in place.
+/// suite then logs to that folder and leaves it in place. Agent E2E in CI presets a
+/// folder under <c>TestResults/</c>, so its uploaded results carry the logs (#548).
 /// </para>
 /// </summary>
 internal static class AgentTestLogs
@@ -53,6 +54,11 @@ internal static class AgentTestLogs
     internal static void PointEveryLaunchedAgentAtTheRunsFolder()
     {
         Environment.SetEnvironmentVariable(AgentLogPaths.LogDirectoryEnvVar, Folder);
+        // #561: and every witness host a spec's Edge starts. The host isn't started
+        // by the agent, so it reads a variable of its own; left unset it would log
+        // into the folder of an agent installed on this box.
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(AgentLogPaths.WitnessHostLogDirectoryEnvVar)))
+            Environment.SetEnvironmentVariable(AgentLogPaths.WitnessHostLogDirectoryEnvVar, Folder);
         if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(UpdaterLogPathEnvVar)))
         {
             // The log upload reads Velopack's log from here instead of the one an

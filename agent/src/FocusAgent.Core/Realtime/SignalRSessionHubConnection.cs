@@ -1,12 +1,11 @@
 using FocusAgent.Core.Auth;
 using FocusAgent.Core.Dtos;
-using FocusAgent.Core.Realtime;
 using FocusAgent.Core.Settings;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace FocusAgent.App.Realtime;
+namespace FocusAgent.Core.Realtime;
 
 public sealed class SignalRSessionHubConnection : ISessionHubConnection
 {
@@ -163,19 +162,14 @@ public sealed class SignalRSessionHubConnection : ISessionHubConnection
         return true;
     }
 
-    public async Task<bool> ExtensionHeartbeatAsync(Guid sessionId, CancellationToken ct = default)
-    {
-        if (_connection.State != HubConnectionState.Connected)
-            return false;
-        await _connection.InvokeAsync("ExtensionHeartbeat", sessionId, ct).ConfigureAwait(false);
-        return true;
-    }
-
     public Task<bool> IsInSessionAsync(Guid sessionId, CancellationToken ct = default) =>
         _connection.InvokeAsync<bool>("IsInSession", sessionId, ct);
 
     public Task<SessionStartedPayload?> GetStartedSessionAsync(CancellationToken ct = default) =>
         _connection.InvokeAsync<SessionStartedPayload?>("GetStartedSession", ct);
+
+    public Task<SessionAllowlistPayload?> GetSessionAllowlistAsync(Guid sessionId, CancellationToken ct = default) =>
+        _connection.InvokeAsync<SessionAllowlistPayload?>("GetSessionAllowlist", sessionId, ct);
 
     private void SetState(AgentConnectionState next)
     {

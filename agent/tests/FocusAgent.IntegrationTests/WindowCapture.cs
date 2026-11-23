@@ -253,6 +253,20 @@ internal static class WindowCapture
         MonitorFromWindow(hwnd, MonitorDefaultToNull) is var monitor && monitor != IntPtr.Zero && IsPrimary(monitor);
 
     /// <summary>
+    /// Where <paramref name="hwnd"/> goes back to once restored, or is when it is not
+    /// minimized nor maximized: its <c>rcNormalPosition</c>, in workspace coordinates
+    /// (#580).
+    /// </summary>
+    public static (int Left, int Top, int Right, int Bottom) RestorePlace(IntPtr hwnd)
+    {
+        var placement = new WindowPlacement { length = Marshal.SizeOf<WindowPlacement>() };
+        if (!GetWindowPlacement(hwnd, ref placement))
+            return default;
+        var normal = placement.rcNormalPosition;
+        return (normal.Left, normal.Top, normal.Right, normal.Bottom);
+    }
+
+    /// <summary>
     /// Show <paramref name="hwnd"/> at its normal size on the primary monitor's
     /// work area, without activating it: not minimized, not maximized, off any
     /// other monitor. Windows a spec opens can land on a second screen, where a
@@ -606,6 +620,26 @@ internal static class WindowCapture
     }
 
     /// <summary>
+    /// The part of <paramref name="hwnd"/> that is drawn on screen (physical
+    /// pixels): <see cref="GetWindowScreenRect"/> less the invisible resize
+    /// borders Windows 10 and 11 keep around a framed window. A capture of the
+    /// window rect reads what lies behind those borders, so a shipped image
+    /// (<see cref="WebsiteScreenshots"/>) showed slivers of whatever was open
+    /// on the desktop at its edges (#514). Falls back to the window rect when
+    /// DWM can't say.
+    /// </summary>
+    public static ScreenRect GetVisibleWindowScreenRect(IntPtr hwnd)
+    {
+        if (DwmGetWindowAttribute(hwnd, DwmwaExtendedFrameBounds, out var r, Marshal.SizeOf<Rect>()) != 0)
+            return GetWindowScreenRect(hwnd);
+        var w = r.Right - r.Left;
+        var h = r.Bottom - r.Top;
+        if (w <= 0 || h <= 0)
+            return GetWindowScreenRect(hwnd);
+        return new ScreenRect(r.Left, r.Top, w, h);
+    }
+
+    /// <summary>
     /// Full bounds (incl. taskbar) of the monitor that currently contains
     /// <paramref name="hwnd"/>, in physical pixels. The lever the overlay spec
     /// uses to assert the surface covers its <em>entire</em> monitor (#103):
@@ -858,6 +892,12 @@ internal static class WindowCapture
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetWindowRect(IntPtr hwnd, out Rect lpRect);
+
+    // DWMWA_EXTENDED_FRAME_BOUNDS: the window's visible frame, in physical pixels.
+    private const int DwmwaExtendedFrameBounds = 9;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out Rect pvAttribute, int cbAttribute);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

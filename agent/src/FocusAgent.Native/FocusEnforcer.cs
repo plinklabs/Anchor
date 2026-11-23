@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using FocusAgent.Core.Focus;
@@ -28,7 +29,13 @@ namespace FocusAgent.Native;
 /// there (#477). A hand-over never
 /// asks a window to minimize while an earlier minimize is on its way to it, nor
 /// once its caller no longer wants the window down (#474). It asks once that
-/// minimize is done, should the window be on screen still (#476).
+/// minimize is done, should the window be on screen still (#476). A window asked to
+/// minimize itself that is on screen still once it had the time to, while it counts
+/// as minimized, had the minimize land in the middle of a restore from another
+/// thread, which undid it (#563): it is put down once more. One that went down in
+/// the middle of a restore before the restore moved it back on screen stays down,
+/// but would come back where Windows parks minimized windows, out of sight: it is
+/// given back the place it had before it was asked to go down (#580).
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class FocusEnforcer : IFocusEnforcer
@@ -84,6 +91,12 @@ public sealed class FocusEnforcer : IFocusEnforcer
     private nint _lastAllowed;
     private nint _lastRestoredToHandOver;
     private long _lastRestoredToHandOverAt;
+    private nint _lastPutDownOnceMore;
+    private long _lastPutDownOnceMoreAt;
+    // Where each window the agent asked to go down was to go back to then, while
+    // that was on a monitor (#580). Kept across sessions: a window minimized in one
+    // may be restored in the next.
+    private readonly ConcurrentDictionary<nint, NativeMethods.WINDOWPLACEMENT> _restorePlaces = new();
     // The windows a hand-over asked to minimize that have not started to go down
     // yet, with when it asked (Environment.TickCount64, #474). Guarded by _gate.
     private readonly Dictionary<nint, long> _minimizeOnItsWay = new();
@@ -181,8 +194,17 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// </summary>
     public void Minimize(nint windowHandle) => Minimize(windowHandle, onOwnThread: false);
 
+    /// <summary>
+    /// Minimizes the window with the foreground by posting the request to its own
+    /// thread (#560), as <see cref="Block"/> does (#438): that thread owns the
+    /// foreground, so Windows hands it on to the window below. The session-start
+    /// sweep asks this once every other off-list window is down, so the window below
+    /// is one the student may use, or explorer's desktop or taskbar.
+    /// </summary>
+    public void MinimizeForeground(nint windowHandle) => Minimize(windowHandle, onOwnThread: true);
+
     /// <summary>Returns whether a window was asked to go down.</summary>
-    private bool Minimize(nint windowHandle, bool onOwnThread)
+    private bool Minimize(nint windowHandle, bool onOwnThread, Func<bool>? stillToGoDown = null)
     {
         if (windowHandle == IntPtr.Zero) return false;
 
@@ -194,9 +216,9 @@ public sealed class FocusEnforcer : IFocusEnforcer
             windowShown: NativeMethods.IsWindowVisible(windowHandle) && !NativeMethods.IsIconic(windowHandle));
         var asked = false;
         if (minimizeOwner)
-            asked |= MinimizeWindow(owner, onOwnThread);
+            asked |= MinimizeWindow(owner, onOwnThread, stillToGoDown);
         if (minimizeWindow)
-            asked |= MinimizeWindow(windowHandle, onOwnThread);
+            asked |= MinimizeWindow(windowHandle, onOwnThread, stillToGoDown);
         return asked;
     }
 
@@ -236,13 +258,15 @@ public sealed class FocusEnforcer : IFocusEnforcer
     /// Minimizes one window: from the agent (<see cref="MinimizeFromAgent"/>), or by
     /// posting the request to the window's thread (<paramref name="onOwnThread"/>,
     /// #438). The posted request never holds up the agent, and the window's thread
-    /// carries it out with the foreground rights it has. Returns whether it was
+    /// carries it out with the foreground rights it has, and is checked on once it
+    /// had the time to (<see cref="CheckWentDownAsync"/>). Returns whether it was
     /// asked.
     /// </summary>
-    private bool MinimizeWindow(nint windowHandle, bool onOwnThread)
+    private bool MinimizeWindow(nint windowHandle, bool onOwnThread, Func<bool>? stillToGoDown)
     {
         try
         {
+            RememberRestorePlace(windowHandle);
             if (!onOwnThread)
             {
                 MinimizeFromAgent(windowHandle);
@@ -253,7 +277,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
                 _log.LogWarning("ShowWindowAsync(SW_MINIMIZE) returned false for 0x{Hwnd:X}", windowHandle);
                 return false;
             }
-            _ = WarnIfNotMinimizedAsync(windowHandle);
+            _ = CheckWentDownAsync(windowHandle, stillToGoDown);
             return true;
         }
         catch (Exception ex)
@@ -265,13 +289,15 @@ public sealed class FocusEnforcer : IFocusEnforcer
 
     /// <summary>
     /// Minimizes one window with the agent's own <c>ShowWindow</c>
-    /// (<see cref="ShowFromAgent"/>, #440), for the session-start sweep and for
-    /// paused browser windows that do not have the foreground. A blocked or paused
-    /// window with the foreground goes to the overlay instead
-    /// (<see cref="HandOverAsync"/>, #441, #450): minimized from the agent, it either
-    /// stays the foreground window and keeps what the student types, or hands the
-    /// foreground to the window below it, which may be an allowed app that hides the
-    /// overlay (Windows 11 Notepad does the latter).
+    /// (<see cref="ShowFromAgent"/>, #440), for the windows the session-start sweep
+    /// and a paused browser take down that do not have the foreground. A blocked or
+    /// paused window with the foreground goes to the overlay instead
+    /// (<see cref="HandOverAsync"/>, #441, #450), and the sweep's minimizes itself
+    /// (<see cref="MinimizeForeground"/>, #560): minimized from the agent, it either
+    /// stays the foreground window and keeps what the student types, while Windows
+    /// raises the foreground event for the window below it as though that one had
+    /// it, or hands the foreground to the window below it, which may be an allowed
+    /// app that hides the overlay (Windows 11 Notepad does the latter).
     /// </summary>
     private void MinimizeFromAgent(nint windowHandle) => ShowFromAgent(windowHandle, NativeMethods.SW_MINIMIZE);
 
@@ -378,27 +404,321 @@ public sealed class FocusEnforcer : IFocusEnforcer
     }
 
     /// <summary>
-    /// Logs a window that has not minimized itself <see cref="OwnThreadMinimizeTimeout"/>
-    /// after it was asked to: its app is not responding. The request stays queued and
-    /// the window goes down the moment the app responds again. Minimizing it from the
-    /// agent would not get it down any sooner: <c>ShowWindow</c> waits for the app too.
-    /// A newer request for the same window, after the student brought it back, takes
-    /// over the check.
+    /// Checks on a window asked to minimize itself, <see cref="OwnThreadMinimizeTimeout"/>
+    /// after it was asked. A newer request for the same window, after the student
+    /// brought it back, takes over the check.
+    /// <list type="bullet">
+    /// <item>Not minimized and on screen: its app is not responding, which is logged.
+    /// The request stays queued and the window goes down the moment the app responds
+    /// again. Minimizing it from the agent would not get it down any sooner:
+    /// <c>ShowWindow</c> waits for the app too.</item>
+    /// <item>Minimized, yet on screen rather than parked off it: the minimize landed
+    /// in the middle of a restore from another thread (#563), which Windows carries
+    /// out in steps it sends to the window's thread. The window's thread carried the
+    /// minimize out between them, and the rest of the restore put the window back
+    /// where it was. A minimize asked of it now changes nothing, since it counts as
+    /// minimized already, so <see cref="PutDownOnceMore"/> takes it down.</item>
+    /// <item>Minimized, and going back to a place off every monitor: the minimize
+    /// landed in the middle of a restore from another thread before the restore
+    /// moved the window back on screen (#580). <see cref="PutRestorePlaceBack"/>
+    /// gives it a place to go back to where the student sees it.</item>
+    /// </list>
     /// </summary>
-    private async Task WarnIfNotMinimizedAsync(nint windowHandle)
+    private async Task CheckWentDownAsync(nint windowHandle, Func<bool>? stillToGoDown)
     {
         var generation = Interlocked.Increment(ref _minimizeGeneration);
+        long resets;
+        lock (_gate)
+            resets = _resets;
         _pendingMinimizes[windowHandle] = generation;
         await Task.Delay(OwnThreadMinimizeTimeout).ConfigureAwait(false);
         if (!_pendingMinimizes.TryRemove(new KeyValuePair<nint, long>(windowHandle, generation)))
             return;
-        if (NativeMethods.IsWindow(windowHandle) && NativeMethods.IsWindowVisible(windowHandle) &&
-            !NativeMethods.IsIconic(windowHandle))
+        if (!NativeMethods.IsWindow(windowHandle))
+            return;
+        var outcome = JudgeOwnThreadMinimize(
+            shown: NativeMethods.IsWindowVisible(windowHandle),
+            minimized: NativeMethods.IsIconic(windowHandle),
+            parked: IsParked(windowHandle),
+            minimizedWindowsParked: MinimizedWindowsParked());
+        if (outcome == OwnThreadMinimizeOutcome.NotResponding)
         {
             _log.LogWarning(
                 "0x{Hwnd:X} [{ClassName}] did not minimize within {TimeoutMs} ms: its app is not responding. It goes down as soon as the app responds",
                 windowHandle, ClassNameOf(windowHandle), OwnThreadMinimizeTimeout.TotalMilliseconds);
         }
+        else if (outcome == OwnThreadMinimizeOutcome.UndoneByRestore)
+        {
+            PutDownOnceMore(windowHandle, stillToGoDown, resets);
+        }
+        else
+        {
+            var fix = PlanRestorePlace(
+                minimized: NativeMethods.IsIconic(windowHandle),
+                restoresOnAMonitor: RestoresOnAMonitor(windowHandle),
+                remembered: _restorePlaces.ContainsKey(windowHandle));
+            if (fix != RestorePlaceFix.None)
+                PutRestorePlaceBack(windowHandle, fix);
+        }
+    }
+
+    /// <summary>How <see cref="CheckWentDownAsync"/> puts right where a window that went down goes back to.</summary>
+    internal enum RestorePlaceFix
+    {
+        /// <summary>It goes back to a place on a monitor, or is not minimized.</summary>
+        None,
+        /// <summary>Back to the place it had when the agent asked it to go down.</summary>
+        Remembered,
+        /// <summary>
+        /// The agent never saw where it was: on the primary monitor, where the
+        /// student sees it at least.
+        /// </summary>
+        OnPrimaryMonitor,
+    }
+
+    /// <summary>
+    /// Whether, and how, the place a window that went down goes back to is put
+    /// right, factored out as a pure decision so it is unit-testable without a live
+    /// desktop. A minimize that lands in the middle of a restore from another
+    /// thread, before the restore moved the window back on screen, takes down a
+    /// window that is still parked off the screen, and Windows takes that spot as
+    /// the place the window goes back to (#580): restored later, it would come back
+    /// off every monitor, where the student cannot see it.
+    /// </summary>
+    internal static RestorePlaceFix PlanRestorePlace(bool minimized, bool restoresOnAMonitor, bool remembered)
+    {
+        if (!minimized || restoresOnAMonitor) return RestorePlaceFix.None;
+        return remembered ? RestorePlaceFix.Remembered : RestorePlaceFix.OnPrimaryMonitor;
+    }
+
+    /// <summary>
+    /// Whether the window is on a monitor, or, minimized, goes back to a place on
+    /// one when it is restored.
+    /// </summary>
+    private static bool RestoresOnAMonitor(nint windowHandle) =>
+        NativeMethods.MonitorFromWindow(windowHandle, NativeMethods.MONITOR_DEFAULTTONULL) != IntPtr.Zero;
+
+    /// <summary>How many windows' places <see cref="RememberRestorePlace"/> keeps before it drops those of closed windows.</summary>
+    private const int RestorePlacesKept = 64;
+
+    /// <summary>
+    /// Remembers where a window the agent asks to go down goes back to, for
+    /// <see cref="PutRestorePlaceBack"/> (#580). Not while that is off every
+    /// monitor: a window activated in the middle of a restore is still parked off
+    /// the screen, and Windows gives that spot as its place.
+    /// </summary>
+    private void RememberRestorePlace(nint windowHandle)
+    {
+        var placement = new NativeMethods.WINDOWPLACEMENT { length = Marshal.SizeOf<NativeMethods.WINDOWPLACEMENT>() };
+        if (!RestoresOnAMonitor(windowHandle) || !NativeMethods.GetWindowPlacement(windowHandle, ref placement))
+            return;
+        if (_restorePlaces.Count >= RestorePlacesKept)
+        {
+            foreach (var window in _restorePlaces.Keys)
+            {
+                if (!NativeMethods.IsWindow(window))
+                    _restorePlaces.TryRemove(window, out _);
+            }
+        }
+        _restorePlaces[windowHandle] = placement;
+    }
+
+    /// <summary>
+    /// Gives a window that went down in the middle of a restore, before the restore
+    /// moved it back on screen, a place to go back to on a monitor (#580): the one
+    /// it had when the agent asked it to go down, maximized again if it was, or one
+    /// on the primary monitor when the agent never saw it on screen. It stays down.
+    /// On a thread of its own: <c>SetWindowPlacement</c> waits for the window's app.
+    /// </summary>
+    private void PutRestorePlaceBack(nint windowHandle, RestorePlaceFix fix)
+    {
+        _log.LogInformation(
+            "0x{Hwnd:X} [{ClassName}] went down in the middle of a restore and would come back off every monitor. " +
+            "Putting back where it goes: {Where}",
+            windowHandle, ClassNameOf(windowHandle),
+            fix == RestorePlaceFix.Remembered ? "where it was" : "on the primary monitor");
+        _ = Task.Factory.StartNew(() =>
+        {
+            try
+            {
+                var placement = new NativeMethods.WINDOWPLACEMENT { length = Marshal.SizeOf<NativeMethods.WINDOWPLACEMENT>() };
+                if (!NativeMethods.GetWindowPlacement(windowHandle, ref placement))
+                    return;
+                if (fix == RestorePlaceFix.Remembered && _restorePlaces.TryGetValue(windowHandle, out var remembered))
+                {
+                    placement.rcNormalPosition = remembered.rcNormalPosition;
+                    placement.ptMaxPosition = remembered.ptMaxPosition;
+                    placement.flags = WentBackMaximized(remembered) ? NativeMethods.WPF_RESTORETOMAXIMIZED : 0;
+                }
+                else
+                {
+                    placement.rcNormalPosition = PlaceOnPrimaryMonitor(windowHandle);
+                    placement.flags = 0;
+                }
+                // Leaves the window as it is: minimized, and not activated.
+                placement.showCmd = NativeMethods.SW_SHOWMINNOACTIVE;
+                if (!NativeMethods.SetWindowPlacement(windowHandle, ref placement))
+                    _log.LogWarning("SetWindowPlacement could not put back where 0x{Hwnd:X} goes back to", windowHandle);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Putting back where 0x{Hwnd:X} goes back to threw", windowHandle);
+            }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    }
+
+    /// <summary>Whether a window with this placement comes back maximized.</summary>
+    private static bool WentBackMaximized(NativeMethods.WINDOWPLACEMENT placement) =>
+        placement.showCmd == NativeMethods.SW_SHOWMAXIMIZED ||
+        (placement.showCmd == NativeMethods.SW_SHOWMINIMIZED && (placement.flags & NativeMethods.WPF_RESTORETOMAXIMIZED) != 0);
+
+    /// <summary>
+    /// Two thirds of the primary monitor's work area, in its middle, as a window's
+    /// place to go back to. In workspace coordinates, whose (0, 0) is the top left
+    /// of that work area, except for a tool window's, which are the screen's.
+    /// </summary>
+    private static NativeMethods.RECT PlaceOnPrimaryMonitor(nint windowHandle)
+    {
+        var work = new NativeMethods.RECT();
+        if (!NativeMethods.SystemParametersInfoW(NativeMethods.SPI_GETWORKAREA, 0, ref work, 0))
+            work = new NativeMethods.RECT { Right = 1024, Bottom = 768 };
+        var width = work.Right - work.Left;
+        var height = work.Bottom - work.Top;
+        var toolWindow = (NativeMethods.GetWindowLongW(windowHandle, NativeMethods.GWL_EXSTYLE) & NativeMethods.WS_EX_TOOLWINDOW) != 0;
+        var left = (toolWindow ? work.Left : 0) + width / 6;
+        var top = (toolWindow ? work.Top : 0) + height / 6;
+        return new NativeMethods.RECT { Left = left, Top = top, Right = left + width * 2 / 3, Bottom = top + height * 2 / 3 };
+    }
+
+    /// <summary>What became of a minimize a window was asked to carry out itself.</summary>
+    internal enum OwnThreadMinimizeOutcome
+    {
+        /// <summary>It is down, or no longer on screen.</summary>
+        Down,
+        /// <summary>It is on screen and not minimized: its app has not got to it.</summary>
+        NotResponding,
+        /// <summary>
+        /// It counts as minimized but is on screen: a restore from another thread
+        /// undid the minimize in the middle of it (#563).
+        /// </summary>
+        UndoneByRestore,
+    }
+
+    /// <summary>
+    /// What became of a minimize a window was asked to carry out itself, once it had
+    /// the time to, factored out as a pure decision so it is unit-testable without a
+    /// live desktop. A minimized window is parked off the screen
+    /// (<paramref name="parked"/>), so one that counts as minimized and is not
+    /// parked is on screen: a restore from another thread undid the minimize in the
+    /// middle of it (#563). Only where Windows parks minimized windows
+    /// (<paramref name="minimizedWindowsParked"/>, as the Windows shell has it):
+    /// otherwise a minimized window is on screen as a title bar.
+    /// </summary>
+    internal static OwnThreadMinimizeOutcome JudgeOwnThreadMinimize(
+        bool shown, bool minimized, bool parked, bool minimizedWindowsParked)
+    {
+        if (!shown) return OwnThreadMinimizeOutcome.Down;
+        if (!minimized) return OwnThreadMinimizeOutcome.NotResponding;
+        return minimizedWindowsParked && !parked
+            ? OwnThreadMinimizeOutcome.UndoneByRestore
+            : OwnThreadMinimizeOutcome.Down;
+    }
+
+    /// <summary>Whether the window is where Windows parks a minimized window, off the screen.</summary>
+    private static bool IsParked(nint windowHandle) =>
+        NativeMethods.GetWindowRect(windowHandle, out var rect) && rect.Left <= NativeMethods.MINIMIZED_POSITION;
+
+    /// <summary>
+    /// Whether Windows parks minimized windows off the screen (<c>ARW_HIDE</c>), as
+    /// the Windows shell has it. Taken to be so when Windows does not say.
+    /// </summary>
+    private static bool MinimizedWindowsParked()
+    {
+        var metrics = new NativeMethods.MINIMIZEDMETRICS { cbSize = Marshal.SizeOf<NativeMethods.MINIMIZEDMETRICS>() };
+        return !NativeMethods.SystemParametersInfoW(NativeMethods.SPI_GETMINIMIZEDMETRICS, (uint)metrics.cbSize, ref metrics, 0) ||
+               (metrics.iArrange & NativeMethods.ARW_HIDE) != 0;
+    }
+
+    /// <summary>
+    /// Takes down a window whose minimize a restore from another thread undid
+    /// (#563): it counts as minimized, so a minimize asked of it changes nothing.
+    /// Its app restores it, without activating it, and minimizes it, one right
+    /// after the other: on screen already, it does not come up, and should it have
+    /// the foreground it hands it on as it goes down (#438). Before that, the place
+    /// it goes back to is put right: the minimize that landed in the middle of the
+    /// restore took the window's place for it while the window was still parked
+    /// off the screen, and the window would come back there, out of sight. Not
+    /// once its session ended (<paramref name="resets"/>) or its caller no longer
+    /// wants it down, and not twice within <see cref="RestoreToHandOverCooldown"/>:
+    /// the restore raises MINIMIZEEND, which blocks the window once more, and the
+    /// two would otherwise keep each other going.
+    /// </summary>
+    private void PutDownOnceMore(nint windowHandle, Func<bool>? stillToGoDown, long resets)
+    {
+        var now = Environment.TickCount64;
+        lock (_gate)
+        {
+            if (resets != _resets) return;
+            if (_lastPutDownOnceMore == windowHandle &&
+                now - _lastPutDownOnceMoreAt < (long)RestoreToHandOverCooldown.TotalMilliseconds)
+            {
+                _log.LogWarning(
+                    "0x{Hwnd:X} [{ClassName}] is on screen though it counts as minimized, right after it was put down once more. Leaving it",
+                    windowHandle, ClassNameOf(windowHandle));
+                return;
+            }
+            _lastPutDownOnceMore = windowHandle;
+            _lastPutDownOnceMoreAt = now;
+        }
+        if (!StillToGoDown(windowHandle, stillToGoDown)) return;
+        _log.LogInformation(
+            "0x{Hwnd:X} [{ClassName}] is on screen though it counts as minimized: a restore from another thread undid " +
+            "its minimize in the middle of it. Putting it down once more",
+            windowHandle, ClassNameOf(windowHandle));
+        // A thread of its own: putting its place right waits for its app.
+        _ = Task.Factory.StartNew(() =>
+        {
+            try
+            {
+                PutBackPlaceRight(windowHandle);
+                if (!NativeMethods.ShowWindowAsync(windowHandle, NativeMethods.SW_SHOWNOACTIVATE) ||
+                    !NativeMethods.ShowWindowAsync(windowHandle, NativeMethods.SW_MINIMIZE))
+                    _log.LogWarning("ShowWindowAsync returned false putting 0x{Hwnd:X} down once more", windowHandle);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Putting 0x{Hwnd:X} down once more threw", windowHandle);
+            }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Makes the place a window that counts as minimized but is on screen (#563)
+    /// goes back to when restored the place it is in now. Windows gives the place of
+    /// a minimized window (<c>ptMinPosition</c>) as where it is, in the coordinates
+    /// of the place it goes back to, which are those of the work area rather than
+    /// the screen; the difference between the two is the one to apply.
+    /// </summary>
+    private void PutBackPlaceRight(nint windowHandle)
+    {
+        var placement = new NativeMethods.WINDOWPLACEMENT { length = Marshal.SizeOf<NativeMethods.WINDOWPLACEMENT>() };
+        if (!NativeMethods.GetWindowPlacement(windowHandle, ref placement) ||
+            !NativeMethods.GetWindowRect(windowHandle, out var rect) ||
+            rect.Left <= NativeMethods.MINIMIZED_POSITION)
+            return;
+        var dx = placement.ptMinPosition.X - rect.Left;
+        var dy = placement.ptMinPosition.Y - rect.Top;
+        placement.rcNormalPosition = new NativeMethods.RECT
+        {
+            Left = rect.Left + dx,
+            Top = rect.Top + dy,
+            Right = rect.Right + dx,
+            Bottom = rect.Bottom + dy,
+        };
+        // Leaves the window as it is: minimized, and not activated.
+        placement.showCmd = NativeMethods.SW_SHOWMINNOACTIVE;
+        if (!NativeMethods.SetWindowPlacement(windowHandle, ref placement))
+            _log.LogDebug("SetWindowPlacement could not put right where 0x{Hwnd:X} goes back to", windowHandle);
     }
 
     public bool Block(nint offendingWindowHandle)
@@ -771,7 +1091,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
             _ = AskPostponedMinimizeOnceOverdueAsync(windowHandle, askedAt);
             return;
         }
-        if (!Minimize(windowHandle, onOwnThread: true) && tracked)
+        if (!Minimize(windowHandle, onOwnThread: true, stillToGoDown) && tracked)
         {
             // Nothing was asked to go down (a dialog already out of sight with the
             // window that owns it): nothing is on its way.
@@ -1004,6 +1324,7 @@ public sealed class FocusEnforcer : IFocusEnforcer
         {
             _lastAllowed = IntPtr.Zero;
             _lastRestoredToHandOver = IntPtr.Zero;
+            _lastPutDownOnceMore = IntPtr.Zero;
             _minimizeOnItsWay.Clear();
             _postponedMinimizes.Clear();
             _resets++;

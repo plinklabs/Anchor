@@ -1170,6 +1170,31 @@ public sealed class SessionsEndpointTests : IClassFixture<AnchorApiFactory>
     }
 
     [Fact]
+    public async Task GET_sessions_rejoinable_carries_the_callers_own_grants_and_no_classmates()
+    {
+        // #568: a silent rejoin replaces the allowlist the agent and extension
+        // had. A host the teacher approved for this student only must survive
+        // it; one approved for a classmate must not leak in.
+        var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory, studentCount: 2);
+        var (student, classmate) = (scenario.Students[0], scenario.Students[1]);
+        var session = await TestSeed.AddSessionAsync(
+            _factory, scenario.Teacher.Id, scenario.Class.Id, new[] { student.Id, classmate.Id });
+        await SetParticipantStateAsync(session.Id, student.Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        await SetParticipantStateAsync(session.Id, classmate.Id, joinedAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        await TestSeed.AddUnblockGrantAsync(_factory, session.Id, student.Id, "own-grant-rejoin.example");
+        await TestSeed.AddUnblockGrantAsync(_factory, session.Id, classmate.Id, "classmate-grant-rejoin.example");
+
+        using var client = _factory.CreateClient();
+        TestAuth.SetStudent(client, student);
+
+        var body = await client.GetFromJsonAsync<List<SessionStartedPayload>>("/sessions/rejoinable");
+
+        var entry = Assert.Single(body!);
+        Assert.Contains(entry.Domains, d => d.MatchType == "Suffix" && d.Value == "own-grant-rejoin.example");
+        Assert.DoesNotContain(entry.Domains, d => d.Value == "classmate-grant-rejoin.example");
+    }
+
+    [Fact]
     public async Task GET_sessions_rejoinable_for_teacher_returns_empty()
     {
         var scenario = await TestSeed.SeedClassWithTeacherAndStudentsAsync(_factory);

@@ -15,7 +15,7 @@ namespace FocusAgent.IntegrationTests;
 /// the <see cref="VisualArtifacts"/> helper produces).
 ///
 /// The surfaces render presentable demo content (a real teacher "Ms Rivera",
-/// class code <c>PLINK-3B</c>, a readable allowlist — see
+/// class 3B, a readable allowlist — see
 /// <c>FocusAgent.App.SelfTestDemoContent</c>), matched to the dashboard's demo
 /// data so the agent and dashboard shots tell one coherent story. No backend, no
 /// real auth, no secrets.
@@ -47,6 +47,12 @@ public sealed class WebsiteScreenshots
     // holds the dashboard-*.png set). Deterministic, repo-relative, not buried in
     // TestResults/.
     private static string AssetsDir => Path.Combine(TestConfig.RepoRoot, "website", "assets");
+
+    // The website is English (its alt text quotes the English copy), and the agent
+    // follows the Windows display language (#323), so a Dutch machine wrote Dutch
+    // shots (#514). Every surface is shot in US English, whatever the host's
+    // language, as the dashboard's generator does (#377).
+    private static readonly string[] LanguageArgs = ["--ui-language", "en-US"];
 
     public static bool Enabled =>
         string.Equals(Environment.GetEnvironmentVariable(EnableEnvVar), "1", StringComparison.Ordinal);
@@ -87,7 +93,7 @@ public sealed class WebsiteScreenshots
         Directory.CreateDirectory(AssetsDir);
         var outPath = Path.Combine(AssetsDir, $"{fileName}.png");
 
-        await using var agent = AgentSelfTestProcess.Launch(selfTestFlag);
+        await using var agent = AgentSelfTestProcess.Launch(selfTestFlag, extraArgs: LanguageArgs);
 
         var hwnd = await agent.WaitForWindowAsync(TimeSpan.FromSeconds(15));
         await Task.Delay(SettleTime);
@@ -98,7 +104,12 @@ public sealed class WebsiteScreenshots
         WindowCapture.ParkCursor();
         await Task.Delay(TimeSpan.FromMilliseconds(250));
 
-        var rect = WindowCapture.GetWindowScreenRect(hwnd);
+        // The visible frame, not the window rect: that one takes in the
+        // invisible resize borders, and with them a sliver of the desktop (#514).
+        // Less the 1px border Windows draws over the frame's edge, which is
+        // see-through and blends in what lies behind.
+        var frame = WindowCapture.GetVisibleWindowScreenRect(hwnd);
+        var rect = new WindowCapture.ScreenRect(frame.Left + 1, frame.Top + 1, frame.Width - 2, frame.Height - 2);
 
         using var shot = WindowCapture.CaptureRect(rect);
 

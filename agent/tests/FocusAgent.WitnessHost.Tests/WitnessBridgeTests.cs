@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Text;
+using System.Text.Json.Nodes;
 using FocusAgent.WitnessHost;
 
 namespace FocusAgent.WitnessHost.Tests;
@@ -102,6 +103,44 @@ public class WitnessBridgeTests
         var header = new byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)payload.Length);
         return [.. header, .. payload];
+    }
+
+    [Fact]
+    public async Task Its_own_messages_are_the_ones_the_witness_contract_lists_from_the_host()
+    {
+        // contracts/witness.json (#573): the host adds agent_available and
+        // agent_unavailable, with no fields, to what it forwards; the extension's
+        // unit tests check that it takes them as the file lists them.
+        using var input = new MemoryStream(); // immediate EOF
+        using var output = new MemoryStream();
+        var agent = new FakeAgentLink { OnStart = link => { link.RaiseConnected(); link.RaiseDisconnected(); } };
+
+        await new WitnessBridge(input, output, agent).RunAsync();
+
+        output.Position = 0;
+        var fromHost = WitnessContract()["fromHost"]!.AsObject();
+        var sent = ReadAllFrames(output).Select(f => JsonNode.Parse(f)!.AsObject()).ToList();
+        Assert.Equal(
+            fromHost.Select(m => m.Key).Order(StringComparer.Ordinal),
+            sent.Select(m => m["type"]!.GetValue<string>()).Order(StringComparer.Ordinal));
+        foreach (var message in sent)
+        {
+            var type = message["type"]!.GetValue<string>();
+            Assert.Equal(
+                fromHost[type]!.AsObject().Select(f => f.Key).Append("type").Order(StringComparer.Ordinal),
+                message.Select(f => f.Key).Order(StringComparer.Ordinal));
+        }
+    }
+
+    private static JsonObject WitnessContract()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var path = Path.Combine(dir.FullName, "contracts", "witness.json");
+            if (File.Exists(path))
+                return JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        }
+        throw new FileNotFoundException($"No contracts/witness.json above {AppContext.BaseDirectory}.");
     }
 
     private static List<string> ReadAllFrames(Stream stream)

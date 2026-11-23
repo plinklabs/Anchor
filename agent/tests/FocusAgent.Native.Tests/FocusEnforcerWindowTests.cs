@@ -37,6 +37,145 @@ public class FocusEnforcerWindowTests
         Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
     }
 
+    /// <summary>
+    /// #563: another app restores the off-list window from a thread of its own.
+    /// Windows carries that out in steps it sends to the window's thread: the first
+    /// raises an event the agent blocks the window on, and the window's thread can
+    /// carry the block's minimize out before the next step, which puts the window
+    /// back on screen while it counts as minimized. The restore's second event
+    /// blocks it again, and that minimize changes nothing. The spec holds the restore
+    /// in the middle until the first block's minimize has landed there, then blocks
+    /// the window again, as the second event does.
+    /// </summary>
+    [Fact]
+    public async Task A_block_whose_minimize_lands_in_the_middle_of_a_restore_from_another_thread_still_takes_the_window_down()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer(log);
+        enforcer.RememberAllowed(allowed.Handle);
+        var restoredTo = offList.Bounds;
+        offList.MinimizeWithoutActivating();
+
+        // The first event of the restore: the agent blocks the window while the
+        // restore is under way, and the window's thread carries the block's minimize
+        // out between the restore's steps.
+        offList.MinimizeInTheMiddleOfTheNextRestore();
+        var firstBlock = Task.Run(() =>
+            offList.WaitUntilInTheMiddleOfARestore(TimeSpan.FromSeconds(5)) && enforcer.Block(offList.Handle));
+        offList.RestoreWithoutActivating();
+        Assert.True(await firstBlock, "The restore was not held in the middle for the agent to block the window.");
+        Assert.True(offList.MinimizedInTheMiddleOfARestore, "The block's minimize did not land in the middle of the restore.");
+        Assert.True(
+            offList.CountsAsMinimizedOnScreen,
+            "The rest of the restore did not put the window back on screen while it counts as minimized; the spec " +
+            "does not reproduce #563.");
+
+        // The second event of the restore blocks the window once more.
+        Assert.True(enforcer.Block(offList.Handle));
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(3)),
+            "A block whose minimize landed in the middle of a restore from another thread left the window on screen, " +
+            "counted as minimized (#563).");
+        Assert.False(NativeMethods.IsIconic(allowed.Handle), "The allowed window was minimized.");
+        Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
+
+        // Put down from there, the window goes back to where it was when it is
+        // restored, not to where Windows parks a minimized window, out of sight.
+        offList.RestoreWithoutActivating();
+        Assert.True(offList.IsBackOnScreen, "The window did not come back on screen once restored.");
+        Assert.Equal(restoredTo, offList.Bounds);
+    }
+
+    /// <summary>
+    /// #580: the other order of #563. The block's minimize lands in the middle of a
+    /// restore from another thread before the restore starts to move the window
+    /// back on screen, as it does when a <c>SW_RESTORE</c> activates the window
+    /// first. The window stays down, but Windows took its spot, parked off the
+    /// screen, as the place it goes back to. The agent had blocked the window
+    /// before, while it was on screen, so it knows where it was.
+    /// </summary>
+    [Fact]
+    public async Task A_block_whose_minimize_lands_before_a_restore_moves_the_window_leaves_it_coming_back_where_it_was()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer(log);
+        enforcer.RememberAllowed(allowed.Handle);
+        var restoredTo = offList.Bounds;
+
+        // The agent blocks the window while it is on screen...
+        Assert.True(enforcer.Block(offList.Handle));
+        Assert.True(await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)), "The blocked window did not go down.");
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout + TimeSpan.FromMilliseconds(300));
+
+        // ...then blocks it again in the middle of a restore from another thread,
+        // before the restore moves it.
+        await BlockBeforeARestoreMovesTheWindowAsync(enforcer, offList);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.RestoresOnAMonitor, TimeSpan.FromSeconds(3)),
+            "A block whose minimize landed before a restore from another thread moved the window left it coming back " +
+            "off every monitor (#580).");
+        Assert.True(offList.HasGoneDown, "Putting back where the window goes back to brought it up.");
+        Assert.False(NativeMethods.IsIconic(allowed.Handle), "The allowed window was minimized.");
+
+        offList.RestoreWithoutActivating();
+        Assert.True(offList.IsBackOnScreen, "The window did not come back on screen once restored.");
+        Assert.Equal(restoredTo, offList.Bounds);
+    }
+
+    /// <summary>
+    /// #580, for a window the agent never saw on screen: minimized before the
+    /// agent started, it has no place to go back to that the agent knows of. It
+    /// comes back on the primary monitor, where the student sees it.
+    /// </summary>
+    [Fact]
+    public async Task A_block_whose_minimize_lands_before_a_restore_moves_a_window_the_agent_never_saw_brings_it_back_on_a_monitor()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var allowed = TestWindow.Open("Anchor test allowed app");
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer(log);
+        enforcer.RememberAllowed(allowed.Handle);
+        offList.MinimizeWithoutActivating();
+
+        await BlockBeforeARestoreMovesTheWindowAsync(enforcer, offList);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.RestoresOnAMonitor, TimeSpan.FromSeconds(3)),
+            "A block whose minimize landed before a restore from another thread moved the window left it coming back " +
+            "off every monitor (#580).");
+        Assert.True(offList.HasGoneDown, "Putting back where the window goes back to brought it up.");
+
+        offList.RestoreWithoutActivating();
+        Assert.True(offList.IsBackOnScreen, "The window did not come back on screen once restored.");
+        Assert.True(offList.RestoresOnAMonitor, "The window came back off every monitor.");
+    }
+
+    /// <summary>
+    /// Restores the minimized <paramref name="offList"/> window from another thread
+    /// and has <paramref name="enforcer"/> block it in the middle, before the
+    /// restore moves it back on screen (#580). Checks the spec reproduces the
+    /// issue: the window stays down, and goes back to where Windows parks it.
+    /// </summary>
+    private static async Task BlockBeforeARestoreMovesTheWindowAsync(FocusEnforcer enforcer, TestWindow offList)
+    {
+        offList.MinimizeInTheMiddleOfTheNextRestore(beforeTheMove: true);
+        var block = Task.Run(() =>
+            offList.WaitUntilInTheMiddleOfARestore(TimeSpan.FromSeconds(5)) && enforcer.Block(offList.Handle));
+        offList.RestoreWithoutActivating();
+        Assert.True(await block, "The restore was not held in the middle for the agent to block the window.");
+        Assert.True(offList.MinimizedInTheMiddleOfARestore, "The block's minimize did not land in the middle of the restore.");
+        Assert.True(offList.HasGoneDown, "The rest of the restore brought the window up; the spec does not reproduce #580.");
+        Assert.False(
+            offList.RestoresOnAMonitor,
+            "The window goes back to a place on a monitor right after the restore; the spec does not reproduce #580.");
+    }
+
     [Fact]
     public async Task Blocking_an_app_that_is_not_responding_never_holds_up_the_agent()
     {
@@ -242,6 +381,76 @@ public class FocusEnforcerWindowTests
         Assert.True(offList.HasGoneDown, "The window was not down yet when Minimize returned.");
         await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout + TimeSpan.FromMilliseconds(300));
         Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
+    }
+
+    [Fact]
+    public async Task The_window_with_the_foreground_minimizes_itself_for_the_sweep()
+    {
+        // #560: minimized from the agent, the window with the foreground stayed the
+        // foreground window, and what the student typed reached the minimized app.
+        // Minimizing itself, it hands the foreground on (#438), as a blocked window
+        // does. Where the foreground goes then needs two processes and is covered by
+        // the e2e ForegroundChangeReportTests.
+        var log = new ListLogger<FocusEnforcer>();
+        using var offList = TestWindow.Open("Anchor test off-list app with the foreground");
+        var enforcer = new FocusEnforcer(log);
+
+        enforcer.MinimizeForeground(offList.Handle);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window with the foreground was not minimized.");
+        Assert.True(
+            await HowItMinimizedAsync(offList) == true,
+            "The window with the foreground was minimized by the agent's thread rather than its own: it stays the " +
+            "foreground window and gets what the student types (#560).");
+        await Task.Delay(FocusEnforcer.OwnThreadMinimizeTimeout + TimeSpan.FromMilliseconds(300));
+        Assert.DoesNotContain(log.Messages, m => m.Contains("did not minimize"));
+    }
+
+    [Fact]
+    public async Task A_window_minimized_from_the_agent_does_not_minimize_itself()
+    {
+        // The other side of the line the test above draws: the sweep's other windows,
+        // which have no foreground to hand on, are minimized from the agent (#440).
+        using var offList = TestWindow.Open("Anchor test off-list app");
+        var enforcer = new FocusEnforcer();
+
+        enforcer.Minimize(offList.Handle);
+
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window was not minimized.");
+        Assert.True(await HowItMinimizedAsync(offList) == false, "A window minimized from the agent minimized itself.");
+    }
+
+    [Fact]
+    public async Task Minimizing_the_foreground_window_of_an_app_that_is_not_responding_never_holds_up_the_sweep()
+    {
+        var log = new ListLogger<FocusEnforcer>();
+        using var offList = TestWindow.Open("Anchor test hung off-list app with the foreground");
+        var enforcer = new FocusEnforcer(log);
+        offList.Freeze();
+
+        var clock = Stopwatch.StartNew();
+        enforcer.MinimizeForeground(offList.Handle);
+        clock.Stop();
+
+        Assert.True(
+            clock.Elapsed < TimeSpan.FromSeconds(1),
+            $"MinimizeForeground took {clock.ElapsedMilliseconds} ms while the off-list app was not responding.");
+        Assert.True(
+            await WaitUntilAsync(() => log.Messages.Any(m => m.Contains("did not minimize")), TimeSpan.FromSeconds(3)),
+            "The agent did not log that the app is not responding.");
+        Assert.False(offList.HasGoneDown, "A window whose thread is frozen went down.");
+
+        // The request waits in the app's queue: the window goes down the moment its
+        // app responds, and minimizes itself.
+        offList.Thaw();
+        Assert.True(
+            await WaitUntilAsync(() => offList.HasGoneDown, TimeSpan.FromSeconds(2)),
+            "The window did not go down once its app responded again.");
+        Assert.True(await HowItMinimizedAsync(offList) == true, "The window that responded again did not minimize itself.");
     }
 
     [Fact]
@@ -579,6 +788,20 @@ public class FocusEnforcerWindowTests
     private static void MakeTopmost(nint hwnd) =>
         NativeMethods.SetWindowPos(hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+
+    /// <summary>
+    /// <see cref="TestWindow.MinimizedItself"/> once the window's thread learned of
+    /// its minimize (<c>WM_SIZE</c>), or null when it did not within a moment.
+    /// Windows parks a minimized window off the screen before that thread gets
+    /// <c>WM_SIZE</c>: on a locked workstation 400 ms before, where a test that read
+    /// it the moment the window <see cref="TestWindow.HasGoneDown"/> saw no minimize
+    /// at all (#576).
+    /// </summary>
+    private static async Task<bool?> HowItMinimizedAsync(TestWindow window)
+    {
+        await WaitUntilAsync(() => window.MinimizedItself != null, TimeSpan.FromSeconds(2));
+        return window.MinimizedItself;
+    }
 
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {

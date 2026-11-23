@@ -332,56 +332,21 @@ public sealed class SessionsController : ControllerBase
         await _db.SaveChangesAsync(cancellationToken);
 
         // Push the recomputed allowlist to every active participant. Each
-        // student's domains differ by their own unblock grants (#73), so fold
-        // those back in per-user and target the user group — a session-wide
-        // broadcast would wipe grants the teacher already approved.
-        var expanded = await _allowlist.ExpandAsync(bundleIds, cancellationToken);
-
+        // student's domains differ by their own unblock grants (#73), so target
+        // the user group with that student's own expansion — a session-wide
+        // broadcast would wipe grants the teacher already approved (#568).
         var activeParticipantIds = await _db.SessionParticipants.AsNoTracking()
             .Where(p => p.SessionId == id && p.JoinedAt != null && p.LeftAt == null && p.DeclinedAt == null)
             .Select(p => p.UserId)
             .ToListAsync(cancellationToken);
 
-        // Whole-class grants (#101) apply to everyone, so fold them into the
-        // shared base before layering each student's own per-student grants on
-        // top — otherwise a mid-session bundle change would silently drop a
-        // host the teacher had opened for the whole class.
-        var classHosts = await _db.SessionWideUnblockGrants.AsNoTracking()
-            .Where(g => g.SessionId == id)
-            .Select(g => g.Host)
-            .ToListAsync(cancellationToken);
-
-        var baseDomains = expanded.Domains;
-        if (classHosts.Count > 0)
-        {
-            var withClass = new List<AllowedDomainDto>(expanded.Domains);
-            foreach (var host in classHosts)
-                withClass.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host));
-            baseDomains = DedupeDomains(withClass);
-        }
-
-        var grantsByUser = (await _db.SessionUnblockGrants.AsNoTracking()
-                .Where(g => g.SessionId == id)
-                .Select(g => new { g.UserId, g.Host })
-                .ToListAsync(cancellationToken))
-            .GroupBy(g => g.UserId)
-            .ToDictionary(g => g.Key, g => g.Select(x => x.Host).ToList());
-
+        var expandedByUser = await _allowlist.ExpandForParticipantsAsync(id, activeParticipantIds, cancellationToken);
         foreach (var participantId in activeParticipantIds)
         {
-            var domains = baseDomains;
-            if (grantsByUser.TryGetValue(participantId, out var hosts) && hosts.Count > 0)
-            {
-                // Suffix match mirrors the shape Unblock emits when granting a host.
-                var withGrants = new List<AllowedDomainDto>(baseDomains);
-                foreach (var host in hosts)
-                    withGrants.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host));
-                domains = DedupeDomains(withGrants);
-            }
-
+            var expanded = expandedByUser[participantId];
             await _broadcaster.SessionBundlesUpdatedAsync(
                 participantId,
-                new SessionBundlesUpdatedPayload(id, expanded.Apps, domains),
+                new SessionBundlesUpdatedPayload(id, expanded.Apps, expanded.Domains),
                 cancellationToken);
         }
 
@@ -391,25 +356,6 @@ public sealed class SessionsController : ControllerBase
             .ToListAsync(cancellationToken);
 
         return Ok(new UpdateSessionBundlesResponse(id, summaries));
-    }
-
-    /// <summary>
-    /// Dedupes a domain list on (match-type, lowercase value). Mirrors
-    /// <see cref="SessionAllowlistExpander"/>'s private dedup so grant-folded
-    /// lists don't double-list a host already covered by a bundle.
-    /// </summary>
-    private static IReadOnlyList<AllowedDomainDto> DedupeDomains(IEnumerable<AllowedDomainDto> source)
-    {
-        var seen = new HashSet<(string, string)>();
-        var result = new List<AllowedDomainDto>();
-        foreach (var dto in source)
-        {
-            if (string.IsNullOrWhiteSpace(dto.Value)) continue;
-            var key = (dto.MatchType, dto.Value.Trim().ToLowerInvariant());
-            if (seen.Add(key))
-                result.Add(dto);
-        }
-        return result;
     }
 
     [HttpGet("{id:guid}")]
@@ -783,7 +729,9 @@ public sealed class SessionsController : ControllerBase
         var sessions = new List<SessionStartedPayload>(ordered.Count);
         foreach (var row in ordered)
         {
-            var expanded = await _allowlist.ExpandForSessionAsync(row.Id, cancellationToken);
+            // The caller's own grants too (#568): a silent rejoin replaces the
+            // allowlist the agent and extension had.
+            var expanded = await _allowlist.ExpandForParticipantAsync(row.Id, caller.Id, cancellationToken);
             sessions.Add(new SessionStartedPayload(
                 row.Id,
                 row.ClassId,
@@ -893,7 +841,9 @@ public sealed class SessionsController : ControllerBase
         // no new client-side branch. It is also the only way a teacher takes
         // part in a session, their own included (#410): the start reaches
         // the class's members only.
-        var expanded = await _allowlist.ExpandForSessionAsync(session.Id, cancellationToken);
+        // A student who left and comes back keeps the grants the teacher
+        // already approved for them (#568).
+        var expanded = await _allowlist.ExpandForParticipantAsync(session.Id, caller.Id, cancellationToken);
         await _broadcaster.SessionStartedAsync(
             BuildStartedPayload(session, expanded),
             new[] { caller.Id },

@@ -34,4 +34,10 @@ public interface IWitnessHostStore
 
     /// <summary>Write <paramref name="content"/> to <paramref name="path"/>, creating the directory if needed.</summary>
     void WriteFile(string path, string content);
+
+    /// <summary>
+    /// Whether a file exists at <paramref name="path"/>: the host exe before it is
+    /// registered, and the manifest and exe the link self-check looks at (#561).
+    /// </summary>
+    bool FileExists(string path);
 }

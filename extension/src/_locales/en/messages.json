@@ -81,9 +81,9 @@
     "message": "Anchor is keeping you on the sites your teacher allowed. Everything else is paused until the session ends.",
     "description": "Popup body while a focus session is active."
   },
-  "popupClassCode": {
-    "message": "Class code",
-    "description": "Label before the class join code in the popup."
+  "popupJoinCode": {
+    "message": "Join code",
+    "description": "Label before the session's join code in the popup. The same name the teacher dashboard gives the code ('Join code' / 'Toegangscode'); 'Class code' / 'Klascode' there is a class's directory code, a different thing (#587)."
   },
   "popupAllowedSites": {
     "message": "Allowed sites",

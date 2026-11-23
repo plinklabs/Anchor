@@ -37,7 +37,7 @@
   <main class="doc">
     <p class="eyebrow">Anchor</p>
     <h1>Frequently asked questions</h1>
-    <p class="lead">The questions teachers and IT leads ask first. Anchor is open-source classroom software made by teachers — it enforces focus during a lesson, it doesn't surveil students. The answers below are consistent with the <a href="privacy.html">privacy policy</a>; where a school's own setup decides the answer, we say so.</p>
+    <p class="lead">The questions teachers and IT leads ask first. Anchor is open-source classroom software made by teachers — it keeps devices to the lesson, it doesn't keep watch on students. Where the <a href="privacy.html">privacy policy</a> has the details, we link to it; where a school's own setup decides the answer, we say so.</p>
 
     <!-- ============================================================
          Privacy & surveillance — the trust questions, answered first.
@@ -46,13 +46,26 @@
       <p class="eyebrow" id="privacy-heading">Privacy &amp; surveillance</p>
 
       <h2>Is this spyware? Does it watch students all the time?</h2>
-      <p>No. Anchor only observes activity <strong>while a teacher has an active focus session running</strong> — outside a session it inspects nothing and sends nothing. Even during a session it does not record everything: it surfaces <strong>off-task</strong> activity (apps and pages that aren't on the lesson's allowlist) so the teacher can nudge a student back. On-allowlist work is never logged. It does not record keystrokes, page contents, screenshots, passwords, or any browsing outside an active session.</p>
+      <p>No. Anchor only does anything <strong>while a teacher has a focus session running</strong> — outside a session it inspects nothing and reports nothing. During a session, the agent and the extension decide on the device which apps and pages may open, and those decisions aren't reported to the teacher (the pilot builds still report some, <a href="#pilot">see below</a>). The teacher is told only what the next answer lists. Anchor does not record keystrokes, page contents, screenshots or passwords.</p>
 
-      <h2>What exactly does it collect during a session?</h2>
-      <p>Only what the teacher needs to see who is off task: off-allowlist page visits (URL, hostname, time, and a tab identifier), unblock requests, integrity signals that suggest enforcement was bypassed, and periodic liveness heartbeats. This is tied to the signed-in student for the duration of the session, then it stops. The full, exact list is in the <a href="privacy.html">privacy policy</a>, and the source is public so you can verify it.</p>
+      <h2 id="what-the-teacher-sees">What does the teacher see, and what is sent for it?</h2>
+      <p>During a session the teacher sees:</p>
+      <ul>
+        <li>who joined, declined or left the session, or quit the agent;</li>
+        <li>access requests: the page a student asks to open (its address and site), sent only when the student clicks <strong>Request access</strong>;</li>
+        <li>tamper signals (such as an InPrivate window left open, the Anchor extension switched off, or its access to websites taken away) and laptops that lose their connection or never join.</li>
+      </ul>
+      <p>The teacher does <strong>not</strong> see which apps a student used or which blocked pages a student tried to open. The home page explains <a href="index.html#soft-enforcement">why</a>.</p>
+      <p>For this, the student's device sends the school's Anchor backend those events, tied to the signed-in student, and a regular heartbeat so that a laptop that drops out is noticed. The privacy policy lists <a href="privacy.html#sent">exactly what is sent</a>, every kind of tamper signal included, and the source is public so you can verify it.</p>
+
+      <h2 id="pilot">Is that what the pilot builds do?</h2>
+      <p>Not yet. To test the enforcement in real classrooms, the builds used in the current pilot also report each app that comes to the foreground, the site of each page the extension blocks, and sites that aren't allowed but were open in Edge without being blocked. The teacher sees these on the session's page in History, and the last one also in the live feed. These reports will be removed before Anchor is used in real lessons. The privacy policy lists <a href="privacy.html#pilot">exactly what each one contains</a>.</p>
+
+      <h2>Can the school look back at what a student did?</h2>
+      <p>Only in a narrow way. Besides the session data above, a school can switch on <strong>diagnostic log uploads</strong>, which are off by default. Only the administrators of the school's backend can download them, and the <a href="privacy.html#logs">privacy policy</a> allows two uses: technical diagnosis, and a concrete suspicion of fraud during a test or exam, <strong>only at the request of the school's leadership</strong>. A school that switches them on should tell students and parents.</p>
 
       <h2>Do students need to consent, and is that handled?</h2>
-      <p>Anchor runs in schools under the school's authority, so the <strong>school is the data controller</strong> and is responsible for the lawful basis — including any parental notice or consent its policies or local law require. Plink Labs operates no backend and receives no student data, so it can't and doesn't collect anything directly from students. Practically, students always know a session is running: they sign in with their existing school account, and the agent shows a join confirmation when a session starts.</p>
+      <p>Anchor runs in schools under the school's authority, so the <strong>school is the data controller</strong> and is responsible for the lawful basis — including any parental notice or consent its policies or local law require. Practically, students always know a session is running: they sign in with their existing school account, and the agent shows a join confirmation when a session starts.</p>
     </section>
 
     <!-- ============================================================
@@ -62,13 +75,13 @@
       <p class="eyebrow" id="how-it-works-heading">How it works</p>
 
       <h2>Can a student bypass it?</h2>
-      <p>Yes — deliberately. Anchor is <strong>soft enforcement</strong>, not a lockdown, on managed and bring-your-own laptops alike. The agent pulls focus back from off-list apps and the extension blocks off-list pages, but a motivated student without admin rights can still defeat it, and that is by design. The goal is to make off-task behaviour <strong>visible to the teacher</strong>, not impossible. Tampering — closing the agent, using a private window, revoking the extension's access — is surfaced to the teacher as an integrity signal rather than silently prevented.</p>
+      <p>Yes — deliberately. Anchor is <strong>soft enforcement</strong>, not a lockdown, on managed and bring-your-own laptops alike: a motivated student without admin rights can still step around it. What the teacher gets then is a signal, such as that the student quit the agent or switched the extension off, not a log of what the student did. The home page explains <a href="index.html#soft-enforcement">why it's built that way</a>.</p>
 
       <h2>What happens when a student goes off task?</h2>
-      <p>Off-list apps are pushed to the background (minimised, not closed — the student keeps their work), off-list pages show a friendly block page, and the event surfaces on the teacher's dashboard live. The teacher can quietly nudge the student back rather than police a log afterwards.</p>
+      <p>Off-list apps and pages are set aside, without the student losing their work, and the block page lets them ask for access; the teachers' page shows <a href="teachers.html#students">what students see</a>. The teacher isn't told about either. They hear about a site only when the student asks for access to it. (The pilot builds report more: see <a href="#pilot">above</a>.)</p>
 
       <h2>Does it keep running between lessons?</h2>
-      <p>No. Anchor only does anything while a teacher-started session is active. When the session ends — teacher action, a timer, or the class period — enforcement stops and observation stops. Nothing is recorded between sessions.</p>
+      <p>No. A session ends when the teacher ends it, or when it reaches the end the teacher chose when starting it, such as the end of this or the next lesson period; a session still running after four hours ends by itself as a safety net. Enforcement and reporting end with it.</p>
     </section>
 
     <!-- ============================================================
@@ -77,14 +90,11 @@
     <section aria-labelledby="platforms-heading">
       <p class="eyebrow" id="platforms-heading">Platforms</p>
 
-      <h2>What platforms does it support?</h2>
-      <p>The student side runs on <strong>Windows</strong> (Windows 10 version 1809 or later, or Windows 11) in <strong>Microsoft Edge</strong>. The student agent is a native Windows tray app and the URL enforcement runs inside Edge, so both are required on the student device. The teacher dashboard is a web app that runs in any modern browser, with nothing to install.</p>
-
-      <h2>Does it work on Chromebooks, Macs, or phones?</h2>
-      <p>Not on the student side. There is <strong>no Mac, Chromebook, iPad, or phone agent</strong> — this is a deliberate scope choice, not a roadmap gap. Enforcement lives in a native Windows app plus an Edge extension, so a Windows laptop running Edge — school-issued or the student's own — is the only supported student device. The teacher's dashboard, however, is just a website and works on whatever device the teacher already uses.</p>
+      <h2>What platforms does it support? Chromebooks, Macs, phones?</h2>
+      <p>Students need a <strong>Windows</strong> laptop (Windows 10 version 1809 or later, or Windows 11) with <strong>Microsoft Edge</strong>, school-issued or their own. There is no Mac, Chromebook, iPad or phone version for students, by design. The teacher dashboard is a website that runs in any modern browser. The IT page has <a href="it.html#requirements">the full requirements</a>.</p>
 
       <h2>Do students have to install anything?</h2>
-      <p>On a school-managed laptop, no: the school's IT pushes the agent through Intune, and it installs and starts by itself. On their own laptop, a student runs the agent's installer once, a <code>Setup.exe</code> that the school publishes for its own Anchor backend. Either way the agent installs for that Windows user only, needs no admin rights, starts whenever they sign in to Windows, and keeps itself up to date. On a managed laptop the school's Edge policy installs the Anchor extension. Elsewhere the agent offers to set that policy itself, with one Windows permission prompt, or opens the extension's Edge Add-ons page so the student can add it in one click. Day to day a student installs nothing and manages no extra password — they just sign in with their existing school Microsoft account.</p>
+      <p>On a school-managed laptop, no: the school's IT installs the agent and the Anchor extension. On their own laptop, a student runs the agent installer their school publishes, once; it needs no admin rights, and the agent then helps them add the extension. After that a student installs nothing and manages no extra password — they sign in with their existing school Microsoft account. The IT page describes <a href="it.html#rollout">the rollout</a>.</p>
     </section>
 
     <!-- ============================================================
@@ -94,13 +104,13 @@
       <p class="eyebrow" id="cost-and-data-heading">Cost &amp; data</p>
 
       <h2>Does it cost anything?</h2>
-      <p>Anchor itself is <strong>free and open source</strong>, licensed GPL-3.0. There is no licence fee and no per-seat charge — Plink Labs sells nothing and operates nothing. The only cost is hosting your own backend in your school's Azure subscription: an App Service on the Basic B1 plan and an Azure SQL Standard S0 database, with the teacher dashboard on a free-tier Static Web App. For a school of around 1,000 students that comes to about <strong>€24 a month</strong> (Azure list prices, Belgium Central region, excluding VAT), or about €43 a month if the database needs to move up to Standard S1. Azure's free App Service tier can't hold the live connections of a full class, so a free-tier deployment isn't an option for real lessons.</p>
+      <p>Anchor itself is <a href="index.html#open-source">free and open source</a>, licensed GPL-3.0. There is no licence fee and no per-seat charge; Plink Labs sells nothing. The only cost is hosting your own backend in your school's Azure subscription: about <strong>€24 a month</strong> for a school of around 1,000 students. The IT page lists <a href="it.html#requirements">the Azure plans behind that figure</a>, and when it costs more.</p>
 
       <h2>Who can see the data, and where is it stored?</h2>
-      <p>Anchor is <strong>self-hosted</strong>: each school runs its own backend in its own Azure subscription, and student devices and the dashboard talk only to that. Your data stays in your Azure. The supervising teacher sees the live session activity for their class; access beyond that is governed by the school, which is the data controller. <strong>Plink Labs operates no backend, receives no student data, and has no access to any school's deployment.</strong></p>
+      <p>Anchor is <strong>self-hosted</strong>: each school runs its own backend in its own Azure subscription, and student devices and the dashboard talk only to that. Your data stays in your Azure. The teacher who runs a session sees <a href="#what-the-teacher-sees">what's listed above</a> for their class, live and afterwards in History. If the school switches on diagnostic log uploads, only its backend administrators can download them. Access beyond that is governed by the school, which is the data controller. <strong>Plink Labs operates no backend, receives no student data, and has no access to any school's deployment.</strong></p>
 
-      <h2>How long is the data kept?</h2>
-      <p>Retention is set by the school, because the school runs the backend. As a default the backend prunes raw session events after 14 days and keeps summaries, but each deployment can configure this. Requests to access or delete data should go to your school or its IT administrator, who controls the deployment.</p>
+      <h2 id="retention">How long is the data kept?</h2>
+      <p>Retention is set by the school, because the school runs the backend. As a default the backend prunes raw session events after 14 days and keeps summaries, and it deletes diagnostic log uploads 14 days after they arrive, but each deployment can configure this. The <a href="privacy.html#retention">privacy policy</a> lists each kind of data and how long it is kept. Requests to access or delete data should go to your school or its IT administrator, who controls the deployment.</p>
 
       <h2>Can we audit what it actually collects?</h2>
       <p>Yes. Anchor's full source code — including exactly what each component collects and sends — is public at <a href="https://github.com/plinklabs/Anchor">github.com/plinklabs/Anchor</a>. Nothing about the data flow is hidden.</p>

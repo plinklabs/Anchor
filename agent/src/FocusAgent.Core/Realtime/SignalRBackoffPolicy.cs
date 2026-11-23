@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.SignalR.Client;
 
-namespace FocusAgent.App.Realtime;
+namespace FocusAgent.Core.Realtime;
 
 internal sealed class SignalRBackoffPolicy : IRetryPolicy
 {

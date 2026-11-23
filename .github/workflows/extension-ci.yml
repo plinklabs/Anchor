@@ -19,6 +19,10 @@ name: Extension CI
 # workflow on its own; this suite still lints the release workflows, and pins
 # their content, which actionlint doesn't check.
 #
+# The suite also holds the extension to contracts/witness.json, the messages on
+# its link to the agent (src/shared/witness-contract.test.ts, #573), so a change
+# to that file runs it too, and fails until the extension agrees.
+#
 # Linux runner, unlike Extension E2E: the unit tests need no browser, the
 # release workflow packages on ubuntu-latest too, and the runner's shellcheck
 # lets actionlint check the release workflows' `run:` scripts as well.
@@ -30,6 +34,7 @@ on:
   pull_request:
     paths:
       - 'extension/**'
+      - 'contracts/witness.json'
       - '.github/workflows/extension-release.yml'
       - '.github/workflows/edge-key-expiry.yml'
       - '.github/workflows/extension-test-ring.yml'
@@ -39,6 +44,7 @@ on:
     branches: [main, develop]
     paths:
       - 'extension/**'
+      - 'contracts/witness.json'
       - '.github/workflows/extension-release.yml'
       - '.github/workflows/edge-key-expiry.yml'
       - '.github/workflows/extension-test-ring.yml'

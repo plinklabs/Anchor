@@ -86,6 +86,41 @@ public sealed class EdgeOpenProfileExtensionProbeTests : IDisposable
     }
 
     [Fact]
+    public void The_profiles_with_the_extension_installed_are_found_on_or_off_and_open_or_not()
+    {
+        // #556: where the extension is installed, for a link that never came up.
+        _profiles.SwitchOn("Default");
+        _profiles.SwitchOff("Profile 1");
+        _profiles.SwitchOn("Profile 2");
+        _profiles.Remove("Profile 3");
+        _windows.Ids.AddRange(["MSEdge", "MSEdge.UserData.Profile1", "MSEdge.UserData.Profile3"]);
+        var probe = Probe();
+
+        Assert.Equal(
+            new[]
+            {
+                new ProfileWithExtension("Default", On: true),
+                new ProfileWithExtension("Profile 1", On: false),
+                new ProfileWithExtension("Profile 2", On: true),
+            },
+            probe.FindWithExtension(openOnly: false).OrderBy(p => p.Profile));
+        // Profile 2 is closed, and Profile 3, though open, never had it.
+        Assert.Equal(
+            new[] { new ProfileWithExtension("Default", On: true), new ProfileWithExtension("Profile 1", On: false) },
+            probe.FindWithExtension(openOnly: true).OrderBy(p => p.Profile));
+    }
+
+    [Fact]
+    public void No_profile_with_the_extension_is_found_where_none_has_it()
+    {
+        _profiles.Remove("Default");
+        _windows.Ids.Add("MSEdge");
+
+        Assert.Empty(Probe().FindWithExtension(openOnly: false));
+        Assert.Empty(Probe().FindWithExtension(openOnly: true));
+    }
+
+    [Fact]
     public void An_extension_removed_from_an_open_profile_is_found_once_it_was_seen_there()
     {
         _profiles.SwitchOn("Profile 1");

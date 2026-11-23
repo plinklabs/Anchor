@@ -247,6 +247,65 @@ namespace Anchor.Infrastructure.Persistence.Migrations
                     b.ToTable("Schools", (string)null);
                 });
 
+            modelBuilder.Entity("Anchor.Domain.Sessions.LogAccess", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("AccessedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("AdminDisplayName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("AdminUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ClassName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("RequestedBy")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("SessionStartedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("StudentDisplayName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<Guid>("StudentUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccessedAt");
+
+                    b.HasIndex("SessionId", "StudentUserId");
+
+                    b.ToTable("LogAccesses", (string)null);
+                });
+
             modelBuilder.Entity("Anchor.Domain.Sessions.Session", b =>
                 {
                     b.Property<Guid>("Id")

@@ -224,12 +224,19 @@ internal sealed class BackendClient
         GetJsonAsync<List<LogUpload>>($"/admin/log-uploads?sessionId={sessionId}", oid);
 
     /// <summary>
-    /// GET /admin/log-uploads/{sessionId}/{userId} — one upload, gunzipped to the
-    /// text the agent sent (admin only).
+    /// POST /admin/log-uploads/download — one upload, gunzipped to the text the
+    /// agent sent (admin only). The backend records every download with its
+    /// purpose and reason (#566) and refuses one without them.
     /// </summary>
     public async Task<string> DownloadLogUploadAsync(Guid sessionId, Guid userId, string oid = TestConfig.TeacherOid)
     {
-        using var res = await SendAsync(HttpMethod.Get, $"/admin/log-uploads/{sessionId}/{userId}", oid);
+        using var res = await SendAsync(HttpMethod.Post, "/admin/log-uploads/download", oid, new
+        {
+            sessionId,
+            userIds = new[] { userId },
+            purpose = "TechnicalDiagnosis",
+            reason = "Agent E2E: checking what the agent uploaded.",
+        });
         await using var gzip = new System.IO.Compression.GZipStream(
             await res.Content.ReadAsStreamAsync(), System.IO.Compression.CompressionMode.Decompress);
         using var reader = new StreamReader(gzip, System.Text.Encoding.UTF8);

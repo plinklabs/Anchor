@@ -53,8 +53,10 @@ const SHOTS = [
   // of the admin sub-nav and "Exam apps" is its first row.
   { name: 'dashboard-bundles', hash: '#/admin/bundles', click: { x: 300, y: 298 }, settle: 700 },
   { name: 'dashboard-classes', hash: '#/classes', settle: 700 },
-  { name: 'dashboard-history', hash: '#/history', settle: 600 },
-  { name: 'dashboard-past-session', hash: `#/history/demo-past-session-3b`, settle: 700 },
+  // The past session's page is longer than the frame: the whole of it, so the
+  // website shows everything a past session keeps (#514). The History list
+  // itself isn't shot: one row of dates adds nothing to the page.
+  { name: 'dashboard-past-session', hash: `#/history/demo-past-session-3b`, settle: 700, height: 1320 },
 ];
 
 const MIME = {
@@ -120,8 +122,10 @@ const browser = await chromium.launch();
 
 try {
   for (const shot of SHOTS) {
+    // A shot may be taller than the frame; the width never changes.
+    const viewport = { ...VIEWPORT, height: shot.height ?? VIEWPORT.height };
     const ctx = await browser.newContext({
-      viewport: VIEWPORT,
+      viewport,
       deviceScaleFactor: 1,
       locale: LOCALE,
     });
@@ -144,7 +148,7 @@ try {
     const path = join(outDir, `${shot.name}.png`);
     await p.screenshot({
       path,
-      clip: { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height },
+      clip: { x: 0, y: 0, width: viewport.width, height: viewport.height },
     });
     await ctx.close();
     console.log(`wrote ${shot.name}.png`);

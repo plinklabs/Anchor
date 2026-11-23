@@ -17,7 +17,28 @@ public interface ISessionAllowlistExpander
 {
     Task<ExpandedAllowlist> ExpandAsync(IReadOnlyCollection<Guid> bundleIds, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// What every participant of the session shares: its bundles and its
+    /// whole-class grants (#101). Not what a student gets — that is
+    /// <see cref="ExpandForParticipantAsync"/>.
+    /// </summary>
     Task<ExpandedAllowlist> ExpandForSessionAsync(Guid sessionId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The allowlist one student enforces in a running session: the session's
+    /// bundles, its whole-class grants and that student's own grants (#73), and
+    /// never another student's. Every path that hands a student the whole
+    /// allowlist of a running session (rejoin, catch-up, join by code, bundle
+    /// change) uses this, so a student's own grants survive each of them (#568).
+    /// </summary>
+    Task<ExpandedAllowlist> ExpandForParticipantAsync(Guid sessionId, Guid userId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// <see cref="ExpandForParticipantAsync"/> for several students at once, one
+    /// entry per user id, in a fixed number of queries.
+    /// </summary>
+    Task<IReadOnlyDictionary<Guid, ExpandedAllowlist>> ExpandForParticipantsAsync(
+        Guid sessionId, IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken = default);
 }
 
 public sealed record ExpandedAllowlist(
@@ -68,7 +89,7 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
         // a rejoin (#54) or join-by-code rehydration must include them — without
         // this a late joiner or a reconnecting agent would miss a host the
         // teacher already opened for the class. Per-student grants are NOT folded
-        // here: they're scoped to one user and layered in by the caller instead.
+        // here: they're scoped to one user, see ExpandForParticipantsAsync.
         var classHosts = await _db.SessionWideUnblockGrants
             .AsNoTracking()
             .Where(g => g.SessionId == sessionId)
@@ -82,6 +103,48 @@ public sealed class SessionAllowlistExpander : ISessionAllowlistExpander
             domains.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host));
 
         return new ExpandedAllowlist(merged.Apps, DedupeDomains(domains));
+    }
+
+    public async Task<ExpandedAllowlist> ExpandForParticipantAsync(
+        Guid sessionId, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var expanded = await ExpandForParticipantsAsync(sessionId, new[] { userId }, cancellationToken);
+        return expanded[userId];
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, ExpandedAllowlist>> ExpandForParticipantsAsync(
+        Guid sessionId, IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken = default)
+    {
+        var shared = await ExpandForSessionAsync(sessionId, cancellationToken);
+        var result = new Dictionary<Guid, ExpandedAllowlist>();
+        if (userIds.Count == 0)
+            return result;
+
+        var hostsByUser = (await _db.SessionUnblockGrants
+                .AsNoTracking()
+                .Where(g => g.SessionId == sessionId && userIds.Contains(g.UserId))
+                .Select(g => new { g.UserId, g.Host })
+                .ToListAsync(cancellationToken))
+            .GroupBy(g => g.UserId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Host).ToList());
+
+        foreach (var userId in userIds)
+        {
+            if (!hostsByUser.TryGetValue(userId, out var hosts) || hosts.Count == 0)
+            {
+                result[userId] = shared;
+                continue;
+            }
+
+            // Suffix match mirrors the shape the unblock approval pushes, so the
+            // host covers its subdomains here as it did when it was granted.
+            var domains = new List<AllowedDomainDto>(shared.Domains);
+            foreach (var host in hosts)
+                domains.Add(new AllowedDomainDto(AllowedDomainMatchTypes.Suffix, host));
+            result[userId] = new ExpandedAllowlist(shared.Apps, DedupeDomains(domains));
+        }
+
+        return result;
     }
 
     private ExpandedAllowlist Merge(IReadOnlyCollection<BundleEntry> entries)

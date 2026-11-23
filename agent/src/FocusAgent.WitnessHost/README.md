@@ -91,8 +91,9 @@ unit-tested with `MemoryStream`s.
   `witness.ts`): agent → extension `session_started`, `no_session`,
   `allowlist_replaced`, `allowlist_amended`, `unblock_denied`, `session_ended`,
   `unblock_request_result`, `open_extension_page`; extension → agent `ping`,
-  `blocked_url`, `unblock_request`, `self_check` (#524), and from an extension
-  older than #539 `tamper` (its `host_permission_revoked` goes on, its
+  `blocked_url`, `unblock_request`, `self_check` (#524), `link_error` (#561: why
+  the link was down before it came up, which the agent only logs), and from an
+  extension older than #539 `tamper` (its `host_permission_revoked` goes on, its
   `inprivate_opened` is dropped, #535). The agent sends the current session (or
   `no_session`) to each connection when it connects, sends every change to all
   of them, and answers an `unblock_request` on the connection that asked.
@@ -102,6 +103,36 @@ the host name in `witness.ts`, and the host manifest's `allowed_origins` pins th
 extension ID (`dnkimhodjfogjibnbbfdjdapgmmiojio`, see `extension/README.md`), plus
 the self-hosted test-ring build's once `extension/test-ring.json` names it (#497,
 `AnchorExtensionIds`).
+
+## Diagnosing a link that is down (#561)
+
+Nobody can look at a student's laptop, so every place the link can fail leaves
+a line in what the agent's log upload (#446) carries:
+
+- **The host's own log.** `anchor-witness-host.exe` writes
+  `witness-host-YYYYMMDD.log` next to the agent's logs
+  (`%LOCALAPPDATA%\Anchor\FocusAgent\logs\`, 14 days kept; `ANCHOR_WITNESS_LOG_DIR`
+  moves it for tests): that it started, its version and the extension origin Edge
+  passed it, each pipe connect attempt and its result (the first five one by one,
+  then one a minute), a pipe drop, and why it exited. Several hosts (one per Edge
+  profile) share a file; each line names its process id. The log upload adds it
+  as its own section, "Witness host log".
+- **The startup registration** logs what it wrote or found up to date, a missing
+  host exe and any failure, as warnings with the path.
+- **The link self-check.** When a session is joined with no extension connected,
+  the agent logs one line per check (`WitnessLinkSelfCheck`): the HKCU key and
+  its `(default)` value; the manifest it points at (there, parses, `name`, `path`,
+  `allowed_origins`); whether that exe is there and is the one next to the agent;
+  which of Anchor's extension IDs is installed in which Edge profile, and whether
+  each is in `allowed_origins`; and Edge's `NativeMessagingUserLevelHosts`,
+  `NativeMessagingBlocklist` and `NativeMessagingAllowlist` policies under HKLM
+  and HKCU. Then it registers the host again, which logs what it had to rewrite.
+- **Edge's own reason** (`chrome.runtime.lastError`) reaches the agent as
+  `link_error` once the link is back (see the extension's README).
+
+Paths are logged with the student's own folder written as its variable
+(`%LOCALAPPDATA%\…`), so the user name doesn't leave the laptop; nothing the
+student browses is logged.
 
 ## Dev registration (no admin)
 

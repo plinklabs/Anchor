@@ -129,6 +129,7 @@ public class AppIdentifierTests
         public void BringForward(nint windowHandle) => BroughtForward.Add(windowHandle);
         public bool RememberAllowed(nint windowHandle) => true;
         public void Minimize(nint windowHandle) { }
+        public void MinimizeForeground(nint windowHandle) { }
         public bool Block(nint offendingWindowHandle) => false;
         public Task<bool> HandOverAsync(
             nint offendingWindowHandle, nint successorWindowHandle, Func<bool>? stillToGoDown = null) =>

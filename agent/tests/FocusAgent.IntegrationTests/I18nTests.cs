@@ -172,6 +172,35 @@ public sealed class I18nTests
     }
 
     [Fact]
+    public async Task The_pause_for_an_extension_that_never_connected_reads_in_English_and_Dutch()
+    {
+        // #556: the copy a student reads on the real overlay window when the
+        // extension is installed but never connected, with a 60-second repair
+        // window. Not the "switched off" copy: the student switched nothing off.
+        var en = await RunVerifyI18nAsync("en-US");
+        Assert.Equal("Edge is paused for now", en["window.overlay_notconnected_headline"]);
+        Assert.Equal(
+            "The Anchor extension in Edge isn't connected to Anchor, so Edge can't be used in this session until it is. " +
+            "Your teacher knows. You can carry on with one of these apps in the meantime.",
+            en["window.overlay_notconnected_message"]);
+        Assert.Equal("Try Edge again", en["window.overlay_notconnected_action"]);
+        Assert.Equal(
+            "Edge opens for 60 seconds. If Anchor connects in that time, Edge stays open.",
+            en["window.overlay_notconnected_hint"]);
+
+        var nl = await RunVerifyI18nAsync("nl-NL");
+        Assert.Equal("Edge staat even op pauze", nl["window.overlay_notconnected_headline"]);
+        Assert.Equal(
+            "De Anchor-extensie in Edge is niet verbonden met Anchor, dus je kunt Edge in deze sessie pas weer gebruiken " +
+            "als ze dat is. Je leerkracht weet het. Ga intussen verder met een van deze apps.",
+            nl["window.overlay_notconnected_message"]);
+        Assert.Equal("Probeer Edge opnieuw", nl["window.overlay_notconnected_action"]);
+        Assert.Equal(
+            "Edge gaat 60 seconden open. Maakt Anchor in die tijd verbinding, dan blijft Edge open.",
+            nl["window.overlay_notconnected_hint"]);
+    }
+
+    [Fact]
     public async Task Unsupported_language_falls_back_to_English()
     {
         // fr-FR ships no catalogue, so MRT resolves the en-US default — never a

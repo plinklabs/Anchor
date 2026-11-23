@@ -8,6 +8,7 @@ import 'api/api_client.dart';
 import 'api/auth_token_store.dart';
 import 'api/bundles_api.dart';
 import 'api/classes_api.dart';
+import 'api/logs_api.dart';
 import 'api/schools_api.dart';
 import 'api/sessions_api.dart';
 import 'app_title.dart';
@@ -15,6 +16,7 @@ import 'auth/msal_auth_service.dart';
 import 'auth/msal_config.dart';
 import 'bundles/bundle_file_io.dart';
 import 'l10n/app_localizations.dart';
+import 'logs/log_file_io.dart';
 import 'realtime/session_hub_client.dart';
 import 'router.dart';
 
@@ -68,8 +70,10 @@ class AnchorDashboard extends StatefulWidget {
     required this.apiBaseUrl,
     this.admins,
     this.schools,
+    this.logs,
     this.hubClientFactory,
     this.bundleFileIo,
+    this.logFileIo,
     this.alertServices,
     this.loginSilentTimeout = const Duration(seconds: 30),
   });
@@ -90,6 +94,10 @@ class AnchorDashboard extends StatefulWidget {
   /// sites (tests) need not supply it — defaults to one built from [api].
   final SchoolsApi? schools;
 
+  /// Client for Admin → Logs (#566). Optional so existing call sites (tests)
+  /// need not supply it — defaults to one built from [api].
+  final LogsApi? logs;
+
   /// Overrides the live-feed builder for the session view (#132). Null in
   /// production; an integration test injects a stubbed feed to drive the real
   /// app without a real SignalR hub.
@@ -100,6 +108,11 @@ class AnchorDashboard extends StatefulWidget {
   /// integration test injects a fake so the flow runs without an OS file
   /// dialog.
   final BundleFileIo? bundleFileIo;
+
+  /// Overrides the file-saving seam of Admin → Logs (#566). Null in
+  /// production (the real `package:web` implementation); an integration test
+  /// injects a fake that keeps what would have been saved.
+  final LogFileIo? logFileIo;
 
   /// Overrides the settings and the sound of live-session alerts (#454). Null
   /// in production (the browser's own: `localStorage` and Web Audio); an
@@ -136,9 +149,11 @@ class _AnchorDashboardState extends State<AnchorDashboard> {
       classes: widget.classes,
       admins: widget.admins ?? AdminsApi(widget.api),
       schools: widget.schools ?? SchoolsApi(widget.api),
+      logs: widget.logs ?? LogsApi(widget.api),
       apiBaseUrl: widget.apiBaseUrl,
       hubClientFactory: widget.hubClientFactory,
       bundleFileIo: widget.bundleFileIo,
+      logFileIo: widget.logFileIo,
       alertServices: widget.alertServices,
       loginSilentTimeout: widget.loginSilentTimeout,
     );

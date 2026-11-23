@@ -23,6 +23,18 @@ public static class TamperKinds
     public const string ExtensionDisabled = "extension_disabled";
 
     /// <summary>
+    /// The extension is installed in an Edge profile that is open during a
+    /// session, but its native-messaging link hasn't come up since the agent
+    /// started (#556), so the session was never handed down to it and it filters
+    /// nothing. The agent registers the witness host again at the join, waits the
+    /// grace period, opens Edge in that profile to wake the extension, and waits
+    /// once more; this kind is reported when Edge is paused after that, once per
+    /// outage (<see cref="ExtensionGuard"/>). Not <see cref="ExtensionDisabled"/>:
+    /// the student switched nothing off.
+    /// </summary>
+    public const string ExtensionNotConnected = "extension_not_connected";
+
+    /// <summary>
     /// An Edge InPrivate window was still open
     /// <see cref="Settings.SessionSettings.SchoolProfileReportSeconds"/> after it
     /// opened during an active session (#148, #535). The extension only ever sees

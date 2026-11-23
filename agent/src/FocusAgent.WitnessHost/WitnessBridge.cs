@@ -29,14 +29,17 @@ public sealed class WitnessBridge
     private readonly Stream _input;
     private readonly Stream _output;
     private readonly IAgentLink _agent;
+    private readonly WitnessHostLog _log;
     private readonly Channel<string> _outbound =
         Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true });
 
-    public WitnessBridge(Stream input, Stream output, IAgentLink agent)
+    /// <param name="log">Where the host writes why it exits (#561); none by default.</param>
+    public WitnessBridge(Stream input, Stream output, IAgentLink agent, WitnessHostLog? log = null)
     {
         _input = input;
         _output = output;
         _agent = agent;
+        _log = log ?? WitnessHostLog.None;
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -52,13 +55,24 @@ public sealed class WitnessBridge
             while (true)
             {
                 var message = await NativeMessaging.ReadMessageAsync(_input, ct).ConfigureAwait(false);
-                if (message is null) break; // browser closed stdin → extension gone
+                if (message is null)
+                {
+                    // browser closed stdin → extension gone
+                    _log.Info("Exiting: Edge closed the extension's port (stdin ended).");
+                    break;
+                }
                 await _agent.SendAsync(message, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
         {
             // host shutting down
+            _log.Info("Exiting: the host was stopped.");
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"Exiting: reading from Edge failed: {WitnessHostLog.Describe(ex)}");
+            throw;
         }
         finally
         {

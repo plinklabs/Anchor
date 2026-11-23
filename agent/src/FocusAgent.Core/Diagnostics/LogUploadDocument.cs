@@ -15,6 +15,7 @@ public static class LogUploadDocument
     public const string AgentLogSection = "Agent log";
     public const string CrashLogSection = "Crash log";
     public const string UpdaterLogSection = "Updater log";
+    public const string WitnessHostLogSection = "Witness host log";
 
     /// <summary>One log's entries inside the window, oldest first.</summary>
     public sealed record Section(string Title, IReadOnlyList<string> Entries);

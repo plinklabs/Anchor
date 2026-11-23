@@ -29,6 +29,15 @@ public sealed class SessionCoordinator : IAsyncDisposable
     private Guid? _activeSessionId;
     private Guid? _joinedSessionId;
 
+    // #570: the joined session's allowlist as this agent last handed it out — the
+    // join, a bundle change, an approved request — so a reconnect's catch-up
+    // replaces it only when the backend's differs.
+    private SessionAllowlistPayload? _allowlist;
+
+    // #570: bumped by every allowlist the hub pushes, so a catch-up answer that a
+    // newer push overtook is not applied over it.
+    private long _allowlistVersion;
+
     // Sessions whose start this agent has handled — from the SessionStarted
     // broadcast, a rejoin, or a catch-up — so a catch-up after a reconnect
     // (#356) never replays one the student has already answered.
@@ -59,6 +68,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
         _hub.SessionStarted += OnSessionStarted;
         _hub.SessionEnded += OnSessionEnded;
         _hub.SessionBundlesUpdated += OnSessionBundlesUpdated;
+        _hub.AllowlistAmended += OnAllowlistAmended;
     }
 
     public JoinConfirmation? ActiveConfirmation
@@ -147,9 +157,11 @@ public sealed class SessionCoordinator : IAsyncDisposable
 
     /// <summary>
     /// Fires when the teacher changes the bundles of the currently-joined
-    /// session (#93). Carries the full recomputed allowlist; subscribers should
-    /// replace their enforcement rules. Only raised for the joined session —
-    /// updates for any other session are dropped here.
+    /// session (#93), and when a reconnect finds the student's allowlist changed
+    /// while the agent was offline (#570, <see cref="RefreshJoinedAllowlistAsync"/>).
+    /// Carries the full recomputed allowlist; subscribers should replace their
+    /// enforcement rules. Only raised for the joined session — updates for any
+    /// other session are dropped here.
     /// </summary>
     public event EventHandler<SessionBundlesUpdatedPayload>? SessionAllowlistUpdated;
 
@@ -269,7 +281,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
                     _activeSessionId = null;
             }
             if (joined)
-                _joinedSessionId = payload.SessionId;
+                SetJoined(payload);
         }
 
         if (joined)
@@ -331,7 +343,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
             }
             else
             {
-                _joinedSessionId = payload.SessionId;
+                SetJoined(payload);
                 fire = true;
             }
         }
@@ -386,6 +398,76 @@ public sealed class SessionCoordinator : IAsyncDisposable
         _log.LogInformation(
             "Session {SessionId} ended or was left while the agent was disconnected; leaving it.", sessionId);
         HandleSessionEnded(sessionId);
+    }
+
+    /// <summary>
+    /// Asks the backend for the student's allowlist in the joined session and,
+    /// when it differs from the one the agent handed out, replaces it: raises
+    /// <see cref="SessionAllowlistUpdated"/>, which the focus controller (apps)
+    /// and the extension relay (<c>allowlist_replaced</c>) take as a bundle
+    /// change (#570). Called each time the hub connection comes back, after
+    /// <see cref="ConfirmJoinedSessionAsync"/>: what the teacher changes on the
+    /// student's allowlist — a request approved, a bundle added or removed —
+    /// reaches only the connections open when it is sent, so a change made
+    /// while the agent was offline would otherwise never arrive.
+    ///
+    /// Nothing is raised when the allowlist is unchanged, so a reconnect does
+    /// not have the extension recheck every tab for nothing; nor when a push
+    /// arrived while the question was out (it is newer), when the backend says
+    /// the student is not in the session (<see cref="ConfirmJoinedSessionAsync"/>
+    /// decides that), or when the question fails — a backend too old to know it
+    /// included. No-op when not joined. Never throws but for cancellation.
+    /// </summary>
+    public async Task RefreshJoinedAllowlistAsync(CancellationToken ct = default)
+    {
+        Guid sessionId;
+        long version;
+        lock (_gate)
+        {
+            if (_joinedSessionId is not Guid joined)
+                return;
+            sessionId = joined;
+            version = _allowlistVersion;
+        }
+
+        SessionAllowlistPayload? current;
+        try
+        {
+            current = await _hub.GetSessionAllowlistAsync(sessionId, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not ask the backend for the allowlist of session {SessionId}; keeping the one the agent has.", sessionId);
+            return;
+        }
+
+        if (current is null || current.SessionId != sessionId)
+            return;
+
+        lock (_gate)
+        {
+            if (_joinedSessionId != sessionId || _allowlistVersion != version)
+            {
+                _log.LogDebug("Allowlist of session {SessionId} changed while the agent asked for it; keeping the newer one.", sessionId);
+                return;
+            }
+            if (_allowlist is { } held && SameAllowlist(held, current))
+            {
+                _log.LogDebug("Allowlist of session {SessionId} unchanged after reconnecting.", sessionId);
+                return;
+            }
+            _allowlist = current;
+            _allowlistVersion++;
+        }
+
+        _log.LogInformation(
+            "Allowlist of session {SessionId} changed while the agent was disconnected ({AppCount} apps, {DomainCount} domains); replacing it.",
+            sessionId, current.Apps.Count, current.Domains.Count);
+        SessionAllowlistUpdated?.Invoke(this, new SessionBundlesUpdatedPayload(sessionId, current.Apps, current.Domains));
     }
 
     /// <summary>
@@ -548,6 +630,11 @@ public sealed class SessionCoordinator : IAsyncDisposable
         lock (_gate)
         {
             forJoinedSession = _joinedSessionId == payload.SessionId;
+            if (forJoinedSession)
+            {
+                _allowlist = new SessionAllowlistPayload(payload.SessionId, payload.Apps, payload.Domains);
+                _allowlistVersion++;
+            }
         }
 
         if (!forJoinedSession)
@@ -561,6 +648,40 @@ public sealed class SessionCoordinator : IAsyncDisposable
         _log.LogInformation("Allowlist updated for joined session {SessionId}", payload.SessionId);
         SessionAllowlistUpdated?.Invoke(this, payload);
     }
+
+    // The extension relay hands an approval to the extension; here it only
+    // joins the allowlist held for the reconnect catch-up (#570), which would
+    // otherwise find the approved host new and replace the list for nothing.
+    private void OnAllowlistAmended(object? sender, AllowlistAmendedPayload payload)
+    {
+        lock (_gate)
+        {
+            if (_joinedSessionId != payload.SessionId || _allowlist is not { } held)
+                return;
+            var domains = held.Domains.ToList();
+            foreach (var domain in payload.AddedDomains)
+            {
+                if (!string.IsNullOrWhiteSpace(domain.Value) && !domains.Contains(domain, AllowlistEntryComparer.Domains))
+                    domains.Add(domain);
+            }
+            _allowlist = held with { Domains = domains };
+            _allowlistVersion++;
+        }
+    }
+
+    // Call under _gate.
+    private void SetJoined(SessionStartedPayload payload)
+    {
+        _joinedSessionId = payload.SessionId;
+        _allowlist = new SessionAllowlistPayload(payload.SessionId, payload.Apps, payload.Domains);
+        _allowlistVersion++;
+    }
+
+    // The same entries in any order: the backend builds the list afresh on each
+    // answer, and an approval appends to the one the agent holds.
+    private static bool SameAllowlist(SessionAllowlistPayload a, SessionAllowlistPayload b) =>
+        a.Apps.ToHashSet(AllowlistEntryComparer.Apps).SetEquals(b.Apps) &&
+        a.Domains.ToHashSet(AllowlistEntryComparer.Domains).SetEquals(b.Domains);
 
     private void OnSessionEnded(object? sender, Guid sessionId)
     {
@@ -606,6 +727,7 @@ public sealed class SessionCoordinator : IAsyncDisposable
         _hub.SessionStarted -= OnSessionStarted;
         _hub.SessionEnded -= OnSessionEnded;
         _hub.SessionBundlesUpdated -= OnSessionBundlesUpdated;
+        _hub.AllowlistAmended -= OnAllowlistAmended;
         JoinConfirmation? active;
         Guid? joined;
         lock (_gate)
@@ -619,5 +741,35 @@ public sealed class SessionCoordinator : IAsyncDisposable
         if (joined is Guid id)
             SessionLeft?.Invoke(this, id);
         await Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// Allowlist entries compared as the backend dedupes them (#570): the same match
+/// kind and value, the value in any case.
+/// </summary>
+internal static class AllowlistEntryComparer
+{
+    public static readonly IEqualityComparer<AllowedAppDto> Apps = new Comparer<AllowedAppDto>(a => (a.MatchKind, a.Value));
+    public static readonly IEqualityComparer<AllowedDomainDto> Domains = new Comparer<AllowedDomainDto>(d => (d.MatchType, d.Value));
+
+    private sealed class Comparer<T>(Func<T, (string Kind, string Value)> key) : IEqualityComparer<T>
+    {
+        public bool Equals(T? x, T? y)
+        {
+            if (x is null || y is null) return x is null && y is null;
+            var (kx, vx) = key(x);
+            var (ky, vy) = key(y);
+            return string.Equals(kx, ky, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(vx, vy, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public int GetHashCode(T obj)
+        {
+            var (kind, value) = key(obj);
+            return HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(kind ?? ""),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(value ?? ""));
+        }
     }
 }

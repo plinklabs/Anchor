@@ -228,6 +228,77 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExpandForParticipantsAsync_layers_each_students_own_grants_on_the_shared_list()
+    {
+        // #568: what a student enforces in a running session is the session's
+        // bundles, its whole-class grants and their own grants, never a
+        // classmate's. A student without grants gets the shared list as is.
+        var bundleId = await SeedBundleAsync("Participant", entries: new[]
+        {
+            (BundleEntryKind.Domain, "*.bundle.example", BundleEntryMatchType.Wildcard),
+        });
+        var teacher = new User { EntraOid = Guid.NewGuid(), DisplayName = "T", Role = UserRole.Teacher };
+        var withGrant = new User { EntraOid = Guid.NewGuid(), DisplayName = "S1", Role = UserRole.Student };
+        var classmate = new User { EntraOid = Guid.NewGuid(), DisplayName = "S2", Role = UserRole.Student };
+        var withoutGrant = new User { EntraOid = Guid.NewGuid(), DisplayName = "S3", Role = UserRole.Student };
+        var @class = new Class { Name = "Maths 6", SchoolYear = "2025-2026" };
+        _db.Users.AddRange(teacher, withGrant, classmate, withoutGrant);
+        _db.Classes.Add(@class);
+        await _db.SaveChangesAsync();
+
+        var sessionId = Guid.NewGuid();
+        _db.Sessions.Add(new Session
+        {
+            Id = sessionId,
+            TeacherId = teacher.Id,
+            ClassId = @class.Id,
+            StartedAt = DateTimeOffset.UtcNow,
+            JoinCode = "333333",
+        });
+        _db.SessionBundles.Add(new SessionBundle { SessionId = sessionId, BundleId = bundleId });
+        _db.SessionWideUnblockGrants.Add(new SessionWideUnblockGrant
+        {
+            SessionId = sessionId,
+            Host = "class-grant.example",
+            GrantedAt = DateTimeOffset.UtcNow,
+        });
+        foreach (var (userId, host) in new[]
+                 {
+                     (withGrant.Id, "own-grant.example"),
+                     // Already open for the class: listed once.
+                     (withGrant.Id, "class-grant.example"),
+                     (classmate.Id, "classmate-grant.example"),
+                 })
+        {
+            _db.SessionUnblockGrants.Add(new SessionUnblockGrant
+            {
+                SessionId = sessionId,
+                UserId = userId,
+                Host = host,
+                GrantedAt = DateTimeOffset.UtcNow,
+            });
+        }
+        await _db.SaveChangesAsync();
+
+        var expander = new SessionAllowlistExpander(_db, Env(Environments.Production), Config());
+        var shared = await expander.ExpandForSessionAsync(sessionId);
+        var byUser = await expander.ExpandForParticipantsAsync(sessionId, new[] { withGrant.Id, withoutGrant.Id });
+        var single = await expander.ExpandForParticipantAsync(sessionId, withGrant.Id);
+
+        Assert.Equal(2, byUser.Count);
+        var own = byUser[withGrant.Id];
+        Assert.Contains(own.Domains, d => d.Value == "*.bundle.example");
+        Assert.Single(own.Domains, d => d.MatchType == "Suffix" && d.Value == "class-grant.example");
+        Assert.Contains(own.Domains, d => d.MatchType == "Suffix" && d.Value == "own-grant.example");
+        Assert.DoesNotContain(own.Domains, d => d.Value == "classmate-grant.example");
+        Assert.Equal(shared.Apps, own.Apps);
+        Assert.Equal(own.Domains, single.Domains);
+
+        Assert.Equal(shared.Domains, byUser[withoutGrant.Id].Domains);
+        Assert.DoesNotContain(byUser[withoutGrant.Id].Domains, d => d.Value == "own-grant.example");
+    }
+
+    [Fact]
     public async Task Empty_or_whitespace_bundle_values_are_skipped()
     {
         var bundleId = await SeedBundleAsync("Sloppy", entries: new[]
@@ -306,8 +377,9 @@ public sealed class SessionAllowlistExpanderTests : IAsyncLifetime
     [Fact]
     public async Task Dashboard_origins_reach_the_rejoin_and_join_by_code_expansion()
     {
-        // ExpandForSessionAsync serves rejoin, join-by-code and GetStartedSession:
-        // a student who joins late must not find the dashboard blocked either.
+        // ExpandForSessionAsync is the shared layer of what rejoin, join-by-code
+        // and GetStartedSession hand a student (#568): a student who joins late
+        // must not find the dashboard blocked either.
         var teacher = new User { EntraOid = Guid.NewGuid(), DisplayName = "T", Role = UserRole.Teacher };
         var @class = new Class { Name = "Maths 5", SchoolYear = "2025-2026" };
         _db.Users.Add(teacher);

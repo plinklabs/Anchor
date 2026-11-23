@@ -60,4 +60,32 @@ void main() {
     await tester.tap(find.byKey(const Key('admin-nav-bundles')));
     expect(navigatedTo, '/admin/bundles');
   });
+
+  testWidgets('the Logs sub-tab (#566) sits last and opens /admin/logs', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    String? navigatedTo;
+    await tester.pumpWidget(
+      _host(
+        section: AdminSection.logs,
+        onNavigate: (location) => navigatedTo = location,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('LOGS'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const Key('admin-nav-logs'))).dy,
+      greaterThan(
+        tester.getTopLeft(find.byKey(const Key('admin-nav-schools'))).dy,
+      ),
+    );
+    await tester.tap(find.byKey(const Key('admin-nav-logs')));
+    expect(navigatedTo, '/admin/logs');
+  });
 }
