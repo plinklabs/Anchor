@@ -44,16 +44,22 @@ It also reports, in style.css:
   currentColor), so no text takes a colour the pairs don't check: --magenta,
   the brand's spark, is 4.30:1 on --paper and only for borders and the mark
   (#600).
-- button: a rule for the links inside a container that reaches a button, an
-  element with class="cta" on any page. Such a rule's last compound selects
-  <a> without a class or id of its own, after an ancestor: ".doc a". It
-  outweighs the button's own .cta--primary and .cta--secondary rules, so the
-  button looks different in that container only; ".doc a" made the contact
-  page's primary button magenta on magenta (#599). Write ".doc a:not(.cta)".
-  Selectors are matched against each button's ancestors in the markup; a test
-  the markup can't settle (:hover, ::after, [href^=...]) counts as a match,
-  ">" is read as a descendant combinator, and the compound before "+" or "~"
-  isn't checked.
+- button, callout: a rule for the elements inside a container that reaches
+  into a component on any page: a button (class="cta") or a callout
+  (class="callout"), itself or an element inside it. A component's own rules
+  give it the same look on every page; a container's rule changes it in that
+  container only. ".doc a" made the contact page's primary button magenta on
+  magenta (#599), ".doc h2" put 40px between the contact page's callout
+  eyebrow and heading (#602). Write ".doc a:not(.cta)" and
+  ".doc h2:not(.callout *)". A rule is a container's when it reaches the
+  element only through an ancestor outside the component and names none of
+  the component's classes, nor its id: ".callout p", "p a" (in the callout's
+  own <p>) and ".doc .callout" are fine. Selectors are matched against each
+  element's ancestors in the markup; a test the markup can't settle (:hover,
+  ::after, [href^=...]) counts as a match, ">" is read as a descendant
+  combinator, the compound before "+" or "~" isn't checked, and a :not()
+  rules an element out only with simple selectors and descendant
+  combinators, such as :not(.cta) and :not(.callout *).
 
 Under GitHub Actions each problem is printed as an error annotation on its
 file and line. Exits 1 if it found any problem.
@@ -115,9 +121,14 @@ CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 CSS_ROOT = re.compile(r":root\s*\{([^{}]*)\}")
 CSS_CUSTOM_PROPERTY = re.compile(r"\s*(--[A-Za-z0-9_-]+)\s*:(.*)", re.S)
 HEX_COLOUR = re.compile(r"#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})")
-# The class every button carries; .cta--primary and .cta--secondary give it
-# its colours, the same on every page.
-BUTTON_CLASS = "cta"
+# The components, by the class each carries: (name, plural). Their own rules
+# give them the same look on every page: .cta--primary and .cta--secondary a
+# button's colours, the .callout rules a callout's spacing.
+COMPONENTS = {"cta": ("button", "buttons"), "callout": ("callout", "callouts")}
+# In a :not() argument, what the markup can't settle or reaches() only
+# approximates: a pseudo-class, a partial attribute match, a combinator other
+# than the descendant one.
+UNSETTLED_NEGATION = re.compile(r"[>+~:]|[|^$*]=")
 # A style rule: its selector list (after the last ";", "{" or "}") and a body
 # without nested blocks, so the rules inside @media are found too.
 CSS_RULE = re.compile(r"([^{};]*)\{[^{}]*\}")
@@ -143,7 +154,10 @@ class Page(HTMLParser):
         self.images = []        # (line, attrs)
         self.chrome = {}        # name -> (line, [(token, line)])
         self.subnav_links = []  # (line, href, aria-current)
-        self.buttons = []       # (line, tag, attrs, [(tag, attrs)] of its ancestors)
+        # (line, tag, attrs, [(tag, attrs)] of its ancestors, component class,
+        # index of the component in ancestors + [itself]) for every element
+        # that is a component or inside one; the innermost one counts.
+        self.components = []
         self.problems = []      # (line, message)
         self._open = []         # [(tag, line, attrs)]
         self._capture = None    # [name, depth, line, tokens] inside a shared block
@@ -173,8 +187,14 @@ class Page(HTMLParser):
                 self.urls.append((line, value))
         if tag == "img":
             self.images.append((line, values))
-        if BUTTON_CLASS in (values.get("class") or "").split():
-            self.buttons.append((line, tag, values, [(t, a) for t, _, a in self._open]))
+        ancestors = [(t, a) for t, _, a in self._open]
+        chain = ancestors + [(tag, values)]
+        for index in range(len(chain) - 1, -1, -1):
+            classes = (chain[index][1].get("class") or "").split()
+            kind = next((c for c in COMPONENTS if c in classes), None)
+            if kind:
+                self.components.append((line, tag, values, ancestors, kind, index))
+                break
 
         if self._capture is None and self._open and self._open[-1][0] == "body":
             name = None
@@ -437,10 +457,12 @@ def compounds(selector):
     return parts
 
 
-def compound_matches(compound, tag, attrs):
-    """False if the compound selector can't match the element. A test the
-    markup can't settle (a pseudo-class such as :hover, a pseudo-element, an
-    attribute test other than [name] and [name=value]) counts as a match."""
+def compound_matches(compound, tag, attrs, ancestors=()):
+    """False if the compound selector can't match the element, whose
+    ancestors are [(tag, attrs)] from <html> down. A test the markup can't
+    settle (a pseudo-class such as :hover, a pseudo-element, an attribute
+    test other than [name] and [name=value], a :not() of one) counts as a
+    match."""
     classes = (attrs.get("class") or "").split()
     for m in CSS_SIMPLE.finditer(compound):
         if m["type"] and m["type"] != "*" and m["type"].lower() != tag:
@@ -457,8 +479,9 @@ def compound_matches(compound, tag, attrs):
                 return False
         if m["pseudo"] == "not" and m["arg"] is not None:
             for negated in selector_list(m["arg"]):
-                plain = not re.search(r"[\s>+~:(]", negated)
-                if plain and compound_matches(negated, tag, attrs):
+                if UNSETTLED_NEGATION.search(negated):
+                    continue
+                if reaches(compounds(negated), tag, attrs, ancestors):
                     return False
     return True
 
@@ -468,7 +491,7 @@ def reaches(parts, tag, attrs, ancestors):
     ancestors are [(tag, attrs)] from <html> down. ">" is read as " ", and the
     compound before "+" or "~", a sibling, isn't checked: its ancestors are
     the next compound's."""
-    if not compound_matches(parts[-1][1], tag, attrs):
+    if not compound_matches(parts[-1][1], tag, attrs, ancestors):
         return False
     level = len(ancestors)
     for i in range(len(parts) - 2, -1, -1):
@@ -476,7 +499,8 @@ def reaches(parts, tag, attrs, ancestors):
             continue
         # The nearest ancestor that matches leaves the most room for the
         # compounds further left.
-        while level and not compound_matches(parts[i][1], *ancestors[level - 1]):
+        while level and not compound_matches(
+                parts[i][1], *ancestors[level - 1], ancestors[:level - 1]):
             level -= 1
         if not level:
             return False
@@ -484,10 +508,10 @@ def reaches(parts, tag, attrs, ancestors):
     return True
 
 
-def container_link_rules(css):
-    """[(selector, compounds, line)] for the stylesheet's rules for the links
-    inside a container: the last compound selects <a> and has no class or id
-    of its own, and a compound before it is an ancestor."""
+def container_rules(css):
+    """[(selector, compounds, line)] for the stylesheet's rules for the
+    elements inside a container: a compound before the last is an
+    ancestor."""
     css = blank_comments(css)
     rules = []
     for rule in CSS_RULE.finditer(css):
@@ -498,46 +522,80 @@ def container_link_rules(css):
         line = css.count("\n", 0, start) + 1
         for selector in selector_list(prelude):
             parts = compounds(selector)
-            if not parts:
-                continue
-            subject = list(CSS_SIMPLE.finditer(parts[-1][1]))
-            if not any((m["type"] or "").lower() == "a" for m in subject):
-                continue
-            if any(m["cls"] or m["id"] for m in subject):
-                continue
             if all(combinator in ("+", "~") for combinator, _ in parts[1:]):
                 continue
             rules.append((" ".join(selector.split()), parts, line))
     return rules
 
 
-def check_buttons(site, pages):
-    """(problems, buttons checked): a rule for the links inside a container
-    must not reach a button, where it outweighs the button's own rules."""
+def names(parts, attrs):
+    """True if a compound of the selector names one of the element's classes
+    or its id."""
+    classes = (attrs.get("class") or "").split()
+    return any(
+        (m["cls"] and m["cls"] in classes) or (m["id"] and m["id"] == attrs.get("id"))
+        for _, compound in parts for m in CSS_SIMPLE.finditer(compound)
+    )
+
+
+def start_tag(tag, attrs):
+    return f'<{tag} class="{attrs["class"]}">' if attrs.get("class") else f"<{tag}>"
+
+
+def check_components(site, pages):
+    """(problems, {class: components checked}): a rule for the elements inside
+    a container must not reach into a component, where it changes the
+    component in that container only."""
     path = site / STYLESHEET
-    buttons = [(page, button) for page in pages.values() for button in page.buttons]
+    elements = [(page, e) for page in pages.values() for e in page.components]
+    counts = {
+        kind: sum(1 for _, e in elements if e[4] == kind and e[5] == len(e[3]))
+        for kind in COMPONENTS
+    }
     if not path.is_file():
-        return [], len(buttons)
+        return [], counts
     problems = []
-    for selector, parts, line in container_link_rules(path.read_text(encoding="utf-8")):
-        reached = [(page, b) for page, b in buttons if reaches(parts, b[1], b[2], b[3])]
-        if not reached:
-            continue
-        page, (button_line, tag, attrs, _) = reached[0]
-        more = f" (and {len(reached) - 1} more)" if len(reached) > 1 else ""
-        subject = parts[-1][1]
-        if selector.endswith(subject) and subject[:1].lower() == "a":
-            fixed = f'"{selector[:-len(subject)]}a:not(.{BUTTON_CLASS}){subject[1:]}"'
-        else:
-            fixed = f"add :not(.{BUTTON_CLASS}) to its a"
-        problems.append((
-            path, line,
-            f'button: "{selector}" restyles the button <{tag} class="{attrs["class"]}"> on '
-            f"{page.path.relative_to(site).as_posix()}:{button_line}{more}: a rule for the "
-            f"links in a container outweighs the button's own .{BUTTON_CLASS} rules there. "
-            f"Leave the buttons out of it: {fixed}",
-        ))
-    return problems, len(buttons)
+    for selector, parts, line in container_rules(path.read_text(encoding="utf-8")):
+        for kind, (name, plural) in COMPONENTS.items():
+            reached = []
+            for page, (element_line, tag, attrs, ancestors, element_kind, root) in elements:
+                component = (ancestors + [(tag, attrs)])[root]
+                if element_kind != kind or names(parts, component[1]):
+                    continue
+                # Through an ancestor outside the component only.
+                if (reaches(parts, tag, attrs, ancestors)
+                        and not reaches(parts, tag, attrs, ancestors[root:])):
+                    reached.append((page, element_line, tag, attrs, component, root == len(ancestors)))
+            if not reached:
+                continue
+            page, element_line, tag, attrs, component, is_component = reached[0]
+            more = f" (and {len(reached) - 1} more)" if len(reached) > 1 else ""
+            what = (f"the {name} {start_tag(*component)}" if is_component
+                    else f"the {start_tag(tag, attrs)} in the {name} {start_tag(*component)}")
+            suffix = "".join(dict.fromkeys(
+                f":not(.{kind})" if r[5] else f":not(.{kind} *)" for r in reached))
+            subject = parts[-1][1]
+            if selector.endswith(subject):
+                # Before the subject's pseudo-classes: "a:not(.cta):hover".
+                depth, cut = 0, len(subject)
+                for i, ch in enumerate(subject):
+                    depth += (ch in "([") - (ch in ")]")
+                    if ch == ":" and depth == 0:
+                        cut = i
+                        break
+                head = selector[:len(selector) - len(subject)]
+                fixed = f'"{head}{subject[:cut]}{suffix}{subject[cut:]}"'
+            else:
+                fixed = f"add {suffix} to its last compound"
+            problems.append((
+                path, line,
+                f'{name}: "{selector}" restyles {what} on '
+                f"{page.path.relative_to(site).as_posix()}:{element_line}{more}: a rule for "
+                f"the elements in a container reaches into the {name}, which then looks "
+                f"different there from the {plural} elsewhere. Leave the {plural} out of it: "
+                f"{fixed}",
+            ))
+    return problems, counts
 
 
 def check(site):
@@ -654,8 +712,8 @@ def check(site):
     problems.extend(contrast_problems)
     colour_problems, stats["colours"] = check_text_colours(site)
     problems.extend(colour_problems)
-    button_problems, stats["buttons"] = check_buttons(site, pages)
-    problems.extend(button_problems)
+    component_problems, stats["components"] = check_components(site, pages)
+    problems.extend(component_problems)
 
     problems.sort(key=lambda p: (str(p[0]), p[1]))
     return problems, stats
@@ -684,10 +742,13 @@ def main():
     if problems:
         print(f"{len(problems)} problem(s) in the website.")
         return 1
+    components = "".join(
+        f"{stats['components'][kind]} {plural}, " for kind, (_, plural) in COMPONENTS.items()
+    )
     print(
         f"All {stats['pages']} pages pass: {stats['links']} local links and images, "
         f"{stats['fragments']} fragments, {stats['images']} image sizes, "
-        f"{stats['buttons']} buttons, {stats['colours']} text colours and "
+        f"{components}{stats['colours']} text colours and "
         f"{stats['contrasts']} contrasts checked."
     )
     return 0

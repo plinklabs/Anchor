@@ -92,7 +92,9 @@ ABOUT = HEAD.format(title="About", home_current="", about_current=' aria-current
     </section>
 
     <section class="callout">
-      <p>Questions? <a href="https://github.com/plinklabs/Anchor/issues">Ask them on GitHub</a>.</p>
+      <p class="eyebrow">Get in touch</p>
+      <h2>Questions?</h2>
+      <p>Ask them <a href="https://github.com/plinklabs/Anchor/issues">on GitHub</a>.</p>
       <div class="cta-row">
         <a class="cta cta--primary" href="https://github.com/plinklabs/Anchor/issues/new">Open an issue</a>
       </div>
@@ -102,12 +104,13 @@ ABOUT = HEAD.format(title="About", home_current="", about_current=' aria-current
 
 
 # The comment ahead of --muted proves comments are skipped: read as part of
-# the declaration, it would hide --muted from the contrast check. So does the
-# one ahead of the .doc links, which would read as a rule that reaches the
-# button, and as a text colour the contrast pairs don't check. The global
-# link rules and ".callout p a" (the button isn't in a <p>) don't reach it
-# either. --magenta colours only borders: "border-color" and
-# "background-color" aren't text colours.
+# the declaration, it would hide --muted from the contrast check. So do the
+# ones ahead of the .doc rules, which would read as rules that reach into the
+# button and the callout, and as a text colour the contrast pairs don't
+# check. The global link rules and ".callout p a" (the button isn't in a <p>)
+# don't reach the button either, and the .callout rules reach into the
+# callout through the callout itself. --magenta colours only borders:
+# "border-color" and "background-color" aren't text colours.
 STYLE = """/* Design tokens */
 :root {
   --ink:    #1B1B23;
@@ -129,11 +132,17 @@ a:hover { color: var(--magenta-press); }
 .cta--primary { background: var(--magenta-press); color: var(--paper); }
 .cta--primary:hover { background-color: var(--magenta-deep); border-color: var(--magenta-deep); }
 .callout { background: var(--callout); border-left: 3px solid var(--magenta); }
+.callout .eyebrow { margin-bottom: 0.75rem; }
+.callout h2 { margin-bottom: 0.5rem; }
+.callout p + p { margin-top: 0.75rem; }
 .callout p a { color: var(--magenta-press); }
 
-/* .doc a { color: #DB2777; } reached the button (#599) */
-.doc a:not(.cta) { color: var(--magenta-press); }
-.doc a:not(.cta):hover { text-decoration: underline; }
+/* .doc a { color: #DB2777; } reached the button (#599), .doc h2 { margin:
+   2.5rem 0 0.75rem; } the callout's heading (#602) */
+.doc .eyebrow:not(.callout *) { margin-bottom: 1rem; }
+.doc h2:not(.callout *) { margin: 2.5rem 0 0.75rem; }
+.doc a:not(.cta):not(.callout *) { color: var(--magenta-press); }
+.doc a:not(.cta):not(.callout *):hover { text-decoration: underline; }
 """
 
 
@@ -326,17 +335,45 @@ class CheckWebsiteTest(unittest.TestCase):
 
     # button
     def test_link_rule_of_a_container_reaches_a_button(self):
-        self.edit("style.css", ".doc a:not(.cta) {", ".doc a {")
+        self.edit("style.css", ".doc a:not(.cta):not(.callout *) {", ".doc a {")
         run = self.assert_flags("style.css", 'button: ".doc a" restyles the button <a class="cta cta--primary"> on about.html:')
         self.assertIn('Leave the buttons out of it: ".doc a:not(.cta)"', run.stdout)
 
     def test_hover_rule_of_a_container_reaches_a_button(self):
-        self.edit("style.css", ".doc a:not(.cta):hover {", ".doc a:hover {")
-        self.assert_flags("style.css", 'button: ".doc a:hover" restyles the button <a class="cta cta--primary"> on about.html:')
+        self.edit("style.css", ".doc a:not(.cta):not(.callout *):hover {", ".doc a:hover {")
+        run = self.assert_flags("style.css", 'button: ".doc a:hover" restyles the button <a class="cta cta--primary"> on about.html:')
+        self.assertIn('Leave the buttons out of it: ".doc a:not(.cta):hover"', run.stdout)
 
     def test_link_rule_in_a_selector_list_inside_a_media_query(self):
         self.edit("style.css", ".cta {", "@media (min-width: 1px) {\n  .hero a, main section > div a { outline: 0; }\n}\n.cta {")
         self.assert_flags("style.css", 'button: "main section > div a" restyles the button')
+
+    # callout (#602)
+    def test_heading_rule_of_a_container_reaches_into_a_callout(self):
+        self.edit("style.css", ".doc h2:not(.callout *) {", ".doc h2 {")
+        run = self.assert_flags("style.css", 'callout: ".doc h2" restyles the <h2> in the callout <section class="callout"> on about.html:')
+        self.assertIn('Leave the callouts out of it: ".doc h2:not(.callout *)"', run.stdout)
+
+    def test_class_rule_of_a_container_reaches_into_a_callout(self):
+        self.edit("style.css", ".doc .eyebrow:not(.callout *) {", ".doc .eyebrow {")
+        self.assert_flags("style.css", 'callout: ".doc .eyebrow" restyles the <p class="eyebrow"> in the callout')
+
+    def test_link_rule_of_a_container_reaches_into_a_callout_but_not_its_button(self):
+        self.edit("style.css", ".doc a:not(.cta):not(.callout *) {", ".doc a:not(.cta) {")
+        run = self.assert_flags("style.css", 'callout: ".doc a:not(.cta)" restyles the <a> in the callout')
+        self.assertNotIn("button:", run.stdout)
+
+    def test_rule_of_a_container_that_reaches_a_callout_itself(self):
+        self.edit("style.css", ".cta {", "main section { padding: 0; }\n.cta {")
+        self.assert_flags("style.css", 'callout: "main section" restyles the callout <section class="callout"> on about.html:')
+
+    # A rule that names the callout is written for it, and one that reaches
+    # into it only through its own elements ("p a": its <p>, "section h2":
+    # the callout is a <section>) styles every callout the same.
+    def test_rules_that_reach_a_callout_through_the_callout_pass(self):
+        self.edit("style.css", ".cta {", ".doc .callout h2 { margin-top: 0; }\np a { text-underline-offset: 2px; }\nsection h2 { letter-spacing: 0; }\n.cta {")
+        run = self.run_checker()
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
     # output
     def test_problems_are_annotations_under_github_actions(self):

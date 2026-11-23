@@ -353,15 +353,21 @@ main { flex: 1; }
 /* ============================================================
    Prose document (privacy / legal copy)
    ============================================================ */
+/* The prose rules stop at a callout: with a plain ".doc h2", ".doc p" and
+   ".doc .eyebrow" the contact page's callout took the prose spacing, 40px
+   between its eyebrow and its heading, where the callouts on the other pages
+   have 12px (#602). Every rule below for the elements in .doc carries
+   :not(.callout *), so they still weigh the same against each other:
+   ".doc .lead" and ".doc .updated" outweigh ".doc p". */
 .doc {
   padding: clamp(3rem, 8vw, 6rem) var(--gutter) clamp(2.5rem, 6vw, 4rem);
   max-width: 46rem;
 }
-.doc .eyebrow {
+.doc .eyebrow:not(.callout *) {
   color: var(--magenta-press);
   margin-bottom: 1rem;
 }
-.doc h1 {
+.doc h1:not(.callout *) {
   font-family: var(--ff-display);
   font-size: clamp(1.875rem, 4.5vw, 3rem);
   font-weight: 300;
@@ -369,35 +375,35 @@ main { flex: 1; }
   letter-spacing: -0.02em;
   margin-bottom: 0.75rem;
 }
-.doc .updated {
+.doc .updated:not(.callout *) {
   font-family: var(--ff-mono);
   font-size: 0.7rem;
   letter-spacing: 0.04em;
   color: var(--muted);
   margin-bottom: 2.5rem;
 }
-.doc h2 {
+.doc h2:not(.callout *) {
   font-family: var(--ff-display);
   font-size: clamp(1.125rem, 2.5vw, 1.4rem);
   font-weight: 300;
   letter-spacing: -0.01em;
   margin: 2.5rem 0 0.75rem;
 }
-.doc p, .doc li {
+.doc p:not(.callout *), .doc li:not(.callout *) {
   font-size: 0.9375rem;
   line-height: 1.7;
   color: var(--ink);
 }
-.doc p { margin-bottom: 1rem; }
-.doc ul { padding-left: 1.25rem; margin-bottom: 1rem; }
-.doc li { margin-bottom: 0.5rem; }
-.doc strong { font-weight: 500; }
+.doc p:not(.callout *) { margin-bottom: 1rem; }
+.doc ul:not(.callout *) { padding-left: 1.25rem; margin-bottom: 1rem; }
+.doc li:not(.callout *) { margin-bottom: 0.5rem; }
+.doc strong:not(.callout *) { font-weight: 500; }
 /* Prose links only: a plain ".doc a" outweighs .cta--primary and turned the
    contact page's button label magenta on magenta (#599). The buttons keep
    their own colours on every page. */
-.doc a:not(.cta) { color: var(--magenta-press); }
-.doc a:not(.cta):hover { text-decoration: underline; }
-.doc .lead { color: var(--muted); font-size: 1rem; }
+.doc a:not(.cta):not(.callout *) { color: var(--magenta-press); }
+.doc a:not(.cta):not(.callout *):hover { text-decoration: underline; }
+.doc .lead:not(.callout *) { color: var(--muted); font-size: 1rem; }
 
 /* ============================================================
    Footer ("Built in Belgium…", GPL-3.0) — reused from parent site.
